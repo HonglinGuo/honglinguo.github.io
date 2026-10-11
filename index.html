@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 观察笔记</title>
+<meta name="description" content="用图表和数据读懂 AI 的进展：报告图解、行业观察与实践笔记。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+<style>
+.intro { padding: 80px 0 56px; }
+.intro h1 { font-size: clamp(44px, 8vw, 96px); line-height: 1.04; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 22px; }
+.intro p { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 32em; margin: 0; }
+
+.list-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
+.list-head h2 { margin: 0; font-size: 20px; }
+.list-head span { color: var(--ink-3); font-size: 15px; }
+
+.posts { list-style: none; margin: 0; padding: 0; }
+.post a { display: grid; grid-template-columns: 9em minmax(0, 1fr) 220px; gap: 12px 40px; padding: 32px 0; border-bottom: 1px solid var(--rule); color: inherit; text-decoration: none; align-items: start; }
+.post time { color: var(--ink-3); font-size: 15px; font-family: var(--f-num); padding-top: 6px; }
+.post h3 { margin: 0 0 8px; font-size: clamp(24px, 3vw, 34px); line-height: 1.25; font-weight: 750; letter-spacing: -0.01em; }
+.post a:hover h3 { color: var(--s1); }
+.post p { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tags span { font-size: 15px; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 10px; }
+
+/* 文章缩略图：小量筒 */
+.thumb { display: flex; gap: 10px; align-items: flex-end; height: 120px; padding-top: 6px; }
+.thumb i { position: relative; flex: 1; height: 100%; border: 2px solid var(--ink); border-top: 0; border-radius: 0 0 8px 8px; }
+.thumb i::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: 3px; height: calc((100% - 6px) * var(--v) / 100); background: var(--s1); border-radius: 1px 1px 5px 5px; }
+
+@media (max-width: 760px) {
+  .post a { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .thumb { height: 72px; max-width: 200px; order: -1; margin-bottom: 8px; }
+}
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="./" aria-current="page">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="intro">
+    <h1>把 AI 的进展<br>画出来看</h1>
+    <p>读报告、看数据、做实验。这里记录我对 AI 的观察，尽量用图表和数字说话，每篇都注明出处。</p>
+  </section>
+
+  <section aria-labelledby="list-h">
+    <div class="list-head"><h2 id="list-h">文章</h2><span>共 1 篇</span></div>
+    <ul class="posts">
+      <!-- 新文章加在最上面 -->
+      <li class="post">
+        <a href="posts/2026-state-of-ai/">
+          <time datetime="2026-10-11">2026.10.11</time>
+          <div>
+            <h3>题目刚出，就被做完了：图解 State of AI 2026</h3>
+            <p>244 页的年度报告，挑出 30 多组关键数据重新绘制：三强格局、AI 研发 AI、1050 亿美元收入、被电力卡住的算力，以及评测中真的攻进了 Hugging Face 的智能体蜂群。</p>
+            <div class="tags"><span>报告图解</span><span>行业</span><span>安全</span></div>
+          </div>
+          <div class="thumb" aria-hidden="true"><i style="--v:95"></i><i style="--v:100"></i><i style="--v:63"></i><i style="--v:68"></i></div>
+        </a>
+      </li>
+    </ul>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>托管于 GitHub Pages</span>
+  </div>
+</footer>
+
+</body>
+</html>
