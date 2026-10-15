@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会弯折的加法</title>
+<meta name="description" content="动手拆一个大语言模型（三）：拖动权重和偏置，看一个神经元怎么像开关；用 Softmax 把分数变概率；用帐篷拼曲线、用折纸理解深度。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 15px; color: var(--ink-2); margin: 4px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 18px; height: 3px; display: inline-block; border-radius: 2px; }
+.legend i.dash { background: repeating-linear-gradient(90deg, var(--dim) 0 5px, transparent 5px 9px); }
+.formula { font-family: var(--f-num); font-size: 17px; color: var(--ink); background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 12px; margin: 8px 0; overflow-x: auto; white-space: nowrap; }
+.formula b { color: var(--s1); font-weight: 600; }
+.formula i { color: var(--s2); font-style: normal; font-weight: 600; }
+</style>
+</head>
+<body data-part="3">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 03</span><span>约 12 分钟</span><span>5 个小实验</span></p>
+  <h1>神经网络：<em>会弯折的加法</em></h1>
+  <p class="lead">按词频查表的老办法，遇到没见过的前文就束手无策；手写规则又永远写不完。我们需要一台能从数据里自己学出规律的机器。神经网络的零件简单得出奇：乘、加，再折一下。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" aria-current="page" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#neuron">一个神经元</a><a href="#bend">为什么要折</a><a href="#softmax">分数变概率</a><a href="#tents">拼出任意曲线</a><a href="#depth">为什么要深</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="neuron">
+  <div class="part-head"><h2>一个神经元，像一个可调的开关</h2><span class="meta">wx + b，再 ReLU</span></div>
+  <div class="sec-lede"><p>前两篇说清了目标：让模型的概率表尽量接近人，用交叉熵打分。那这台预测机器用什么来做？让人写规则写不完，按前文查统计表又会遇到组合爆炸：前文一长，绝大多数组合从没出现过，查表只能得到“没见过”。我们需要一个能从数据里学出规律、举一反三的工具，这就是<strong>神经网络</strong>。</p><p>它的基本单元叫神经元，只做两件事：先把输入乘上权重、加上偏置，再把结果“弯折”一下，最常用的是 ReLU，负数变成 0，正数原样输出。于是一个神经元就像一个可调的开关：偏置决定它在哪里打开，权重决定打开后涨得多快、朝哪个方向。</p><p class="go">拖动 w 和 b 两个滑块，看开关的位置和斜率怎么变。</p></div>
+  <div class="lab lab-split">
+    <div>
+      <div class="formula" id="nrF"></div>
+      <label class="ctl"><span>权重 w <output id="nrWo"></output></span><input type="range" id="nrW" min="-3" max="3" step="0.1" value="1.5" aria-label="权重 w"></label>
+      <label class="ctl"><span>偏置 b <output id="nrBo"></output></span><input type="range" id="nrB" min="-3" max="3" step="0.1" value="-1.5" aria-label="偏置 b"></label>
+      <div class="read"><div class="hl"><div class="v" id="nrK">0</div><div class="k">开关打开的位置</div></div></div>
+      <p class="note">真实网络里，一个神经元有成千上万个输入，每个输入配一个自己的权重，乘完全部加起来，再加 b、再折一下。道理和这里一样。</p>
+    </div>
+    <div>
+      <div class="legend"><span><i style="background:var(--s1)"></i>神经元输出</span><span><i class="dash"></i>折之前的 wx + b</span></div>
+      <div class="box" id="nrChart"></div>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>神经元</dt><dd>把输入加权求和、加上偏置，再经过一个非线性函数输出一个数。</dd></div><div class="it" tabindex="0"><dt>权重 w</dt><dd>每个输入对结果的影响大小和方向。</dd></div><div class="it" tabindex="0"><dt>偏置 b</dt><dd>固定加上的一个量，决定神经元在哪里“打开”。</dd></div><div class="it" tabindex="0"><dt>ReLU</dt><dd>最常用的非线性函数：负数变 0，正数原样输出。</dd></div><div class="it" tabindex="0"><dt>参数</dt><dd>所有权重和偏置的统称，训练就是在调它们。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>y = ReLU(w<sub>1</sub>x<sub>1</sub> + … + w<sub>n</sub>x<sub>n</sub> + b)</code></dt><dd>一个神经元的完整公式。</dd></div><div class="it cmd" tabindex="0"><dt><code>ReLU(z) = max(0, z)</code></dt><dd>只有一个拐点。</dd></div><div class="it cmd" tabindex="0"><dt><code>单输入时，开关位置 x = −b / w</code></dt><dd>打开后的斜率是 w。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="bend">
+  <div class="part-head"><h2>不折一下，叠多少层都是一条直线</h2><span class="meta">非线性</span></div>
+  <div class="sec-lede"><p>很多神经元并排就是一层，一层的输出作为下一层的输入，一层层叠起来就是网络。网络里所有权重和偏置统称参数，它们决定了这个网络算的是什么函数，训练就是去调它们。</p><p>为什么每层都要弯折一下？因为直线套直线还是直线：先算 2x+1 再算 3 倍减 2，结果是 6x+1，叠多少层都等价于一层，只能表示最简单的直线关系。加上 ReLU 这样的非线性，每个神经元贡献一个拐点，网络才能拼出弯弯曲曲的复杂形状。</p><p class="go">下面是一个随机初始化的三层小网络。把 ReLU 关掉、再换几组参数，看输出是不是永远是一条直线。</p></div>
+  <div class="lab">
+    <div class="ctrls">
+      <div class="seg" id="bdSeg"><button data-v="1" aria-pressed="true">每层都折一下</button><button data-v="0">不折</button></div>
+      <button class="btn" type="button" id="bdNew">换一组随机参数</button>
+    </div>
+    <div class="box" id="bdChart"></div>
+    <div class="read"><div class="hl"><div class="v" id="bdK">0</div><div class="k">图上看得出的拐点</div></div></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>层</dt><dd>许多神经元并排，接收同一组输入。</dd></div><div class="it" tabindex="0"><dt>神经网络</dt><dd>一层层叠起来，上一层的输出是下一层的输入。</dd></div><div class="it" tabindex="0"><dt>非线性 / 激活函数</dt><dd>每层加权求和之后的“弯折”，让网络能表示弯曲的关系。</dd></div><div class="it" tabindex="0"><dt>隐藏层</dt><dd>输入层和输出层之间的层，它的输出不直接给人看。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>线性套线性还是线性：3(2x + 1) − 2 = 6x + 1</code></dt><dd>没有激活函数，叠多少层都等价于一层。</dd></div><div class="it cmd" tabindex="0"><dt>每个 ReLU 最多贡献一个拐点</dt><dd>拐点多了，折线就能弯成复杂形状。</dd></div><div class="it cmd" tabindex="0"><dt>拐点越多，能拟合的形状越复杂</dt><dd>这正是加神经元、加层的意义。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="softmax">
+  <div class="part-head"><h2>最后一层：把分数变成概率</h2><span class="meta">Softmax</span></div>
+  <div class="sec-lede"><p>网络算出来的只是一堆数字，而语言模型要的是下一个 token 的概率。做法是：最后一层给词表里每个 token 配一个神经元，算出一个分数（常叫 logits），这一层不再弯折，否则负分全变成 0 就分不出高低了。</p><p>但分数不能直接当概率：它可正可负，加起来也不等于 1。<strong>Softmax</strong> 负责转换：先对每个分数取指数，保证都是正数、而且高分被放大；再除以总和，保证加起来正好是 1。每个候选的概率都大于 0，所以模型猜错时交叉熵也不会变成无穷大。</p><p>到这里语言模型的骨架就齐了：前文 → 多层神经网络 → 每个 token 的分数 → Softmax → 下一个 token 的概率。</p><p class="go">拖动四个候选的分数看概率变化，再试试“所有分数都加 3”。</p></div>
+  <div class="lab lab-split">
+    <div>
+      <p class="lab-t">“这个周六，我们去____吧”</p>
+      <div id="smCtl"></div>
+      <div class="stepper"><button class="btn" type="button" id="smAdd">所有分数都加 3</button><button class="btn" type="button" id="smReset">复原</button></div>
+    </div>
+    <div>
+      <div id="smBars"></div>
+      <p class="msg" id="smMsg"></p>
+    </div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li><strong>只有分数之间的差距才重要</strong>：全体加同一个数，概率纹丝不动。</li>
+    <li>再低的分数，概率也大于 0。这样模型猜错时也不会“完全没想到”，第 2 篇里的交叉熵才不会变成无穷大。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>logits</dt><dd>最后一层给每个候选 token 打的原始分数，可正可负。</dd></div><div class="it" tabindex="0"><dt>Softmax</dt><dd>把一组分数变成概率：先取指数，再除以总和。</dd></div><div class="it" tabindex="0"><dt>平移不变性</dt><dd>所有分数加上同一个数，Softmax 结果不变。</dd></div><div class="it" tabindex="0"><dt>指数函数 e<sup>x</sup></dt><dd>永远为正，且 x 越大增长越快，用来放大分数之间的差距。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>q<sub>i</sub> = e<sup>s<sub>i</sub></sup> / Σ<sub>j</sub> e<sup>s<sub>j</sub></sup></code></dt><dd>Softmax 公式。</dd></div><div class="it cmd" tabindex="0"><dt><code>每个 q<sub>i</sub> &gt; 0，Σ q<sub>i</sub> = 1</code></dt><dd>保证是合法概率，猜错时交叉熵也不会无穷大。</dd></div><div class="it cmd" tabindex="0"><dt>只有分数差决定概率</dt><dd>差 1 分，概率比约为 e ≈ 2.72 倍。</dd></div><div class="it cmd" tabindex="0"><dt>最后一层不加 ReLU</dt><dd>否则负分全变 0，分不出高低。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="tents">
+  <div class="part-head"><h2>神经元够多，什么曲线都能拼出来</h2><span class="meta">通用逼近</span></div>
+  <div class="sec-lede"><p>这样一层层叠起来的网络，能力上限在哪里？答案出奇地好：<strong>通用逼近定理</strong>说，只要神经元足够多，哪怕只有一个隐藏层，也能以任意精度逼近任意连续函数。“输入前文、输出下一个 token 的概率”也是一个函数，只是输入输出都有成千上万维，所以神经网络原则上有能力表示它。</p><p>用 ReLU 很容易看出为什么：三个 ReLU 一加一减能拼出一顶“小帐篷”，两边是 0、中间一个尖；许多帐篷并排摆好、各自调高矮，加起来就是一条贴着目标曲线的折线。</p><p>但这个定理没说要多少神经元，没说参数怎么找到，也没说能否推广到没见过的数据。</p><p class="go">先看一顶帐篷怎么拼，再拖动帐篷数量，看折线如何越来越贴近目标。</p></div>
+  <div class="lab">
+    <div class="ctrls">
+      <div class="seg" id="tnSeg"><button data-v="one">看一顶帐篷怎么拼</button><button data-v="many" aria-pressed="true">用很多帐篷拼曲线</button></div>
+    </div>
+    <label class="ctl" id="tnCtl"><span>帐篷数量 <output id="tnNo">5</output></span><input type="range" id="tnN" min="2" max="40" value="5" aria-label="帐篷数量"></label>
+    <div class="legend" id="tnLeg"></div>
+    <div class="box" id="tnChart"></div>
+    <div class="read" id="tnRead">
+      <div><div class="v" id="tnR">0</div><div class="k">用掉的 ReLU</div></div>
+      <div class="hl"><div class="v" id="tnE">0</div><div class="k">和目标曲线的最大误差</div></div>
+    </div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>定理只保证“存在”这样一组参数，没说需要多少神经元，也没说怎么找到它们，更没说在没见过的数据上表现如何。</li>
+    <li>“怎么找”留给第 4 篇；“需要多少”引出了下面的深度。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>通用逼近定理</dt><dd>神经元足够多时，即使只有一个隐藏层，网络也能以任意精度逼近任意连续函数。</dd></div><div class="it" tabindex="0"><dt>帐篷函数</dt><dd>用三个 ReLU 拼成的尖顶：两边为 0，中间一个峰。</dd></div><div class="it" tabindex="0"><dt>存在性定理</dt><dd>只保证好参数存在，不保证能找到。</dd></div><div class="it" tabindex="0"><dt>折线逼近</dt><dd>用许多首尾相连的直线段去贴合一条曲线，段越多贴得越紧。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>ReLU(x) − 2·ReLU(x−1) + ReLU(x−2)</code></dt><dd>在 x = 1 处取峰值 1、两侧为 0 的帐篷。</dd></div><div class="it cmd" tabindex="0"><dt>帐篷越多越窄，折线越贴近目标</dt><dd>每顶帐篷用 3 个 ReLU。</dd></div><div class="it cmd" tabindex="0"><dt>定理没回答的三件事</dt><dd>需要多少神经元、参数怎么找、能否推广到没见过的数据。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="depth">
+  <div class="part-head"><h2>同样的零件，叠深比铺宽划算得多</h2><span class="meta">深度</span></div>
+  <div class="sec-lede"><p>既然一层就够，为什么 GPT-3 有 96 层？原因之一是：同样多的神经元，叠深能表示的函数复杂得多。两个神经元能把 0 到 1 这段线对折一次，把输出再送进同样的两个神经元就是再折一次，每多一层，折线段数就翻倍；而单层网络里每个神经元只能贡献一个拐点。</p><p>另一个原因是复杂规律本来就是一层层搭起来的：字组成词，词组成短语，短语组成句子的意思。研究者在真实模型里也看到，较低的层多捕捉拼写、搭配这类表层模式，较高的层多捕捉语义。</p><p>代价是越深越难训练，这要等下一篇讲完训练再解决。</p><p class="go">拖动层数，对比深网络用掉的神经元和单层网络需要的数量。</p></div>
+  <div class="lab">
+    <label class="ctl"><span>层数 <output id="dpLo">3</output></span><input type="range" id="dpL" min="1" max="8" value="3" aria-label="层数"></label>
+    <div class="box" id="dpChart"></div>
+    <div class="read">
+      <div class="hl"><div class="v" id="dpA">0</div><div class="k">深网络用的神经元</div></div>
+      <div><div class="v" id="dpB">0</div><div class="k">折线段数</div></div>
+      <div class="warn"><div class="v" id="dpC">0</div><div class="k">只用一层，至少要的神经元</div></div>
+    </div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>语言本身也是一层层搭起来的：字组成词，词组成短语，短语组成意思。深网络可以让前面的层管拼写和搭配，后面的层管语义和推理。</li>
+    <li>代价是越深越难训练。下一篇讲训练，以及让上百层网络也能训起来的两个小技巧。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>深度</dt><dd>网络的层数。</dd></div><div class="it" tabindex="0"><dt>深度优势</dt><dd>同样多的神经元，叠深能表示的函数远比铺宽复杂。</dd></div><div class="it" tabindex="0"><dt>层级表示</dt><dd>低层处理表层模式，高层在其上组合出语义和推理。</dd></div><div class="it" tabindex="0"><dt>宽度</dt><dd>每层神经元的数量。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>L 层折纸网络：2L 个神经元，2<sup>L</sup> 段折线</code></dt><dd>段数随层数指数增长。</dd></div><div class="it cmd" tabindex="0"><dt><code>单层要表示同样的折线，至少 2<sup>L</sup> − 1 个神经元</code></dt><dd>一层里每个神经元只贡献一个拐点。</dd></div><div class="it cmd" tabindex="0"><dt><code>GPT-3：96 层；Llama 3 8B：32 层</code></dt><dd>真实大模型都很深。</dd></div><div class="it cmd" tabindex="0"><dt>代价：越深越难训练</dt><dd>要靠残差连接和归一化来解决。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm-2/"><small>上一篇</small><span>猜得有多准，用 bit 来量</span></a><a href="../2026-10-15-llm-4/" class="nx"><small>下一篇</small><span>训练：往下坡走，把错摊回去</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+var relu = function (z) { return z > 0 ? z : 0; };
+function axes(s, x, y, xs, ys, L, R, T, B, fx, fy) {
+  ys.forEach(function (v) { svg('line', { class: v === 0 ? 'ax' : 'gl', x1: L, x2: R, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: fy ? fy(v) : S.f(v, 0) }, s); });
+  xs.forEach(function (v, i) { svg('line', { class: v === 0 ? 'ax' : 'gl', x1: x(v), x2: x(v), y1: T, y2: B }, s); svg('text', { class: 'n', x: x(v), y: B + 22, 'text-anchor': i === xs.length - 1 && x(v) > R - 30 ? 'end' : 'middle', text: fx ? fx(v) : S.f(v, 0) }, s); });
+}
+
+/* ---------- 神经元 ---------- */
+(function () {
+  var w, b;
+  var redraw = S.fit($('#nrChart'), 260, function (s, W, H) {
+    var L = 40, R = W - 12, T = 10, B = H - 34;
+    var x = S.scale(-3, 3, L, R), y = S.scale(-2, 5, B, T);
+    axes(s, x, y, [-3, -2, -1, 0, 1, 2, 3], [-2, 0, 2, 4], L, R, T, B);
+    var cl = function (v) { return S.clamp(v, -2, 5); };
+    svg('path', { class: 'ln k-dim', 'stroke-dasharray': '6 5', 'stroke-width': 1.5, d: S.path([[x(-3), y(cl(-3 * w + b))], [x(3), y(cl(3 * w + b))]]) }, s);
+    var pts = []; for (var i = 0; i <= 240; i++) { var xv = -3 + i / 40; pts.push([x(xv), y(cl(relu(w * xv + b)))]); }
+    svg('path', { class: 'ln k-s1', d: S.path(pts) }, s);
+    if (Math.abs(w) > 1e-9) { var k = -b / w; if (k >= -3 && k <= 3) svg('circle', { cx: x(k), cy: y(0), r: 6, class: 'f-s2' }, s); }
+  });
+  function upd() {
+    w = +$('#nrW').value; b = +$('#nrB').value;
+    $('#nrWo').textContent = S.f(w, 1); $('#nrBo').textContent = S.f(b, 1);
+    $('#nrF').innerHTML = 'y = ReLU( <b>' + S.f(w, 1) + '</b> × x ' + (b < 0 ? '− ' : '+ ') + '<i>' + S.f(Math.abs(b), 1) + '</i> )';
+    var k = Math.abs(w) < 1e-9 ? null : -b / w;
+    $('#nrK').innerHTML = k === null ? (b > 0 ? '一直开着' : '一直关着') : 'x = ' + S.f(k, 2) + '<small>' + (w > 0 ? '往右打开' : '往左打开') + '</small>';
+    redraw();
+  }
+  $('#nrW').addEventListener('input', upd); $('#nrB').addEventListener('input', upd);
+  upd();
+})();
+
+/* ---------- 为什么要折 ---------- */
+(function () {
+  var on = true, seed = 11, net;
+  function make() {
+    var r = S.rng(seed), g = function () { return (r() * 2 - 1); };
+    var W1 = [], B1 = [], W2 = [], B2 = [], W3 = [], B3 = [], W4 = [];
+    for (var i = 0; i < 6; i++) { W1.push(g() * 1.5); B1.push(g() * 1.5); }
+    for (i = 0; i < 6; i++) { W2.push([]); B2.push(g() * .6); for (var j = 0; j < 6; j++) W2[i].push(g() * .8); }
+    for (i = 0; i < 6; i++) { W3.push([]); B3.push(g() * .6); for (j = 0; j < 6; j++) W3[i].push(g() * .8); }
+    for (i = 0; i < 6; i++) W4.push(g());
+    net = [W1, B1, W2, B2, W3, B3, W4];
+  }
+  function f(x) {
+    var a = function (z) { return on ? relu(z) : z; };
+    var h1 = net[0].map(function (w, i) { return a(w * x + net[1][i]); });
+    var h2 = net[2].map(function (row, i) { return a(row.reduce(function (s, w, j) { return s + w * h1[j]; }, net[3][i])); });
+    var h3 = net[4].map(function (row, i) { return a(row.reduce(function (s, w, j) { return s + w * h2[j]; }, net[5][i])); });
+    return h3.reduce(function (s, v, i) { return s + v * net[6][i]; }, 0);
+  }
+  var redraw = S.fit($('#bdChart'), 250, function (s, W, H) {
+    var L = 48, R = W - 12, T = 10, B = H - 34, N = 600, xs = [], ys = [];
+    for (var i = 0; i <= N; i++) { var xv = -3 + 6 * i / N; xs.push(xv); ys.push(f(xv)); }
+    var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
+    if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+    var pad = (hi - lo) * .12; lo -= pad; hi += pad;
+    var x = S.scale(-3, 3, L, R), y = S.scale(lo, hi, B, T);
+    axes(s, x, y, [-3, -2, -1, 0, 1, 2, 3], [lo + pad, (lo + hi) / 2, hi - pad], L, R, T, B, null, function (v) { return S.f(v, 1); });
+    svg('path', { class: 'ln ' + (on ? 'k-s1' : 'k-s2'), d: S.path(xs.map(function (xv, i) { return [x(xv), y(ys[i])]; })) }, s);
+    var k = 0, prev = false, sl = [], ms = 0;
+    for (i = 0; i < N; i++) { sl.push((ys[i + 1] - ys[i]) * N / 6); ms = Math.max(ms, Math.abs(sl[i])); }
+    for (i = 1; i < N; i++) { var d2 = Math.abs(sl[i] - sl[i - 1]) > .03 * ms; if (d2 && !prev) k++; prev = d2; }
+    $('#bdK').textContent = on ? k + ' 个' : '0 个';
+  });
+  S.seg($('#bdSeg'), function (v) { on = v === '1'; redraw(); });
+  $('#bdNew').addEventListener('click', function () { seed = (seed * 48271) % 2147483647; make(); redraw(); });
+  make(); redraw();
+})();
+
+/* ---------- Softmax ---------- */
+(function () {
+  var NM = ['公园', '商场', '博物馆', '在家躺着'], INIT = [2, 1, 0.5, -1], sc = INIT.slice(), sls = [];
+  NM.forEach(function (n, i) {
+    var lab = h('label', { class: 'ctl' }, $('#smCtl'));
+    var sp = h('span', null, lab); sp.appendChild(document.createTextNode(n + ' 的分数 ')); var o = h('output', null, sp);
+    var r = h('input', { type: 'range', min: '-4', max: '9', step: '0.1', value: sc[i], 'aria-label': n + '的分数' }, lab);
+    r.addEventListener('input', function () { sc[i] = +r.value; upd(); });
+    sls.push({ r: r, o: o });
+  });
+  function upd() {
+    var p = S.softmax(sc), ex = sc.map(Math.exp), tot = ex.reduce(function (a, b) { return a + b; }, 0);
+    sls.forEach(function (x, i) { x.r.value = sc[i]; x.o.textContent = S.f(sc[i], 1); });
+    S.bars($('#smBars'), NM.map(function (n, i) { return { label: n, value: p[i], text: S.pct(p[i], 1) }; }));
+    $('#smMsg').textContent = '以“' + NM[0] + '”为例：e^' + S.f(sc[0], 1) + ' ≈ ' + S.f(ex[0], 2) + '，除以四项之和 ' + S.f(tot, 2) + '，得到 ' + S.pct(p[0], 1) + '。';
+  }
+  $('#smAdd').addEventListener('click', function () { if (Math.max.apply(null, sc) > 6) return; sc = sc.map(function (v) { return v + 3; }); upd(); });
+  $('#smReset').addEventListener('click', function () { sc = INIT.slice(); upd(); });
+  upd();
+})();
+
+/* ---------- 帐篷 ---------- */
+(function () {
+  var mode = 'many', n = 5;
+  var tgt = function (x) { return .5 + .28 * Math.sin(2 * Math.PI * x) + .14 * Math.sin(9 * x + 1); };
+  function hat(x, c, wd) { return relu(x - (c - wd)) / wd - 2 * relu(x - c) / wd + relu(x - (c + wd)) / wd; }
+  var redraw = S.fit($('#tnChart'), 270, function (s, W, H) {
+    var L = 40, R = W - 12, T = 10, B = H - 34, i, pts;
+    if (mode === 'one') {
+      var x = S.scale(-.5, 3, L, R), y = S.scale(-2.2, 2.2, B, T);
+      axes(s, x, y, [0, 1, 2, 3], [-2, -1, 0, 1, 2], L, R, T, B);
+      var parts = [[function (v) { return relu(v); }, 'k-s1'], [function (v) { return -2 * relu(v - 1); }, 'k-s2'], [function (v) { return relu(v - 2); }, 'k-s3']];
+      parts.forEach(function (pp) { pts = []; for (i = 0; i <= 140; i++) { var v = -.5 + 3.5 * i / 140; pts.push([x(v), y(S.clamp(pp[0](v), -2.2, 2.2))]); } svg('path', { class: 'ln ' + pp[1], 'stroke-width': 1.6, 'stroke-dasharray': '6 4', d: S.path(pts) }, s); });
+      pts = []; for (i = 0; i <= 140; i++) { var v2 = -.5 + 3.5 * i / 140; pts.push([x(v2), y(hat(v2, 1, 1))]); }
+      svg('path', { class: 'ln k-ink', 'stroke-width': 3.5, d: S.path(pts) }, s);
+      return;
+    }
+    var x2 = S.scale(0, 1, L, R), y2 = S.scale(-.1, 1.05, B, T);
+    axes(s, x2, y2, [0, .25, .5, .75, 1], [0, .5, 1], L, R, T, B, function (v) { return S.f(v, 2); }, function (v) { return S.f(v, 1); });
+    var wd = 1 / (n - 1), err = 0;
+    for (var k = 0; k < n; k++) {
+      var c = k * wd, hh = tgt(c); pts = [];
+      for (i = -1; i <= 1; i += .5) pts.push([x2(S.clamp(c + i * wd, 0, 1)), y2(hh * (1 - Math.abs(i)))]);
+      svg('path', { class: 'k-dim', fill: 'none', 'stroke-width': 1, opacity: .7, d: S.path(pts) }, s);
+    }
+    pts = []; var p2 = [];
+    for (i = 0; i <= 400; i++) {
+      var xv = i / 400, sum = 0;
+      for (k = 0; k < n; k++) sum += tgt(k * wd) * hat(xv, k * wd, wd);
+      pts.push([x2(xv), y2(tgt(xv))]); p2.push([x2(xv), y2(sum)]);
+      err = Math.max(err, Math.abs(sum - tgt(xv)));
+    }
+    svg('path', { class: 'ln k-dim', 'stroke-width': 6, opacity: .35, d: S.path(pts) }, s);
+    svg('path', { class: 'ln k-s1', d: S.path(p2) }, s);
+    $('#tnE').textContent = S.f(err, 3);
+    $('#tnR').textContent = 3 * n + ' 个';
+  });
+  function upd() {
+    $('#tnNo').textContent = n;
+    $('#tnCtl').style.display = $('#tnRead').style.display = mode === 'many' ? '' : 'none';
+    $('#tnLeg').innerHTML = mode === 'one'
+      ? '<span><i style="background:var(--s1)"></i>ReLU(x)</span><span><i style="background:var(--s2)"></i>−2·ReLU(x−1)</span><span><i style="background:var(--s3)"></i>ReLU(x−2)</span><span><i style="background:var(--ink);height:4px"></i>三者相加：一顶帐篷</span>'
+      : '<span><i style="background:var(--dim);opacity:.5;height:6px"></i>目标曲线</span><span><i style="background:var(--dim)"></i>每顶帐篷</span><span><i style="background:var(--s1)"></i>帐篷之和</span>';
+    redraw();
+  }
+  $('#tnN').addEventListener('input', function () { n = +this.value; upd(); });
+  S.seg($('#tnSeg'), function (v) { mode = v; upd(); });
+  upd();
+})();
+
+/* ---------- 深度：折纸 ---------- */
+(function () {
+  var Ln = 3;
+  var t = function (x) { return 2 * relu(x) - 4 * relu(x - .5); };
+  var redraw = S.fit($('#dpChart'), 250, function (s, W, H) {
+    var L = 40, R = W - 12, T = 10, B = H - 34;
+    var x = S.scale(0, 1, L, R), y = S.scale(0, 1, B, T);
+    axes(s, x, y, [0, .5, 1], [0, 1], L, R, T, B, function (v) { return S.f(v, 1); });
+    var N = Math.max(800, Math.pow(2, Ln) * 8), pts = [];
+    for (var i = 0; i <= N; i++) { var v = i / N, z = v; for (var l = 0; l < Ln; l++) z = t(z); pts.push([x(v), y(z)]); }
+    svg('path', { class: 'ln k-s1', 'stroke-width': Ln > 6 ? 1.2 : 2.2, d: S.path(pts) }, s);
+  });
+  function upd() {
+    Ln = +$('#dpL').value; $('#dpLo').textContent = Ln;
+    $('#dpA').innerHTML = 2 * Ln + '<small>个</small>';
+    $('#dpB').innerHTML = Math.pow(2, Ln) + '<small>段</small>';
+    $('#dpC').innerHTML = (Math.pow(2, Ln) - 1) + '<small>个</small>';
+    redraw();
+  }
+  $('#dpL').addEventListener('input', upd);
+  upd();
+})();
+})();
+</script>
+</body>
+</html>

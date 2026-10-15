@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>下坡与回传</title>
+<meta name="description" content="动手拆一个大语言模型（四）：梯度下降、Softmax 的“预测减答案”、反向传播、梯度消失与残差、归一化、过拟合，全部可以拖、可以点。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 15px; color: var(--ink-2); margin: 4px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 18px; height: 3px; display: inline-block; border-radius: 2px; }
+table.t { width: 100%; border-collapse: collapse; font-size: 15px; }
+table.t th { text-align: left; font-weight: 600; color: var(--ink-3); padding: 4px 8px 6px 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+table.t td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--hair); font-family: var(--f-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.t td:first-child { font-family: var(--f-sans); }
+table.t tr.truth td:first-child { color: var(--ok); font-weight: 650; }
+.gpos { color: var(--s2); } .gneg { color: var(--ok); }
+.tbl-scroll { overflow-x: auto; }
+.status { display: inline-block; font-size: 15px; border-radius: 5px; padding: 1px 10px; }
+.status.ok { background: var(--ok-soft); color: var(--ok); }
+.status.osc { background: var(--s2-soft); color: var(--s2); }
+.status.bad { background: var(--alert-soft); color: var(--alert); }
+.spark { font-family: var(--f-num); font-size: 15px; color: var(--ink-2); line-height: 1.8; word-break: break-all; }
+.bp-desc { font-size: 16px; color: var(--ink); min-height: 3.4em; margin: 10px 0 0; }
+</style>
+</head>
+<body data-part="4">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 04</span><span>约 15 分钟</span><span>6 个小实验</span></p>
+  <h1>往<em>下坡</em>走，把错摊回去</h1>
+  <p class="lead">刚搭好的网络，参数全是随机数，交叉熵高得离谱。训练要做的，是在几十亿个参数里，一点点找到让交叉熵变低的那一组。这一篇把“怎么找”拆成六个能动手的实验。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" aria-current="page" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#descent">下坡</a><a href="#pull">拉高答案</a><a href="#backprop">反向传播</a><a href="#vanish">梯度消失</a><a href="#norm">归一化</a><a href="#overfit">背答案</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="descent">
+  <div class="part-head"><h2>看不见整座山，也能一步步走到谷底</h2><span class="meta">梯度下降</span></div>
+  <div class="sec-lede"><p>刚搭好的网络，参数都是随机数，输出的概率表一团乱，交叉熵很高。训练要做的，就是在海量文本上把交叉熵降下来。通用逼近定理只说好参数存在，没说怎么找，而参数有几十亿个。</p><p>先看只有一个参数的情况。参数往某个方向微微一动，损失跟着变多少，这个比例叫<strong>梯度</strong>。可以把损失想象成一片山地，你站在某个位置，看不见整座山，但脚下的坡朝哪边、有多陡是知道的；每一步都往下坡走，就能走到谷底附近，这就是<strong>梯度下降</strong>。每步迈多大由学习率决定：太小走得慢，太大会一步迈过头，在谷底两边来回震荡。</p><p>实际训练中梯度用求导直接算出来，不用一点点试。</p><p class="go">下面用“工钱 = w × 工时”这个一参数模型，调学习率，一步步走向谷底。</p></div>
+  <div class="lab lab-split">
+    <div>
+      <label class="ctl"><span>学习率 <output id="gdLo"></output></span><input type="range" id="gdLr" min="0.005" max="0.125" step="0.005" value="0.03" aria-label="学习率"></label>
+      <div class="stepper"><button class="btn pri" type="button" id="gdStep">走一步</button><button class="btn" type="button" id="gd10">连走 10 步</button><button class="btn" type="button" id="gdReset">回到起点</button></div>
+      <div class="read">
+        <div class="hl"><div class="v" id="gdW">0</div><div class="k">当前 w（正确答案是 4）</div></div>
+        <div><div class="v" id="gdL">0</div><div class="k">损失</div></div>
+      </div>
+      <p class="msg"><span class="status" id="gdS"></span></p>
+      <div class="tbl-scroll"><table class="t" id="gdT"><thead><tr><th>步</th><th>w</th><th>损失</th><th>梯度</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div>
+      <div class="box" id="gdChart"></div>
+      <p class="note">把学习率拖到 0.06 以上，看它在谷底两边来回跳；再拖到 0.115 以上，它会越跳越远。</p>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>梯度</dt><dd>参数微微变化时损失跟着变化的比例，指出往哪个方向调能让损失上升。</dd></div><div class="it" tabindex="0"><dt>梯度下降</dt><dd>每一步都把参数往梯度的反方向挪一点，让损失下降。</dd></div><div class="it" tabindex="0"><dt>学习率</dt><dd>每一步迈多大；太小走得慢，太大会震荡甚至发散。</dd></div><div class="it" tabindex="0"><dt>局部最小值</dt><dd>周围都比它高的低点，不一定是全局最低。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>θ ← θ − η · ∂L/∂θ</code></dt><dd>参数更新公式，η 是学习率。</dd></div><div class="it cmd" tabindex="0"><dt><code>例：L = (3w − 12)²，∂L/∂w = 18w − 72</code></dt><dd>本节演示用的损失和梯度。</dd></div><div class="it cmd" tabindex="0"><dt>梯度为负就把参数调大，为正就调小</dt><dd>减号就是“下坡”。</dd></div><div class="it cmd" tabindex="0"><dt>Adam 优化器</dt><dd>参考近几步梯度的平均方向，并给每个参数单独调步长。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="pull">
+  <div class="part-head"><h2>语言模型的梯度，简单得出奇</h2><span class="meta">预测 − 答案</span></div>
+  <div class="sec-lede"><p>落到语言模型身上，Softmax 配交叉熵的梯度有一个特别简洁的形式：<strong>每个候选分数的梯度 = 模型给它的概率 − 它是不是正确答案</strong>（是记 1，否记 0）。</p><p>按“新参数 = 旧参数 − 学习率 × 梯度”更新一次，实际出现的 token 被往上拉，其他候选按原本的概率被往下压，原来越看好的错误答案被压得越狠。</p><p>那逐句纠错怎么变成了学规律？关键在于所有句子共用同一套参数。只对个别句子有用的调整会被别的句子抵消；对大量句子都有用的调整，比如“下雨”和“伞”有关，会在反复更新中被加强。真实训练每批要处理几百万个 token，更新几万次。</p><p class="go">选一个真实答案，连续点“更新一次”，看各候选的分数和交叉熵怎么走。</p></div>
+  <div class="lab">
+    <p class="lab-t">“外面下着雨，出门别忘了带____”</p>
+    <div class="ctrls">
+      <span class="lab-s" style="margin:0">真实答案：</span>
+      <div class="seg" id="plTruth"><button data-v="0" aria-pressed="true">伞</button><button data-v="1">外套</button><button data-v="2">钥匙</button></div>
+    </div>
+    <label class="ctl" style="max-width:420px"><span>学习率 <output id="plLo">1.0</output></span><input type="range" id="plLr" min="0.2" max="3" step="0.1" value="1" aria-label="学习率"></label>
+    <div class="tbl-scroll"><table class="t" id="plT"><thead><tr><th>候选</th><th>分数</th><th>概率</th><th>梯度 = 概率 − 答案</th></tr></thead><tbody></tbody></table></div>
+    <div class="stepper"><button class="btn pri" type="button" id="plGo">看到答案，更新一次</button><button class="btn" type="button" id="plReset">复原</button></div>
+    <p class="lab-s" style="margin-top:12px">真实答案的交叉熵（bit），每更新一次记一笔：</p>
+    <div class="spark" id="plSpark"></div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>真实训练里，所有句子共用同一套参数。只对个别句子有用的调整会被别的句子抵消，对大量句子都有用的调整（比如“下雨”和“伞”有关）会被反复加强。</li>
+    <li>所以“逐句纠错”累积起来，就成了“学到规律”。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>独热答案</dt><dd>真实下一个 token 记为 1，其余记为 0 的向量。</dd></div><div class="it" tabindex="0"><dt>预测减答案</dt><dd>Softmax 配交叉熵时，每个分数的梯度恰好等于“概率 − 答案”。</dd></div><div class="it" tabindex="0"><dt>批次 batch</dt><dd>每次更新前同时计算的一批文本，梯度取平均后再更新。</dd></div><div class="it" tabindex="0"><dt>交叉熵损失</dt><dd>对真实 token 取 −log q；预测越准，损失越接近 0。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>∂L/∂s<sub>i</sub> = q<sub>i</sub> − y<sub>i</sub></code></dt><dd>正确答案的梯度为负（被拉高），其他为正（被压低）。</dd></div><div class="it cmd" tabindex="0"><dt>越被看好的错误答案，被压得越狠</dt><dd>压低的幅度正比于它原来的概率。</dd></div><div class="it cmd" tabindex="0"><dt>所有句子共用一套参数</dt><dd>普遍有用的调整被反复加强，个别噪声互相抵消。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="backprop">
+  <div class="part-head"><h2>几十亿个参数，梯度一次算完</h2><span class="meta">反向传播</span></div>
+  <div class="sec-lede"><p>几十亿个参数，每个都要一个梯度。如果每个参数单独去试探，每求一个都要把整个模型算一遍，根本算不完。<strong>反向传播</strong>只需要正向算一遍、反向推一遍，就能得到全部参数的梯度。</p><p>它利用的是微积分里的链式法则：从损失出发一层层往回推，每一层拿到后面传回来的梯度，乘上自己这一层的局部系数，就得到自己参数的梯度，再把梯度继续传给前一层。每一层只需要知道自己的输入和后面传来的数，不用了解整个网络。直观地说，就是结果错了以后逐层分摊责任。算一遍全部梯度的计算量，大约只是正向的两倍。</p><p class="go">下面是一个两层的小例子，一步步点“下一步”，看数值怎么正着算、梯度怎么倒着传，最后用试探法验算。</p></div>
+  <div class="lab">
+    <div class="box" id="bpChart"></div>
+    <p class="bp-desc" id="bpDesc" aria-live="polite"></p>
+    <div class="stepper"><button class="btn" type="button" id="bpPrev">上一步</button><button class="btn pri" type="button" id="bpNext">下一步</button><span class="cnt" id="bpCnt"></span></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>反向传播</dt><dd>先正向算出结果，再从损失出发逐层往回，用链式法则算出所有参数的梯度。</dd></div><div class="it" tabindex="0"><dt>链式法则</dt><dd>复合函数的导数等于各层局部导数相乘。</dd></div><div class="it" tabindex="0"><dt>局部系数</dt><dd>每一层输出对输入的导数，梯度回传时要乘上它。</dd></div><div class="it" tabindex="0"><dt>计算图</dt><dd>把模型拆成一步步运算连成的图，正向沿图算值，反向沿图传梯度。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>∂L/∂a = ∂L/∂y · ∂y/∂h · ∂h/∂a</code></dt><dd>链式法则：沿路径把局部导数乘起来。</dd></div><div class="it cmd" tabindex="0"><dt><code>算全部梯度 ≈ 正向计算量的 2 倍</code></dt><dd>所以训练一步约是推理一步的 3 倍。</dd></div><div class="it cmd" tabindex="0"><dt>每层只需自己的输入和后面传来的梯度</dt><dd>框架（如 PyTorch）会自动完成。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="vanish">
+  <div class="part-head"><h2>层一多，梯度会消失或爆炸</h2><span class="meta">残差连接</span></div>
+  <div class="sec-lede"><p>反向传播有一个隐患：梯度每往回传一层，就要乘上这一层的局部系数，层数一多就是一长串连乘。每层乘 0.5，传 30 层就只剩十亿分之一，前面的层几乎学不动，叫<strong>梯度消失</strong>；每层乘 1.5，传 30 层放大到十几万倍，参数一更新就乱套，叫<strong>梯度爆炸</strong>。这是深网络难训练的根本原因。</p><p>2015 年何恺明等人发现，56 层的普通网络连训练误差都比 20 层的高。他们的解法是<strong>残差连接</strong>：每层不再输出一个全新的结果，而是算出对输入的修改，再加回输入上。这样局部系数变成“1 加上一个小数”，梯度永远有一条乘 1 的直通路。</p><p class="go">拖动层数和每层系数，对比普通堆叠和带残差的梯度在往回传的路上发生了什么。</p></div>
+  <div class="lab">
+    <div class="ctl-grid">
+      <label class="ctl"><span>层数 <output id="vnLo"></output></span><input type="range" id="vnL" min="10" max="120" value="60" aria-label="层数"></label>
+      <label class="ctl"><span>普通堆叠：每层系数 <output id="vnCo"></output></span><input type="range" id="vnC" min="0.5" max="1.5" step="0.01" value="0.85" aria-label="每层系数"></label>
+      <label class="ctl"><span>残差：每层修改的幅度 <output id="vnDo"></output></span><input type="range" id="vnD" min="0" max="0.2" step="0.005" value="0.05" aria-label="残差修改幅度"></label>
+    </div>
+    <div class="legend"><span><i style="background:var(--s2)"></i>普通堆叠</span><span><i style="background:var(--s1)"></i>带残差连接</span></div>
+    <div class="box" id="vnChart"></div>
+    <div class="read">
+      <div class="warn"><div class="v" id="vnA">0</div><div class="k">普通堆叠：传回第一层的梯度倍数</div></div>
+      <div class="hl"><div class="v" id="vnB">0</div><div class="k">带残差：传回第一层的梯度倍数</div></div>
+    </div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>2015 年 ResNet 用残差连接把图像网络训到了 152 层。今天的大语言模型，每一层都带残差。</li>
+    <li>换个角度看：最终输出 = 最初输入 + 每一层的修改之和。各层像在同一份稿子上做批注，而不是一遍遍重抄。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>梯度消失</dt><dd>层数多时连乘许多小于 1 的系数，前面的层几乎收不到梯度。</dd></div><div class="it" tabindex="0"><dt>梯度爆炸</dt><dd>连乘许多大于 1 的系数，梯度变得极大，训练失控。</dd></div><div class="it" tabindex="0"><dt>残差连接</dt><dd>每层输出“输入 + 本层的修改”，给梯度留一条直通路。</dd></div><div class="it" tabindex="0"><dt>残差流</dt><dd>贯穿所有层的那条向量通道，各层从中读取、再把修改加回去。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>0.9<sup>100</sup> ≈ 2.7 × 10<sup>−5</sup>；1.1<sup>100</sup> ≈ 1.4 × 10<sup>4</sup></code></dt><dd>连乘的威力。</dd></div><div class="it cmd" tabindex="0"><dt><code>y = x + F(x)，局部系数 = 1 + F′</code></dt><dd>即使 F′ 很小，也不会乘到 0。</dd></div><div class="it cmd" tabindex="0"><dt><code>x<sub>L</sub> = x<sub>0</sub> + F<sub>1</sub> + … + F<sub>L</sub></code></dt><dd>最终输出 = 原始输入 + 每层修改之和。</dd></div><div class="it cmd" tabindex="0"><dt>ResNet（2015）用残差把网络训到 152 层</dt><dd>今天的大语言模型每层都带残差。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="norm">
+  <div class="part-head"><h2>每层先把音量调回标准</h2><span class="meta">LayerNorm / RMSNorm</span></div>
+  <div class="sec-lede"><p>同样的连乘问题，在数值往前传时也会出现：每层放大 10%，叠上 96 层就放大近一万倍；每层缩小 10%，就几乎缩没了。数值太大时 Softmax 会把概率几乎全给一个候选，太小时有用的信息淹没在误差里。</p><p><strong>归一化</strong>的做法很直接：每层计算前先把向量调回标准大小，常用的 LayerNorm 是减去平均值、再除以标准差。这就像录音时的自动音量调节，不管说话人离麦克风多远，录下来的音量都差不多，说的内容却不变。之后还会乘上一组可学习的缩放，让网络在需要时自己决定大小。现代大模型常用更省事的 RMSNorm，只除以均方根。</p><p class="go">拖动四个分量，再试试“整体放大”和“整体加上”，看归一化之后变不变。</p></div>
+  <div class="lab">
+    <div class="ctrls"><div class="seg" id="nmSeg"><button data-v="ln" aria-pressed="true">LayerNorm</button><button data-v="rms">RMSNorm</button></div></div>
+    <div class="ctl-grid" id="nmCtl"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>整体放大 <output id="nmKo"></output></span><input type="range" id="nmK" min="-2" max="2" step="0.01" value="0" aria-label="整体放大倍数，对数刻度"></label>
+      <label class="ctl"><span>整体加上 <output id="nmSo"></output></span><input type="range" id="nmS" min="-20" max="20" step="0.5" value="0" aria-label="整体平移"></label>
+    </div>
+    <div class="lab-split">
+      <div><p class="lab-s">输入向量</p><div class="box" id="nmIn"></div></div>
+      <div><p class="lab-s">归一化之后</p><div class="box" id="nmOut"></div></div>
+    </div>
+    <p class="note" id="nmNote"></p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>归一化</dt><dd>每层计算前把向量调回标准的数值范围。</dd></div><div class="it" tabindex="0"><dt>LayerNorm</dt><dd>对每个位置的向量减去均值、除以标准差，再乘上可学习的缩放、加上偏移。</dd></div><div class="it" tabindex="0"><dt>RMSNorm</dt><dd>不减均值，只除以均方根，更省计算，效果相近。</dd></div><div class="it" tabindex="0"><dt>Pre-Norm</dt><dd>把归一化放在子层之前，训练更稳定，现代大模型的标准做法。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>LN(x) = γ · (x − μ) / σ + β</code></dt><dd>μ 是均值，σ 是标准差。</dd></div><div class="it cmd" tabindex="0"><dt><code>RMS(x) = √(Σx<sub>i</sub>² / n)</code></dt><dd>RMSNorm 用它做除数。</dd></div><div class="it cmd" tabindex="0"><dt>整体放大任意倍，LayerNorm 结果不变</dt><dd>去掉大小，保留各分量的相对关系。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="overfit">
+  <div class="part-head"><h2>背下答案，还是学会方法</h2><span class="meta">过拟合与泛化</span></div>
+  <div class="sec-lede"><p>网络怎么搭、怎么学都有了，还剩最后一个问题：训练数据上做得好，换成没见过的数据还行吗？想象两个学生看了一万道乘法题，一个把答案全背下来，一个学会了乘法；遇到新题，只有后者会做。而且后者要记的东西也少得多，只需一套规则。</p><p>这就是<strong>泛化</strong>和<strong>过拟合</strong>：找到可复用的规律，就同时得到了压缩和泛化；死记硬背，训练分数很高，换了数据就不行。所以训练时要留一份模型从没见过的验证集，只用来检查。大模型预训练的数据极大，多数文本只看一两遍，来不及背，只能去找规律。</p><p class="go">用不同阶数的多项式去拟合 10 个带噪声的点，拖动阶数，同时盯住训练误差和验证误差。</p></div>
+  <div class="lab">
+    <div class="ctrls">
+      <label class="ctl" style="flex:1;min-width:220px;margin:0"><span>多项式阶数（可调参数的多少） <output id="ofDo"></output></span><input type="range" id="ofD" min="0" max="9" value="3" aria-label="多项式阶数"></label>
+      <button class="btn" type="button" id="ofNew">换一批数据</button>
+    </div>
+    <div class="legend"><span><i style="background:var(--s1);height:10px;width:10px;border-radius:50%"></i>训练点</span><span><i style="border:2px solid var(--ink-3);height:10px;width:10px;border-radius:50%;background:none"></i>验证点</span><span><i style="background:var(--s2)"></i>模型</span></div>
+    <div class="lab-split">
+      <div class="box" id="ofChart"></div>
+      <div class="box" id="ofErr"></div>
+    </div>
+    <div class="read">
+      <div><div class="v" id="ofTr">0</div><div class="k">训练误差</div></div>
+      <div class="hl"><div class="v" id="ofVa">0</div><div class="k">验证误差（这个才算数）</div></div>
+    </div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>找到规律，就同时得到了两样东西：不用逐条记（压缩），也能答没见过的题（泛化）。第 2 篇说的“压缩即理解”就落在这里。</li>
+    <li>大模型预训练的数据量极大，多数文本只看一两遍，来不及背，只能去找规律。但重复出现很多次的内容仍可能被逐字记住，这会带来隐私和版权问题。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>过拟合</dt><dd>在训练数据上表现很好，在没见过的数据上表现变差，相当于背答案。</dd></div><div class="it" tabindex="0"><dt>泛化</dt><dd>在没见过的数据上也表现良好，相当于学会了方法。</dd></div><div class="it" tabindex="0"><dt>验证集</dt><dd>不参与训练、只用来检查的那部分数据。</dd></div><div class="it" tabindex="0"><dt>欠拟合</dt><dd>训练和验证误差都高，模型太小或训练不够。</dd></div><div class="it" tabindex="0"><dt>最小描述长度</dt><dd>能用最短描述说清数据的规律，往往泛化最好。</dd></div></dl></div><div><h4>要点</h4><dl><div class="it cmd" tabindex="0"><dt>训练降、验证也降</dt><dd>正常学习。</dd></div><div class="it cmd" tabindex="0"><dt>训练降、验证反升</dt><dd>开始过拟合。</dd></div><div class="it cmd" tabindex="0"><dt>判断学没学会，看验证集不看训练集</dt><dd>训练误差可以被“背”到 0。</dd></div><div class="it cmd" tabindex="0"><dt>预训练数据极大、大多只看一两遍</dt><dd>经典过拟合少见，但重复多次的内容仍可能被逐字记住。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm-3/"><small>上一篇</small><span>神经网络：一堆会弯折的加法</span></a><a href="../2026-10-15-llm-5/" class="nx"><small>下一篇</small><span>Transformer：每个词都去别处找线索</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+function axes(s, x, y, xs, ys, L, R, T, B, fx, fy) {
+  ys.forEach(function (v) { svg('line', { class: 'gl', x1: L, x2: R, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: fy ? fy(v) : S.f(v, 0) }, s); });
+  xs.forEach(function (v, i) { svg('text', { class: 'n', x: x(v), y: B + 22, 'text-anchor': i === xs.length - 1 && x(v) > R - 40 ? 'end' : 'middle', text: fx ? fx(v) : S.f(v, 0) }, s); });
+  svg('line', { class: 'ax', x1: L, x2: R, y1: B, y2: B }, s);
+}
+
+/* ---------- 梯度下降 ---------- */
+(function () {
+  var W0 = 1, w, hist;
+  var loss = function (v) { return Math.pow(3 * v - 12, 2); }, grad = function (v) { return 18 * v - 72; };
+  var redraw = S.fit($('#gdChart'), 296, function (s, W, H) {
+    var L = 52, R = W - 12, T = 12, B = H - 56;
+    var x = S.scale(-1, 9, L, R), y = S.scale(0, 260, B, T);
+    axes(s, x, y, [0, 2, 4, 6, 8], [0, 100, 200], L, R, T, B);
+    var pts = []; for (var i = 0; i <= 200; i++) { var v = -1 + 10 * i / 200; pts.push([x(v), y(Math.min(270, loss(v)))]); }
+    svg('path', { class: 'ln k-dim', d: S.path(pts) }, s);
+    var pp = hist.map(function (v) { return [x(S.clamp(v, -1, 9)), y(Math.min(260, loss(v)))]; });
+    if (pp.length > 1) svg('path', { class: 'k-s2', fill: 'none', 'stroke-width': 1.5, d: S.path(pp) }, s);
+    pp.forEach(function (p, i) { svg('circle', { cx: p[0], cy: p[1], r: i === pp.length - 1 ? 7 : 4, class: i === pp.length - 1 ? 'f-s1' : 'f-s2' }, s); });
+    svg('text', { x: L, y: H - 4, class: 'c-3', text: '横轴：w　纵轴：损失' }, s);
+  });
+  function upd() {
+    var lr = +$('#gdLr').value, f = 1 - 18 * lr;
+    $('#gdLo').textContent = S.f(lr, 3);
+    $('#gdW').textContent = Math.abs(w) > 1e6 ? '飞出去了' : S.f(w, 3);
+    $('#gdL').textContent = loss(w) > 1e9 ? '∞' : S.f(loss(w), 3);
+    var st = $('#gdS');
+    if (Math.abs(f) >= 1) { st.className = 'status bad'; st.textContent = '学习率太大：每一步都迈过头，越跳越远'; }
+    else if (f < 0) { st.className = 'status osc'; st.textContent = '在谷底两边来回跳，但幅度在缩小'; }
+    else { st.className = 'status ok'; st.textContent = lr < .012 ? '方向对，但步子太小，走得很慢' : '稳稳地往谷底走'; }
+    var tb = $('#gdT tbody'); tb.textContent = '';
+    hist.slice(-5).forEach(function (v, i, a) {
+      var tr = h('tr', null, tb), n = hist.length - a.length + i;
+      [n, S.f(v, 3), S.f(loss(v), 2), S.f(grad(v), 2)].forEach(function (c) { h('td', { text: c }, tr); });
+    });
+    redraw();
+  }
+  function step(n) { var lr = +$('#gdLr').value; for (var i = 0; i < n; i++) { if (Math.abs(w) > 1e6) break; w = w - lr * grad(w); hist.push(w); } upd(); }
+  function reset() { w = W0; hist = [w]; upd(); }
+  $('#gdStep').addEventListener('click', function () { step(1); });
+  $('#gd10').addEventListener('click', function () { step(10); });
+  $('#gdReset').addEventListener('click', reset);
+  $('#gdLr').addEventListener('input', reset);
+  reset();
+})();
+
+/* ---------- 预测减答案 ---------- */
+(function () {
+  var NM = ['伞', '外套', '钥匙', '雨靴'], INIT = [1.0, 1.6, 0.4, 0.2], sc, truth = 0, losses;
+  function render() {
+    var p = S.softmax(sc), tb = $('#plT tbody'); tb.textContent = '';
+    NM.forEach(function (n, i) {
+      var g = p[i] - (i === truth ? 1 : 0);
+      var tr = h('tr', { class: i === truth ? 'truth' : '' }, tb);
+      h('td', { text: n + (i === truth ? '（答案）' : '') }, tr);
+      h('td', { text: S.f(sc[i], 2) }, tr);
+      h('td', { text: S.pct(p[i], 1) }, tr);
+      h('td', { class: g < 0 ? 'gneg' : 'gpos', text: (g >= 0 ? '+' : '') + S.f(g, 3) + (g < 0 ? '　分数会被拉高' : '　分数会被压低') }, tr);
+    });
+    $('#plSpark').textContent = losses.map(function (l) { return S.f(l, 2); }).join(' → ');
+  }
+  function reset() { sc = INIT.slice(); losses = [-S.log2(S.softmax(sc)[truth])]; render(); }
+  $('#plGo').addEventListener('click', function () {
+    var lr = +$('#plLr').value, p = S.softmax(sc);
+    sc = sc.map(function (v, i) { return v - lr * (p[i] - (i === truth ? 1 : 0)); });
+    losses.push(-S.log2(S.softmax(sc)[truth]));
+    if (losses.length > 14) losses.splice(1, 1);
+    render();
+  });
+  $('#plLr').addEventListener('input', function () { $('#plLo').textContent = S.f(+this.value, 1); });
+  $('#plReset').addEventListener('click', reset);
+  S.seg($('#plTruth'), function (v) { truth = +v; reset(); });
+  reset();
+})();
+
+/* ---------- 反向传播 ---------- */
+(function () {
+  // x=2 → h = a·x (a=1.5) → y = b·h (b=2) → L = (y − 4)²
+  var STEPS = [
+    '起点：输入 x = 2，两个参数 a = 1.5、b = 2，希望最后输出 4。先从左往右算。',
+    '第 1 层：h = a × x = 1.5 × 2 = 3。',
+    '第 2 层：y = b × h = 2 × 3 = 6。',
+    '损失：L = (y − 4)² = 4。比目标多了 2，现在开始往回推。',
+    '损失对 y 的梯度：2 × (y − 4) = 4。意思是 y 每多 0.01，损失约多 0.04。',
+    '第 2 层拿到 4。它的参数 b 的梯度 = h × 4 = 12；再把 b × 4 = 8 传给前一层的 h。',
+    '第 1 层拿到 8。参数 a 的梯度 = x × 8 = 16。每层只用到自己的输入和后面传来的数，不需要看整张网络。',
+    '验算：把 a 从 1.5 调到 1.51，重新正向算，损失从 4 变成 4.1616，正好多了约 16 × 0.01。梯度为正，所以训练会把 a 往小调。'
+  ];
+  var k = 0;
+  var NODES = [['x', '2', null, 0], ['h', '3', '8', 1], ['y', '6', '4', 2], ['L', '4', '1', 3]];
+  var OPS = [['× a', 'a = 1.5', '∂L/∂a = 16', 1, 6], ['× b', 'b = 2', '∂L/∂b = 12', 2, 5], ['(y − 4)²', '', '', 3, 4]];
+  var redraw = S.fit($('#bpChart'), function (W) { return W < 560 ? 560 : 220; }, function (s, W, H) {
+    var vert = W < 560, pos = [];
+    for (var i = 0; i < 4; i++) pos.push(vert ? [W / 2 - 60, 50 + i * 150] : [50 + i * (W - 100) / 3, 70]);
+    for (i = 0; i < 3; i++) {
+      var a = pos[i], b = pos[i + 1], op = OPS[i], fwdOn = k >= op[3], bwOn = op[4] && k >= op[4];
+      svg('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: fwdOn ? 'k-ink' : 'k-rule', 'stroke-width': 2 }, s);
+      var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      var tx = vert ? mx + 44 : mx, ty = vert ? my - 8 : my - 30, anc = vert ? 'start' : 'middle';
+      svg('text', { x: tx, y: ty, 'text-anchor': anc, class: 'ink b', text: op[0] }, s);
+      if (op[1]) svg('text', { x: tx, y: ty + 20, 'text-anchor': anc, class: 'c-3', text: op[1] }, s);
+      if (bwOn && op[2]) svg('text', { x: tx, y: vert ? ty + 42 : my + 96, 'text-anchor': anc, class: 'n c-s2 b', text: op[2] }, s);
+      if (k >= 4 && k >= (op[4] || 99)) {
+        // 回传箭头
+        var off = vert ? -26 : 26;
+        var x1 = vert ? b[0] + off : b[0], y1 = vert ? b[1] : b[1] + off, x2 = vert ? a[0] + off : a[0], y2 = vert ? a[1] : a[1] + off;
+        svg('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: 'k-s2', 'stroke-width': 2, 'stroke-dasharray': '5 4' }, s);
+      }
+    }
+    NODES.forEach(function (n, i) {
+      var p = pos[i], fwd = k >= n[3], bw = n[2] && k >= (i === 3 ? 4 : i === 2 ? 4 : i === 1 ? 5 : 99);
+      svg('circle', { cx: p[0], cy: p[1], r: 22, class: fwd ? 'f-s1s' : 'f-bg', stroke: 'currentColor' }, s).setAttribute('class', (fwd ? 'f-s1s' : 'f-bg') + ' k-ink');
+      svg('text', { x: p[0], y: p[1] + 6, 'text-anchor': 'middle', class: 'ink b', text: n[0] }, s);
+      svg('text', { x: vert ? p[0] - 34 : p[0], y: vert ? p[1] + 6 : p[1] - 32, 'text-anchor': vert ? 'end' : 'middle', class: 'n ink', text: fwd ? '= ' + n[1] : '' }, s);
+      if (bw && i > 0) svg('text', { x: vert ? p[0] - 34 : p[0], y: vert ? p[1] + 28 : p[1] + 46, 'text-anchor': vert ? 'end' : 'middle', class: 'n c-s2', text: i === 3 ? '' : '梯度 ' + n[2] }, s);
+    });
+  });
+  function upd() {
+    $('#bpDesc').textContent = STEPS[k];
+    $('#bpCnt').textContent = (k + 1) + ' / ' + STEPS.length;
+    $('#bpPrev').disabled = k === 0; $('#bpNext').disabled = k === STEPS.length - 1;
+    redraw();
+  }
+  $('#bpPrev').addEventListener('click', function () { if (k > 0) { k--; upd(); } });
+  $('#bpNext').addEventListener('click', function () { if (k < STEPS.length - 1) { k++; upd(); } });
+  upd();
+})();
+
+/* ---------- 梯度消失与残差 ---------- */
+(function () {
+  var r = S.rng(2024), RS = []; for (var i = 0; i < 200; i++) RS.push(r() * 2 - 1);
+  var Ln, c, d;
+  function sup(e) { return '10' + String(e).replace('-', '⁻').replace(/\d/g, function (ch) { return '⁰¹²³⁴⁵⁶⁷⁸⁹'[ch]; }); }
+  var redraw = S.fit($('#vnChart'), 260, function (s, W, H) {
+    var L = 58, R = W - 12, T = 10, B = H - 34;
+    var x = S.scale(0, Ln, L, R), y = S.scale(-12, 12, B, T);
+    axes(s, x, y, [0, Math.round(Ln / 2), Ln], [-12, -6, 0, 6, 12], L, R, T, B, function (v) { return v === 0 ? '输出端' : v + ' 层前'; }, function (v) { return v === 0 ? '1' : sup(v); });
+    var a = [], b = [], pa = 0, pb = 0;
+    for (var k = 0; k <= Ln; k++) {
+      a.push([x(k), y(S.clamp(pa, -12, 12))]); b.push([x(k), y(S.clamp(pb, -12, 12))]);
+      pa += Math.log10(c); pb += Math.log10(1 + d * RS[k]);
+    }
+    svg('path', { class: 'ln k-s2', d: S.path(a) }, s);
+    svg('path', { class: 'ln k-s1', d: S.path(b) }, s);
+  });
+  function fmt(v) { return v > 1e5 || v < 1e-3 ? S.sci(v, 1) : S.f(v, 3); }
+  function upd() {
+    Ln = +$('#vnL').value; c = +$('#vnC').value; d = +$('#vnD').value;
+    $('#vnLo').textContent = Ln; $('#vnCo').textContent = S.f(c, 2); $('#vnDo').textContent = '±' + S.f(d, 3);
+    var pb = 1; for (var k = 0; k < Ln; k++) pb *= 1 + d * RS[k];
+    $('#vnA').textContent = fmt(Math.pow(c, Ln));
+    $('#vnB').textContent = fmt(pb);
+    redraw();
+  }
+  ['#vnL', '#vnC', '#vnD'].forEach(function (q) { $(q).addEventListener('input', upd); });
+  upd();
+})();
+
+/* ---------- 归一化 ---------- */
+(function () {
+  var base = [2, 4, 6, 8], mode = 'ln', sls = [];
+  base.forEach(function (v, i) {
+    var lab = h('label', { class: 'ctl' }, $('#nmCtl'));
+    var sp = h('span', null, lab); sp.appendChild(document.createTextNode('第 ' + (i + 1) + ' 个分量 ')); var o = h('output', null, sp);
+    var r = h('input', { type: 'range', min: '-10', max: '10', step: '0.5', value: v, 'aria-label': '第' + (i + 1) + '个分量' }, lab);
+    r.addEventListener('input', function () { base[i] = +r.value; upd(); });
+    sls.push(o);
+  });
+  var cur = { inp: [0, 0, 0, 0], out: [0, 0, 0, 0] };
+  function barsSvg(box, key, cls) {
+    return S.fit(box, 4 * 34 + 8, function (s, W) {
+      var vals = cur[key], m = Math.max.apply(null, vals.map(Math.abs)) || 1, mid = W / 2, half = W / 2 - 70;
+      svg('line', { class: 'ax', x1: mid, x2: mid, y1: 0, y2: 4 * 34 + 8 }, s);
+      vals.forEach(function (v, i) {
+        var len = Math.abs(v) / m * half, yy = 6 + i * 34;
+        svg('rect', { x: v >= 0 ? mid : mid - len, y: yy, width: Math.max(1, len), height: 22, rx: 3, class: cls }, s);
+        svg('text', { class: 'n ink', x: v >= 0 ? mid + len + 6 : mid - len - 6, y: yy + 17, 'text-anchor': v >= 0 ? 'start' : 'end', text: Math.abs(v) >= 1000 ? S.f(v, 0) : S.f(v, 2) }, s);
+      });
+    });
+  }
+  var drawIn = barsSvg($('#nmIn'), 'inp', 'f-dim'), drawOut = barsSvg($('#nmOut'), 'out', 'f-s1');
+  function upd() {
+    var k = Math.pow(10, +$('#nmK').value), sh = +$('#nmS').value;
+    $('#nmKo').textContent = '× ' + (k >= 10 ? S.f(k, 0) : k >= 1 ? S.f(k, 1) : S.f(k, 2));
+    $('#nmSo').textContent = (sh >= 0 ? '+' : '') + S.f(sh, 1);
+    sls.forEach(function (o, i) { o.textContent = S.f(base[i], 1); });
+    var v = base.map(function (x) { return x * k + sh; });
+    var mean = v.reduce(function (a, b) { return a + b; }, 0) / 4, out;
+    if (mode === 'ln') {
+      var sd = Math.sqrt(v.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0) / 4);
+      out = v.map(function (x) { return sd < 1e-9 ? 0 : (x - mean) / sd; });
+      $('#nmNote').textContent = '平均值 ' + S.f(mean, 2) + '，标准差 ' + S.f(sd, 2) + '。拖“整体放大”或“整体加上”，右边都不变。';
+    } else {
+      var rms = Math.sqrt(v.reduce(function (a, b) { return a + b * b; }, 0) / 4);
+      out = v.map(function (x) { return rms < 1e-9 ? 0 : x / rms; });
+      $('#nmNote').textContent = '均方根 ' + S.f(rms, 2) + '。RMSNorm 不减平均，所以“整体放大”不影响结果，“整体加上”会影响；它更省计算，效果和 LayerNorm 相近，许多新模型用它。';
+    }
+    cur.inp = v; cur.out = out; drawIn(); drawOut();
+  }
+  $('#nmK').addEventListener('input', upd); $('#nmS').addEventListener('input', upd);
+  S.seg($('#nmSeg'), function (v) { mode = v; upd(); });
+  upd();
+})();
+
+/* ---------- 过拟合 ---------- */
+(function () {
+  var g = function (x) { return .8 * Math.sin(Math.PI * x) + .3 * x; };
+  var seed = 5, tr, va, deg = 3, coefs = [], errs = [];
+  function gauss(r) { var u = 0; for (var i = 0; i < 6; i++) u += r(); return (u - 3) / Math.sqrt(.5); }
+  function data() {
+    var r = S.rng(seed); tr = []; va = [];
+    for (var i = 0; i < 10; i++) { var x = -1 + 2 * (i + .2 + .6 * r()) / 10; tr.push([x, g(x) + .18 * gauss(r)]); }
+    for (i = 0; i < 40; i++) { var x2 = -1 + 2 * r(); va.push([x2, g(x2) + .18 * gauss(r)]); }
+  }
+  function fit(dg) {
+    var n = dg + 1, A = [], i, j, k;
+    for (i = 0; i < n; i++) { A.push([]); for (j = 0; j <= n; j++) A[i].push(0); }
+    tr.forEach(function (p) {
+      for (i = 0; i < n; i++) { var xi = Math.pow(p[0], i); for (j = 0; j < n; j++) A[i][j] += xi * Math.pow(p[0], j); A[i][n] += xi * p[1]; }
+    });
+    for (i = 0; i < n; i++) A[i][i] += 1e-10;
+    for (i = 0; i < n; i++) {
+      var mx = i; for (k = i + 1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[mx][i])) mx = k;
+      var tmp = A[i]; A[i] = A[mx]; A[mx] = tmp;
+      for (k = i + 1; k < n; k++) { var f = A[k][i] / A[i][i]; for (j = i; j <= n; j++) A[k][j] -= f * A[i][j]; }
+    }
+    var c = new Array(n);
+    for (i = n - 1; i >= 0; i--) { var sum = A[i][n]; for (j = i + 1; j < n; j++) sum -= A[i][j] * c[j]; c[i] = sum / A[i][i]; }
+    return c;
+  }
+  function ev(c, x) { var s = 0; for (var i = c.length - 1; i >= 0; i--) s = s * x + c[i]; return s; }
+  function mse(c, d) { return d.reduce(function (a, p) { var e = ev(c, p[0]) - p[1]; return a + e * e; }, 0) / d.length; }
+  function recompute() { errs = []; coefs = []; for (var d = 0; d <= 9; d++) { var c = fit(d); coefs.push(c); errs.push([mse(c, tr), mse(c, va)]); } }
+  var r1 = S.fit($('#ofChart'), 260, function (s, W, H) {
+    var L = 44, R = W - 10, T = 10, B = H - 30;
+    var x = S.scale(-1, 1, L, R), y = S.scale(-2, 2, B, T);
+    axes(s, x, y, [-1, 0, 1], [-2, 0, 2], L, R, T, B);
+    var pts = [], fp = [];
+    for (var i = 0; i <= 300; i++) { var xv = -1 + 2 * i / 300; pts.push([x(xv), y(g(xv))]); fp.push([x(xv), y(S.clamp(ev(coefs[deg], xv), -2.3, 2.3))]); }
+    svg('path', { class: 'ln k-dim', 'stroke-width': 1.2, 'stroke-dasharray': '5 5', d: S.path(pts) }, s);
+    va.forEach(function (p) { svg('circle', { cx: x(p[0]), cy: y(p[1]), r: 4, fill: 'none', class: 'k-dim', 'stroke-width': 1.5 }, s); });
+    tr.forEach(function (p) { svg('circle', { cx: x(p[0]), cy: y(p[1]), r: 5.5, class: 'f-s1' }, s); });
+    var cp = svg('clipPath', { id: 'ofclip' }, s); svg('rect', { x: L, y: T, width: R - L, height: B - T }, cp);
+    svg('path', { class: 'ln k-s2', 'clip-path': 'url(#ofclip)', d: S.path(fp) }, s);
+  });
+  var r2 = S.fit($('#ofErr'), 260, function (s, W, H) {
+    var L = 56, R = W - 12, T = 26, B = H - 30;
+    var x = S.scale(0, 9, L, R), y = S.scale(-4, 1, B, T);
+    axes(s, x, y, [0, 3, 6, 9], [-4, -2, 0], L, R, T, B, function (v) { return v + ' 阶'; }, function (v) { return v === 0 ? '1' : '10' + (v === -2 ? '⁻²' : '⁻⁴'); });
+    var lg = function (v) { return y(S.clamp(Math.log10(Math.max(v, 1e-5)), -4, 1)); };
+    svg('path', { class: 'ln k-s1', d: S.path(errs.map(function (e, i) { return [x(i), lg(e[0])]; })) }, s);
+    svg('path', { class: 'ln k-dim', d: S.path(errs.map(function (e, i) { return [x(i), lg(e[1])]; })) }, s);
+    svg('line', { x1: x(deg), x2: x(deg), y1: T, y2: B, class: 'k-s2', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, s);
+    svg('text', { x: L, y: 16, class: 'c-s1', text: '训练误差' }, s);
+    svg('text', { x: L + 80, y: 16, text: '验证误差' }, s);
+  });
+  function upd() {
+    deg = +$('#ofD').value; $('#ofDo').textContent = deg + ' 阶（' + (deg + 1) + ' 个参数）';
+    $('#ofTr').textContent = S.f(errs[deg][0], 4); $('#ofVa').textContent = errs[deg][1] > 100 ? '> 100' : S.f(errs[deg][1], 4);
+    r1(); r2();
+  }
+  $('#ofD').addEventListener('input', upd);
+  $('#ofNew').addEventListener('click', function () { seed = (seed * 16807) % 2147483647; data(); recompute(); upd(); });
+  data(); recompute(); upd();
+})();
+})();
+</script>
+</body>
+</html>

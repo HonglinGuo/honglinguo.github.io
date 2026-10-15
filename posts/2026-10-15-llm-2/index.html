@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>惊讶有几个 bit</title>
+<meta name="description" content="动手拆一个大语言模型（二）：用猜数字、彩票、抛硬币和天气预报，把信息量、熵、交叉熵和困惑度一个个摸清楚。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.grid-n { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; max-width: 460px; margin: 10px 0; }
+.grid-n button { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 5px 0; border-radius: 5px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); cursor: pointer; }
+.grid-n button.out { background: none; color: var(--ink-3); border-color: var(--hair); text-decoration: line-through; cursor: default; }
+.grid-n button.win { background: var(--ok); color: var(--bg); border-color: var(--ok); }
+.grid-n button:not(.out):hover { border-color: var(--s1); color: var(--s1); }
+.log { list-style: none; margin: 8px 0 0; padding: 0; font-size: 15px; }
+.log li { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) auto; gap: 8px; padding: 6px 0; border-top: 1px solid var(--hair); color: var(--ink-2); }
+.log li b { font-family: var(--f-num); font-weight: 600; color: var(--ink-3); }
+.log li span:last-child { font-family: var(--f-num); color: var(--s1); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.presets button { font: inherit; font-size: 15px; background: none; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.presets button:hover { color: var(--ink); border-color: var(--ink-3); }
+.flips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+.flips i { width: 22px; height: 22px; border-radius: 50%; font-style: normal; font-size: 15px; line-height: 22px; text-align: center; background: var(--s1); color: var(--bg); }
+.flips i.t { background: var(--dim-soft); color: var(--ink-2); }
+table.code { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 6px; }
+table.code th { text-align: left; font-weight: 600; color: var(--ink-3); padding: 4px 6px 6px 0; border-bottom: 1px solid var(--rule); }
+table.code td { padding: 5px 6px 5px 0; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+table.code td.c { font-family: var(--f-num); color: var(--s1); letter-spacing: .06em; }
+table.code td.n { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+table.code input[type=range] { width: 100%; min-width: 80px; accent-color: var(--s1); }
+.tbl-scroll { overflow-x: auto; }
+.phrase { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.phrase span { width: 2em; height: 2.2em; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px dashed var(--ink-3); font-size: 20px; color: var(--ink); position: relative; }
+.phrase span.done { border-style: solid; border-color: var(--rule); background: var(--bg); }
+.phrase span.cur { border: 2px solid var(--s1); }
+.phrase span sub { position: absolute; right: 2px; bottom: -2px; font-size: 15px; font-family: var(--f-num); color: var(--s2); }
+.record { font-family: var(--f-num); font-size: 18px; letter-spacing: .12em; color: var(--ink); min-height: 1.5em; }
+</style>
+</head>
+<body data-part="2">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 02</span><span>约 15 分钟</span><span>6 个小实验</span></p>
+  <h1>越意外，<em>信息越多</em></h1>
+  <p class="lead">上一篇说模型交出一张概率表。这张表好不好，得有个分数。这个分数来自香农的信息论，听着吓人，其实只用到一个动作：对半分。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" aria-current="page" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#guess">猜数字</a><a href="#surprise">信息量</a><a href="#coin">熵</a><a href="#code">压缩</a><a href="#xent">交叉熵</a><a href="#shannon">香农的游戏</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="guess">
+  <div class="part-head"><h2>先玩一局：我想好了一个数</h2><span class="meta">bit 是什么</span></div>
+  <div class="sec-lede"><p>上一篇留下一个问题：模型的概率表“接近”人到什么程度，用什么数字来衡量？答案来自香农的信息论，而它的起点只是一个简单的游戏。</p><p>我从 1 到 8 里心里挑一个数，你只能问“是 / 否”的问题。挨个问“是 1 吗”很浪费，每次只排除一个；聪明的问法是每次把剩下的候选对半分，8 个变 4 个、再变 2 个、再变 1 个，三问必定锁定。每对半砍一次拿到的信息，就叫 <strong>1 bit</strong>。</p><p>候选越多，起初越不确定，要拿到的信息也越多：16 个要 4 bit，64 个要 6 bit。而且任何问法平均都不可能少于这个数，因为一次是 / 否最多只给 1 bit。</p><p class="go">来玩一局。点格子里的数字 k 就是问“大于 k 吗”，留意每一问实际拿到了多少 bit。</p></div>
+  <div class="lab-row">
+    <div class="lab">
+      <div class="seg" id="gsN"><button data-v="8">1–8</button><button data-v="16" aria-pressed="true">1–16</button><button data-v="32">1–32</button><button data-v="64">1–64</button></div>
+      <div class="grid-n" id="gsGrid" aria-label="点一个数字 k，提问：大于 k 吗？"></div>
+      <div class="stepper"><button class="btn pri" type="button" id="gsHalf">替我问个最省的</button><button class="btn" type="button" id="gsNew">换一个数重来</button></div>
+      <p class="msg" id="gsMsg" aria-live="polite"></p>
+      <ol class="log" id="gsLog"></ol>
+    </div>
+    <div class="aside">
+      <p>每一问最多拿到 <strong>1 bit</strong>：恰好把剩下的候选对半砍时，才拿满。</p>
+      <p>不管怎么问，锁定答案时累计拿到的信息总是 <strong>log₂N bit</strong>。问得偏，只是每次拿得少、问得多。</p>
+      <p>所以 1–16 需要 4 bit，1–64 需要 6 bit：bit 数就是“得对半砍几刀”。</p>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>信息</dt><dd>能消除不确定性的东西。</dd></div><div class="it" tabindex="0"><dt>bit</dt><dd>区分两个等可能选项所需的信息量，也就是“对半砍一刀”。</dd></div><div class="it" tabindex="0"><dt>二分提问</dt><dd>每次把剩余候选分成数量相等的两组来问，每问恰好拿到 1 bit。</dd></div><div class="it" tabindex="0"><dt>对数 log<sub>2</sub></dt><dd>问“要对半砍几次”：log<sub>2</sub>8 = 3，因为 8 砍 3 次剩 1。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>N 个等可能候选需要 log<sub>2</sub>N bit</code></dt><dd>8 个要 3 bit，16 个要 4 bit，64 个要 6 bit。</dd></div><div class="it cmd" tabindex="0"><dt>一次“是 / 否”回答最多带来 1 bit</dt><dd>所以任何问法平均都至少要问 log<sub>2</sub>N 次。</dd></div><div class="it cmd" tabindex="0"><dt><code>一问拿到的信息 = log<sub>2</sub>(问前候选数 ÷ 问后候选数)</code></dt><dd>问得偏，拿到的就少于 1 bit。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="surprise">
+  <div class="part-head"><h2>一件事有多“意外”，就有多少 bit</h2><span class="meta">信息量 = −log₂ p</span></div>
+  <div class="sec-lede"><p>猜数字游戏把“概率”和“信息”连了起来：一个概率为 p 的结果发生了，相当于从 1/p 个等可能的选项里锁定了它，需要对半砍 log₂(1/p) 刀。这就是这个结果带来的<strong>信息量</strong>，写作 −log₂ p。</p><p>记住三点就够了：概率越小，信息量越大；概率为 1 的事情发生了，不带来任何信息；概率每减半，信息量加 1 bit。用大白话说，信息就是惊喜，越出乎意料信息越多。“太阳照常升起”几乎没有信息，“太阳从西边升起”才是大新闻。</p><p>训练代码里常用自然对数，单位叫 nat，和 bit 只差一个固定倍数。</p><p class="go">点上面几个预设事件，或者直接拖动概率，看信息量怎么跟着变。</p></div>
+  <div class="lab">
+    <div class="presets" id="spPre"></div>
+    <label class="ctl"><span>这件事的概率 p <output id="spP"></output></span><input type="range" id="spSl" min="0" max="100" step="0.5" value="12" aria-label="事件概率，对数刻度"></label>
+    <div class="read">
+      <div class="hl"><div class="v" id="spI">0</div><div class="k">信息量</div></div>
+      <div><div class="v" id="spC">0</div><div class="k">相当于连续猜中这么多次抛硬币</div></div>
+    </div>
+    <div class="box" id="spChart"></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>信息量（自信息）</dt><dd>一个结果发生时带来的信息，概率越小信息越多。</dd></div><div class="it" tabindex="0"><dt>惊讶程度</dt><dd>信息量的直观含义：越出乎意料，信息越多。</dd></div><div class="it" tabindex="0"><dt>必然事件</dt><dd>概率为 1 的结果，知道它发生不带来任何信息。</dd></div><div class="it" tabindex="0"><dt>nat</dt><dd>用自然对数 ln 计量的信息单位，训练代码里最常见。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>I(x) = −log<sub>2</sub> p(x)</code></dt><dd>单位是 bit；用自然对数时单位是 nat。</dd></div><div class="it cmd" tabindex="0"><dt><code>p = ½ → 1 bit，p = ⅛ → 3 bit</code></dt><dd>概率每减半，信息量加 1 bit。</dd></div><div class="it cmd" tabindex="0"><dt><code>1 nat ≈ 1.44 bit</code></dt><dd>训练代码里常用自然对数，只差一个固定倍数。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="coin">
+  <div class="part-head"><h2>平均有多难猜：熵</h2><span class="meta">H = Σ p · (−log₂ p)</span></div>
+  <div class="sec-lede"><p>单个结果的信息量有大有小，但我们更关心一个随机事件“平均有多难猜”。把每种结果的信息量按它出现的概率加权平均，得到的就是<strong>熵</strong>。</p><p>同样是两个结果，难度可以差很多：公平硬币正反各半，熵是 1 bit，最难预测；正面 90% 的硬币，熵只有约 0.47 bit，大多数时候猜正面就对了；必定正面的硬币，熵为 0。罕见的结果虽然一出现就带来很多信息，但它出现得少，拉不高平均值。</p><p>语言也是这样：下一个字越受前文约束，这一步的熵就越低。</p><p class="go">拖动正面的概率，看熵曲线上的点怎么移动，再看看按这个概率抛 30 次是什么样子。</p></div>
+  <div class="lab-split lab">
+    <div>
+      <label class="ctl"><span>正面朝上的概率 <output id="cnP">50%</output></span><input type="range" id="cnSl" min="0" max="100" value="50" aria-label="正面概率"></label>
+      <div class="read">
+        <div class="hl"><div class="v" id="cnH">1.000<small>bit</small></div><div class="k">每抛一次的熵</div></div>
+      </div>
+      <p class="lab-s" style="margin-top:12px">按这个概率抛 30 次（实心是正面）：</p>
+      <div class="flips" id="cnFlips" aria-hidden="true"></div>
+      <div class="stepper"><button class="btn" type="button" id="cnRe">再抛 30 次</button></div>
+    </div>
+    <div class="box" id="cnChart"></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>熵 entropy</dt><dd>各结果信息量按其概率加权的平均值，衡量一个随机事件平均有多难猜。</dd></div><div class="it" tabindex="0"><dt>均匀分布</dt><dd>所有结果概率相同，同样多候选时熵最大。</dd></div><div class="it" tabindex="0"><dt>确定性分布</dt><dd>某个结果概率为 1，熵为 0。</dd></div><div class="it" tabindex="0"><dt>加权平均</dt><dd>每种结果的值乘以它的概率再相加；熵就是信息量的加权平均。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>H(X) = −Σ p(x) · log<sub>2</sub> p(x)</code></dt><dd>熵的定义。</dd></div><div class="it cmd" tabindex="0"><dt><code>公平硬币 H = 1 bit；正面 90% 时 H ≈ 0.469 bit</code></dt><dd>越偏越好猜。</dd></div><div class="it cmd" tabindex="0"><dt><code>0 ≤ H ≤ log<sub>2</sub>N</code></dt><dd>下界在完全确定时取到，上界在 N 个结果等可能时取到。</dd></div><div class="it cmd" tabindex="0"><dt>罕见结果信息量大，但占比小</dt><dd>所以拉不高平均值。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="code">
+  <div class="part-head"><h2>熵也是压缩的极限</h2><span class="meta">无损编码</span></div>
+  <div class="sec-lede"><p>熵不只是一个难度分数，它还有一个非常实在的含义：平均最少要用多少个 0 和 1 才能把结果无损地记下来。常见的结果配短码、少见的配长码，平均码长就能缩短，但<strong>任何无损编码的平均长度都不可能低于熵</strong>。</p><p>这引出了“压缩即智能”的想法：规律掌握得越准，编码就越短；能压到熵，说明数据里所有可利用的规律都已经被挖出来了。语言模型预测得越准，就越能把文字压得接近它的熵，而要做到这一点，就得学会文字背后的语法、常识和逻辑。不过这只是一个有启发的视角，并不是定理。</p><p class="go">下面拖动每样午饭的频率，页面会实时算出最优的前缀码，对比它的平均长度和熵。</p></div>
+  <div class="lab">
+    <div class="presets" id="cdPre">
+      <button type="button" data-v="1,1,1,1,1,1">六样一样常吃</button>
+      <button type="button" data-v="60,15,10,8,5,2">偏爱面条</button>
+      <button type="button" data-v="96,1,1,1,0.5,0.5">几乎天天面条</button>
+    </div>
+    <div class="tbl-scroll"><table class="code" id="cdTbl"><thead><tr><th>午饭</th><th style="width:34%">频率</th><th>概率</th><th>码字</th><th>码长</th></tr></thead><tbody></tbody></table></div>
+    <div class="read">
+      <div class="hl"><div class="v" id="cdH">0</div><div class="k">熵（理论下限）</div></div>
+      <div><div class="v" id="cdL">0</div><div class="k">霍夫曼码平均长度</div></div>
+      <div><div class="v">3.000<small>bit</small></div><div class="k">不看频率、六样都用 3 位</div></div>
+    </div>
+    <p class="note">规律掌握得越好，编码越短。这就是“压缩即理解”这个说法的出发点：要把人类文字压得很短，得先把文字背后的规律学到手。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>无损压缩</dt><dd>能被完整还原的编码方式。</dd></div><div class="it" tabindex="0"><dt>前缀码</dt><dd>任何一个码字都不是另一个码字开头的编码，接收方可以逐位解码不会歧义。</dd></div><div class="it" tabindex="0"><dt>霍夫曼编码</dt><dd>反复把概率最小的两项合并，得到平均码长最短的前缀码。</dd></div><div class="it" tabindex="0"><dt>压缩即理解</dt><dd>能把数据压得越短，说明掌握的规律越多；这是一种研究视角，不是已证明的定理。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>平均码长 L ≥ H</code></dt><dd>熵是任何无损编码平均长度的下限（香农信源编码定理）。</dd></div><div class="it cmd" tabindex="0"><dt><code>霍夫曼：H ≤ L &lt; H + 1</code></dt><dd>最优前缀码离熵不到 1 bit。</dd></div><div class="it cmd" tabindex="0"><dt>常见的配短码，少见的配长码</dt><dd>理想码长就是 −log<sub>2</sub> p。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="xent">
+  <div class="part-head"><h2>按错的概率编码，要多花多少</h2><span class="meta">交叉熵与困惑度</span></div>
+  <div class="sec-lede"><p>熵是数据本身的性质，模型估得准不准都改变不了它。会变的是：如果模型以为的概率 q 和真实的 p 不一样，按 q 去分配码长，实际要多花多少 bit？这个“按模型编码的平均花费”就是<strong>交叉熵</strong>。</p><p>交叉熵永远不低于熵，只有 q 和 p 完全一致时才相等，多出来的部分是估错概率的代价。而且自信地猜错比什么都不懂还贵：最常见的结果被模型分到了很长的码。</p><p>好消息是计算它不需要知道真实的 p：拿一大段人写的文本，在每个位置看模型给真实下一个 token 的概率，取 −log 再平均就行。这正是训练语言模型的损失函数。它的另一种说法叫困惑度，等于 2 的交叉熵次方，表示模型平均像在几个选项里犹豫。</p><p class="go">下面你来扮演天气预报模型，调它以为的概率，看交叉熵、多花的部分和困惑度怎么变。</p></div>
+  <div class="lab">
+    <p class="lab-t">某城市的天气：晴 60%、多云 25%、下雨 15%。你来扮演模型，调它以为的概率。</p>
+    <div class="presets" id="xePre">
+      <button type="button" data-v="60,25,15">和真实一样</button>
+      <button type="button" data-v="1,1,1">什么都不懂（均匀）</button>
+      <button type="button" data-v="70,20,10">大致猜对</button>
+      <button type="button" data-v="4,6,90">自信地猜错</button>
+    </div>
+    <div class="lab-split">
+      <div>
+        <label class="ctl"><span>模型以为的“晴”权重 <output id="xeO0"></output></span><input type="range" id="xeS0" min="1" max="100" value="33" aria-label="晴"></label>
+        <label class="ctl"><span>“多云”权重 <output id="xeO1"></output></span><input type="range" id="xeS1" min="1" max="100" value="33" aria-label="多云"></label>
+        <label class="ctl"><span>“下雨”权重 <output id="xeO2"></output></span><input type="range" id="xeS2" min="1" max="100" value="33" aria-label="下雨"></label>
+      </div>
+      <div class="box" id="xeChart"></div>
+    </div>
+    <div class="read">
+      <div><div class="v" id="xeH">0</div><div class="k">熵：天气本身的难猜程度</div></div>
+      <div class="hl"><div class="v" id="xeX">0</div><div class="k">交叉熵：按模型编码的平均花费</div></div>
+      <div class="warn"><div class="v" id="xeK">0</div><div class="k">多花的部分</div></div>
+      <div><div class="v" id="xePP">0</div><div class="k">困惑度 2^交叉熵：像在几个选项里犹豫</div></div>
+    </div>
+    <div class="stepper"><button class="btn" type="button" id="xeSim">按真实天气过 365 天，实测平均花费</button></div>
+    <p class="msg" id="xeMsg" aria-live="polite"></p>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>“自信地猜错”比“什么都不懂”还贵：真实最常见的结果被分到很长的码。</li>
+    <li>不需要知道真实概率 p 也能算交叉熵：拿真实发生的数据，对每个结果的 −log₂q 取平均就行。语言模型训练用的损失函数正是这个。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>交叉熵 cross-entropy</dt><dd>真实按 p 出现、却按模型的 q 来编码时，平均每个结果花费的 bit 数。</dd></div><div class="it" tabindex="0"><dt>KL 散度</dt><dd>交叉熵减去熵，即估错概率多花的部分，永远不小于 0。</dd></div><div class="it" tabindex="0"><dt>困惑度 perplexity</dt><dd>2 的交叉熵次方，表示模型平均像在几个等可能选项里犹豫。</dd></div><div class="it" tabindex="0"><dt>损失函数</dt><dd>训练时要压低的那个数；语言模型用的就是交叉熵。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>H(p, q) = −Σ p(x) · log<sub>2</sub> q(x)</code></dt><dd>p 负责加权，q 负责定价。</dd></div><div class="it cmd" tabindex="0"><dt><code>H(p, q) = H(p) + KL(p‖q) ≥ H(p)</code></dt><dd>只有 q = p 时相等。</dd></div><div class="it cmd" tabindex="0"><dt><code>PPL = 2<sup>H(p, q)</sup></code></dt><dd>交叉熵 3 bit 对应困惑度 8。</dd></div><div class="it cmd" tabindex="0"><dt><code>实际计算：对每个位置取 −log q(真实下一个 token) 再求平均</code></dt><dd>不需要知道真实分布 p。</dd></div><div class="it cmd" tabindex="0"><dt>自信地猜错比什么都不懂更贵</dt><dd>常见结果被分到了很长的码。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="shannon">
+  <div class="part-head"><h2>换你来当“预测机”</h2><span class="meta">香农 1951 年的实验</span></div>
+  <div class="sec-lede"><p>交叉熵能给模型打分了，但还有一个问题：人类语言本身的熵大概是多少？模型最低能降到哪里？1951 年香农估算过这个数。</p><p>前文越多，下一个字越好猜：英文 27 种符号乱猜要 4.75 bit；只知道字母频率是 4 bit 出头；看到前面一个字母，比如 Q，下一个几乎必是 U。前文一长组合多到数不过来，香农就直接让人当预测者，遮住一段英文让人逐个字母猜，记下每个字母猜了几次。懂英语的人大多一次就中，这串“猜了几次”的记录满是 1，可以压得很短，由此估出英文每个字母只有约 0.6 到 1.3 bit。</p><p>语言模型是一台机器预测者，而且给出的是完整概率表，它在真实文本上的交叉熵，就是语言熵的一个上界。</p><p class="go">下面换成中文，你来当预测者，看看自己的记录里有多少个 1。</p></div>
+  <div class="lab">
+    <div class="seg" id="shSeg"><button data-v="0" aria-pressed="true">一句古诗</button><button data-v="1">一条通知</button></div>
+    <div class="phrase" id="shPh" aria-label="待猜的句子"></div>
+    <p class="lab-s" id="shHint">下一个字是哪个？点选项，猜错就再点。</p>
+    <div class="opts" id="shOpts"></div>
+    <p class="lab-s" style="margin-top:14px">你的“猜了几次”记录：</p>
+    <div class="record" id="shRec"></div>
+    <p class="msg" id="shMsg" aria-live="polite"></p>
+    <div class="stepper"><button class="btn" type="button" id="shRe">重来一遍</button></div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>香农据此估算，英文在有足够上下文时每个字母只有大约 1 bit 的熵，远低于 26 个字母乱猜的 4.7 bit。</li>
+    <li>语言模型就是一台机器预测者，而且它给的不只是猜的顺序，而是完整的概率表。它在真实文本上的交叉熵，就是语言熵的一个上界。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>香农猜字实验</dt><dd>让人逐字母猜一段被遮住的文本，记录每个字母猜了几次，用来估计语言的熵。</dd></div><div class="it" tabindex="0"><dt>猜测序号编码</dt><dd>只传“第几次猜中”的记录，对方用相同的预测者就能还原原文。</dd></div><div class="it" tabindex="0"><dt>上下文</dt><dd>已知的前文；知道得越多，下一个字越好猜。</dd></div><div class="it" tabindex="0"><dt>上界</dt><dd>模型在真实文本上的交叉熵不会低于语言的真实熵，因此是它的一个上界。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>英文 27 种符号乱猜：log<sub>2</sub>27 ≈ 4.75 bit</code></dt><dd>不用任何规律时的难度。</dd></div><div class="it cmd" tabindex="0"><dt><code>有约 100 个字母上下文：约 0.6–1.3 bit / 字母</code></dt><dd>香农 1951 年的估计。</dd></div><div class="it cmd" tabindex="0"><dt>模型越好，这个上界压得越低</dt><dd>也就越接近语言本身的熵。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm-1/"><small>上一篇</small><span>说到底，它只是在猜下一个词</span></a><a href="../2026-10-15-llm-3/" class="nx"><small>下一篇</small><span>神经网络：一堆会弯折的加法</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+/* ---------- 猜数字 ---------- */
+(function () {
+  var N = 16, secret, lo, hi, qs, log = $('#gsLog'), grid = $('#gsGrid');
+  function newGame() {
+    secret = 1 + Math.floor(Math.random() * N); lo = 1; hi = N; qs = 0;
+    log.textContent = ''; $('#gsMsg').textContent = '答案在 1–' + N + ' 之间，需要 ' + S.log2(N) + ' bit 信息才能确定。';
+    grid.textContent = '';
+    for (var i = 1; i <= N; i++) (function (k) {
+      var b = h('button', { type: 'button', text: k, 'aria-label': '问：大于 ' + k + ' 吗' }, grid);
+      b.addEventListener('click', function () { ask(k); });
+    })(i);
+    paint();
+  }
+  function paint() {
+    $$('button', grid).forEach(function (b, i) {
+      var k = i + 1;
+      b.className = k < lo || k > hi ? 'out' : (lo === hi ? 'win' : '');
+    });
+    $('#gsHalf').disabled = lo === hi;
+  }
+  function ask(k) {
+    if (lo === hi || k < lo || k >= hi) {
+      if (lo !== hi && k === hi) $('#gsMsg').textContent = '问“大于 ' + k + ' 吗”一定得到“否”，这一问是 0 bit，换一个吧。';
+      return;
+    }
+    var before = hi - lo + 1, yes = secret > k;
+    if (yes) lo = k + 1; else hi = k;
+    var after = hi - lo + 1, bits = S.log2(before / after);
+    qs++;
+    var li = h('li', null, log);
+    h('b', { text: '第' + qs + '问' }, li);
+    h('span', { text: '大于 ' + k + ' 吗？' + (yes ? '是' : '否') + '，剩 ' + after + ' 个' }, li);
+    h('span', { text: '+' + S.f(bits, 2) + ' bit' }, li);
+    paint();
+    $('#gsMsg').textContent = lo === hi
+      ? '锁定了，是 ' + lo + '。你问了 ' + qs + ' 次，累计拿到 ' + S.f(S.log2(N), 2) + ' bit；每次都对半砍，只需 ' + S.log2(N) + ' 次。'
+      : '还剩 ' + after + ' 个候选，还差 ' + S.f(S.log2(after), 2) + ' bit。';
+  }
+  $('#gsHalf').addEventListener('click', function () { ask(lo + Math.floor((hi - lo + 1) / 2) - 1); });
+  $('#gsNew').addEventListener('click', newGame);
+  S.seg($('#gsN'), function (v) { N = +v; newGame(); });
+  newGame();
+})();
+
+/* ---------- 信息量 ---------- */
+(function () {
+  var pre = [['太阳照常升起', 0.999999], ['抛硬币得正面', 0.5], ['骰子掷出 6', 1 / 6], ['从一副牌里抽中红桃 A', 1 / 52], ['双色球中头奖', 1 / 17721088]];
+  var sl = $('#spSl'), p;
+  function toP(v) { return Math.pow(10, -8 * v / 100); }
+  function toV(pp) { return -100 * Math.log10(pp) / 8; }
+  pre.forEach(function (x) {
+    var b = h('button', { type: 'button', text: x[0] }, $('#spPre'));
+    b.addEventListener('click', function () { sl.value = toV(x[1]); p = x[1]; upd(true); });
+  });
+  var redraw = S.fit($('#spChart'), 236, function (s, W, H) {
+    var L = 46, R = W - 18, T = 14, B = H - 60;
+    var x = S.scale(-8, 0, L, R), y = S.scale(0, 27, B, T);
+    [0, 9, 18, 27].forEach(function (b) { svg('line', { class: 'gl', x1: L, x2: R, y1: y(b), y2: y(b) }, s); svg('text', { class: 'n', x: L - 8, y: y(b) + 5, 'text-anchor': 'end', text: b }, s); });
+    [-8, -6, -4, -2, 0].forEach(function (e) { svg('text', { class: 'n', x: x(e), y: B + 24, 'text-anchor': e === 0 ? 'end' : e === -8 ? 'start' : 'middle', text: e === 0 ? '1' : '10' + String(e).replace('-', '⁻').replace(/\d/g, function (c) { return '⁰¹²³⁴⁵⁶⁷⁸⁹'[c]; }) }, s); });
+    var pts = []; for (var e = -8; e <= 0.001; e += 0.1) pts.push([x(e), y(-e * Math.log2(10))]);
+    svg('path', { class: 'ln k-s1', d: S.path(pts) }, s);
+    svg('text', { x: R, y: B + 24 + 0, 'text-anchor': 'end', class: 'c-3', text: '' }, s);
+    var le = Math.log10(p), I = -S.log2(p);
+    svg('line', { class: 'k-s2', x1: x(le), x2: x(le), y1: B, y2: y(I), 'stroke-dasharray': '4 4', 'stroke-width': 1.5 }, s);
+    svg('circle', { cx: x(le), cy: y(I), r: 6, class: 'f-s2' }, s);
+    svg('text', { x: L, y: H - 2, class: 'c-3', text: '横轴：概率 p（对数刻度）　纵轴：bit' }, s);
+  });
+  function upd(keep) {
+    if (!keep) p = toP(+sl.value);
+    var I = -S.log2(p);
+    $('#spP').textContent = p >= 0.01 ? S.pct(p, p > 0.999 ? 4 : 1) : '1 / ' + S.big(Math.round(1 / p));
+    $('#spI').innerHTML = S.f(I, 2) + '<small>bit</small>';
+    $('#spC').innerHTML = S.f(I, 1) + '<small>次</small>';
+    redraw();
+  }
+  sl.addEventListener('input', function () { upd(false); });
+  p = toP(+sl.value); upd(true);
+})();
+
+/* ---------- 熵：偏心硬币 ---------- */
+(function () {
+  var p = .5, seed = 7;
+  function H(q) { return q <= 0 || q >= 1 ? 0 : -(q * S.log2(q) + (1 - q) * S.log2(1 - q)); }
+  var redraw = S.fit($('#cnChart'), 250, function (s, W, Hh) {
+    var L = 44, R = W - 14, T = 14, B = Hh - 60;
+    var x = S.scale(0, 1, L, R), y = S.scale(0, 1, B, T);
+    [0, .5, 1].forEach(function (v) { svg('line', { class: 'gl', x1: L, x2: R, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: v }, s); });
+    [0, .5, 1].forEach(function (v) { svg('text', { class: 'n', x: x(v), y: B + 22, 'text-anchor': v === 0 ? 'start' : v === 1 ? 'end' : 'middle', text: v * 100 + '%' }, s); });
+    var pts = []; for (var i = 0; i <= 100; i++) pts.push([x(i / 100), y(H(i / 100))]);
+    svg('path', { class: 'ln k-s1', d: S.path(pts) }, s);
+    svg('circle', { cx: x(p), cy: y(H(p)), r: 6, class: 'f-s2' }, s);
+    svg('text', { x: L, y: Hh - 2, class: 'c-3', text: '横轴：正面概率　纵轴：熵（bit）' }, s);
+  });
+  function flips() {
+    var r = S.rng(seed), box = $('#cnFlips'); box.textContent = '';
+    for (var i = 0; i < 30; i++) { var hd = r() < p; h('i', { class: hd ? '' : 't', text: hd ? '正' : '反' }, box); }
+  }
+  function upd() {
+    p = $('#cnSl').value / 100;
+    $('#cnP').textContent = Math.round(p * 100) + '%';
+    $('#cnH').innerHTML = S.f(H(p), 3) + '<small>bit</small>';
+    redraw(); flips();
+  }
+  $('#cnSl').addEventListener('input', upd);
+  $('#cnRe').addEventListener('click', function () { seed = (seed * 7919 + 13) % 100003; flips(); });
+  upd();
+})();
+
+/* ---------- 霍夫曼编码 ---------- */
+(function () {
+  var names = ['面条', '米饭套餐', '饺子', '沙拉', '汉堡', '不吃'];
+  var w = [60, 15, 10, 8, 5, 2];
+  var tb = $('#cdTbl tbody'), rows = [];
+  names.forEach(function (n, i) {
+    var tr = h('tr', null, tb);
+    h('td', { text: n }, tr);
+    var td = h('td', null, tr);
+    var r = h('input', { type: 'range', min: '0', max: '100', step: '0.5', value: w[i], 'aria-label': n + '的频率' }, td);
+    r.addEventListener('input', function () { w[i] = +r.value; upd(); });
+    rows.push({ r: r, p: h('td', { class: 'n' }, tr), c: h('td', { class: 'c' }, tr), l: h('td', { class: 'n' }, tr) });
+  });
+  function huff(ps) {
+    var nodes = ps.map(function (p, i) { return { p: p, i: i }; });
+    var codes = ps.map(function () { return ''; });
+    if (nodes.length === 1) { codes[0] = '0'; return codes; }
+    while (nodes.length > 1) {
+      nodes.sort(function (a, b) { return a.p - b.p; });
+      var a = nodes.shift(), b = nodes.shift();
+      nodes.push({ p: a.p + b.p, k: [a, b] });
+    }
+    (function walk(n, c) { if (n.k) { walk(n.k[0], c + '1'); walk(n.k[1], c + '0'); } else codes[n.i] = c || '0'; })(nodes[0], '');
+    return codes;
+  }
+  function upd() {
+    var tot = w.reduce(function (a, b) { return a + b; }, 0) || 1;
+    var ps = w.map(function (x) { return x / tot; });
+    var live = [], idx = [];
+    ps.forEach(function (p, i) { if (p > 0) { live.push(p); idx.push(i); } });
+    var cs = huff(live), codes = ps.map(function () { return '—'; });
+    idx.forEach(function (i, j) { codes[i] = cs[j]; });
+    var Hh = 0, L = 0;
+    ps.forEach(function (p, i) {
+      rows[i].p.textContent = S.pct(p, 1);
+      rows[i].c.textContent = codes[i];
+      rows[i].l.textContent = p > 0 ? codes[i].length : '—';
+      if (p > 0) { Hh -= p * S.log2(p); L += p * codes[i].length; }
+      rows[i].r.value = w[i];
+    });
+    $('#cdH').innerHTML = S.f(Hh, 3) + '<small>bit</small>';
+    $('#cdL').innerHTML = S.f(L, 3) + '<small>bit</small>';
+  }
+  $$('#cdPre button').forEach(function (b) { b.addEventListener('click', function () { w = b.getAttribute('data-v').split(',').map(Number); upd(); }); });
+  upd();
+})();
+
+/* ---------- 交叉熵 ---------- */
+(function () {
+  var P = [.6, .25, .15], NM = ['晴', '多云', '下雨'];
+  var sl = [0, 1, 2].map(function (i) { return $('#xeS' + i); });
+  function Q() { var w = sl.map(function (s) { return +s.value; }); var t = w[0] + w[1] + w[2]; return w.map(function (x) { return x / t; }); }
+  var redraw = S.fit($('#xeChart'), 250, function (s, W, Hh) {
+    var q = Q(), L = 56, R = W - 10, T = 36, B = Hh - 34;
+    var y = S.scale(0, 1, B, T), gw = (R - L) / 3, bw = Math.min(30, gw / 3);
+    [0, .5, 1].forEach(function (v) { svg('line', { class: 'gl', x1: L, x2: R, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: v * 100 + '%' }, s); });
+    for (var i = 0; i < 3; i++) {
+      var cx = L + gw * i + gw / 2;
+      svg('rect', { x: cx - bw - 2, y: y(P[i]), width: bw, height: B - y(P[i]), class: 'f-dim', rx: 2 }, s);
+      svg('rect', { x: cx + 2, y: y(q[i]), width: bw, height: B - y(q[i]), class: 'f-s1', rx: 2 }, s);
+      svg('text', { x: cx, y: B + 22, 'text-anchor': 'middle', class: 'ink', text: NM[i] + ' ' + S.f(-S.log2(q[i]), 1) + 'b' }, s);
+    }
+    svg('rect', { x: L, y: 0, width: 12, height: 12, class: 'f-dim', rx: 2 }, s);
+    svg('text', { x: L + 18, y: 11, text: '真实' }, s);
+    svg('rect', { x: L + 70, y: 0, width: 12, height: 12, class: 'f-s1', rx: 2 }, s);
+    svg('text', { x: L + 88, y: 11, text: '模型以为' }, s);
+  });
+  function upd() {
+    var q = Q(), H = 0, X = 0;
+    for (var i = 0; i < 3; i++) { H -= P[i] * S.log2(P[i]); X -= P[i] * S.log2(q[i]); $('#xeO' + i).textContent = S.pct(q[i], 0); }
+    $('#xeH').innerHTML = S.f(H, 3) + '<small>bit</small>';
+    $('#xeX').innerHTML = S.f(X, 3) + '<small>bit</small>';
+    $('#xeK').innerHTML = '+' + S.f(X - H, 3) + '<small>bit</small>';
+    $('#xePP').innerHTML = S.f(Math.pow(2, X), 2) + '<small>个</small>';
+    $('#xeMsg').textContent = '';
+    redraw();
+  }
+  sl.forEach(function (s) { s.addEventListener('input', upd); });
+  $$('#xePre button').forEach(function (b) { b.addEventListener('click', function () { var v = b.getAttribute('data-v').split(','); sl.forEach(function (s, i) { s.value = v[i]; }); upd(); }); });
+  $('#xeSim').addEventListener('click', function () {
+    var q = Q(), sum = 0, cnt = [0, 0, 0];
+    for (var d = 0; d < 365; d++) { var r = Math.random(), k = r < P[0] ? 0 : r < P[0] + P[1] ? 1 : 2; cnt[k]++; sum -= S.log2(q[k]); }
+    $('#xeMsg').textContent = '这一年晴 ' + cnt[0] + ' 天、多云 ' + cnt[1] + ' 天、下雨 ' + cnt[2] + ' 天；按模型的码本，平均每天花 ' + S.f(sum / 365, 3) + ' bit，和上面的交叉熵很接近。';
+  });
+  upd();
+})();
+
+/* ---------- 香农的猜字游戏 ---------- */
+(function () {
+  var G = [
+    { t: '白日依山尽黄河入海流', o: ['白红落明春今', '日云雪天发马', '依落出照在倚', '山西江楼云水', '尽落下去远高', '黄长江青大白', '河江海沙云鹤', '入向东奔流归', '海东天江大云', '流去中来深东'] },
+    { t: '会议改到周四下午三点', o: ['会我今明请他', '议上员场计面', '改定推在延取', '到在成为期了', '周明下本后星', '四一二三五末', '下上中晚早全', '午班周面次个', '三两一四五六', '点时半刻钟楼'] }
+  ];
+  var g, pos, tries, rec;
+  function shuffle(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function start(k) { g = G[k]; pos = 0; tries = 0; rec = []; $('#shMsg').textContent = ''; draw(); }
+  function draw() {
+    var ph = $('#shPh'); ph.textContent = '';
+    for (var i = 0; i < g.t.length; i++) {
+      var sp = h('span', { class: i < pos ? 'done' : i === pos ? 'cur' : '' }, ph);
+      if (i < pos) { sp.textContent = g.t[i]; h('sub', { text: rec[i] }, sp); }
+    }
+    var os = $('#shOpts'); os.textContent = '';
+    if (pos >= g.t.length) { $('#shHint').textContent = '整句猜完了。'; finish(); return; }
+    $('#shHint').textContent = '第 ' + (pos + 1) + ' 个字是哪个？点选项，猜错就再点。';
+    shuffle(Array.from(g.o[pos])).forEach(function (c) {
+      var b = h('button', { class: 'opt', type: 'button', text: c, style: 'font-size:18px;min-width:2.6em' }, os);
+      b.addEventListener('click', function () {
+        if (b.disabled) return;
+        tries++;
+        if (c === g.t[pos]) { rec.push(tries); tries = 0; pos++; draw(); }
+        else { b.classList.add('wrong'); b.disabled = true; }
+      });
+    });
+    $('#shRec').textContent = rec.join(' ');
+  }
+  function finish() {
+    $('#shRec').textContent = rec.join(' ');
+    var n = rec.length, c = {}, H = 0, ones = 0;
+    rec.forEach(function (r) { c[r] = (c[r] || 0) + 1; if (r === 1) ones++; });
+    for (var k in c) { var p = c[k] / n; H -= p * S.log2(p); }
+    $('#shMsg').textContent = n + ' 个字里，' + ones + ' 个一次猜中。按这串记录的分布粗算，每个字约 ' + S.f(H, 2) + ' bit；完全瞎猜六选一要 ' + S.f(S.log2(6), 2) + ' bit。';
+  }
+  S.seg($('#shSeg'), function (v) { start(+v); });
+  $('#shRe').addEventListener('click', function () { start(G.indexOf(g)); });
+  start(0);
+})();
+})();
+</script>
+</body>
+</html>

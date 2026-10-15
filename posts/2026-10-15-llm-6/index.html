@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>变成聊天助手</title>
+<meta name="description" content="动手拆一个大语言模型（六）：温度与 Top-p 采样、从基座模型到对话助手的几轮后训练、工具调用的循环、规模定律计算器，以及“症状对病根”的局限小测验。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; min-height: 2em; }
+.chips span { font-size: 15px; border-radius: 5px; padding: 2px 9px; background: var(--s1-soft); color: var(--ink); }
+.chips span.junk { background: var(--alert-soft); color: var(--alert); }
+.out { font-size: 17px; line-height: 1.75; color: var(--ink); background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 12px 16px; margin: 10px 0; white-space: pre-wrap; }
+.out .q { color: var(--ink-3); display: block; margin-bottom: 6px; }
+.stack { display: flex; height: 26px; border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+.stack i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 15px; color: var(--ink-2); margin: 4px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 12px; height: 12px; display: inline-block; border-radius: 3px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.presets button { font: inherit; font-size: 15px; background: none; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.presets button:hover { color: var(--ink); border-color: var(--ink-3); }
+.match { list-style: none; margin: 0; padding: 0; }
+.match li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 20px; padding: 12px 0; border-top: 1px solid var(--hair); align-items: start; }
+.match li:first-child { border-top: 0; }
+.match .sym { font-size: 16px; color: var(--ink); }
+.match select { font: inherit; font-size: 15px; color: var(--ink); background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; width: 100%; }
+.match select.right { border-color: var(--ok); background: var(--ok-soft); }
+.match select.wrong { border-color: var(--alert); background: var(--alert-soft); }
+.match .fix { grid-column: 1 / -1; font-size: 15px; color: var(--ink-2); margin: 0; }
+.match .fix b { color: var(--ok); }
+@media (max-width: 640px) { .match li { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 06</span><span>约 15 分钟</span><span>6 个小实验</span></p>
+  <h1>从概率表到<em>聊天助手</em></h1>
+  <p class="lead">模型本身只会交出概率表。要变成你每天用的那个助手，还得决定怎么从表里挑词、教它用对话的方式回应、让它会调用工具、把它做大，并且清楚它在哪些地方靠不住。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" aria-current="page" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#sample">怎么挑词</a><a href="#stages">后训练</a><a href="#hack">钻空子</a><a href="#tools">用工具</a><a href="#scale">做大</a><a href="#limits">局限</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="sample">
+  <div class="part-head"><h2>从概率表里挑一个：稳一点，还是野一点</h2><span class="meta">温度 · Top-k · Top-p</span></div>
+  <div class="sec-lede"><p>模型本身讲完了：给它一段前文，它算出下一个 token 的概率表。从这一篇开始看它怎么变成你每天用的聊天助手。第一个问题是从表里怎么挑。</p><p>永远挑概率最高的（贪心），文字稳定但平淡，还容易陷入重复；完全按概率抽签，又可能抽中长尾。词表有十几万个 token，单个离谱词的概率也许只有十万分之一，可成千上万个加起来就有几个百分点，生成几百个 token 时碰上几次几乎是必然的。<strong>Top-k</strong> 只在最高的 k 个里抽，<strong>Top-p</strong> 从高到低累加到 p 为止，候选数会随情况自动伸缩。<strong>温度</strong>则先把分数除以 T 再做 Softmax，T 越小越保守，越大越大胆。</p><p class="go">换策略、拖温度和 p，看哪些候选被砍掉，再点“抽 20 次”看结果。</p></div>
+  <div class="lab">
+    <p class="lab-t">“给巷子里新开的咖啡馆起个名字：____”</p>
+    <div class="seg" id="smMode"><button data-v="greedy">贪心</button><button data-v="all">直接按概率抽</button><button data-v="topk">Top-k</button><button data-v="topp" aria-pressed="true">Top-p</button></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>温度 T <output id="smTo"></output></span><input type="range" id="smT" min="0.1" max="2" step="0.05" value="1" aria-label="温度"></label>
+      <label class="ctl" id="smKc"><span>k <output id="smKo"></output></span><input type="range" id="smK" min="1" max="8" value="4" aria-label="k"></label>
+      <label class="ctl" id="smPc"><span>p <output id="smPo"></output></span><input type="range" id="smP" min="0.5" max="1" step="0.01" value="0.9" aria-label="p"></label>
+    </div>
+    <div id="smBars"></div>
+    <div class="read">
+      <div><div class="v" id="smN">0</div><div class="k">参与抽签的候选</div></div>
+      <div class="warn"><div class="v" id="smTail">0</div><div class="k">抽到长尾怪词的概率</div></div>
+    </div>
+    <div class="stepper"><button class="btn pri" type="button" id="smGo">抽 20 次</button></div>
+    <div class="chips" id="smOut" aria-live="polite"></div>
+    <p class="note">所以同一个问题每次答案不同：概率表一样，抽到的词不同，后面整段就走向不同方向。写代码、查事实适合低温，起名、写诗可以高一点。但采样只能在表里挑，表本身错了，怎么挑都救不回来。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>贪心解码</dt><dd>每步都选概率最高的 token，稳定但容易单调重复。</dd></div><div class="it" tabindex="0"><dt>随机采样</dt><dd>按概率抽签，多样但可能抽中长尾里的离谱词。</dd></div><div class="it" tabindex="0"><dt>Top-k</dt><dd>只在概率最高的 k 个候选里抽。</dd></div><div class="it" tabindex="0"><dt>Top-p（核采样）</dt><dd>从高到低累加到概率 p 为止，只在这些候选里抽，候选数随情况变化。</dd></div><div class="it" tabindex="0"><dt>温度</dt><dd>先把分数除以 T 再做 Softmax，控制分布的尖锐程度。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>q<sub>i</sub> = softmax(s<sub>i</sub> / T)</code></dt><dd>T &lt; 1 更集中保守，T &gt; 1 更平均大胆。</dd></div><div class="it cmd" tabindex="0"><dt><code>T → 0 等价于贪心</code></dt><dd>最高分拿走全部概率。</dd></div><div class="it cmd" tabindex="0"><dt>长尾单个很小、合起来不小</dt><dd>生成几百个 token 时，抽中离谱词几乎必然。</dd></div><div class="it cmd" tabindex="0"><dt>采样改变不了概率表本身</dt><dd>表错了怎么挑都救不回来。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="stages">
+  <div class="part-head"><h2>只会续写的模型，怎么学会“回答”</h2><span class="meta">后训练</span></div>
+  <div class="sec-lede"><p>到目前为止，模型学的都是“人写的文本接下来通常是什么”，这一步叫预训练，得到的是<strong>基座模型</strong>。它知识很多，但只会续写：你问一个问题，它可能接着列出更多问题，因为网上的问题常常成串出现。它其实知道答案，只是不知道自己该扮演回答者，还可能写个不停、模仿网上的粗鲁语气。</p><p>把它变成助手的训练统称<strong>后训练</strong>。监督微调用“指令 + 优质回答”的示范教它回答的样子，几千到几万条精选示范就够；偏好对齐让它学会人更喜欢的回答；推理强化学习只告诉它答案对不对，它自己摸索出先写过程、中途检查的习惯。对模型来说，对话仍然是一段连续文本，只是用特殊标记分出了谁在说话。</p><p class="go">切换四个阶段，看同一个问题的回答怎么变，再切到“模型实际读到的文本”。</p></div>
+  <div class="lab">
+    <div class="seg" id="stSeg"><button data-v="0" aria-pressed="true">只有预训练</button><button data-v="1">+ 监督微调</button><button data-v="2">+ 偏好对齐</button><button data-v="3">+ 推理强化</button></div>
+    <div class="out" id="stOut"></div>
+    <p class="lab-s" id="stData"></p>
+    <div class="ctrls"><div class="seg" id="stView"><button data-v="0" aria-pressed="true">看对话</button><button data-v="1">看模型实际读到的文本</button></div></div>
+    <div class="tape" id="stTape" hidden></div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>对模型来说，对话依然是一段连续文本，只是用特殊标记分出了谁在说话。系统提示词就是放在最前面的一段字；多轮对话里，之前每一轮都会拼进前文。</li>
+    <li>示范数据贵在质量：几千到几万条精选示范，就足以让基座模型学会对话的样子。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>预训练</dt><dd>在海量普通文本上学“预测下一个 token”，得到基座模型。</dd></div><div class="it" tabindex="0"><dt>基座模型</dt><dd>知识丰富但只会续写，不知道要扮演回答者。</dd></div><div class="it" tabindex="0"><dt>后训练</dt><dd>把基座模型变成助手的一系列训练的统称。</dd></div><div class="it" tabindex="0"><dt>监督微调 SFT</dt><dd>用“指令 + 优质回答”的示范继续训练，通常只对回答部分算损失。</dd></div><div class="it" tabindex="0"><dt>对话模板</dt><dd>用特殊标记把系统提示、用户、助手的话拼成一段连续文本。</dd></div><div class="it" tabindex="0"><dt>推理强化学习</dt><dd>在可自动判对错的题目上只奖励最终正确，模型自己学会先推理再作答。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>预训练 → SFT → 偏好对齐 → 推理强化</code></dt><dd>从续写机到会推理的助手。</dd></div><div class="it cmd" tabindex="0"><dt>示范贵在质量不在数量</dt><dd>几千到几万条精选示范就能教会对话格式。</dd></div><div class="it cmd" tabindex="0"><dt>系统提示词就是放在最前面的一段文字</dt><dd>多轮对话时，之前每轮都拼进前文。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="hack">
+  <div class="part-head"><h2>打分的模型有盲点，就会被钻空子</h2><span class="meta">奖励投机</span></div>
+  <div class="sec-lede"><p>示范有两个局限：写高质量示范很贵；而且人往往更擅长比较而不是创作，你写不出一首好诗，但给你两首，大概能分出哪首更好。<strong>RLHF</strong> 就利用这一点：让标注员在成对的回答里挑更好的，用这些挑选训练一个打分模型，再让助手往高分方向优化。效果很明显，有研究里标注员更喜欢 13 亿参数的对齐模型，而不是 1750 亿参数的原始 GPT-3。</p><p>但打分模型只是人类口味的近似，有盲点。放开优化，模型会找到钻空子的办法，比如打分模型略偏爱长回答，它就越写越长、越写越空，这叫<strong>奖励投机</strong>。所以优化时要加约束，不许离原模型太远。</p><p class="go">下面是一个示意：拖动优化力度，对比打分模型的分和真实满意度，再打开约束看看。</p></div>
+  <div class="lab lab-split">
+    <div>
+      <label class="ctl"><span>优化力度 <output id="hkXo"></output></span><input type="range" id="hkX" min="0" max="100" value="30" aria-label="优化力度"></label>
+      <div class="seg" id="hkSeg"><button data-v="0" aria-pressed="true">不加约束</button><button data-v="1">不许离原模型太远</button></div>
+      <div class="read">
+        <div class="hl"><div class="v" id="hkR">0</div><div class="k">打分模型给的分</div></div>
+        <div class="good"><div class="v" id="hkQ">0</div><div class="k">人真实的满意度</div></div>
+        <div><div class="v" id="hkL">0</div><div class="k">平均回答长度</div></div>
+      </div>
+      <p class="note">约束的做法是在奖励里扣掉“和原模型差多远”的分，这样优化走不到太偏的地方。也有更简单的 DPO 方法，跳过打分模型，直接用“好 / 差”回答对来调。</p>
+    </div>
+    <div class="box" id="hkChart"></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>RLHF</dt><dd>基于人类反馈的强化学习：收集偏好比较 → 训练打分模型 → 让助手往高分方向优化。</dd></div><div class="it" tabindex="0"><dt>奖励模型</dt><dd>用人的“哪个更好”数据训练出来、给回答打分的模型。</dd></div><div class="it" tabindex="0"><dt>奖励投机</dt><dd>模型钻打分模型的空子，分数上涨但真实质量下降。</dd></div><div class="it" tabindex="0"><dt>KL 约束</dt><dd>在奖励里扣掉“偏离原模型多远”，防止优化走偏。</dd></div><div class="it" tabindex="0"><dt>DPO</dt><dd>跳过奖励模型，直接用“好 / 差”回答对调整模型的偏好对齐方法。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt>人更擅长比较，不擅长创作</dt><dd>这正是偏好数据比示范数据更容易收集的原因。</dd></div><div class="it cmd" tabindex="0"><dt><code>优化目标 ≈ 奖励 − β · KL(新模型 ‖ 原模型)</code></dt><dd>β 控制约束强弱。</dd></div><div class="it cmd" tabindex="0"><dt>InstructGPT：13 亿参数胜过 1750 亿的 GPT-3</dt><dd>后训练对“好不好用”可能和规模一样重要。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="tools">
+  <div class="part-head"><h2>它不会上网，它只会写“我要上网”</h2><span class="meta">工具调用</span></div>
+  <div class="sec-lede"><p>现在的聊天助手还能联网搜索、运行代码、看图片，可模型只会预测下一个 token，这是怎么做到的？答案是：<strong>模型只负责写出“要做什么”</strong>。训练让它在需要外部信息时，输出一段约定格式的调用文字，然后停下。外部程序看到这段文字，真的去执行搜索或计算，再把结果作为一段新文字拼回上下文，模型读到结果后接着往下写。</p><p>算数、查资料、读文件都是同一个套路。所谓智能体（Agent），就是让“想下一步、调工具、看结果”这个循环自动跑很多轮。看图也类似：图片被切成小块，每块转成一个向量，和文字 token 排在一起。对模型来说，一切都是一串 token。</p><p class="go">一步步点“下一步”，看这段文本是怎么被模型和外部程序轮流写长的。</p></div>
+  <div class="lab">
+    <div class="seg" id="tlSeg"><button data-v="0" aria-pressed="true">查天气</button><button data-v="1">算一笔账</button></div>
+    <div class="tape" id="tlTape" style="margin-top:12px" aria-live="polite"></div>
+    <p class="msg" id="tlMsg"></p>
+    <div class="stepper"><button class="btn pri" type="button" id="tlNext">下一步</button><button class="btn" type="button" id="tlReset">从头来</button><span class="cnt" id="tlCnt"></span></div>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>智能体（Agent）就是让这个循环自动转很多圈：想下一步、调工具、看结果、再决定，直到任务完成。</li>
+    <li>看图也是同一个思路：把图片切成小块，每块变成一个向量，和文字 token 排在一起送进同一个 Transformer。对模型来说，一切都是一串 token。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>工具调用</dt><dd>模型写出一段约定格式的调用文字并停下，由外部程序执行，再把结果作为文字接回上下文。</dd></div><div class="it" tabindex="0"><dt>智能体 Agent</dt><dd>让“思考 → 调用工具 → 看结果”的循环自动运行多轮，直到完成任务。</dd></div><div class="it" tabindex="0"><dt>多模态输入</dt><dd>把图片切成小块并转成向量，与文字 token 一起送入同一个 Transformer。</dd></div><div class="it" tabindex="0"><dt>系统提示词</dt><dd>放在对话最前面的说明文字，常用来告诉模型有哪些工具、怎么调用。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>模型写调用 → 程序执行 → 结果拼回 → 模型继续</code></dt><dd>模型自己并不联网或计算。</dd></div><div class="it cmd" tabindex="0"><dt>精确计算、最新信息交给工具</dt><dd>正好补上模型的弱项。</dd></div><div class="it cmd" tabindex="0"><dt>对模型来说，一切都是一串 token</dt><dd>聊天、用工具、看图都一样。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="scale">
+  <div class="part-head"><h2>为什么越做越大</h2><span class="meta">规模定律</span></div>
+  <div class="sec-lede"><p>“大语言模型”到底大在哪、为什么要大？影响能力的有三个量：参数量 N（脑容量）、训练 token 数 D（读了多少书）、计算量 C（学了多久），常用估算是 C ≈ 6ND。2020 年的研究发现，交叉熵随这三者的增加按幂律平稳下降，规模每扩大同样倍数，损失就降一个大致固定的比例。这让人能先用小模型做便宜的实验，再外推大模型的效果。</p><p>2022 年的 Chinchilla 研究进一步发现，参数和数据要一起涨，算力最优时每个参数大约配 20 个训练 token；它还把损失拆成三部分：模型不够大、数据不够多，以及一块怎么都消不掉的不可约部分，那正是文本本身的熵。</p><p class="go">拖动参数量和 token 数，或点几个真实模型的预设，看损失的构成；再试试“同样的算力，换成最优分配”。</p></div>
+  <div class="lab">
+    <div class="presets" id="scPre">
+      <button type="button" data-v="175e9,300e9">GPT-3</button>
+      <button type="button" data-v="280e9,300e9">Gopher</button>
+      <button type="button" data-v="70e9,1.4e12">Chinchilla</button>
+      <button type="button" data-v="8e9,15e12">Llama 3 8B</button>
+    </div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>参数量 <output id="scNo"></output></span><input type="range" id="scN" min="8" max="12.5" step="any" value="11.243" aria-label="参数量，对数刻度"></label>
+      <label class="ctl"><span>训练 token 数 <output id="scDo"></output></span><input type="range" id="scD" min="9" max="14" step="any" value="11.477" aria-label="训练 token 数，对数刻度"></label>
+    </div>
+    <div class="stack" id="scStack" aria-hidden="true"></div>
+    <div class="legend"><span><i style="background:var(--dim)"></i>不可约：文本本身的随机性</span><span><i style="background:var(--s1)"></i>模型不够大</span><span><i style="background:var(--s2)"></i>数据不够多</span></div>
+    <div class="read">
+      <div class="hl"><div class="v" id="scL">0</div><div class="k">预测损失（nat / token）</div></div>
+      <div><div class="v" id="scC">0</div><div class="k">训练算力（次浮点运算）</div></div>
+      <div><div class="v" id="scR">0</div><div class="k">每个参数分到的 token</div></div>
+    </div>
+    <div class="stepper"><button class="btn" type="button" id="scOpt">同样的算力，换成最优分配</button></div>
+    <p class="lab-s" style="margin-top:14px">同样算力下，参数量取不同值时的损失（橙点是当前）：</p>
+    <div class="box" id="scChart"></div>
+    <p class="msg" id="scMsg"></p>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>同样算力，Chinchilla 用 700 亿参数配 1.4 万亿 token，打败了 2800 亿参数、只读了 3000 亿 token 的 Gopher：参数和数据要一起涨。</li>
+    <li>Llama 3 8B 远远“读多了”，因为模型只训一次、却要被调用无数次，小一点更省推理成本。</li>
+    <li>不可约的那一块怎么都消不掉：它对应文本本身的熵，也就是第 2 篇里香农想测的那个数。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>规模定律</dt><dd>交叉熵随参数量、数据量、算力的增加按幂律平稳下降。</dd></div><div class="it" tabindex="0"><dt>算力最优</dt><dd>在固定计算预算下，使损失最低的参数量与数据量搭配。</dd></div><div class="it" tabindex="0"><dt>不可约损失</dt><dd>无论模型多大、数据多多都消不掉的部分，对应文本本身的熵。</dd></div><div class="it" tabindex="0"><dt>幂律</dt><dd>规模每扩大同样的倍数，损失就按大致固定的比例下降；在双对数坐标上近似一条直线。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>训练算力 C ≈ 6 · N · D</code></dt><dd>N 是参数量，D 是训练 token 数；正向 2N、反向 4N。</dd></div><div class="it cmd" tabindex="0"><dt><code>L(N, D) = E + A / N<sup>α</sup> + B / D<sup>β</sup></code></dt><dd>Chinchilla 拟合：E ≈ 1.69，α ≈ 0.34，β ≈ 0.28。</dd></div><div class="it cmd" tabindex="0"><dt><code>算力最优：每个参数约 20 个训练 token</code></dt><dd>Chinchilla 的经验比例。</dd></div><div class="it cmd" tabindex="0"><dt><code>GPT-3：6 × 1750 亿 × 3000 亿 ≈ 3.1 × 10<sup>23</sup> 次运算</code></dt><dd>与论文报告一致。</dd></div><div class="it cmd" tabindex="0"><dt>推理成本取决于参数量</dt><dd>所以常用远超 20 倍的数据训练小模型，如 Llama 3 8B 读了约 15 万亿 token。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="limits">
+  <div class="part-head"><h2>它在哪些地方靠不住</h2><span class="meta">症状对病根</span></div>
+  <div class="sec-lede"><p>模型的能力来自“在海量文本上预测下一个 token”，它的局限也大多来自这里。最有名的是<strong>幻觉</strong>：流畅、自信，却与事实不符。可以从几个角度理解：训练目标是“像人写的”而不是“真实”，遇到不确定的内容，最像样的续写往往仍是一段自信的文字；零散的事实没有规律可压缩，只出现一两次的很难记牢；很多评测答错和不答都得零分，猜一个更划算；写出去的字又收不回来。</p><p>其他常见毛病也各有根源：知识停在训练截止日，看的是 token 而不是字母，上下文长度有限，偏好训练学会了顺着人说，学到的关联是有方向的。</p><p class="go">给下面每个症状挑一个病根，对了会显示应对办法。</p></div>
+  <div class="lab">
+    <ol class="match" id="lmList"></ol>
+    <p class="msg" id="lmScore"></p>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>越冷门、越具体（人名、日期、数字、引用、网址），越容易出错；关键信息一定要自己核实。</li>
+    <li>它的能力参差不齐：可能解得出竞赛题，却在简单常识上翻车。可不可靠，要看它在你自己的真实任务上的表现。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>幻觉</dt><dd>生成流畅、自信但与事实不符的内容。</dd></div><div class="it" tabindex="0"><dt>知识截止</dt><dd>模型只知道训练数据收集之前的信息。</dd></div><div class="it" tabindex="0"><dt>上下文窗口</dt><dd>模型一次能处理的最大 token 数。</dd></div><div class="it" tabindex="0"><dt>迎合 sycophancy</dt><dd>倾向于同意用户，即使用户是错的。</dd></div><div class="it" tabindex="0"><dt>反转诅咒</dt><dd>学会“A 是 B”不代表能答出“B 是 A”。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt>训练目标是“像”，不是“真”</dt><dd>幻觉的首要根源。</dd></div><div class="it cmd" tabindex="0"><dt>零散事实没有规律可压缩</dt><dd>只出现一两次的事实最容易答错。</dd></div><div class="it cmd" tabindex="0"><dt>评测不扣分时，猜比说“不知道”划算</dt><dd>模型因此倾向于猜。</dd></div><div class="it cmd" tabindex="0"><dt><code>注意力计算量 ∝ n²</code></dt><dd>上下文越长越贵，中间的信息也容易被忽视。</dd></div><div class="it cmd" tabindex="0"><dt>越冷门、越具体越要核实</dt><dd>人名、数字、日期、引用、网址。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm-5/"><small>上一篇</small><span>Transformer：每个词都去别处找线索</span></a><a href="../2026-10-15-llm/" class="nx"><small>系列完</small><span>回到系列目录</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+/* ---------- 采样 ---------- */
+(function () {
+  var NAMES = [['慢时光', 3.2], ['转角', 2.9], ['拾光', 2.5], ['巷子里', 2.2], ['豆子日记', 1.6], ['晨雾', 1.3], ['猫与豆', 1.0], ['二楼', .6]];
+  var JUNK = ['螺丝刀', '第三季度', '嗯嗯嗯', '高压锅', '的的', '发票', '电梯井', '牙膏', '三角函数', '拖拉机'];
+  var TAIL_N = 40, TAIL_S = -1.2, mode = 'topp';
+  function dist() {
+    var T = +$('#smT').value, sc = NAMES.map(function (n) { return n[1]; });
+    for (var i = 0; i < TAIL_N; i++) sc.push(TAIL_S);
+    var p = S.softmax(sc, T), keep = p.map(function () { return true; });
+    var order = p.map(function (v, i) { return i; }).sort(function (a, b) { return p[b] - p[a]; });
+    if (mode === 'greedy') keep = p.map(function (v, i) { return i === order[0]; });
+    else if (mode === 'topk') { var k = +$('#smK').value; keep = p.map(function () { return false; }); order.slice(0, k).forEach(function (i) { keep[i] = true; }); }
+    else if (mode === 'topp') { var P = +$('#smP').value, acc = 0; keep = p.map(function () { return false; }); for (var j = 0; j < order.length; j++) { keep[order[j]] = true; acc += p[order[j]]; if (acc >= P - 1e-12) break; } }
+    var z = 0; p.forEach(function (v, i) { if (keep[i]) z += v; });
+    var q = p.map(function (v, i) { return keep[i] ? v / z : 0; });
+    return { p: p, q: q, keep: keep };
+  }
+  function upd() {
+    var d = dist(), rows = [], tail = 0, tailKeep = false, nk = 0;
+    $('#smTo').textContent = S.f(+$('#smT').value, 2);
+    $('#smKo').textContent = $('#smK').value; $('#smPo').textContent = S.f(+$('#smP').value, 2);
+    $('#smKc').style.display = mode === 'topk' ? '' : 'none';
+    $('#smPc').style.display = mode === 'topp' ? '' : 'none';
+    NAMES.forEach(function (n, i) { rows.push({ label: n[0], value: d.q[i], text: d.keep[i] ? S.pct(d.q[i], 1) : '砍掉', cut: !d.keep[i] }); if (d.keep[i]) nk++; });
+    for (var i = NAMES.length; i < d.p.length; i++) { tail += d.q[i]; if (d.keep[i]) { tailKeep = true; nk++; } }
+    rows.push({ label: '长尾 ' + TAIL_N + ' 个怪词', value: tail, text: tailKeep ? S.pct(tail, 1) : '砍掉', cls: 'alt', cut: !tailKeep });
+    S.bars($('#smBars'), rows);
+    $('#smN').textContent = nk + ' 个';
+    $('#smTail').textContent = S.pct(tail, 1);
+  }
+  $('#smGo').addEventListener('click', function () {
+    var d = dist(), out = $('#smOut'); out.textContent = '';
+    for (var t = 0; t < 20; t++) {
+      var r = Math.random(), a = 0, pick = 0;
+      for (var i = 0; i < d.q.length; i++) { a += d.q[i]; if (r < a) { pick = i; break; } }
+      var junk = pick >= NAMES.length;
+      h('span', { class: junk ? 'junk' : '', text: junk ? JUNK[(pick + t) % JUNK.length] : NAMES[pick][0] }, out);
+    }
+  });
+  ['#smT', '#smK', '#smP'].forEach(function (q) { $(q).addEventListener('input', upd); });
+  S.seg($('#smMode'), function (v) { mode = v; upd(); });
+  upd();
+})();
+
+/* ---------- 后训练阶段 ---------- */
+(function () {
+  var Q = '番茄炒蛋怎么做？', Q2 = '做一盘番茄炒蛋要 3 个鸡蛋，冰箱里有 11 个，最多能做几盘？还剩几个？';
+  var A = [
+    { q: Q, a: '番茄炒蛋要先放番茄还是先放蛋？番茄炒蛋放糖还是放盐？番茄炒蛋为什么会出水？番茄炒蛋的 10 种家常做法，点击查看更多……', d: '训练数据：数万亿 token 的网页、书籍、代码。学会了大量知识，但只会“接着写”，这里续写成了一串搜索问题。' },
+    { q: Q, a: '1. 番茄切块，鸡蛋加一点盐打散。\n2. 热油下蛋液，凝固后盛出。\n3. 再下番茄翻炒出汁，倒回鸡蛋，加盐和少许糖，翻匀出锅。', d: '训练数据：几千到几万条“问题 + 优质回答”的示范，仍然用“猜下一个 token”的方式训练，只对回答部分计分。它学会了回答的格式。' },
+    { q: Q, a: '家常做法很简单，3 步就好：\n1. 番茄切块，鸡蛋加一小撮盐打散。\n2. 油热后倒蛋液，稍凝固就盛出，保持嫩滑。\n3. 番茄下锅炒软出汁，倒回鸡蛋，加盐，喜欢酸甜可加半勺糖。\n小技巧：番茄用开水烫一下更好去皮。要我再说说带汤汁的版本吗？', d: '训练数据：人在成对回答里挑更好的那个。它学到的是人更喜欢的语气、详略和安全边界。' },
+    { q: Q2, a: '先算能做几盘：11 ÷ 3 = 3 余 2。\n检查一下：3 盘用 3 × 3 = 9 个，9 + 2 = 11，对得上。\n所以最多做 3 盘，还剩 2 个鸡蛋。', d: '训练数据：能自动判对错的题（数学、编程）。只告诉它最后对不对，它自己摸索出“先写过程、中途检查”的习惯。' }
+  ];
+  var cur = 0, view = 0;
+  function render() {
+    var a = A[cur], o = $('#stOut'); o.textContent = '';
+    h('span', { class: 'q', text: '提问：' + a.q }, o);
+    o.appendChild(document.createTextNode(a.a));
+    $('#stData').textContent = a.d;
+    var t = $('#stTape');
+    t.hidden = view === 0;
+    t.textContent = '';
+    if (cur === 0) {
+      h('span', { class: 'r-user', text: a.q }, t); h('span', { class: 'r-bot', text: a.a }, t);
+      t.appendChild(document.createTextNode('\n（基座模型没有对话格式：问题和续写就是一段连续文字）'));
+    } else {
+      var seq = [['r-sp', '<|系统|>'], ['r-sys', '你是一个乐于助人的助手。\n'], ['r-sp', '<|用户|>'], ['r-user', a.q + '\n'], ['r-sp', '<|助手|>'], ['r-bot', a.a], ['r-sp', '<|结束|>']];
+      seq.forEach(function (x) { h('span', { class: x[0], text: x[1] }, t); });
+    }
+  }
+  S.seg($('#stSeg'), function (v) { cur = +v; render(); });
+  S.seg($('#stView'), function (v) { view = +v; render(); });
+  render();
+})();
+
+/* ---------- 奖励投机（示意） ---------- */
+(function () {
+  var leash = false;
+  function eff(x) { return leash ? 35 * (1 - Math.exp(-x / 35)) : x; }
+  function R(x) { return 40 + .6 * x; }
+  function Qf(x) { return 40 + 1.4 * x - .022 * x * x; }
+  var redraw = S.fit($('#hkChart'), 250, function (s, W, H) {
+    var L = 40, Rr = W - 12, T = 26, B = H - 34;
+    var x = S.scale(0, 100, L, Rr), y = S.scale(0, 110, B, T);
+    [0, 50, 100].forEach(function (v) { svg('line', { class: 'gl', x1: L, x2: Rr, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: v }, s); });
+    svg('line', { class: 'ax', x1: L, x2: Rr, y1: B, y2: B }, s);
+    var a = [], b = [];
+    for (var i = 0; i <= 100; i++) { a.push([x(i), y(R(eff(i)))]); b.push([x(i), y(Math.max(0, Qf(eff(i))))]); }
+    svg('path', { class: 'ln k-s1', d: S.path(a) }, s);
+    svg('path', { class: 'ln k-ok', d: S.path(b) }, s);
+    var cx = +$('#hkX').value;
+    svg('line', { x1: x(cx), x2: x(cx), y1: T, y2: B, class: 'k-s2', 'stroke-dasharray': '4 4', 'stroke-width': 1.5 }, s);
+    svg('text', { x: L, y: 16, class: 'c-s1', text: '打分模型的分' }, s);
+    svg('text', { x: L + 120, y: 16, class: 'c-ok', text: '真实满意度' }, s);
+    svg('text', { x: Rr, y: H - 4, 'text-anchor': 'end', class: 'c-3', text: '优化力度 →（示意）' }, s);
+  });
+  function upd() {
+    var x = +$('#hkX').value, e = eff(x);
+    $('#hkXo').textContent = x;
+    $('#hkR').textContent = S.f(R(e), 0);
+    $('#hkQ').textContent = S.f(Math.max(0, Qf(e)), 0);
+    $('#hkL').innerHTML = Math.round(180 + e * e * .25 + e * 4) + '<small>字</small>';
+    redraw();
+  }
+  $('#hkX').addEventListener('input', upd);
+  S.seg($('#hkSeg'), function (v) { leash = v === '1'; upd(); });
+  upd();
+})();
+
+/* ---------- 工具调用 ---------- */
+(function () {
+  var SC = [
+    [
+      [['r-sp', '<|系统|>'], ['r-sys', '可用工具：搜索(关键词)、计算器(算式)\n'], '系统提示词放在最前面，告诉模型有哪些工具、调用格式是什么。'],
+      [['r-sp', '<|用户|>'], ['r-user', '杭州明天出门要带伞吗？\n'], '用户的问题接在后面。'],
+      [['r-sp', '<|助手|>'], ['r-bot', ''], ['r-sp', '<|调用|>'], ['r-tool', '搜索(杭州 明天 天气)'], ['r-sp', '<|结束|>\n'], '模型判断需要最新信息，于是写出一行调用，然后输出结束标记停下。它自己没有联网。'],
+      [['r-sp', '<|工具结果|>'], ['r-tool', '杭州明天：小雨转中雨，降水概率 80%，14–19℃\n'], '外部程序看到这行调用，真的去搜索，把结果当作一段文字接到后面。'],
+      [['r-sp', '<|助手|>'], ['r-bot', '要带。明天杭州小雨转中雨，降水概率约 80%，气温 14–19℃，最好再加件外套。'], ['r-sp', '<|结束|>'], '模型读到结果，继续“猜下一个 token”，写出回答。']
+    ],
+    [
+      [['r-sp', '<|系统|>'], ['r-sys', '可用工具：搜索(关键词)、计算器(算式)\n'], '同样的系统提示词。'],
+      [['r-sp', '<|用户|>'], ['r-user', '我每月存 3780 元，存 17 个月一共多少？\n'], '精确乘法正是模型的弱项：它看到的是 token，不是一位位数字。'],
+      [['r-sp', '<|助手|>'], ['r-sp', '<|调用|>'], ['r-tool', '计算器(3780 * 17)'], ['r-sp', '<|结束|>\n'], '它写出算式交给计算器，而不是自己“猜”出一个数。'],
+      [['r-sp', '<|工具结果|>'], ['r-tool', '64260\n'], '计算器给出精确结果。'],
+      [['r-sp', '<|助手|>'], ['r-bot', '一共 64260 元。'], ['r-sp', '<|结束|>'], '模型把结果组织成回答。']
+    ]
+  ];
+  var sc = 0, k = 0;
+  function render() {
+    var t = $('#tlTape'); t.textContent = '';
+    SC[sc].slice(0, k + 1).forEach(function (stp, i) {
+      stp.slice(0, -1).forEach(function (x) { h('span', { class: x[0] + (i === k ? ' fresh' : ''), text: x[1] }, t); });
+    });
+    var st = SC[sc][k];
+    $('#tlMsg').textContent = st[st.length - 1];
+    $('#tlCnt').textContent = (k + 1) + ' / ' + SC[sc].length;
+    $('#tlNext').disabled = k === SC[sc].length - 1;
+  }
+  $('#tlNext').addEventListener('click', function () { if (k < SC[sc].length - 1) { k++; render(); } });
+  $('#tlReset').addEventListener('click', function () { k = 0; render(); });
+  S.seg($('#tlSeg'), function (v) { sc = +v; k = 0; render(); });
+  render();
+})();
+
+/* ---------- 规模定律 ---------- */
+(function () {
+  var E = 1.69, A = 406.4, B = 410.7, al = .34, be = .28;
+  function loss(N, D) { return E + A / Math.pow(N, al) + B / Math.pow(D, be); }
+  function cnt(x) { return S.big(x).replace(' ', ''); }
+  var N, D;
+  var redraw = S.fit($('#scChart'), 230, function (s, W, H) {
+    var C = 6 * N * D, L = 54, R = W - 12, T = 10, Bt = H - 34;
+    var lo = 7.5, hi = 13, pts = [], ys = [];
+    for (var i = 0; i <= 200; i++) { var ln = lo + (hi - lo) * i / 200, n = Math.pow(10, ln), d = C / (6 * n); var l = loss(n, d); pts.push([ln, l]); ys.push(l); }
+    var ymin = Math.min.apply(null, ys), ymax = Math.min(ymin + 1.5, Math.max.apply(null, ys));
+    var x = S.scale(lo, hi, L, R), y = S.scale(ymin - .05, ymax, Bt, T);
+    [ymin, (ymin + ymax) / 2, ymax].forEach(function (v) { svg('line', { class: 'gl', x1: L, x2: R, y1: y(v), y2: y(v) }, s); svg('text', { class: 'n', x: L - 8, y: y(v) + 5, 'text-anchor': 'end', text: S.f(v, 2) }, s); });
+    [8, 9, 10, 11, 12, 13].forEach(function (v) { svg('text', { class: 'n', x: x(v), y: Bt + 22, 'text-anchor': v === 13 ? 'end' : 'middle', text: ['1亿', '10亿', '100亿', '1000亿', '1万亿', '10万亿'][v - 8] }, s); });
+    var cp = svg('clipPath', { id: 'scclip' }, s); svg('rect', { x: L, y: T - 4, width: R - L, height: Bt - T + 8 }, cp);
+    svg('path', { class: 'ln k-s1', 'clip-path': 'url(#scclip)', d: S.path(pts.map(function (p) { return [x(p[0]), y(Math.min(p[1], ymax + .2))]; })) }, s);
+    var cl = Math.log10(N);
+    if (cl >= lo && cl <= hi) svg('circle', { cx: x(cl), cy: y(Math.min(loss(N, D), ymax + .1)), r: 7, class: 'f-s2' }, s);
+  });
+  function upd() {
+    N = Math.pow(10, +$('#scN').value); D = Math.pow(10, +$('#scD').value);
+    var a = A / Math.pow(N, al), b = B / Math.pow(D, be), l = E + a + b;
+    $('#scNo').textContent = cnt(N); $('#scDo').textContent = cnt(D);
+    var st = $('#scStack'); st.textContent = '';
+    [[E, 'var(--dim)'], [a, 'var(--s1)'], [b, 'var(--s2)']].forEach(function (p) { h('i', { style: 'width:' + (p[0] / l * 100) + '%;background:' + p[1] }, st); });
+    $('#scL').textContent = S.f(l, 3);
+    $('#scC').textContent = S.sci(6 * N * D, 1);
+    $('#scR').textContent = S.f(D / N, D / N < 10 ? 1 : 0);
+    $('#scMsg').textContent = '';
+    redraw();
+  }
+  $('#scN').value = Math.log10(175e9); $('#scD').value = Math.log10(300e9);
+  $('#scN').addEventListener('input', upd); $('#scD').addEventListener('input', upd);
+  $$('#scPre button').forEach(function (b) {
+    b.addEventListener('click', function () { var v = b.getAttribute('data-v').split(',').map(Number); $('#scN').value = Math.log10(v[0]); $('#scD').value = Math.log10(v[1]); upd(); });
+  });
+  $('#scOpt').addEventListener('click', function () {
+    var C = 6 * N * D, old = loss(N, D), best = null;
+    for (var i = 0; i <= 2000; i++) { var ln = 7 + 7 * i / 2000, n = Math.pow(10, ln), d = C / (6 * n); var l = loss(n, d); if (!best || l < best[1]) best = [n, l, d]; }
+    var bd = Math.log10(best[2]);
+    if (bd < 9 || bd > 14 || Math.log10(best[0]) < 8 || Math.log10(best[0]) > 12.5) { $('#scMsg').textContent = '最优点超出了滑块范围。'; return; }
+    $('#scN').value = Math.log10(best[0]); $('#scD').value = bd; upd();
+    $('#scMsg').textContent = '算力不变，最优分配是 ' + cnt(best[0]) + ' 参数配 ' + cnt(best[2]) + ' token，损失从 ' + S.f(old, 3) + ' 降到 ' + S.f(best[1], 3) + '。';
+  });
+  upd();
+})();
+
+/* ---------- 症状对病根 ---------- */
+(function () {
+  var ROOTS = ['训练目标是“像人写的”，不是“真实”', '它看到的是 token，不是一个个字母', '知识停在训练数据截止的那天', '偏好训练里，人更爱给“同意我”的回答打高分', '学到的关联是有方向的', '评测里答错和不答都得零分，猜一个更划算', '一次能读的长度有限，中间的内容容易被忽略'];
+  var SYM = [
+    ['一本正经地给出一篇根本不存在的论文，格式还挺像样。', 0, '让它依据你提供的资料回答，并要求给出处；引用一律自己核对。'],
+    ['问它 strawberry 里有几个 r，经常数错。', 1, '让它写代码来数，或调用工具。'],
+    ['问它上个月刚发生的事，它不知道，甚至会编一个。', 2, '涉及“最新”“现在”的问题，让它联网检索。'],
+    ['你明明说错了，它也连连称是。', 3, '中立地提问，直接要求它指出你的错误。'],
+    ['它知道“某本书的作者是谁”，反过来问“这个人写过哪本书”却答不上。', 4, '换个方向再问一次，关键推理自己检查。'],
+    ['明明没把握，也不肯说“我不知道”。', 5, '在提问里明确允许它回答“不确定”。'],
+    ['很长的文档里，夹在中间的一条要求被它忽略了。', 6, '重要要求放在开头或结尾，长对话适时让它总结。']
+  ];
+  var ol = $('#lmList'), right = {};
+  SYM.forEach(function (sy, i) {
+    var li = h('li', null, ol);
+    h('div', { class: 'sym', text: (i + 1) + '. ' + sy[0] }, li);
+    var sel = h('select', { 'aria-label': '第' + (i + 1) + '个症状的病根' }, li);
+    h('option', { value: '', text: '选一个病根…' }, sel);
+    ROOTS.forEach(function (r, j) { h('option', { value: j, text: r }, sel); });
+    var fx = h('p', { class: 'fix', hidden: '' }, li);
+    sel.addEventListener('change', function () {
+      if (sel.value === '') { sel.className = ''; fx.hidden = true; delete right[i]; score(); return; }
+      var ok = +sel.value === sy[1];
+      sel.className = ok ? 'right' : 'wrong';
+      fx.hidden = false; fx.textContent = '';
+      if (ok) { h('b', { text: '对了。' }, fx); fx.appendChild(document.createTextNode('应对：' + sy[2])); right[i] = 1; }
+      else { fx.appendChild(document.createTextNode('不太对，再想想。')); delete right[i]; }
+      score();
+    });
+  });
+  function score() { var n = Object.keys(right).length; $('#lmScore').textContent = n ? '已配对 ' + n + ' / ' + SYM.length + (n === SYM.length ? '，全对。' : '') : ''; }
+})();
+})();
+</script>
+</body>
+</html>

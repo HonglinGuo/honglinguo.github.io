@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>猜下一个词</title>
+<meta name="description" content="动手拆一个大语言模型（一）：token 怎么切、一段话怎么一个 token 一个 token 地接出来，以及为什么“猜得准”会逼出知识和推理。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.typed { font-size: clamp(20px, 2.6vw, 26px); line-height: 1.6; margin: 6px 0 12px; color: var(--ink); min-height: 1.6em; }
+.typed .new { color: var(--s1); border-bottom: 2px solid var(--s1); }
+.typed .gap { display: inline-block; min-width: 2.2em; border-bottom: 2px dashed var(--ink-3); margin-left: 2px; }
+.cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 24px; }
+@media (max-width: 560px) { .cmp { grid-template-columns: minmax(0, 1fr); } }
+.cmp h4 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.sample { font-size: 18px; color: var(--ink); background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; margin: 10px 0; min-height: 2.6em; }
+.tally { font-family: var(--f-num); font-size: 15px; color: var(--ink-2); }
+.ability { display: inline-block; font-size: 15px; border-radius: 5px; padding: 0 8px; margin-left: 6px; background: var(--s1-soft); color: var(--s1); }
+</style>
+</head>
+<body data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 01</span><span>约 10 分钟</span><span>5 个小实验</span></p>
+  <h1>说到底，它只是在<em>猜下一个词</em></h1>
+  <p class="lead">聊天机器人看起来什么都会，但拆开看，核心程序只做一件事：读一段前文，给出“下一块文字”的概率表。这一篇用五个小实验，把这件事拆开摸一遍。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" aria-current="page" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#token">切块</a><a href="#spread">概率表</a><a href="#loop">接龙</a><a href="#judge">当裁判</a><a href="#cloze">填空</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="token">
+  <div class="part-head"><h2>模型读的不是字，是“块”</h2><span class="meta">token</span></div>
+  <div class="sec-lede"><p>我们说“模型在猜下一个字”，其实不太准确。模型处理文字之前，要先按一张固定的词表把句子切成一块块，每块叫一个 <strong>token</strong>，再换成整数编号。一个 token 可能是单个字，也可能是一个常用词，英文里还常常是半个单词。</p><p>为什么不干脆一个字一块？一是省步数：模型每生成一个 token 都要从头到尾完整算一遍，块越大，同样一句话要算的次数越少。二是常一起出现的字本来就该当作整体，“今天”“天气”这类搭配，合并以后模型就不必每次重新去猜“今”后面跟“天”。</p><p>所以后面说的“下一个词”，严格讲都是“下一个 token”。这也埋下了一个伏笔：模型看到的是块，不是字母。</p><p class="go">下面是一个只有几十项词表的玩具分词器。改改句子，或者切到“一个字一块”，对比要走的步数。</p></div>
+  <div class="lab">
+    <p class="lab-t">玩具分词器</p>
+    <p class="lab-s">这里的词表只有几十项，是手写的；真实词表有十万多项，是统计语料里哪些片段最常一起出现、再逐步合并出来的。</p>
+    <input class="field" id="tkIn" value="明天可能会下雨，记得带伞" maxlength="40" aria-label="要切分的句子">
+    <div class="ctrls" id="tkPre">
+      <button class="btn" type="button">明天可能会下雨，记得带伞</button>
+      <button class="btn" type="button">大语言模型预测下一个token</button>
+      <button class="btn" type="button">unbelievable strawberry</button>
+    </div>
+    <div class="seg" id="tkMode" style="margin-top:4px"><button data-v="vocab" aria-pressed="true">按词表切</button><button data-v="char">一个字一块</button></div>
+    <div class="toks" id="tkOut" aria-live="polite"></div>
+    <div class="read">
+      <div><div class="v" id="tkChars">0</div><div class="k">个字符</div></div>
+      <div class="hl"><div class="v" id="tkN">0</div><div class="k">个 token，也就是要算这么多步</div></div>
+    </div>
+    <p class="note">注意 strawberry 被切成了两块：模型看见的是“straw”“berry”，而不是十个字母。后面第 6 篇讲它为什么数不清字母时，会回到这里。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>token</dt><dd>模型读写文字的最小单位，可能是一个字、一个词，也可能是一个词的一部分。</dd></div><div class="it" tabindex="0"><dt>词表 vocabulary</dt><dd>所有 token 的固定清单，每个 token 对应一个整数编号；大模型的词表通常有 5 万到 25 万项。</dd></div><div class="it" tabindex="0"><dt>分词 tokenization</dt><dd>按词表把一段文字切成 token 序列、再换成编号的过程。</dd></div><div class="it" tabindex="0"><dt>BPE</dt><dd>一种常用的建词表方法：从单个字符出发，反复把语料里最常相邻出现的一对合并成新 token。</dd></div></dl></div><div><h4>要点</h4><dl><div class="it cmd" tabindex="0"><dt>生成一个 token = 整个模型完整算一遍</dt><dd>所以 token 越少，生成越快、越省钱。</dd></div><div class="it cmd" tabindex="0"><dt>常见词并成一块，生僻词拆成碎片</dt><dd>同样一句话，在不同模型里的 token 数可能不同。</dd></div><div class="it cmd" tabindex="0"><dt>模型看不到 token 内部的字母</dt><dd>这是它数字母、做逐位运算容易出错的根源。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="spread">
+  <div class="part-head"><h2>有的空只有一个答案，有的空有一百个</h2><span class="meta">概率分布</span></div>
+  <div class="sec-lede"><p>把一句话停在半截，问“下一个是什么”，人心里其实会浮出好几个候选，只是把握大小不同。语言模型做的就是把这种“把握”明确地写成数字：给词表里每个 token 一个概率，全部加起来等于 1。</p><p>这张<strong>概率表</strong>就是语言模型的全部输出。有的空几乎只有一个答案，比如“一年有十二个”后面；有的空可以接几百种说法，比如“周五晚上想去”。表是“尖”还是“平”，取决于前文给了多少约束。</p><p>这些数字不是谁规定的，而是模型从海量人写的文本里统计、学习出来的“人在这里通常接什么”。</p><p class="go">点三个不同的开头，看概率表的形状怎么变；留意“凑够 90% 需要几个候选”。</p></div>
+  <div class="lab-row">
+    <div class="lab">
+      <div class="seg" id="spSeg"><button data-v="0" aria-pressed="true">一年有十二个…</button><button data-v="1">她打开冰箱，拿出一瓶…</button><button data-v="2">周五晚上想去…</button></div>
+      <p class="typed" id="spText"></p>
+      <div id="spBars"></div>
+      <div class="read">
+        <div class="hl"><div class="v" id="spTop">0</div><div class="k">最可能的候选占比</div></div>
+        <div><div class="v" id="spCover">0</div><div class="k">凑够 90% 需要的候选数</div></div>
+      </div>
+    </div>
+    <div class="aside">
+      <p>“尖”还是“平”，正是第 2 篇要精确量出来的东西：它叫<strong>熵</strong>，单位是 bit。</p>
+      <p>这张表里的每个概率，都是模型从海量人写的文本里学出来的“人在这里通常接什么”。</p>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>语言模型</dt><dd>给定前文，输出“下一个 token 的概率分布”的程序。</dd></div><div class="it" tabindex="0"><dt>概率分布</dt><dd>给词表里每个 token 一个 0 到 1 之间的数，全部加起来等于 1。</dd></div><div class="it" tabindex="0"><dt>条件概率</dt><dd>在已知前文的条件下某个 token 出现的可能性，记作 P(下一个 | 前文)。</dd></div><div class="it" tabindex="0"><dt>候选</dt><dd>概率表里的每一项，即下一步可能出现的某个 token。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>Σ<sub>i</sub> P(token<sub>i</sub></dt><dd>前文) = 1</code> | 一张合法的概率表，所有候选加起来必须是 1。</dd></div><div class="it cmd" tabindex="0"><dt>前文约束越强，分布越尖</dt><dd>尖的分布好猜（熵低），平的分布难猜（熵高）。</dd></div><div class="it cmd" tabindex="0"><dt>这些概率是从人写的海量文本里学出来的</dt><dd>表达的是“人在这里通常会接什么”。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>一段话，是一块一块接出来的</h2><span class="meta">自回归生成</span></div>
+  <div class="sec-lede"><p>模型每次只吐一个 token，那一整段回答是怎么来的？办法朴素得出奇：从概率表里选一个 token 接到前文末尾，把加长后的整段再交给模型，算出下一张表，如此循环，直到选中一个表示“结束”的特殊 token。</p><p>这种“自己的输出变成下一步的输入”的方式叫<strong>自回归生成</strong>。它有一个重要后果：写出去的字收不回来。前面一旦选了一个不太好的词，后面只能顺着它往下圆，模型并不会回头改。</p><p>聊天框里逐字蹦出来的效果，正是这个循环在一步步跑。</p><p class="go">下面是一个手写的小模型，你来替它做选择：点候选词，或者让它按概率抽，多跑几次看看同一个开头能长出多少种句子。</p></div>
+  <div class="lab">
+    <p class="typed" id="lpText"></p>
+    <p class="lab-s" id="lpStep"></p>
+    <div id="lpBars"></div>
+    <div class="stepper">
+      <button class="btn pri" type="button" id="lpSample">按概率抽一个</button>
+      <button class="btn" type="button" id="lpGreedy">选最高的</button>
+      <button class="btn" type="button" id="lpReset">从头来</button>
+    </div>
+    <p class="note">多试几次“按概率抽”：同一个开头会长出不同的句子。偶尔抽到 1% 的“冰淇淋”，后面每一步都只能顺着它往下编，已经写出的字不会被撤回。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>自回归生成</dt><dd>每次只生成一个 token，接到前文末尾，再把整段当作新输入继续预测。</dd></div><div class="it" tabindex="0"><dt>结束标记</dt><dd>词表里一个特殊 token，模型选中它就表示这段话写完了。</dd></div><div class="it" tabindex="0"><dt>上下文</dt><dd>模型当前能看到的全部文本，包括提示词和它已经写出的内容。</dd></div><div class="it" tabindex="0"><dt>提示词 prompt</dt><dd>用户或系统给出的开头文字，是生成循环的第一段前文。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>前文 → 概率表 → 挑一个 → 接上 → 重复</code></dt><dd>聊天回复就是这个循环跑几百次。</dd></div><div class="it cmd" tabindex="0"><dt>写出的 token 不会撤回</dt><dd>一步走偏，后面只能顺着它往下写。</dd></div><div class="it cmd" tabindex="0"><dt>停止条件</dt><dd>选中结束标记，或达到预设的最大长度。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="judge">
+  <div class="part-head"><h2>猜得和人一模一样，裁判就分不出来</h2><span class="meta">模仿游戏</span></div>
+  <div class="sec-lede"><p>“预测下一个词”听上去像高级输入法，它凭什么和“智能”扯上关系？答案要回到 1950 年。图灵觉得“机器能不能思考”太难定义，于是换了个能操作的问法：让裁判隔着屏幕只通过文字和人、机器分别聊天，如果反复测试也分不出谁是机器，就可以认为机器表现出了人的智能。</p><p>注意裁判只看得到文字。对语言模型来说，这等于问：<strong>它给出的概率表，和人写作时的概率表有多接近</strong>。如果两张表完全一样，它一个 token 一个 token 写出来的东西就和人写的没有区别。</p><p>所以把“预测下一个 token”做到极致，就是在逼近图灵测试的标准。</p><p class="go">拖动滑块让模型“学得更好”，看最聪明的裁判命中率怎么降向 50%，再亲自当几回裁判。</p></div>
+  <div class="lab">
+    <p class="lab-t">题目：周末早上，我一般会____</p>
+    <label class="ctl"><span>模型学到的程度 <output id="jgA">20%</output></span><input type="range" id="jgSl" min="0" max="100" value="20" aria-label="模型学到的程度"></label>
+    <div class="cmp">
+      <div><h4>人会怎么填</h4><div id="jgP"></div></div>
+      <div><h4>模型会怎么填</h4><div id="jgQ"></div></div>
+    </div>
+    <div class="read">
+      <div class="hl"><div class="v" id="jgAcc">0</div><div class="k">最聪明的裁判只看一句时的命中率（50% 等于瞎猜）</div></div>
+    </div>
+    <div class="sample" id="jgSample">点“出一题”，我会随机让人或模型填一句。</div>
+    <div class="stepper">
+      <button class="btn pri" type="button" id="jgGo">出一题</button>
+      <button class="btn" type="button" id="jgH" disabled>是人写的</button>
+      <button class="btn" type="button" id="jgM" disabled>是模型写的</button>
+      <span class="tally" id="jgTally"></span>
+    </div>
+    <p class="note">裁判的最佳策略是：看到的词在哪边概率更高，就判给哪边。两张表重合得越多，这个策略越接近抛硬币。看的句子越多，差异会累积，所以真正的测试会聊很久。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>图灵测试</dt><dd>只通过文字交流，如果裁判反复测试也分不清哪个是机器，就认为机器表现出了人的智能。</dd></div><div class="it" tabindex="0"><dt>行为标准</dt><dd>只看输出像不像人，不问内部怎么实现。</dd></div><div class="it" tabindex="0"><dt>分布接近</dt><dd>模型的概率表与人写作时的概率表越接近，写出的文字越难与人区分。</dd></div><div class="it" tabindex="0"><dt>模仿游戏</dt><dd>图灵 1950 年提出的原始说法：裁判通过打字与看不见的人和机器对话。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>最佳裁判只看一个词的命中率 = ½ + ½·TV(p, q)</code></dt><dd>TV 是两张概率表的“总变差距离”，重合越多越接近 50%。</dd></div><div class="it cmd" tabindex="0"><dt>看的文字越多，差异越会累积</dt><dd>所以测试需要长时间对话。</dd></div><div class="it cmd" tabindex="0"><dt>“分不出”不等于“真理解”</dt><dd>机器是否理解，至今仍有争论。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="cloze">
+  <div class="part-head"><h2>想把空填对，光背搭配不够</h2><span class="meta">预测逼出理解</span></div>
+  <div class="sec-lede"><p>光会背字词搭配，能把下一个词猜准吗？不能。人写下的句子里装着各种东西：要填出某国首都，得有知识；要从几句比较里得出谁最矮，得会推理；要知道手机进水后先关机，得懂常识；要读懂一句话里的情绪，得明白人。</p><p>想在所有这些位置上都猜得准，模型就被迫把这些东西也一并学进去。“预测下一个词”这个看似简单的目标，实际上是一个包罗万象的考试，知识、逻辑、常识和情感都在题里。</p><p>当然，“猜得准”是否等于真正“理解”，至今仍有争论；但它给了我们一个清晰、可以打分的目标。</p><p class="go">下面四道填空，每道都会告诉你它考的是哪种能力。</p></div>
+  <div class="lab">
+    <ol class="quiz" id="clQuiz"></ol>
+  </div>
+  <ul class="pts" style="margin-top:20px">
+    <li>所以“把下一个词猜准”这个看似朴素的目标，是一条通往知识和推理的路，这也是这类模型能力的起点。</li>
+    <li>它到底算不算真的“理解”，学界还在争论；但“猜得多准”可以被精确打分，下一篇就讲怎么打分。</li>
+  </ul>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>预测即理解的压力</dt><dd>要把下一个词猜准，模型必须把文字背后的知识、逻辑、常识和情绪也学进去。</dd></div><div class="it" tabindex="0"><dt>知识</dt><dd>关于世界的事实，例如地理、人物、日期。</dd></div><div class="it" tabindex="0"><dt>推理</dt><dd>把多条信息串起来得出新结论的能力。</dd></div><div class="it" tabindex="0"><dt>常识</dt><dd>人人默认知道、文本里很少明说的道理。</dd></div></dl></div><div><h4>要点</h4><dl><div class="it cmd" tabindex="0"><dt>同一个训练目标，逼出多种能力</dt><dd>没人单独教它推理，猜准的压力让它不得不学。</dd></div><div class="it cmd" tabindex="0"><dt>能力来自数据里藏着的规律</dt><dd>数据里没有的东西，它也学不到。</dd></div><div class="it cmd" tabindex="0"><dt>“分不出”只是行为标准</dt><dd>能不能算真正的理解，学界仍有争论。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm/"><small>回到系列目录</small><span>系列目录：动手拆一个大语言模型</span></a><a href="../2026-10-15-llm-2/" class="nx"><small>下一篇</small><span>猜得有多准，用 bit 来量</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+/* ---------- 玩具分词器 ---------- */
+(function () {
+  var V = ['明天','今天','可能','下雨','记得','带伞','大语言模型','语言模型','语言','模型','预测','下一个','下一','一个','token','tok','en','un','believ','able','straw','berry','天气','我们','出门','人工智能','智能','的','了','会'];
+  V.sort(function (a, b) { return b.length - a.length; });
+  var inp = $('#tkIn'), out = $('#tkOut'), mode = 'vocab';
+  function id(t) { var x = 2166136261; for (var i = 0; i < t.length; i++) { x ^= t.charCodeAt(i); x = Math.imul(x, 16777619) >>> 0; } return x % 100000; }
+  function cut(s) {
+    var r = [], i = 0;
+    while (i < s.length) {
+      var hit = null;
+      if (mode === 'vocab') for (var k = 0; k < V.length; k++) { if (s.substr(i, V[k].length).toLowerCase() === V[k]) { hit = s.substr(i, V[k].length); break; } }
+      if (!hit) hit = s[i];
+      r.push(hit); i += hit.length;
+    }
+    return r;
+  }
+  function run() {
+    var s = inp.value, toks = cut(s);
+    out.textContent = '';
+    toks.forEach(function (t) {
+      var e = h('span', { class: 'tok' }, out);
+      h('span', { text: t === ' ' ? '␣' : t }, e);
+      h('small', { text: '#' + id(t) }, e);
+    });
+    $('#tkChars').textContent = Array.from(s).length;
+    $('#tkN').textContent = toks.length;
+  }
+  inp.addEventListener('input', run);
+  $$('#tkPre button').forEach(function (b) { b.addEventListener('click', function () { inp.value = b.textContent; run(); }); });
+  S.seg($('#tkMode'), function (v) { mode = v; run(); });
+  run();
+})();
+
+/* ---------- 尖与平 ---------- */
+(function () {
+  var D = [
+    { pre: '一年有十二个', c: [['月', .965], ['星座', .015], ['生肖', .012], ['节气', .004], ['其他', .004]] },
+    { pre: '她打开冰箱，拿出一瓶', c: [['牛奶', .29], ['水', .24], ['可乐', .17], ['啤酒', .12], ['酸奶', .07], ['酱油', .04], ['其他', .07]] },
+    { pre: '周五晚上想去', c: [['吃火锅', .16], ['看电影', .15], ['健身', .1], ['逛街', .09], ['喝一杯', .08], ['唱歌', .06], ['加班', .04], ['其他几百种', .32]] }
+  ];
+  function show(i) {
+    var d = D[i];
+    $('#spText').innerHTML = '';
+    $('#spText').appendChild(document.createTextNode(d.pre));
+    h('span', { class: 'gap' }, $('#spText'));
+    S.bars($('#spBars'), d.c.map(function (c) { return { label: c[0], value: c[1], text: S.pct(c[1], 1), cls: /其他/.test(c[0]) ? 'dim' : '' }; }));
+    $('#spTop').textContent = S.pct(d.c[0][1], 0);
+    var acc = 0, n = 0;
+    for (var k = 0; k < d.c.length; k++) { if (/其他/.test(d.c[k][0])) { n = '很多'; break; } acc += d.c[k][1]; n++; if (acc >= .9) break; }
+    $('#spCover').textContent = typeof n === 'number' ? n + ' 个' : '上百个';
+  }
+  S.seg($('#spSeg'), function (v) { show(+v); });
+  show(0);
+})();
+
+/* ---------- 接龙 ---------- */
+(function () {
+  var END = '〔结束〕';
+  function next(st) {
+    var k = st.kind;
+    switch (st.stage) {
+      case 0: return [['雨', .5, { kind: 'rain' }], ['大雨', .2, { kind: 'rain' }], ['雪', .16, { kind: 'snow' }], ['冰雹', .07, { kind: 'hail' }], ['小雨', .06, { kind: 'rain' }], ['冰淇淋', .01, { kind: 'odd' }]];
+      case 1: return k === 'odd' ? [['？', .5], ['，', .35], ['。', .15]] : st.lai ? [['，', .75], ['。', .25]] : [['，', .7], ['。', .2], ['来', .1, { stage: 1 }]];
+      case 2:
+        if (k === 'rain') return [['我', .3], ['记得', .26], ['地上', .24], ['空气', .2]];
+        if (k === 'snow') return [['孩子们', .4], ['地上', .35], ['我', .25]];
+        if (k === 'hail') return [['车顶', .55], ['我', .45]];
+        return [['孩子们', .6], ['我', .4]];
+      case 3:
+        var w = st.last;
+        if (w === '我') return k === 'rain' ? [['撑开了伞', .4], ['关上了窗', .35], ['躲进了屋', .25]] : k === 'snow' ? [['裹紧了围巾', .6], ['关上了窗', .4]] : k === 'hail' ? [['躲进了屋', .7], ['关上了窗', .3]] : [['张大了嘴', .7], ['愣住了', .3]];
+        if (w === '记得') return [['带伞', .7], ['收衣服', .3]];
+        if (w === '地上') return k === 'snow' ? [['白了', .7], ['积了雪', .3]] : [['湿了', .6], ['积了水', .4]];
+        if (w === '空气') return [['凉了', .55], ['清新多了', .45]];
+        if (w === '孩子们') return k === 'snow' ? [['堆起了雪人', .6], ['打起了雪仗', .4]] : [['跑出去接', .7], ['欢呼起来', .3]];
+        if (w === '车顶') return [['砰砰作响', 1]];
+        return [['。', 1]];
+      case 4: return [['。', .85], ['！', .15]];
+      default: return [[END, 1]];
+    }
+  }
+  var start = '窗外下起了', toks, st, fresh;
+  function reset() { toks = []; st = { stage: 0, kind: null, last: null, lai: false }; fresh = -1; render(); }
+  function pick(i) {
+    var c = next(st), ch = c[i];
+    if (!ch || st.stage === 9) return;
+    if (ch[0] === END) { st.stage = 9; render(); return; }
+    toks.push(ch[0]); fresh = toks.length - 1;
+    var o = ch[2] || {};
+    if (o.kind) st.kind = o.kind;
+    st.last = ch[0];
+    if (ch[0] === '。' || ch[0] === '！' || ch[0] === '？') st.stage = 5;
+    else if (o.stage === 1) { st.stage = 1; st.lai = true; }
+    else st.stage++;
+    render();
+  }
+  function render() {
+    var t = $('#lpText'); t.textContent = start;
+    toks.forEach(function (x, i) { h('span', { class: i === fresh ? 'new' : '', text: x }, t); });
+    var done = st.stage === 9;
+    if (!done) h('span', { class: 'gap' }, t);
+    var c = done ? [] : next(st);
+    $('#lpStep').textContent = done ? '模型选出了〔结束〕，这段话写完了。一共走了 ' + (toks.length + 1) + ' 步。' : '第 ' + (toks.length + 1) + ' 步：把上面整段交给模型，它给出下面这张表。';
+    S.bars($('#lpBars'), c.map(function (x) { return { label: x[0], value: x[1], text: S.pct(x[1], 0), cls: x[1] < .05 ? 'alt' : '' }; }), { onPick: pick });
+    $('#lpSample').disabled = $('#lpGreedy').disabled = done;
+  }
+  $('#lpSample').addEventListener('click', function () {
+    var c = next(st), r = Math.random(), a = 0;
+    for (var i = 0; i < c.length; i++) { a += c[i][1]; if (r < a) return pick(i); }
+    pick(c.length - 1);
+  });
+  $('#lpGreedy').addEventListener('click', function () { pick(0); });
+  $('#lpReset').addEventListener('click', reset);
+  reset();
+})();
+
+/* ---------- 当裁判 ---------- */
+(function () {
+  var L = ['睡懒觉', '出门跑步', '吃顿早饭', '看会儿书', '去加班', '乱码词'];
+  var P = [.38, .2, .18, .14, .1, 0];
+  var Q0 = [.07, .07, .07, .07, .07, .65];
+  var JUNK = ['的的了', '跑步书', '早饭懒', '星期加', '觉看会'];
+  var a = .2, cur = null, ok = 0, all = 0;
+  function q() { return Q0.map(function (x, i) { return (1 - a) * x + a * P[i]; }); }
+  function render() {
+    var Q = q(), tv = 0;
+    for (var i = 0; i < P.length; i++) tv += Math.abs(P[i] - Q[i]) / 2;
+    S.bars($('#jgP'), L.map(function (l, i) { return { label: l, value: P[i], text: S.pct(P[i], 0) }; }));
+    S.bars($('#jgQ'), L.map(function (l, i) { return { label: l, value: Q[i], text: S.pct(Q[i], 0), cls: 'alt' }; }));
+    $('#jgA').textContent = Math.round(a * 100) + '%';
+    $('#jgAcc').textContent = S.pct(.5 + tv / 2, 0);
+  }
+  function draw(dist) { var r = Math.random(), s = 0; for (var i = 0; i < dist.length; i++) { s += dist[i]; if (r < s) return i; } return dist.length - 1; }
+  $('#jgSl').addEventListener('input', function () { a = this.value / 100; render(); });
+  $('#jgGo').addEventListener('click', function () {
+    var isHuman = Math.random() < .5, i = draw(isHuman ? P : q());
+    var word = i === 5 ? JUNK[Math.floor(Math.random() * JUNK.length)] : L[i];
+    cur = isHuman;
+    $('#jgSample').textContent = '周末早上，我一般会' + word + '。';
+    $('#jgH').disabled = $('#jgM').disabled = false;
+  });
+  function guess(saysHuman) {
+    if (cur === null) return;
+    all++; if (saysHuman === cur) ok++;
+    $('#jgSample').textContent += '　→ ' + (saysHuman === cur ? '判对了，' : '判错了，') + '其实是' + (cur ? '人' : '模型') + '写的。';
+    $('#jgTally').textContent = '你判对 ' + ok + ' / ' + all;
+    cur = null; $('#jgH').disabled = $('#jgM').disabled = true;
+  }
+  $('#jgH').addEventListener('click', function () { guess(true); });
+  $('#jgM').addEventListener('click', function () { guess(false); });
+  render();
+})();
+
+/* ---------- 填空 ---------- */
+(function () {
+  var Q = [
+    ['珠穆朗玛峰在中国和____的交界处。', ['尼泊尔', '印度', '不丹'], 0, '知识', '要记得世界地理。'],
+    ['甲比乙重，丙比甲重，三个人里最轻的是____。', ['甲', '乙', '丙'], 1, '推理', '要把两句关系串起来比一比。'],
+    ['手机掉进了水里，他捞出来第一件事是赶紧____。', ['充上电', '关机', '拍照发朋友圈'], 1, '常识', '要知道进水后通电会短路。'],
+    ['等了三年的签证终于批下来了，她____得哭了出来。', ['激动', '无聊', '困'], 0, '情绪', '要读懂人在这种时刻的心情。']
+  ];
+  var ol = $('#clQuiz');
+  Q.forEach(function (q) {
+    var li = h('li', null, ol);
+    h('p', { class: 'q', text: q[0] }, li);
+    var os = h('div', { class: 'opts' }, li);
+    var fb = h('p', { class: 'fb', 'aria-live': 'polite' }, li);
+    q[1].forEach(function (o, i) {
+      var b = h('button', { class: 'opt', type: 'button', text: o }, os);
+      b.addEventListener('click', function () {
+        $$('.opt', os).forEach(function (x) { x.classList.remove('right', 'wrong'); });
+        b.classList.add(i === q[2] ? 'right' : 'wrong');
+        fb.className = 'fb' + (i === q[2] ? '' : ' bad');
+        fb.innerHTML = '';
+        h('b', { text: i === q[2] ? '对了。' : '再想想。' }, fb);
+        fb.appendChild(document.createTextNode(i === q[2] ? '这一空考的是' : '提示：这一空考的是'));
+        h('span', { class: 'ability', text: q[3] }, fb);
+        fb.appendChild(document.createTextNode('，' + q[4]));
+      });
+    });
+  });
+})();
+})();
+</script>
+</body>
+</html>

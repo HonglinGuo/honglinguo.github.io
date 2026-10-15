@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transformer 拆开看</title>
+<meta name="description" content="动手拆一个大语言模型（五）：词向量、高维空间里的“几乎垂直”、注意力的查询与键、因果掩码、旋转位置编码，以及 1750 亿参数到底在哪。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-15-llm-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-15-llm-shared/series.js"></script>
+<style>
+.toklist { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+.tk { font: inherit; display: flex; flex-direction: column; align-items: stretch; min-width: 3.6em; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 4px 8px 6px; cursor: pointer; font-size: 17px; text-align: center; }
+.tk small { font-family: var(--f-num); font-size: 15px; color: var(--ink-3); margin-top: 2px; }
+.tk .wb { height: 6px; background: var(--dim-soft); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+.tk .wb i { display: block; height: 100%; background: var(--s1); border-radius: 3px; }
+.tk.cur { border: 2px solid var(--s2); }
+.tk.fut { color: var(--ink-3); border-style: dashed; }
+.tk.fut .wb i { background: none; }
+.mgrid { display: grid; gap: 3px; margin: 8px 0; max-width: 520px; font-size: 15px; }
+.mgrid .hd { color: var(--ink-3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mgrid .rh { font: inherit; font-size: 15px; text-align: right; padding-right: 6px; color: var(--ink-2); background: none; border: 0; cursor: pointer; white-space: nowrap; }
+.mgrid .rh.on { color: var(--s1); font-weight: 650; }
+.mgrid .c { height: 30px; border-radius: 4px; background: var(--dim-soft); }
+.mgrid .c.y { background: var(--s1-soft); }
+.mgrid .c.y.on { background: var(--s1); }
+.mgrid .c.no { background: repeating-linear-gradient(45deg, var(--hair) 0 4px, transparent 4px 8px); }
+.stack { display: flex; height: 26px; border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+.stack i { display: block; height: 100%; transition: width .3s ease; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 15px; color: var(--ink-2); margin: 4px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 12px; height: 12px; display: inline-block; border-radius: 3px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.presets button { font: inherit; font-size: 15px; background: none; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.presets button:hover { color: var(--ink); border-color: var(--ink-3); }
+@media (prefers-reduced-motion: reduce) { .stack i { transition: none; } }
+</style>
+</head>
+<body data-part="5">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>动手拆一个大语言模型 · 05</span><span>约 15 分钟</span><span>6 个小实验</span></p>
+  <h1>每个词都去<em>别处找线索</em></h1>
+  <p class="lead">前四篇备齐了零件：概率表、交叉熵、神经元、梯度、残差和归一化。2017 年的 Transformer 把它们拼成了今天几乎所有大语言模型的骨架。它最关键的新零件，叫注意力。</p>
+  <p class="credit">本系列受《<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">三万字长文：大语言模型从零入门</a>》（腾讯技术工程公众号，作者 flyflywang）启发。原文是一篇系统扎实的长文，推荐对照阅读；这里不复述原文，而是把其中的概念换成能动手试的小实验。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-15-llm/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-15-llm-1/" data-part="1"><b>01</b>猜下一个词</a>
+  <a href="../2026-10-15-llm-2/" data-part="2"><b>02</b>惊讶有几个 bit</a>
+  <a href="../2026-10-15-llm-3/" data-part="3"><b>03</b>会弯折的加法</a>
+  <a href="../2026-10-15-llm-4/" data-part="4"><b>04</b>下坡与回传</a>
+  <a href="../2026-10-15-llm-5/" aria-current="page" data-part="5"><b>05</b>Transformer</a>
+  <a href="../2026-10-15-llm-6/" data-part="6"><b>06</b>变成聊天助手</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#embed">词向量</a><a href="#superpos">高维空间</a><a href="#attn">注意力</a><a href="#mask">只许往前看</a><a href="#rope">位置</a><a href="#params">参数在哪</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="embed">
+  <div class="part-head"><h2>每个 token 换成一串数</h2><span class="meta">嵌入向量</span></div>
+  <div class="sec-lede"><p>前四篇备齐了零件，现在看它们拼成的结构：2017 年 Google 提出的 Transformer，如今几乎所有大语言模型都基于它。数据在里面这样流动：token 编号 → 嵌入成向量 → 加入位置信息 → 若干层“注意力 + 前馈网络” → 输出每个 token 的分数 → Softmax。</p><p>第一步是把编号变成有意义的数。编号本身没有含义，452 并不比 25“大”，所以每个 token 会查表换成一串几千维的数，叫<strong>嵌入向量</strong>。每一维代表什么不是人定的，这些数也是参数，一起训练出来。训练会让常出现在相似上下文里的词，比如“茶”和“咖啡”，被推到相近的方向。于是模型在一句话里学到的东西，能自然迁移到没见过的近义说法上，这正好解决了查表法“没见过就不会”的难题。</p><p class="go">下面是二维示意。先点一个词，再点另一个，比较它们的点积、余弦相似度和夹角。</p></div>
+  <div class="lab lab-split">
+    <div class="box" id="emChart"></div>
+    <div>
+      <p class="msg" id="emPick">已选：</p>
+      <div class="read">
+        <div><div class="v" id="emDot">—</div><div class="k">点积：对应位置相乘再相加</div></div>
+        <div class="hl"><div class="v" id="emCos">—</div><div class="k">余弦相似度：只看方向</div></div>
+        <div><div class="v" id="emAng">—</div><div class="k">夹角</div></div>
+      </div>
+      <div class="ctrls"><div class="seg" id="emSeg"><button data-v="1" aria-pressed="true">原长</button><button data-v="2">把第二个词拉长 2 倍</button></div></div>
+      <p class="note">拉长以后点积翻倍，余弦不变：意思主要在方向上，长度更像“音量”。注意力打分用的正是点积。</p>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>嵌入向量</dt><dd>每个 token 对应的一串可学习的数，用来代替没有意义的编号。</dd></div><div class="it" tabindex="0"><dt>嵌入表</dt><dd>词表大小 × 向量维度的大矩阵，查表就能把编号换成向量。</dd></div><div class="it" tabindex="0"><dt>点积</dt><dd>两个向量对应位置相乘再相加，方向越接近越大。</dd></div><div class="it" tabindex="0"><dt>余弦相似度</dt><dd>点积除以两个向量长度之积，只看方向不看长度。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>a · b = Σ a<sub>i</sub>b<sub>i</sub> = |a||b| cos θ</code></dt><dd>点积与夹角的关系。</dd></div><div class="it cmd" tabindex="0"><dt><code>cos θ = a · b / (|a||b|)</code></dt><dd>范围 −1 到 1，向量放大不变。</dd></div><div class="it cmd" tabindex="0"><dt><code>Llama 3 8B 嵌入表：约 12.8 万 × 4096 ≈ 5.25 亿个数</code></dt><dd>嵌入表本身就是很大一块参数。</dd></div><div class="it cmd" tabindex="0"><dt>上下文相似的词，向量被训练推到一起</dt><dd>学到的规律因此能迁移到没见过的说法上。</dd></div><div class="it cmd" tabindex="0"><dt>减法表示关系</dt><dd>如“国王 − 男人 + 女人 ≈ 女王”。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="superpos">
+  <div class="part-head"><h2>几千维，为什么装得下几十万个概念</h2><span class="meta">叠加</span></div>
+  <div class="sec-lede"><p>语言里的概念有几十万个，向量却只有几千维，装得下吗？如果每个概念都要占一个和其他概念严格垂直的方向，4096 维最多只能放 4096 个。</p><p>但只要允许一点误差，情况就完全不同。高维空间有一个反直觉的性质：随手取两个方向，几乎总是接近垂直。三维空间里，两个随机方向的夹角落在 88° 到 92° 之间的概率只有约 3.5%；到 GPT-3 的 12288 维，这个概率超过 99.98%。“几乎垂直”的方向能放下的数量随维度指数增长，于是模型可以把远多于维度数的概念各放一个几乎互不干扰的方向，这叫<strong>叠加</strong>。代价是读一个概念时会混进一点别的噪声，好在一段话里同时用到的概念很少。</p><p class="go">拖动维度和允许的误差，看“几乎垂直”的概率怎么变。</p></div>
+  <div class="lab">
+    <div class="ctl-grid">
+      <label class="ctl"><span>空间维度 <output id="spDo"></output></span><input type="range" id="spD" min="0" max="100" value="30" aria-label="维度，对数刻度"></label>
+      <label class="ctl"><span>允许偏离 90° 多少 <output id="spTo"></output></span><input type="range" id="spT" min="1" max="10" step="0.5" value="2" aria-label="允许的角度误差"></label>
+    </div>
+    <div class="presets" id="spPre"><button type="button" data-v="3">3 维</button><button type="button" data-v="768">768 维</button><button type="button" data-v="4096">4096 维</button><button type="button" data-v="12288">12288 维</button></div>
+    <div class="box" id="spChart"></div>
+    <div class="read"><div class="hl"><div class="v" id="spP">0</div><div class="k">随机两个方向“几乎垂直”的概率</div></div></div>
+    <p class="note">于是模型能把远多于维度数的概念各放在一个几乎互不干扰的方向上，代价是读一个概念时会混进一点别的噪声。也因此，真实向量的某一维通常没法单独解释成“甜不甜”这类含义。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>近似正交</dt><dd>两个方向的夹角接近 90°，点积接近 0，几乎互不干扰。</dd></div><div class="it" tabindex="0"><dt>叠加 superposition</dt><dd>在 d 维空间里放远多于 d 个概念，每个占一个近似正交的方向。</dd></div><div class="it" tabindex="0"><dt>干扰噪声</dt><dd>叠加的代价：读一个概念时会混进一点其他概念。</dd></div><div class="it" tabindex="0"><dt>维度</dt><dd>向量里数字的个数；大模型通常是几千维。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>随机两方向夹角密度 ∝ sin<sup>d−2</sup>θ</code></dt><dd>维度越高越集中在 90° 附近。</dd></div><div class="it cmd" tabindex="0"><dt><code>夹角在 90° ± 2° 内的概率：3 维约 3.5%，12288 维 &gt; 99.98%</code></dt><dd>高维空间“很宽敞”。</dd></div><div class="it cmd" tabindex="0"><dt>单个维度通常没法单独解释</dt><dd>概念对应的是方向，而且彼此叠加。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="attn">
+  <div class="part-head"><h2>注意力：拿着问题，去前文里找答案</h2><span class="meta">Q · K · V</span></div>
+  <div class="sec-lede"><p>嵌入表给每个 token 的向量是固定的，不看上下文：“苹果”在“吃苹果”和“苹果手机”里拿到的是同一个向量。可理解一句话离不开上下文，代词“它”指谁、“一杯”后面该接什么，往往取决于好几个 token 之前的词。</p><p>最简单的办法是把前文所有向量平均一下，但有用的信息会被无关的词冲淡。真正需要的是<strong>有选择地收集</strong>，这就是注意力：每个位置算出一个查询（我在找什么），每个位置还有一个键（我这里有什么）和一个值（被关注时交出什么）。查询和每个键做点积打分，Softmax 变成权重，再按权重把值加起来，结果加回当前位置的向量。经过注意力之后，每个位置的向量里就融进了上下文。</p><p class="go">下面点任意一个词设为当前位置，切换两个“头”，看它把注意力分给了谁、收集到了什么。</p></div>
+  <div class="lab">
+    <p class="lab-s">点任意一个词，把它设为“当前位置”（橙框）。每个词下方的蓝条就是当前位置分给它的注意力权重。键是二维的教学构造：第 1 维表示“是会动的东西”，第 2 维表示“是物件或地点”。</p>
+    <div class="toklist" id="atToks"></div>
+    <div class="ctrls">
+      <div class="seg" id="atHead"><button data-v="0" aria-pressed="true">头 1：找会动的</button><button data-v="90">头 2：找物件和地点</button><button data-v="45">两者各一半</button></div>
+      <div class="seg" id="atScale"><button data-v="1" aria-pressed="true">除以 √d</button><button data-v="0">不缩放</button></div>
+    </div>
+    <label class="ctl" style="max-width:460px"><span>查询方向（0° 找会动的，90° 找物件） <output id="atAo"></output></span><input type="range" id="atA" min="0" max="90" value="0" aria-label="查询方向"></label>
+    <div class="read">
+      <div class="hl"><div class="v" id="atTop">—</div><div class="k">权重最高的词</div></div>
+      <div><div class="v" id="atOut">—</div><div class="k">收集到的信息（会动, 物件）</div></div>
+    </div>
+    <p class="note">同一句话里同时存在好几种关系，所以真实模型会并行跑几十组独立的查询、键、值，每组叫一个“头”，最后把所有头的结果拼起来。谁该关注谁不是人规定的，而是训练中为了降低交叉熵自己长出来的。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>注意力</dt><dd>每个位置按相关程度给前文各位置分配权重，再把它们的信息加权平均收集过来。</dd></div><div class="it" tabindex="0"><dt>查询 Q</dt><dd>当前位置“想找什么”。</dd></div><div class="it" tabindex="0"><dt>键 K</dt><dd>每个位置“我这里有什么”，用来和查询比对。</dd></div><div class="it" tabindex="0"><dt>值 V</dt><dd>被关注时实际交出去的内容。</dd></div><div class="it" tabindex="0"><dt>多头注意力</dt><dd>并行多组独立的 Q、K、V，各自关注不同关系，结果拼接后再混合。</dd></div><div class="it" tabindex="0"><dt>归纳头</dt><dd>一类注意力头：看到 A 时去找上次 A 后面的 B，从而预测 B。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d) V</code></dt><dd>注意力的完整公式。</dd></div><div class="it cmd" tabindex="0"><dt><code>Q = xW<sub>Q</sub>，K = xW<sub>K</sub>，V = xW<sub>V</sub></code></dt><dd>三个矩阵都是训练出来的。</dd></div><div class="it cmd" tabindex="0"><dt>除以 √d</dt><dd>防止维度高时点积过大，Softmax 过于集中、梯度过小。</dd></div><div class="it cmd" tabindex="0"><dt>关注谁不是人规定的</dt><dd>是为了降低交叉熵在训练中自己形成的。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="mask">
+  <div class="part-head"><h2>只许往前看</h2><span class="meta">因果掩码</span></div>
+  <div class="sec-lede"><p>生成文字的时候，模型只知道已经写出的部分。训练时也必须保持一致：每个位置只能看它自己和前面的位置，否则就是偷看答案。做法是把“未来位置”的注意力分数设为负无穷，经过 Softmax 后权重就是 0，这叫<strong>因果掩码</strong>。</p><p>它还带来一个大好处：一段文本只需要算一遍，每个位置都同时在做自己那道“猜下一个”的题，彼此互不偷看。一段 1000 个 token 的文本，一次就提供约 1000 道练习题，这是 Transformer 训练效率高的重要原因，也是语言模型只需要原始 Transformer 中“解码器”那一半的原因。</p><p class="go">点左边任意一行，看这个位置能看到哪些词、要预测的是什么。</p></div>
+  <div class="lab lab-split">
+    <div><div class="mgrid" id="mkGrid"></div></div>
+    <div>
+      <p class="msg" id="mkMsg"></p>
+      <p class="note">好处是一整段文本只要算一遍：每个位置同时在做自己那道“猜下一个”的题，互不偷看。一段 1000 个 token 的文本，一次就提供约 1000 道练习题。</p>
+    </div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>因果掩码</dt><dd>让每个位置只能看到自己和之前的位置，不能偷看未来。</dd></div><div class="it" tabindex="0"><dt>解码器</dt><dd>Transformer 中按顺序生成的那一半；语言模型只用它。</dd></div><div class="it" tabindex="0"><dt>并行训练</dt><dd>一段文本算一遍，每个位置同时练习预测自己的下一个 token。</dd></div><div class="it" tabindex="0"><dt>下三角矩阵</dt><dd>因果掩码的形状：第 i 行只有前 i 列可见。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>未来位置的分数设为 −∞，Softmax 后权重为 0</code></dt><dd>掩码的实现方式。</dd></div><div class="it cmd" tabindex="0"><dt><code>n 个 token 的文本 ≈ n 道练习题</code></dt><dd>Transformer 训练高效的原因之一。</dd></div><div class="it cmd" tabindex="0"><dt>训练和生成必须一致</dt><dd>生成时本来就看不到未来。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="rope">
+  <div class="part-head"><h2>注意力本身不分先后</h2><span class="meta">旋转位置编码 RoPE</span></div>
+  <div class="sec-lede"><p>注意力只看向量像不像，本身并不知道顺序：把两个词互换位置，打分结果完全不变。可“狗咬人”和“人咬狗”用字相同，意思相反，所以必须额外告诉模型位置信息。</p><p>原始 Transformer 给每个位置生成一个特定的向量，加到 token 的向量上。许多新模型则用<strong>旋转位置编码（RoPE）</strong>：不改 token 向量本身，而是在算注意力时，把查询和键按“与位置成正比的角度”各转一下。两个向量的点积只取决于它们的长度和夹角，各自转过之后，多出来的夹角只和两者相隔多远有关。于是注意力分数只看相对距离，不看绝对位置，这通常更有用：紧挨着的词往往比 500 个 token 之前的词更相关，不管这句话出现在文章哪里。</p><p class="go">拖动查询和键的位置，再点“两个一起往后挪 100 位”，看分数变不变。</p></div>
+  <div class="lab lab-split">
+    <div>
+      <label class="ctl"><span>查询所在位置 m <output id="rpMo"></output></span><input type="range" id="rpM" min="0" max="200" value="3" aria-label="查询位置"></label>
+      <label class="ctl"><span>键所在位置 n <output id="rpNo"></output></span><input type="range" id="rpN" min="0" max="200" value="5" aria-label="键位置"></label>
+      <div class="stepper"><button class="btn" type="button" id="rpShift">两个一起往后挪 100 位</button><button class="btn" type="button" id="rpBack">挪回来</button></div>
+      <div class="read">
+        <div><div class="v" id="rpD">0</div><div class="k">相隔 n − m</div></div>
+        <div class="hl"><div class="v" id="rpS">0</div><div class="k">查询 · 键 的分数</div></div>
+      </div>
+      <p class="note">这里每个位置转 10°。真实的 RoPE 把向量拆成许多对，每一对转速不同：转得快的对近距离敏感，转得慢的能感知远处。</p>
+    </div>
+    <div class="box" id="rpChart"></div>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>位置编码</dt><dd>让模型知道 token 顺序的信息；注意力本身对顺序不敏感。</dd></div><div class="it" tabindex="0"><dt>正弦位置编码</dt><dd>原始 Transformer 的做法：把按位置算出的正弦、余弦向量加到 token 向量上。</dd></div><div class="it" tabindex="0"><dt>旋转位置编码 RoPE</dt><dd>计算注意力前，按位置把查询和键各自旋转一个角度。</dd></div><div class="it" tabindex="0"><dt>相对位置</dt><dd>两个 token 相隔多远，比它们的绝对位置更有用。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>q 转 mθ，k 转 nθ，点积只取决于 (n − m)θ</code></dt><dd>RoPE 让分数只依赖相对距离。</dd></div><div class="it cmd" tabindex="0"><dt>向量拆成许多二维对，各对转速不同</dt><dd>快的对近距离敏感，慢的能感知远处。</dd></div><div class="it cmd" tabindex="0"><dt>Llama 等许多模型使用 RoPE</dt><dd>现代大模型的常见选择。</dd></div></dl></div></div></div>
+</section>
+
+<section class="part" id="params">
+  <div class="part-head"><h2>1750 亿个参数，都在哪</h2><span class="meta">Transformer 块</span></div>
+  <div class="sec-lede"><p>注意力负责让各个位置交换信息，之后每个位置还要各自经过一个<strong>前馈网络</strong>，也就是第 3 篇讲的“加权求和 + 弯折”：先把向量放宽到约 4 倍，经过非线性，再压回原来的宽度。注意力主要在做加权平均，真正做复杂变换的主要是前馈网络。有研究认为它像一张“键-值记忆”：识别出“某国的首都是”这样的模式，就提高对应城市的分数，不过知识分散在大量参数里，指不出哪个参数存着哪条事实。</p><p>一个 Transformer 块就是注意力加前馈网络，每个子层前做归一化、外面套残差连接，再把这样的块堆几十层。层数越往后，每个位置融合的上下文越多，最后一个位置的向量就代表了“读完整段之后接下来该说什么”。</p><p class="go">按向量宽度、层数和词表大小估一估参数量，看看 1750 亿是怎么来的、大头在哪里。</p></div>
+  <div class="lab">
+    <div class="presets" id="pmPre"><button type="button" data-v="768,12,50257">GPT-2 小号</button><button type="button" data-v="4096,32,50257">中等规模</button><button type="button" data-v="12288,96,50257">GPT-3 最大号</button></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>向量宽度 d <output id="pmDo"></output></span><input type="range" id="pmD" min="0" max="100" value="100" aria-label="向量宽度，对数刻度"></label>
+      <label class="ctl"><span>层数 <output id="pmLo"></output></span><input type="range" id="pmL" min="1" max="128" value="96" aria-label="层数"></label>
+      <label class="ctl"><span>词表大小 <output id="pmVo"></output></span><input type="range" id="pmV" min="8000" max="256000" step="1" value="50257" aria-label="词表大小"></label>
+    </div>
+    <div class="stack" id="pmStack" aria-hidden="true"></div>
+    <div class="legend"><span><i style="background:var(--s1)"></i>前馈网络 8d² × 层数</span><span><i style="background:var(--s2)"></i>注意力 4d² × 层数</span><span><i style="background:var(--dim)"></i>嵌入表 词表 × d</span></div>
+    <div class="read">
+      <div class="hl"><div class="v" id="pmT">0</div><div class="k">总参数（忽略偏置、归一化等零头）</div></div>
+      <div><div class="v" id="pmF">0</div><div class="k">前馈网络占比</div></div>
+    </div>
+    <p class="note">按 GPT-3 的数字代进去，得到约 1746 亿，和公布的 1750 亿基本一致。大头在前馈网络里，有研究认为它像一张巨大的“看到某种模式就提高某些词分数”的记忆表，但知识是分散存放的，指不出哪个参数记着哪条事实。</p>
+  </div>
+  <div class="notes"><div class="notes-head"><h3>记下来</h3><button class="btn quiz-btn" type="button" aria-pressed="false">自测：遮住解释</button></div><div class="notes-grid"><div><h4>概念</h4><dl><div class="it" tabindex="0"><dt>Transformer 块</dt><dd>注意力 + 前馈网络两个子层，各自前置归一化、外套残差连接。</dd></div><div class="it" tabindex="0"><dt>前馈网络 FFN</dt><dd>每个位置独立的“加权求和 + 弯折”，先放宽到约 4 倍再压回。</dd></div><div class="it" tabindex="0"><dt>SwiGLU</dt><dd>现代模型常用的带门控的前馈网络变体。</dd></div><div class="it" tabindex="0"><dt>键-值记忆</dt><dd>一种解释：前馈层识别输入模式，再提高相应后续 token 的分数。</dd></div></dl></div><div><h4>公式与要点</h4><dl><div class="it cmd" tabindex="0"><dt><code>每层参数 ≈ 4d²（注意力）+ 8d²（前馈）= 12d²</code></dt><dd>d 是向量宽度。</dd></div><div class="it cmd" tabindex="0"><dt><code>总参数 ≈ 12d²·L + V·d</code></dt><dd>L 是层数，V 是词表大小。</dd></div><div class="it cmd" tabindex="0"><dt><code>GPT-3：d = 12288，L = 96 → 约 1746 亿</code></dt><dd>与公布的 1750 亿基本一致。</dd></div><div class="it cmd" tabindex="0"><dt>前馈网络约占三分之二的参数</dt><dd>知识分散存放，指不出单条事实存在哪里。</dd></div><div class="it cmd" tabindex="0"><dt><code>x ← x + Attn(Norm(x))；x ← x + FFN(Norm(x))</code></dt><dd>一个 Pre-Norm 块的计算顺序。</dd></div></dl></div></div></div>
+</section>
+</div>
+<div class="wrap"><nav class="pager" aria-label="翻页"><a href="../2026-10-15-llm-4/"><small>上一篇</small><span>训练：往下坡走，把错摊回去</span></a><a href="../2026-10-15-llm-6/" class="nx"><small>下一篇</small><span>从一张概率表，到一个聊天助手</span></a></nav></div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记 · 动手拆一个大语言模型</span>
+    <span>灵感来源：<a href="https://mp.weixin.qq.com/s/j5b3OokW552SM3iNLMoXkQ" rel="noopener">《三万字长文：大语言模型从零入门》</a>（腾讯技术工程）</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h, svg = S.svg;
+/* ---------- 词向量 ---------- */
+(function () {
+  var Wd = [['猫', .85, .3], ['狗', .72, .5], ['兔子', .93, .08], ['咖啡', .1, .93], ['茶', .36, .87], ['牛奶', .56, .72], ['跑步', -.86, .45], ['游泳', -.9, .18], ['书', -.22, -.9], ['报纸', -.62, -.7]];
+  var sel = [0, 1], k = 1, next = 0;
+  var redraw = S.fit($('#emChart'), function (W) { return Math.min(W, 380); }, function (s, W, H) {
+    var cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 40;
+    var X = function (v) { return cx + v * R; }, Y = function (v) { return cy - v * R; };
+    svg('line', { class: 'ax', x1: X(-1.1), x2: X(1.1), y1: cy, y2: cy }, s);
+    svg('line', { class: 'ax', x1: cx, x2: cx, y1: Y(-1.1), y2: Y(1.1) }, s);
+    sel.forEach(function (i, j) {
+      var w = Wd[i], m = j === 1 ? k : 1;
+      svg('line', { x1: cx, y1: cy, x2: X(w[1] * m), y2: Y(w[2] * m), class: j ? 'k-s2' : 'k-s1', 'stroke-width': 3, 'stroke-linecap': 'round' }, s);
+    });
+    Wd.forEach(function (w, i) {
+      var on = sel.indexOf(i), g = svg('g', { class: 'clk', tabindex: 0, role: 'button', 'aria-label': '选择 ' + w[0] }, s);
+      svg('circle', { cx: X(w[1]), cy: Y(w[2]), r: 7, class: on === 0 ? 'f-s1' : on === 1 ? 'f-s2' : 'f-dim' }, g);
+      svg('rect', { x: X(w[1]) - 24, y: Y(w[2]) - 24, width: 48, height: 48, fill: 'transparent' }, g);
+      var rt = w[1] >= 0.2;
+      svg('text', { x: X(w[1]) + (rt ? 12 : -12), y: Y(w[2]) + 5, 'text-anchor': rt ? 'start' : 'end', class: on >= 0 ? 'ink b' : '', text: w[0] }, g);
+      var go = function () { sel[next] = i; next = 1 - next; upd(); };
+      g.addEventListener('click', go);
+      g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+  });
+  function upd() {
+    var a = Wd[sel[0]], b = Wd[sel[1]];
+    var bx = b[1] * k, by = b[2] * k, dot = a[1] * bx + a[2] * by;
+    var cos = dot / (Math.hypot(a[1], a[2]) * Math.hypot(bx, by));
+    $('#emPick').innerHTML = '';
+    $('#emPick').appendChild(document.createTextNode('已选：'));
+    h('b', { text: a[0], style: 'color:var(--s1)' }, $('#emPick'));
+    $('#emPick').appendChild(document.createTextNode(' 和 '));
+    h('b', { text: b[0], style: 'color:var(--s2)' }, $('#emPick'));
+    $('#emPick').appendChild(document.createTextNode('（下一次点击替换' + (next ? '第二个' : '第一个') + '）'));
+    $('#emDot').textContent = S.f(dot, 2);
+    $('#emCos').textContent = S.f(cos, 2);
+    $('#emAng').textContent = Math.round(Math.acos(S.clamp(cos, -1, 1)) * 180 / Math.PI) + '°';
+    redraw();
+  }
+  S.seg($('#emSeg'), function (v) { k = +v; upd(); });
+  upd();
+})();
+
+/* ---------- 高维几乎垂直 ---------- */
+(function () {
+  var d, tol, dFix = null;
+  function toD(v) { return Math.round(Math.pow(10, Math.log10(2) + (Math.log10(20000) - Math.log10(2)) * v / 100)); }
+  function toV(dd) { return 100 * (Math.log10(dd) - Math.log10(2)) / (Math.log10(20000) - Math.log10(2)); }
+  // 两个随机方向夹角 θ 的密度 ∝ sin^(d−2) θ
+  function dens(th) { var sn = Math.sin(th); return sn <= 0 ? (d === 2 ? 1 : 0) : Math.exp((d - 2) * Math.log(sn)); }
+  function prob() {
+    var N = 40000, tot = 0, inb = 0, lo = (90 - tol) * Math.PI / 180, hi = (90 + tol) * Math.PI / 180;
+    for (var i = 0; i < N; i++) { var th = (i + .5) / N * Math.PI, v = dens(th); tot += v; if (th >= lo && th <= hi) inb += v; }
+    return inb / tot;
+  }
+  var redraw = S.fit($('#spChart'), 236, function (s, W, H) {
+    var L = 16, R = W - 16, T = 12, B = H - 58;
+    var x = S.scale(0, 180, L, R), y = S.scale(0, 1, B, T);
+    svg('rect', { x: x(90 - tol), y: T, width: x(90 + tol) - x(90 - tol), height: B - T, class: 'f-s1s' }, s);
+    [0, 45, 90, 135, 180].forEach(function (v) { svg('text', { class: 'n', x: x(v), y: B + 22, 'text-anchor': v === 0 ? 'start' : v === 180 ? 'end' : 'middle', text: v + '°' }, s); });
+    svg('line', { class: 'ax', x1: L, x2: R, y1: B, y2: B }, s);
+    var pts = []; for (var i = 0; i <= 720; i++) { var a = i / 4; pts.push([x(a), y(dens(a * Math.PI / 180))]); }
+    svg('path', { class: 'ln k-s1', d: S.path(pts) }, s);
+    svg('text', { x: L, y: H - 4, class: 'c-3', text: '夹角分布（蓝底 = 几乎垂直）' }, s);
+  });
+  function upd() {
+    d = dFix || toD(+$('#spD').value); tol = +$('#spT').value;
+    $('#spDo').textContent = d + ' 维'; $('#spTo').textContent = '±' + tol + '°';
+    var p = prob();
+    $('#spP').textContent = p > .9999 ? '> 99.99%' : S.pct(p, p < .1 ? 2 : 1);
+    redraw();
+  }
+  $('#spD').addEventListener('input', function () { dFix = null; upd(); }); $('#spT').addEventListener('input', upd);
+  $$('#spPre button').forEach(function (b) { b.addEventListener('click', function () { dFix = +b.getAttribute('data-v'); $('#spD').value = toV(dFix); upd(); }); });
+  upd();
+})();
+
+/* ---------- 注意力 ---------- */
+(function () {
+  var T = [['小猫', 2, .2], ['追着', .3, .1], ['毛线球', .2, 1.6], ['滚到了', .4, .3], ['沙发', 0, 1.3], ['底下', 0, .7], ['，', 0, 0], ['它', .6, .6]];
+  var pos = 7, ang = 0, scale = true, btns = [];
+  T.forEach(function (t, i) {
+    var b = h('button', { class: 'tk', type: 'button', 'aria-label': '把“' + t[0] + '”设为当前位置' }, $('#atToks'));
+    h('span', { text: t[0] }, b); var sm = h('small', null, b); var wb = h('span', { class: 'wb' }, b); var bar = h('i', null, wb);
+    b.addEventListener('click', function () { pos = i; upd(); });
+    btns.push({ b: b, sm: sm, bar: bar });
+  });
+  function upd() {
+    var a = ang * Math.PI / 180, q = [2 * Math.cos(a), 2 * Math.sin(a)];
+    var sc = [], vis = T.slice(0, pos + 1);
+    vis.forEach(function (t) { sc.push((q[0] * t[1] + q[1] * t[2]) / (scale ? Math.SQRT2 : 1)); });
+    var w = S.softmax(sc), out = [0, 0], best = 0;
+    vis.forEach(function (t, i) { out[0] += w[i] * t[1]; out[1] += w[i] * t[2]; if (w[i] > w[best]) best = i; });
+    btns.forEach(function (x, i) {
+      x.b.classList.toggle('cur', i === pos); x.b.classList.toggle('fut', i > pos);
+      x.sm.textContent = i > pos ? '看不到' : S.pct(w[i], 0);
+      x.bar.style.width = i > pos ? '0' : w[i] * 100 + '%';
+    });
+    $('#atAo').textContent = ang + '°';
+    $('#atTop').textContent = T[best][0] + ' ' + S.pct(w[best], 0);
+    $('#atOut').textContent = '(' + S.f(out[0], 2) + ', ' + S.f(out[1], 2) + ')';
+  }
+  $('#atA').addEventListener('input', function () { ang = +this.value; upd(); });
+  S.seg($('#atHead'), function (v) { ang = +v; $('#atA').value = ang; upd(); });
+  S.seg($('#atScale'), function (v) { scale = v === '1'; upd(); });
+  upd();
+})();
+
+/* ---------- 因果掩码 ---------- */
+(function () {
+  var T = ['小猫', '追着', '毛线球', '滚到了', '沙发', '底下'], NEXT = ['追着', '毛线球', '滚到了', '沙发', '底下', '。'];
+  var g = $('#mkGrid'), row = 3;
+  g.style.gridTemplateColumns = 'max-content repeat(' + T.length + ', minmax(0, 1fr))';
+  function draw() {
+    g.textContent = '';
+    h('span', null, g);
+    T.forEach(function (t) { h('span', { class: 'hd', text: t }, g); });
+    T.forEach(function (t, i) {
+      var rb = h('button', { class: 'rh' + (i === row ? ' on' : ''), type: 'button', text: t, 'aria-label': '查看位置“' + t + '”' }, g);
+      rb.addEventListener('click', function () { row = i; draw(); });
+      T.forEach(function (u, j) { h('span', { class: 'c ' + (j <= i ? 'y' + (i === row ? ' on' : '') : 'no') }, g); });
+    });
+    $('#mkMsg').innerHTML = '';
+    var m = $('#mkMsg');
+    m.appendChild(document.createTextNode('“' + T[row] + '”这一行能看到前 ' + (row + 1) + ' 个位置，它要预测的是“'));
+    h('b', { text: NEXT[row], style: 'color:var(--s1)' }, m);
+    m.appendChild(document.createTextNode('”。斜线格是被遮住的未来。'));
+  }
+  draw();
+})();
+
+/* ---------- RoPE ---------- */
+(function () {
+  var STEP = 10, Q0 = 0, K0 = 35, QL = 1, KL = .85;
+  var m, n;
+  var redraw = S.fit($('#rpChart'), function (W) { return Math.min(W, 320); }, function (s, W, H) {
+    var cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 28;
+    svg('circle', { cx: cx, cy: cy, r: R, fill: 'none', class: 'k-hair', 'stroke-width': 1 }, s);
+    svg('line', { class: 'ax', x1: cx - R, x2: cx + R, y1: cy, y2: cy }, s);
+    svg('line', { class: 'ax', x1: cx, x2: cx, y1: cy - R, y2: cy + R }, s);
+    var aq = (Q0 + m * STEP) * Math.PI / 180, ak = (K0 + n * STEP) * Math.PI / 180;
+    [[aq, QL, 'k-s1', '查询'], [ak, KL, 'k-s2', '键']].forEach(function (v) {
+      var ex = cx + Math.cos(v[0]) * R * v[1], ey = cy - Math.sin(v[0]) * R * v[1];
+      svg('line', { x1: cx, y1: cy, x2: ex, y2: ey, class: v[2], 'stroke-width': 4, 'stroke-linecap': 'round' }, s);
+      svg('circle', { cx: ex, cy: ey, r: 5, class: v[2] === 'k-s1' ? 'f-s1' : 'f-s2' }, s);
+      var lx = cx + Math.cos(v[0]) * (R * v[1] + 16), ly = cy - Math.sin(v[0]) * (R * v[1] + 16);
+      svg('text', { x: lx, y: ly + 5, 'text-anchor': Math.cos(v[0]) > .2 ? 'start' : Math.cos(v[0]) < -.2 ? 'end' : 'middle', class: 'ink b', text: v[3] }, s);
+    });
+  });
+  function upd() {
+    m = +$('#rpM').value; n = +$('#rpN').value;
+    $('#rpMo').textContent = m; $('#rpNo').textContent = n;
+    $('#rpD').textContent = n - m;
+    var rel = (K0 + n * STEP) - (Q0 + m * STEP);
+    $('#rpS').textContent = S.f(QL * KL * Math.cos(rel * Math.PI / 180), 3);
+    redraw();
+  }
+  $('#rpM').addEventListener('input', upd); $('#rpN').addEventListener('input', upd);
+  $('#rpShift').addEventListener('click', function () { var a = +$('#rpM').value, b = +$('#rpN').value; if (Math.max(a, b) + 100 > 200) return; $('#rpM').value = a + 100; $('#rpN').value = b + 100; upd(); });
+  $('#rpBack').addEventListener('click', function () { var a = +$('#rpM').value, b = +$('#rpN').value; if (Math.min(a, b) < 100) return; $('#rpM').value = a - 100; $('#rpN').value = b - 100; upd(); });
+  upd();
+})();
+
+/* ---------- 参数量 ---------- */
+(function () {
+  function toD(v) { return Math.round(Math.pow(2, 8 + 6 * v / 100)); }
+  function toV(d) { return 100 * (Math.log2(d) - 8) / 6; }
+  var dOverride = null;
+  function upd() {
+    var d = dOverride || toD(+$('#pmD').value), L = +$('#pmL').value, V = +$('#pmV').value;
+    var ffn = 8 * d * d * L, att = 4 * d * d * L, emb = V * d, tot = ffn + att + emb;
+    $('#pmDo').textContent = d; $('#pmLo').textContent = L; $('#pmVo').textContent = V;
+    var st = $('#pmStack'); st.textContent = '';
+    [[ffn, 'var(--s1)'], [att, 'var(--s2)'], [emb, 'var(--dim)']].forEach(function (p) { h('i', { style: 'width:' + (p[0] / tot * 100) + '%;background:' + p[1] }, st); });
+    $('#pmT').textContent = S.big(tot);
+    $('#pmF').textContent = S.pct(ffn / tot, 0);
+  }
+  $('#pmD').addEventListener('input', function () { dOverride = null; upd(); });
+  $('#pmL').addEventListener('input', upd); $('#pmV').addEventListener('input', upd);
+  $$('#pmPre button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var v = b.getAttribute('data-v').split(',').map(Number);
+      $('#pmD').value = toV(v[0]); dOverride = v[0]; $('#pmL').value = v[1]; $('#pmV').value = v[2]; upd();
+      $('#pmVo').textContent = v[2];
+    });
+  });
+  dOverride = 12288; $('#pmV').value = 50257; upd(); $('#pmVo').textContent = 50257;
+})();
+})();
+</script>
+</body>
+</html>
