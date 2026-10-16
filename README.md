@@ -8,7 +8,9 @@
 index.html              首页（文章列表）
 assets/site.css         公共配色、字体、页眉页脚（含深色模式）
 assets/site.js          深浅色切换
+posts/*-shared/         系列文章共用的样式和脚本（LLM 系列、Agent 系列各一套）
 posts/<slug>/index.html 每篇文章一个文件夹，自包含
+src/agent-series/       Agent 系列的正文片段和拼装脚本（改片段后运行 build.py 重新生成）
 ```
 
 ## 新增文章

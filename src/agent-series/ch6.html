@@ -1,0 +1,398 @@
+---
+title: 交互扩展：异步、语音、屏幕与机器人
+desc: 深入理解 AI Agent 学习笔记（六）：模态与时机两根轴、事件驱动异步架构与三种事件处理策略、兼容同步接口的占位符规则、语音的级联/Omni/全双工与快慢思考、Computer Use 的视觉定位与坐标缩放、机器人的分层控制与动作分块。
+kicker: <span>深入理解 AI Agent · 06</span><span>对应原书第六章</span><span>约 25 分钟</span><span>边读边点</span>
+h1: 世界不会<em>等它想完</em>
+lead: 前五篇里，Agent 和世界是轮流行动的：用户说一句，它想一段、调几个工具、回一句，思考期间世界被默认静止。原书这一章挑战的就是这个前提。回合制只是模型和接口的一种约定，不是环境的性质：邮件会在它思考时到达，用户会在它说到一半时插话，杯子会在机械臂伸手途中被碰倒。
+nav: axes|两根轴;events|事件驱动;compat|兼容方案;voice|语音;cu|Computer Use;robot|机器人
+---
+<style>
+.evbox { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.lat { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.lat .row { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) 4.5em; gap: 8px; align-items: center; font-size: 15px; }
+.lat .track { position: relative; height: 20px; background: var(--dim-soft); border-radius: 4px; }
+.lat .seg2 { position: absolute; top: 0; height: 100%; border-radius: 4px; background: var(--s1); transition: left .3s, width .3s; }
+.lat .seg2.v { background: var(--ink-3); } .lat .seg2.a { background: var(--s3); } .lat .seg2.t { background: var(--s2); }
+.lat .n { font-family: var(--f-num); text-align: right; color: var(--ink-2); }
+.res { font-family: var(--f-num); font-size: 15px; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; line-height: 1.8; margin-top: 10px; }
+.screen { position: relative; border: 2px solid var(--ink); border-radius: 6px; background: var(--bg); margin-top: 10px; overflow: hidden; }
+.screen i { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--s2); border: 2px solid var(--bg); }
+.screen span { position: absolute; left: 8px; top: 6px; font-size: 15px; color: var(--ink-3); }
+.table2 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.table2 div { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 6px; text-align: center; font-size: 15px; background: var(--bg); min-height: 64px; }
+.table2 div b { display: block; font-size: 16px; }
+.table2 div.ok { border-color: var(--ok); background: var(--ok-soft); }
+.table2 div.bad { border-color: var(--alert); background: var(--alert-soft); }
+@media (max-width: 640px) { .evbox { grid-template-columns: minmax(0, 1fr); } .table2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.layers2 { list-style: none; margin: 8px 0 0; padding: 0; }
+.layers2 li { display: grid; grid-template-columns: 8em minmax(0, 1fr) 7em; gap: 10px; padding: 9px 10px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 15px; background: var(--bg); cursor: pointer; }
+.layers2 li b { font-size: 16px; }
+.layers2 li .hz { font-family: var(--f-num); color: var(--ink-3); text-align: right; }
+.layers2 li.on { border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 50%, transparent); }
+@media (max-width: 640px) { .layers2 li { grid-template-columns: minmax(0, 1fr); } .layers2 li .hz { text-align: left; } }
+</style>
+===BODY===
+<section class="part" id="axes">
+  <div class="part-head"><h2>观察和动作的两根新轴：模态与时机</h2><span class="meta">原书 6.1 节</span></div>
+  <div class="sec-lede">
+    <p>第 1 篇说过，模型固定时最大的杠杆是扩展观察空间和动作空间。第 2 到 5 篇扩展的是它们的<strong>内容</strong>：上下文、记忆、工具、代码。这一篇扩展另外两个方向。<strong>模态</strong>决定观察和动作的形式：只读文本，还是也能听声音、看屏幕、感知力矩；只能输出 token，还是也能发声、点击、驱动关节。<strong>时机</strong>决定节奏：观察是 Agent 主动去取还是世界主动推来；动作是在一个回合内做完，还是可以跨回合、被打断、被更紧急的事抢占。</p>
+    <p>原书按时间尺度排了四个场景：<strong>异步与事件驱动</strong>（秒到天，模态不变、只变时机）、<strong>语音</strong>（10 毫秒到 1 秒，边听边说）、<strong>Computer Use</strong>（亚秒到秒，屏幕在两帧之间持续变化）、<strong>机器人</strong>（毫秒，传感器连续回流，动作要分块并可被抢占）。四者共享同一组系统原语：唤醒、安全点、取消、抢占、快慢路径分离。</p>
+    <p class="go">先把几个场景放到对应的时间尺度上。</p>
+  </div>
+  <div class="lab"><div id="axSort"></div></div>
+  <div class="notes" id="n-axes"></div>
+</section>
+
+<section class="part" id="events">
+  <div class="part-head"><h2>事件驱动：取消、排队，还是并行</h2><span class="meta">原书 6.2 节</span></div>
+  <div class="sec-lede">
+    <p>同步 Agent 像只会叫号的柜台，异步 Agent 像一位秘书：桌上同时摆着邮件、电话、来访者，按紧急程度决定先处理哪个，处理到一半还能切换。技术上，所有输入（用户消息、工具结果、外部回调、定时触发）统一建模成<strong>事件流</strong>，由事件循环驱动 Agent。OpenClaw 有三种内置机制：Hooks（框架内部生命周期事件）、Cron（定时）、Heartbeat（每隔 N 分钟醒一次）。但后两种都是时间驱动的；Pine AI 打电话时客服要验证码，等下一次心跳才通知用户，客服早挂了。所以 PineClaw 加了 <strong>Channel 机制</strong>，让外部事件即时推送。原书的结论是：<strong>真正的主动服务，需要事件能主动通知 Agent</strong>。</p>
+    <p>与此配套的是第 4 篇留下的两类工具：<strong>事件触发工具</strong>（一次性和循环定时器、监控后台命令的 monitor、接外部事件源的 connect_channel）和<strong>用户沟通工具</strong>（OpenClaw 不直接把模型输出当回复，而是用专门工具发消息，所以有“活人感”）。原书还建议给 Agent 一套<strong>独立的虚拟身份</strong>（自己的邮箱电话、虚拟电脑和手机），出错只坏虚拟环境；必须用用户本人账号时，让用户通过远程桌面亲自登录。</p>
+    <p>多个事件同时到达时，按紧急度选策略。<strong>取消式</strong>用于紧急事件（“停！我说错了”）：中断当前推理和工具，清空队列，把所有事件追加到轨迹，立即重新调用模型，相当于<strong>主动制造一个安全点</strong>。<strong>队列式</strong>用于常规事件：等当前步骤到安全点（推理结束或工具返回），再把积攒的事件一次性追加。<strong>并行式</strong>用于独立的轻量查询（分析数据时被问天气）：另起一个推理会话回答，结果标记为“与主任务并行”追加回来。原书建议用一个轻量分类 LLM 做事件路由，而不是硬编码规则。</p>
+    <p class="go">给事件选处理策略。</p>
+  </div>
+  <div class="lab"><div id="evSort"></div></div>
+  <div class="notes" id="n-events"></div>
+</section>
+
+<section class="part" id="compat">
+  <div class="part-head"><h2>同步接口里，怎么表达“还没好”</h2><span class="meta">原书 6.2 节 · 兼容方案与原生异步</span></div>
+  <div class="sec-lede">
+    <p>很多 API 要求：assistant 发出的工具调用必须先配上 tool result，才能继续。那么工具还没返回、用户突然插话怎么办？原书给出的兼容路线是：<strong>常态下让模型看到标准的同步轨迹，只在打断时插入占位符修复格式</strong>。五条规则：已完成的 assistant 消息及时记录；工具完成时才记录真实结果；执行中被打断，就给未完成的工具生成一个明确的占位结果（“工具正在后台执行，请优先处理新事件”），再追加打断事件；没有原生续接接口时取消半截生成，不把半截输出硬塞回去；非打断事件进队列批处理。</p>
+    <p>占位符有语义风险：模型可能把“已启动”当成“已完成”，编造还没到的数据。更好的做法是从工具接口上就表达异步：用 <code>initiate_phone_call</code> 而不是 <code>phone_call</code>，立即返回任务 ID，进展通过 <code>phone_call_connected</code> 等事件到达。批量事件还有注意力问题：模型可能只回应最后一条，可以给每条加“[未处理事件 2/4]”标记并在末尾汇总。</p>
+    <p>另一条路是<strong>模型原生异步</strong>：截至 2026 年 9 月，GPT-6 Astra 已提供原生异步工具调用（发起和拿结果分开，等待时能做不依赖结果的事）和回合中途引导（用户在它思考时追加“预算减少了”）。但原书强调，接收到更新不等于正确使用：还要检查结果归属、任务恢复、多条更新能否综合使用；修改计划也不会自动撤销已经发生的动作。</p>
+    <p class="go">按原书的例子走一遍：起草邮件时搜联系人，搜索还没返回，用户问天气。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">占位符怎么插</p>
+      <p class="msg" id="phCap"></p>
+      <div class="chat" id="phChat" style="margin-top:8px"></div>
+      <div id="phStep"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">批量事件别只看最后一条</p>
+      <div class="seg" id="bqSeg"><button data-v="0" aria-pressed="true">直接追加</button><button data-v="1">加编号和汇总</button></div>
+      <div class="res" id="bqOut"></div>
+      <p class="cap" id="bqCap"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-compat"></div>
+</section>
+
+<section class="part" id="voice">
+  <div class="part-head"><h2>语音：从轮流说话到边听边说</h2><span class="meta">原书 6.3 节</span></div>
+  <div class="sec-lede">
+    <p>说话速度约为打字的四倍，还不占手和眼。原书引用 OpenAI 对语音系统的三分法。<strong>级联</strong>：VAD 判断说完没 → ASR 转文字 → LLM 生成 → TTS 念出来，模块清晰易调试，但等待层层累加，语气和情绪在转文字时丢失。<strong>端到端 Omni</strong>：一个模型直接听音频、出语音，延迟更低、保留副语言信息，但仍按轮次，靠 VAD 猜发言权，用户报数字时停顿一下就可能被判为说完。<strong>全双工</strong>：模型持续听、持续说，自己决定继续、停顿、打断或调用工具（Moshi、Thinking Machines 的交互模型、GPT-Live）。主线是摆脱“轮流说话”和 VAD 对发言权的猜测。</p>
+    <p>级联也能优化成<strong>流式</strong>：ASR 边听边转，LLM 拿临时转录做推测执行（最终文本不同就取消重来），LLM 第一段可播报文本一出就交给 TTS，TTS 增量合成。</p>
+    <p>另一个维度是<strong>认知时序</strong>：前台要在用户在线时回应，后台可以想得更久。方案一“快思考回应、慢思考回答”会前后矛盾（快模型说买，慢模型发现缺功能）；方案二“快思考交互、慢思考提醒”更稳，但通信间接；方案三把思考和表达统一在一个端到端模型里（Step-Audio R1 的 MGRD 和双脑架构）。原书认为快慢分离有个工程优势：<strong>能直接承接慢模型的迭代红利</strong>，换个更强的后台模型即可。截至 2026 年 8 月，采用快慢分离的 Pine AI 语音 Agent 在 τ³-Voice 榜单排第一。</p>
+    <p class="go">拖动各级延迟，比较串行和流式的总等待。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次简短回复的延迟瀑布</p>
+    <p class="lab-s">各级数值由你设定，仅作示意；真实数值取决于模型、硬件、网络和负载。</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>VAD 静音阈值 ms <output id="vV">600</output></span><input type="range" id="vVs" min="200" max="1200" step="50" value="600"></label>
+      <label class="ctl"><span>ASR ms <output id="vA">300</output></span><input type="range" id="vAs" min="50" max="1000" step="50" value="300"></label>
+      <label class="ctl"><span>LLM 首个可播报片段 ms <output id="vL">500</output></span><input type="range" id="vLs" min="100" max="3000" step="50" value="500"></label>
+      <label class="ctl"><span>TTS 首包 ms <output id="vT">250</output></span><input type="range" id="vTs" min="50" max="1000" step="50" value="250"></label>
+    </div>
+    <div class="seg" id="vMode"><button data-v="serial" aria-pressed="true">完全串行</button><button data-v="stream">流式（ASR 边听边转 + 推测执行）</button></div>
+    <div class="lat" id="vLat"></div>
+    <div class="read"><div class="hl"><div class="v" id="vTot">0</div><div class="k">用户说完到听见第一个字</div></div></div>
+    <p class="note" id="vNote"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">快慢思考的三种组织方式</p>
+    <div id="fsQ"></div>
+  </div>
+  <div class="notes" id="n-voice"></div>
+</section>
+
+<section class="part" id="cu">
+  <div class="part-head"><h2>Computer Use：下一步点哪里</h2><span class="meta">原书 6.4 节</span></div>
+  <div class="sec-lede">
+    <p>Computer Use 的核心是“截图 → 模型思考出一个动作 → 执行 → 等界面响应再截图”的循环。原书强调要区分“看懂界面”和“完成任务”：后者要处理页面加载、状态变化、误操作和不可逆后果，每一步之后都要<strong>重新确认现实是否仍符合计划</strong>。Anthropic 的参考实现把动作空间分成三类工具：GUI 操作（鼠标、键盘、截图、等待）、持久 bash 会话、字符串匹配的文件编辑器。</p>
+    <p>最难的是<strong>视觉定位</strong>：按钮在哪？两大思路。一是把定位变成<strong>选择题</strong>：Set-of-Mark 用分割模型在截图上切出候选区域并编号，模型只报编号；browser-use 这类 Web Agent 则从 DOM 和无障碍树里枚举可交互元素编号，更精确稳定。二是<strong>纯坐标预测</strong>（SeeClick、Claude computer use），像人一样看着截图报坐标，但对训练分辨率很敏感。原书的选择逻辑：<strong>有结构化信息就用 DOM/无障碍树索引；没有（Photoshop、Canvas、游戏）再在视觉标注和坐标预测之间选</strong>。</p>
+    <p>原书还讲了两个前沿方向：一是重新设计<strong>观察接口</strong>（只在屏幕显著变化时截关键帧、有声音时转写、把截图描述成一句话留在上下文里），让 Agent 看见两帧之间发生的事；二是 <strong>Computer Use 世界模型</strong>，在点击前预测桌面会变成什么，像人一样“推测执行”，偏离预期才停下重新观察。移动端最大的障碍则不是技术，而是<strong>生态壁垒</strong>：Agent 不看广告、不冲动消费，侵蚀了靠流量变现的平台的商业模式。</p>
+    <p class="go">输入真实屏幕分辨率，看坐标预测路线要怎样做双向缩放。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">分辨率匹配与双向坐标缩放</p>
+      <p class="lab-s">Claude 训练用的三档：XGA 1024×768（4:3）、WXGA 1280×800（16:10）、FWXGA 1366×768（约 16:9）。按宽高比选最接近的一档。</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>真实宽度 <output id="rW">2560</output></span><input type="range" id="rWs" min="1024" max="3840" step="16" value="2560"></label>
+        <label class="ctl"><span>真实高度 <output id="rH">1440</output></span><input type="range" id="rHs" min="600" max="2400" step="16" value="1440"></label>
+      </div>
+      <div class="ctrls"><button class="btn" type="button" data-p="2560,1440">2560×1440</button><button class="btn" type="button" data-p="2880,1800">2880×1800</button><button class="btn" type="button" data-p="1600,1200">1600×1200</button></div>
+      <div class="res" id="rOut"></div>
+      <div class="screen" id="rScr"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">该用哪种定位方式</p>
+      <div id="gQ"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-cu"></div>
+</section>
+
+<section class="part" id="robot">
+  <div class="part-head"><h2>机器人：走一步，看一步</h2><span class="meta">原书 6.5 节</span></div>
+  <div class="sec-lede">
+    <p>原书用一个任务贯穿：XLeRobot 把红色杯子放进托盘、黄色废纸放进垃圾盒，最后重新观察确认。第一个关键证据是：这台几百美元的机械臂<strong>由人遥操作就能完成</strong>，说明对这个任务而言<strong>硬件不是瓶颈，算法才是</strong>。人会自然地做很多算法必须显式实现的事：靠近时减速、杯子滑动时修正、没夹住就重新看。</p>
+    <p>机器人系统按时间尺度分层：任务目标（分钟）、长程规划（先杯子后废纸）、基本技能（<code>pick(red_cup)</code>，约 1–3 秒）、VLA 技能策略（约 1–10 Hz 推理）、底层控制与安全层（50–1000 Hz）。模型不应直接输出任意关节角，只在 <code>observe_scene</code>、<code>pick</code>、<code>place</code>、<code>verify_state</code>、<code>stop</code> 这类有边界的技能里选，每完成一个就重新观察检查后置条件，失败只重试当前一步。</p>
+    <p><strong>VLA</strong>（视觉—语言—动作模型）把“当前画面 + 技能指令”变成动作；RT-2、OpenVLA 把动作离散成 token，π₀ 直接生成连续轨迹。大模型每秒只能推理几次，控制器却要每秒几十上千次，所以用<strong>动作分块</strong>：一次生成一小段，控制线程高频执行，模型在后台准备下一段。代价是段越长越平滑，但这段时间里看到的新画面越少。VLA 回答“现在做什么”，<strong>世界模型</strong>回答“做了会怎样”：比较候选动作的后果、执行时对照预测发现偏差、训练时减少真机试错。但预测只能帮助选择，<strong>最终是否完成必须由新的观察确认</strong>。</p>
+    <p class="go">点控制分层看各层做什么；再比较开环执行和逐步检查在抓取失败时的表现。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">分层控制</p>
+      <ul class="layers2" id="rbL"></ul>
+      <p class="cap" id="rbCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">开环 vs 逐步检查</p>
+      <p class="lab-s">第一次抓杯子有 50% 概率滑脱（模拟可恢复的瞬时失败）。</p>
+      <div class="seg" id="olSeg"><button data-v="open" aria-pressed="true">开环执行</button><button data-v="step">逐步检查</button></div>
+      <div class="table2" id="olT"></div>
+      <div class="ctrls"><button class="btn pri" type="button" id="olGo">运行一次</button></div>
+      <p class="cap" id="olCap"></p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">动作分块：平滑还是灵敏</p>
+    <label class="ctl"><span>每块包含的控制步数 <output id="ckN">10</output></span><input type="range" id="ckNs" min="1" max="50" value="10"></label>
+    <div class="read"><div><div class="v" id="ckRe">0</div><div class="k">两次重新看画面之间的时间（控制器 50 Hz 时）</div></div><div><div class="v" id="ckHide">0</div><div class="k">能藏住的推理时间上限</div></div></div>
+    <p class="note" id="ckNote"></p>
+  </div>
+  <div class="notes" id="n-robot"></div>
+</section>
+===SCRIPT===
+/* ---------- 1 两根轴 ---------- */
+S.sortGame($('#axSort'), {
+  bins: [{ k: 'ev', t: '秒—天：异步与事件驱动' }, { k: 'vo', t: '10 毫秒—1 秒：语音' }, { k: 'cu', t: '亚秒—秒：Computer Use' }, { k: 'rb', t: '毫秒：机器人' }],
+  items: [
+    { t: '对方回邮件了，唤醒 Agent 继续谈判', k: 'ev', why: '模态仍是文本，只是观察从“主动去取”变成“世界推来”。' },
+    { t: '用户在 Agent 说到一半时插话', k: 'vo', why: '边说边听，可被打断。' },
+    { t: '点击后弹出一个转瞬即逝的通知', k: 'cu', why: '屏幕在两帧之间持续变化，动作后要重新确认现实。' },
+    { t: '夹爪伸向杯子途中杯子被碰倒', k: 'rb', why: '传感器连续回流，动作分块要可被抢占。' },
+    { t: '后台编译跑了二十分钟终于结束', k: 'ev', why: '动作跨回合：先发起，后续靠事件收尾。' }
+  ]
+});
+S.notes($('#n-axes'), {
+  c: [
+    ['模态', '观察和动作的形式：文本、声音、屏幕像素、力矩；输出 token、发声、点击、关节运动。'],
+    ['触发时机', '观察和动作的节奏：主动去取还是世界推来；回合内做完还是跨回合、可打断、可抢占。'],
+    ['回合制', '模型与接口的一种交互约定，不是环境的性质。'],
+    ['安全点', '可以安全消费新事件的边界，如一段推理结束、一次工具返回。']
+  ],
+  p: [
+    ['三个扩展方向', '内容（第 2–5 篇）、模态、时机（本篇）。'],
+    ['四个场景', '异步（秒—天）、语音（10ms—1s）、Computer Use（亚秒—秒）、机器人（毫秒）。'],
+    ['共享原语', '唤醒、安全点、取消、抢占、快慢分离。'],
+    ['共享骨架', '持续感知 → 判断状态与时机 → 选择输出 → 进入环境 → 观察反馈 → 继续/修正/重试/停止/重规划。']
+  ]
+});
+
+/* ---------- 2 事件策略 ---------- */
+S.sortGame($('#evSort'), {
+  bins: [{ k: 'c', t: '取消式（紧急）' }, { k: 'q', t: '队列式（常规）' }, { k: 'p', t: '并行式（独立轻量）' }],
+  items: [
+    { t: '用户：“停！我说错了，不是这个文件”', k: 'c', why: '用户中断：立刻停下当前推理和工具，避免执行错误操作。' },
+    { t: '用户补充：“报告用中文发给我”', k: 'q', why: '不打断当前操作，等到安全点和其他事件一起交给模型。' },
+    { t: '分析大表时用户问：“今天天气怎么样？”', k: 'p', why: '与主任务无关、要快、成本低：另起一个推理会话回答。' },
+    { t: '异步工具返回了查询结果', k: 'q', why: 'tool.result 属于非紧急事件，批量处理。' },
+    { t: '系统告警：支付失败', k: 'c', why: '标记为紧急的外部触发器。' },
+    { t: '监督系统发来高优先级指令', k: 'c', why: 'supervisor.instruction 属于紧急事件。' },
+    { t: '定时器到点：生成日报', k: 'q', why: 'timer.trigger 属于非紧急事件。' }
+  ]
+});
+S.notes($('#n-events'), {
+  c: [
+    ['事件驱动', '所有输入统一建模为事件流，新消息到达时触发处理，而不是轮询。'],
+    ['事件触发工具', 'set_timer（一次性/循环）、monitor_shell、connect_channel：注册时 Agent 调用，触发时外部回调。'],
+    ['用户沟通工具', '用专门工具给用户发消息（可带图片文件和推送），而不是把模型输出直接当回复。'],
+    ['结构化事件', '来源（谁）、渠道（方式）、内容（什么）、上下文（与哪个任务相关）。'],
+    ['虚拟身份', 'Agent 自己的邮箱、电话、虚拟电脑和手机，出错只坏虚拟环境。']
+  ],
+  p: [
+    ['主动服务的前提', '不仅能定时检查，更要事件能主动通知 Agent（PineClaw 的 Channel）。'],
+    ['取消式 = 提前制造安全点', '停止当前操作 → 清空队列 → 全部追加 → 立即重新调用。'],
+    ['队列式', '等到安全点，把积攒的事件一次性追加，省掉往返。'],
+    ['并行式', '独立轻量查询另起会话，结果标记“与主任务并行”追加回主轨迹。'],
+    ['事件路由', '建议用轻量分类 LLM 按语义判断策略，硬编码规则有局限。'],
+    ['取消点要能安全收尾', '未完成的工具结果用显式占位符，不能伪造成功。']
+  ]
+});
+
+/* ---------- 3 兼容方案 ---------- */
+var ph = [
+  { m: [{ r: 'user', t: '帮我给张经理写封邮件，约下周开会。' }, { r: 'asst', b: '模型 · tool_calls', t: 'search_contacts("张经理")' }], c: '规则 1：assistant 消息一发出就写入轨迹。搜索在后台执行，规则 2：结果没到就不写 tool result，此时轨迹处于“部分完成”状态。' },
+  { m: [{ r: 'user', t: '帮我给张经理写封邮件，约下周开会。' }, { r: 'asst', b: '模型 · tool_calls', t: 'search_contacts("张经理")' }, { r: 'tool', b: '工具结果 · 占位符', t: '工具正在后台执行，请优先处理新事件。（task_id: t-17，状态：running）' }, { r: 'user', b: '用户 · 打断', t: '等一下，先帮我查一下明天的天气。' }], c: '规则 3：用户打断时，给未完成的 search_contacts 补一个明确的占位结果，再追加打断事件，重新调用模型。从模型视角看，调用和结果仍然配对完好，格式合法。' },
+  { m: [{ r: 'user', t: '帮我给张经理写封邮件……' }, { r: 'asst', b: '模型 · tool_calls', t: 'search_contacts("张经理")' }, { r: 'tool', b: '工具结果 · 占位符', t: '工具正在后台执行……（task_id: t-17）' }, { r: 'user', b: '用户 · 打断', t: '先帮我查一下明天的天气。' }, { r: 'asst', b: '模型', t: 'get_weather(明天) → 回复用户：明天晴，18–26°C。' }], c: '模型先处理天气。风险：它可能把“已启动”误当成“已完成”，编造张经理的邮箱。要用明确的任务状态和结果校验防止，评估时专门检查有没有编造未到达的数据。' },
+  { m: [{ r: 'asst', b: '模型', t: '……明天晴，18–26°C。' }, { r: 'tool', b: '事件 · 后台结果到达', t: 'task t-17 完成：张经理 zhang@corp.com' }, { r: 'asst', b: '模型', t: '读取联系人，继续起草邮件。' }], c: '真实结果作为带来源和任务 ID 的新事件送入轨迹，模型接着完成原任务。规则 5：期间的非打断事件都进队列批处理。' }
+];
+S.stepper($('#phStep'), ph.length, function (i) { var c = $('#phChat'); c.innerHTML = ''; ph[i].m.forEach(function (m, j) { S.msg(c, m, j === ph[i].m.length - 1); }); $('#phCap').textContent = ph[i].c; });
+var bq = [
+  ['Tool result from database_query: 北京 1203 条，上海 980 条……\nUser 补充说明：只看北京地区的数据\n系统提醒：报告截止时间还有 30 分钟\nUser 询问：进度如何？', '模型很可能只回答“进度如何”，忘了“只看北京”和“30 分钟截止”。'],
+  ['[未处理事件 1/4] Tool result from database_query：北京 1203 条，上海 980 条……\n[未处理事件 2/4] User 补充说明：只看北京地区的数据\n[未处理事件 3/4] 系统提醒：报告截止时间还有 30 分钟\n[未处理事件 4/4] User 询问：进度如何？\n\n上面有 4 个未处理事件，包括 1 个工具结果、2 条用户消息、1 个系统提醒。请确保回应涵盖所有信息。', '编号加末尾汇总（一种状态栏标记），把“有几件事要处理”显式告诉模型。']
+];
+function drawBq(i) { $('#bqOut').textContent = bq[+i][0]; $('#bqCap').textContent = bq[+i][1]; }
+S.seg($('#bqSeg'), drawBq); drawBq(0);
+S.notes($('#n-compat'), {
+  c: [
+    ['占位符', '为被打断的未完成工具生成的明确“未完成”结果，用来维持同步接口要求的调用—结果配对。'],
+    ['任务句柄', '把“启动”和“完成”解耦：initiate_* 立即返回任务 ID，进展通过事件到达。'],
+    ['异步工具调用', '原生能力：发起和拿结果分开，等待期间做不依赖结果的事（GPT-6 Astra）。'],
+    ['回合中途引导', '原生能力：模型思考或输出时，用户可以追加新要求。']
+  ],
+  p: [
+    ['五条兼容规则', '及时记录已完成消息；完成才记结果；打断时插占位符；不回灌半截输出；非打断事件进队列。'],
+    ['占位符的风险', '模型可能把“已启动”当“已完成”而编造数据，要用任务状态和结果校验防住。'],
+    ['工具名传达异步语义', 'initiate_phone_call 而不是 phone_call，描述里写明“立即返回任务 ID”。'],
+    ['批量事件的注意力', '加编号和汇总，防止只回应最后一条。'],
+    ['能接收 ≠ 能正确处理', '检查结果归属与未完成状态、任务恢复与动作控制、多条更新的综合使用。']
+  ]
+});
+
+/* ---------- 4 语音 ---------- */
+function drawV() {
+  var V = +$('#vVs').value, A = +$('#vAs').value, L = +$('#vLs').value, T = +$('#vTs').value;
+  $('#vV').textContent = V; $('#vA').textContent = A; $('#vL').textContent = L; $('#vT').textContent = T;
+  var stream = S.$('#vMode button[aria-pressed="true"]').getAttribute('data-v') === 'stream';
+  var segs;
+  if (!stream) segs = [['VAD', 0, V, 'v'], ['ASR', V, A, 'a'], ['LLM', V + A, L, ''], ['TTS', V + A + L, T, 't']];
+  else {
+    var vad = Math.round(V * 0.5), asr = Math.round(A * 0.3), llm = Math.round(L * 0.4);
+    segs = [['VAD', 0, vad, 'v'], ['ASR', vad, asr, 'a'], ['LLM', vad + asr, llm, ''], ['TTS', vad + asr + llm, T, 't']];
+  }
+  var tot = segs[3][1] + segs[3][2], max = 1200 + 1000 + 3000 + 1000;
+  var box = $('#vLat'); box.innerHTML = '';
+  segs.forEach(function (s) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: s[0] }, r);
+    var tr = h('div', { class: 'track' }, r); h('div', { class: 'seg2 ' + s[3], style: 'left:' + s[1] / max * 100 + '%;width:' + Math.max(0.5, s[2] / max * 100) + '%' }, tr);
+    h('span', { class: 'n', text: s[2] + 'ms' }, r);
+  });
+  $('#vTot').textContent = tot + ' ms';
+  $('#vNote').textContent = stream
+    ? '流式下的数字是示意：ASR 边听边转，说完时只剩最后一小段要确认；LLM 拿临时转录推测执行，最终文本一致就省掉重算；静音阈值也可以由语义端点判断缩短。实际省多少取决于实现。'
+    : '完全串行：必须等一段静音确认说完，再依次转写、生成、合成，每一级的等待都累加。';
+}
+['#vVs', '#vAs', '#vLs', '#vTs'].forEach(function (s) { $(s).addEventListener('input', drawV); });
+S.seg($('#vMode'), drawV); drawV();
+S.quiz($('#fsQ'), [
+  { q: '前台快模型先说“这个套餐挺好，可以买”，几秒后后台慢模型发现套餐缺关键功能，用户听到前后矛盾。这是哪种方案的问题？', o: ['方案一：快思考回应，慢思考回答', '方案二：快思考交互，慢思考提醒', '方案三：端到端统一'], a: 0, why: '两个实例各自独立完成了一次思考，简单问题被重复处理，复杂问题前后不一致。' },
+  { q: '后台把建议写进状态栏，前台决定怎么说；但后台完成前用户追问，前台只能靠自己。', o: ['方案一', '方案二', '方案三'], a: 1, why: '比方案一稳定，但通信间接，前台可能误解建议，也做不到真正的边想边说。' },
+  { q: '新出了一个更强的推理模型，想马上用上。哪种架构最省事？', o: ['快慢分离', '端到端统一'], a: 0, why: '快慢分离只需替换后台模型；统一路线要把推理和交互一起重新训练。' },
+  { q: '“端到端”在原书里有两个含义，下列哪个组合是可能的？', o: ['语音通路端到端，同时认知上快慢分离', '两者必须同时成立'], a: 0, why: '两条轴彼此独立。Thinking Machines 的交互模型听说都是端到端，复杂任务仍委派给后台推理模型。' }
+]);
+S.notes($('#n-voice'), {
+  c: [
+    ['级联', 'VAD → ASR → LLM → TTS：模块清晰、易替换易调试，但延迟累积、副语言信息丢失。'],
+    ['端到端 Omni', '原生音频输入输出，按轮次交互；延迟低、保留语气情绪，仍靠 VAD 划分发言权。'],
+    ['全双工', '持续听、说和决策，重叠说话和打断成为自然行为（Moshi、交互模型、GPT-Live）。'],
+    ['VAD', 'Voice Activity Detection：判断用户是否开始或结束说话。'],
+    ['控制标记 TTS', '主 LLM 输出 THINKING、EMO:happy、SPEED:0.8x 等标记，TTS 映射成停顿、语调、笑声。']
+  ],
+  p: [
+    ['三种范式的主线', '摆脱“轮流说话”和 VAD 对发言权的猜测。'],
+    ['流式感知四件事', 'ASR 边听边转、LLM 推测执行、LLM 分段输出、TTS 增量合成。'],
+    ['端点判断的训练标签', '只能用决策时刻可见的信息，否则“上帝视角”线上无法复现。'],
+    ['快慢分离的工程优势', '直接承接慢模型的迭代红利；Pine AI 用此架构在 τ³-Voice 排第一（2026 年 8 月）。'],
+    ['更像人的 TTS', '适当的停顿、填充词，是表达思考状态的信号；过于流畅反而暴露机器身份。']
+  ]
+});
+
+/* ---------- 5 Computer Use ---------- */
+var targets = [['XGA', 1024, 768], ['WXGA', 1280, 800], ['FWXGA', 1366, 768]];
+function drawR() {
+  var W = +$('#rWs').value, H = +$('#rHs').value;
+  $('#rW').textContent = W; $('#rH').textContent = H;
+  var ar = W / H, best = targets.slice().sort(function (a, b) { return Math.abs(a[1] / a[2] - ar) - Math.abs(b[1] / b[2] - ar); })[0];
+  var mx = Math.round(best[1] / 2), my = Math.round(best[2] / 2);
+  var rx = Math.round(mx * W / best[1]), ry = Math.round(my * H / best[2]);
+  var bad = targets[0], bx = Math.round(bad[1] / 2), by = Math.round(bad[2] / 2);
+  $('#rOut').innerHTML = '真实屏幕 ' + W + '×' + H + '（宽高比 ' + ar.toFixed(2) + '）→ 选 <b>' + best[0] + ' ' + best[1] + '×' + best[2] + '</b>（' + (best[1] / best[2]).toFixed(2) + '）<br>' +
+    '截图等比缩放后送入模型；模型输出点击 (' + mx + ', ' + my + ')<br>反向映射：(' + mx + '×' + W + '/' + best[1] + ', ' + my + '×' + H + '/' + best[2] + ') ≈ <b>(' + rx + ', ' + ry + ')</b>' +
+    (best[0] !== 'XGA' && Math.abs(ar - 4 / 3) > 0.1 ? '<br><span style="color:var(--alert)">若硬拉伸进 4:3 的 1024×768，画面横向被压扁，模型的坐标判断会系统性偏移。</span>' : '');
+  var scr = $('#rScr'); var w = scr.clientWidth || 400; scr.style.height = Math.round(w / ar) + 'px';
+  scr.innerHTML = '<span>真实屏幕（示意）</span><i style="left:' + (rx / W * 100) + '%;top:' + (ry / H * 100) + '%"></i>';
+}
+['#rWs', '#rHs'].forEach(function (s) { $(s).addEventListener('input', drawR); });
+S.$$('[data-p]').forEach(function (b) { b.addEventListener('click', function () { var p = b.getAttribute('data-p').split(','); $('#rWs').value = p[0]; $('#rHs').value = p[1]; drawR(); }); });
+drawR(); addEventListener('resize', drawR);
+S.quiz($('#gQ'), [
+  { q: '在一个普通网页上填写报名表单', o: ['DOM / 无障碍树元素索引', '纯坐标预测'], a: 0, why: '结构化信息可得时优先用，定位最精确稳定，免去分割模型的漏检误检（但不省 token）。' },
+  { q: '操作 Photoshop 的工具栏', o: ['DOM 索引', '视觉标注（Set-of-Mark）或坐标预测'], a: 1, why: '原生桌面软件没有 DOM。未专门训练的通用模型更适合视觉标注的选择题；做过 GUI 定位训练的模型可以直接预测坐标。' },
+  { q: '为什么“报编号”比“报坐标”容易？', o: ['编号更短', '把开放的填空题变成封闭的选择题'], a: 1, why: '坐标需要大量训练，在不同分辨率下还容易偏。' },
+  { q: '准确率已经达到人类水平的 Computer Use Agent，为什么还不够实用？', o: ['已经够了', '步骤和等待时间仍明显多于人类（OSWorld-Human）'], a: 1, why: '每个动作都要重新截图、思考。世界模型的推测执行是提效方向。' }
+]);
+S.notes($('#n-cu'), {
+  c: [
+    ['Computer Use', '通过截图观察、鼠标键盘行动来使用软件的 Agent。'],
+    ['视觉定位 Grounding', '在截图里找到目标元素并给出位置。'],
+    ['Set-of-Mark', '用分割模型在截图上切出候选区域并编号，模型只报编号（纯视觉）。'],
+    ['结构化元素索引', '从 DOM / 无障碍树枚举可交互元素编号（browser-use）。'],
+    ['观察接口 AOI', '把连续屏幕和声音变成离散事件：关键帧截图、音量门控转写、截图转一句话描述。']
+  ],
+  p: [
+    ['看懂 ≠ 完成', '每一步之后都要重新确认现实是否仍符合计划。'],
+    ['选择逻辑', '有结构化信息用 DOM/无障碍树；没有再在视觉标注和坐标预测之间选。'],
+    ['坐标缩放', '按宽高比选最接近的训练分辨率，等比缩放截图，输出坐标反向映射回真实屏幕。'],
+    ['世界模型', '点击前预测状态变化，与预期一致就继续，偏离才重新观察（Photon-1）。'],
+    ['移动端的障碍是生态', 'Agent 绕过了广告与流量变现，与平台商业模式结构性冲突。']
+  ]
+});
+
+/* ---------- 6 机器人 ---------- */
+var rl = [
+  ['任务目标', '人想完成什么：“把杯子和废纸归位”', '分钟级'],
+  ['长程规划', '先处理杯子，再处理废纸，最后检查；失败只重规划受影响的后续步骤', '秒到分钟'],
+  ['基本技能', 'pick(red_cup)、place(red_cup, tray)：一次只做一件事，有边界、有超时', '约 1–3 秒'],
+  ['VLA / 技能策略', '这个技能具体怎么动：从哪个方向接近、何时闭合夹爪', '约 1–10 Hz'],
+  ['底层控制与安全', '关节或末端控制量，限速、急停，独立于模型', '50–1000 Hz']
+];
+rl.forEach(function (r, i) {
+  var li = h('li', null, $('#rbL')); h('b', { text: r[0] }, li); h('span', { text: r[1] }, li); h('span', { class: 'hz', text: r[2] }, li);
+  li.addEventListener('click', function () { S.$$('#rbL li').forEach(function (x) { x.classList.remove('on'); }); li.classList.add('on'); $('#rbCap').textContent = ['任务语义必须来自观察，人只负责启动、急停和监护。', '把“任务顺序”和“眼前动作”分开，否则高层推理延迟会拖慢底层控制。', '工具调用定义期望的状态变化；每个技能后用 verify_state 检查后置条件。', 'VLA 回答“现在做什么”，还需要世界模型回答“做了会怎样”。', '安全层独立于模型，模型永远不直接输出任意关节角。'][i]; });
+});
+S.$$('#rbL li')[2].click();
+var olMode = 'open', olR = S.rng(11);
+S.seg($('#olSeg'), function (v) { olMode = v; $('#olT').innerHTML = ''; $('#olCap').textContent = ''; });
+$('#olGo').addEventListener('click', function () {
+  var slip = olR() < 0.5, box = $('#olT'); box.innerHTML = '';
+  var cells = [];
+  if (olMode === 'open') {
+    cells = [['pick 杯子', slip ? 'bad' : 'ok', slip ? '滑脱（没人看）' : '夹住'], ['place 杯子', slip ? 'bad' : 'ok', slip ? '空手放置' : '放进托盘'], ['pick 废纸', 'ok', '夹住'], ['place 废纸', 'ok', '放进垃圾盒']];
+    $('#olCap').innerHTML = slip ? '<b style="color:var(--alert)">任务失败。</b>开环计划一次生成完，中途不看，第一步的局部失败被一路带到末尾，而且模型还以为自己做完了。' : '这次运气好，第一次就夹住了。多运行几次看看。';
+  } else {
+    cells = slip ? [['pick 杯子', 'bad', '滑脱 → verify 发现'], ['pick 杯子（重试）', 'ok', '夹住'], ['place 杯子', 'ok', 'verify：在托盘内'], ['pick/place 废纸', 'ok', 'verify：在垃圾盒内']]
+      : [['pick 杯子', 'ok', 'verify：已夹住'], ['place 杯子', 'ok', 'verify：在托盘内'], ['pick 废纸', 'ok', 'verify：已夹住'], ['place 废纸', 'ok', 'verify：在垃圾盒内']];
+    $('#olCap').innerHTML = slip ? '<b>任务完成。</b>每个技能后重新观察，失败只重试当前一步。最终成功由新观察确认，而不是凭“我刚才说过已完成”。' : '一次成功，每一步都由 verify_state 的新观察确认。';
+  }
+  cells.forEach(function (c) { h('div', { class: c[1], html: '<b>' + c[0] + '</b>' + c[2] }, box); });
+});
+function ck() {
+  var n = +$('#ckNs').value; $('#ckN').textContent = n;
+  var ms = n * 20;
+  $('#ckRe').textContent = ms + ' ms'; $('#ckHide').textContent = ms + ' ms';
+  $('#ckNote').textContent = n <= 3 ? '块很短：反应灵敏，但模型必须每秒推理几十次才跟得上，动作也容易抖。' : n >= 25 ? '块很长：运动平滑，推理等待基本能藏住；但这段时间里杯子被碰动，它仍在执行根据旧画面生成的动作。' : '折中：动作分块是平滑性与反应速度的取舍，不是没有代价的加速。';
+}
+$('#ckNs').addEventListener('input', ck); ck();
+S.notes($('#n-robot'), {
+  c: [
+    ['遥操作诊断', '固定硬件、把操作者换成人，测出“硬件能做到什么”；XLeRobot 说明这个任务的瓶颈在算法。'],
+    ['VLA', 'Vision-Language-Action：当前观察 + 技能指令 → 动作。RT-2/OpenVLA 离散 token，π₀ 连续轨迹。'],
+    ['动作分块', '一次生成一小段未来动作，控制线程高频执行，模型后台准备下一段。'],
+    ['世界模型', '动作结果预测器：当前状态 + 候选动作 → 下一状态，用于比较、监控和训练。'],
+    ['Sim2Real', '从仿真到真机要处理背景、光照、相机、摩擦、延迟的差异；可在训练时主动扩大画面变化。']
+  ],
+  p: [
+    ['机器人系统四问', '人想做什么？先做哪个子任务？当前技能输出哪些动作？执行后现实是否仍符合计划？'],
+    ['有边界的技能', '模型只选 observe/pick/place/verify/stop，不直接输出关节角。'],
+    ['逐步检查胜过开环', '开环把局部失败带到末尾；逐步检查能恢复；预测式执行还能给候选技能排序。'],
+    ['VLA 的局限', '数据有限、只模仿不懂后果、机器人各不相同、观察可能过时。'],
+    ['预测不能代替验收', '最终是否完成，必须由新的真实观察确认。']
+  ]
+});

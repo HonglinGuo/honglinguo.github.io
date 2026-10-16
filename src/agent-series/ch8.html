@@ -1,0 +1,444 @@
+---
+title: 后训练：把能力写进参数
+desc: 深入理解 AI Agent 学习笔记（八）：预训练、Mid-training、SFT、RL 四阶段，何时选哪种，SFT 记忆与 RL 泛化，GRPO 与 PPO，On-policy 与训练推理数值失配，RL 环境与奖励设计，RLVP，在轨蒸馏与自蒸馏，从问题案例到训练数据。
+kicker: <span>深入理解 AI Agent · 08</span><span>对应原书第八章</span><span>约 30 分钟</span><span>边读边点</span>
+h1: 数据和环境，<em>比算法更重要</em>
+lead: 前七篇都在调 Agent 的上下文、工具和 Harness，这一篇动模型本身：把能力写进权重。原书有两条贯穿全章的主线：在它的对照实验里，SFT 更容易记住示范、RL 表现出更好的泛化；以及工业界最反直觉的一条经验，决定成败的是语料、示范、环境和奖励，而不是挑哪个 RL 算法。
+nav: stages|四个阶段;choose|选哪种训练;sftrl|SFT vs RL;grpo|GRPO 一步;onpolicy|On-policy;reward|环境与奖励;distill|蒸馏;cases|从问题到训练
+---
+<style>
+.stg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.stg button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); border-radius: 8px; padding: 10px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
+.stg button b { display: block; color: var(--ink); font-size: 17px; }
+.stg button[aria-pressed="true"] { border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 50%, transparent); }
+@media (max-width: 640px) { .stg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.roll { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin: 10px 0; }
+.roll div { border-radius: 6px; padding: 6px 2px; text-align: center; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); }
+.roll div b { display: block; font-family: var(--f-num); font-size: 15px; }
+.roll div.ok { background: var(--ok-soft); border-color: var(--ok); }
+.roll div.bad { background: var(--alert-soft); border-color: var(--alert); }
+.roll div.zero { background: var(--dim-soft); }
+@media (max-width: 560px) { .roll { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+</style>
+===BODY===
+<section class="part" id="stages">
+  <div class="part-head"><h2>能力是分四步长出来的</h2><span class="meta">原书 8.1 节</span></div>
+  <div class="sec-lede">
+    <p>现代模型的能力开发通常分四个环节。<strong>预训练</strong>在海量文本上“预测下一个词”，学会语言、知识和基本推理，最贵，是地基。<strong>Mid-training</strong>（也叫继续预训练）从已有基模出发，在目标语言、领域文档、代码、长上下文上继续做语言建模，补通用预训练没覆盖好的“教材章节”。<strong>SFT</strong>（监督微调）用几千到几万条“输入—输出”示范，教模型用什么格式、风格、流程回答。<strong>RL</strong>（强化学习）不再模仿标准答案的 token，而是让模型自己试，按结果奖惩调整。原书的类比：通识教育、集中研修专业教材、老师示范答题规范、自己下场做题反复打磨。</p>
+    <p>关键认识：<strong>模型的输出本质上是一个概率分布，训练就是调整这个分布</strong>，四个环节的区别只在“想要什么”和“用什么信号定义想要”。SFT 在数学上和预训练是同一个任务，差别只有两点：数据换成了问答示范，损失只算在回答部分（loss masking）。所以 SFT 擅长固化格式、风格、流程这类<strong>协议性知识</strong>，不擅长灌入大量<strong>事实性知识</strong>，后者靠 Mid-training 或 RAG。LoRA 是贯穿所有方法的工程默认项：只训一个占原参数 1%–5% 的低秩补丁，学习率约为全参的 10 倍。</p>
+    <p>原书还讲了一段认知史：OpenAI 先相信算法（Atari），再相信环境（Gym、Universe、Dota），最后发现<strong>先验 &gt; 环境 &gt; 算法</strong>。同一个寻宝游戏，表格 Q-learning 要近 10000 局才稳定通关，Kimi K3 驱动的 LLM Agent 第一局 18 步就通关，靠的是预训练带来的先验，而不是更好的学习算法。</p>
+    <p class="go">点四个阶段，对照它们的数据、目标和代价。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四个环节</p>
+    <div class="stg" id="stg"></div>
+    <div class="tblw" style="margin-top:12px"><table class="cmpt"><tbody id="stgT"></tbody></table></div>
+  </div>
+  <div class="notes" id="n-stages"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>缺底座、缺协议，还是缺策略</h2><span class="meta">原书 8.4–8.6 节</span></div>
+  <div class="sec-lede">
+    <p>原书反复提醒：<strong>不要把“模型做不好”统一归因成需要 RL</strong>。先排除不改权重的方案：提示词、工具、代码约束、上下文管理能解决就不训练；事实要频繁更新、引用或删除，优先 RAG。</p>
+    <p>然后在目标留出集上<strong>测能力支持</strong>：不只看 pass@1，还要看固定采样下的 pass@k。pass@1 低但 pass@k 随 k 明显上升，说明正确策略已在模型分布里、只是概率太小，RL、拒绝采样、蒸馏都有东西可放大。如果合理的 k 下 pass@k 仍接近 0，基模几乎生成不出成功轨迹：GRPO 的一组 rollout 全是 0，组内优势直接消失，继续加采样只能按约 1/p 的速度等偶然成功。RL <strong>擅长把已有但概率低的成功行为推高，不擅长从全零奖励里凭空创造能力</strong>。</p>
+    <p>对症下药：缺领域语言、事实、代码模式、长上下文基础能力，先 <strong>Mid-training</strong>（数据从失败分布反推、按能力配比、每阶段“双重回放”防遗忘、多维门禁决定何时停）；会做但格式、工具 schema、流程不稳，先 <strong>SFT</strong>；已有非零成功率和可靠奖励、但好策略概率低或泛化不足，才上 <strong>RL</strong>。这不是必须依次跑完的仪式：强基模可以直接 RL（DeepSeek-R1-Zero），格式型任务可能只需 SFT。</p>
+    <p class="go">先拖滑块感受“能力支持”，再给几个症状对症下药。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">RL 有没有东西可放大</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>单次成功率 pass@1 <output id="sp">2%</output></span><input type="range" id="sps" min="0" max="30" step="0.5" value="2"></label>
+        <label class="ctl"><span>每题采样数 k <output id="sk">16</output></span><input type="range" id="sks" min="1" max="64" value="16"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="spk">0</div><div class="k">pass@k</div></div><div class="warn"><div class="v" id="sall">0</div><div class="k">一组 k 条全部失败（没有梯度）的概率</div></div><div><div class="v" id="swait">0</div><div class="k">平均多少次采样等到一次成功</div></div></div>
+      <p class="cap" id="spCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">症状 → 方法</p>
+      <div id="chSort"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="sftrl">
+  <div class="part-head"><h2>SFT 记住地图，RL 拿着指南针探路</h2><span class="meta">原书 8.1、8.7 节</span></div>
+  <div class="sec-lede">
+    <p>两者的差别来自<strong>优化目标</strong>。SFT 最大化标注回答的概率，逐条复现示范；示范多样时也能泛化，示范单一时容易对表面模式过拟合。RL 最大化期望奖励，探索多条路径、提高高奖励路径的概率；奖励忠实、探索充分时，可能学到示范里没有的可迁移策略，奖励有偏时同样会钻捷径。从分布形状看，SFT 倾向<strong>覆盖式</strong>（mass-covering，尽量覆盖示范里出现过的多个写法），RL 配合反向 KL 倾向<strong>寻峰式</strong>（mode-seeking，把概率集中到少数高奖励的峰）。</p>
+    <p>原书用 GeneralPoints 实验量化这件事：类似 24 点，用四张牌加减乘除凑 24。训练时 J、Q、K 都按 10 算，测试时改成 11、12、13（规则 OOD）；或训练用黑色花色、测试用红色花色（视觉 OOD）。基于 Llama-3.2-Vision-11B，相同预算下对比 SFT 和 PPO。原书的解释是：有限的 SFT 数据强化了“遇到 J/Q/K 就当 10”的固定模式；RL 更可能强化“重新计算直到正确”的策略。另一个发现是，这个模型和严格结构化输出要求下，不经 SFT 直接 RL 完全失败，因为它连可解析的输出都给不出，奖励算不了。</p>
+    <p>在线反馈给了 RL 三个机会：能评估示范之外的候选（SimpleVLA-RL 学出了人类示范里没有的“推切”动作）；能利用“验证比生成容易”（代码可测、答案可对）；能在当前策略实际访问的状态上训练，避免离线模仿的<strong>协变量漂移</strong>。原书还提到，后训练也塑造模型“何时行动”：Coding 模型的行动阈值差异，很可能就写在参数里。</p>
+    <p class="go">看 GeneralPoints 的结果，再切换两种训练看概率分布的形状。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">GeneralPoints：分布外测试（实验 8-11）</p>
+      <div class="seg" id="gpSeg"><button data-v="0" aria-pressed="true">规则 OOD · 纯文本</button><button data-v="1">视觉 OOD · 图像</button></div>
+      <div id="gpBars" style="margin-top:10px"></div>
+      <p class="cap" id="gpCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">覆盖式 vs 寻峰式</p>
+      <p class="lab-s">示意：一个问题有三类合理回答，其中 B 类奖励最高。</p>
+      <div class="seg" id="mdSeg"><button data-v="base" aria-pressed="true">训练前</button><button data-v="sft">SFT 后</button><button data-v="rl">RL 后</button></div>
+      <div class="box" id="mdChart"></div>
+      <p class="cap" id="mdCap"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-sftrl"></div>
+</section>
+
+<section class="part" id="grpo">
+  <div class="part-head"><h2>一个 step：16 次 rollout 到一次参数更新</h2><span class="meta">原书 8.8 节</span></div>
+  <div class="sec-lede">
+    <p>原书用一条 SWE-bench 任务讲 <strong>GRPO</strong>：<code>parser.py</code> 遇到空输入会抛 IndexError，要求修复且不能改测试。第一步，同一个问题复制到 16 个隔离沙箱，策略模型独立尝试 16 次，每次“读代码 → 改文件 → 跑测试 → 提交”就是一次 <strong>rollout</strong>；有的补上边界检查，有的只捕获异常掩盖问题，有的去改测试。第二步，验证器在干净环境里跑测试算<strong>奖励</strong>，通过且没改测试得 1，否则 0。第三步，算<strong>相对优势</strong>：比组内平均好的为正，差的为负。第四步，把优势变成损失，梯度下降更新参数，以后“先复现、查边界、改实现、跑测试”更容易出现。</p>
+    <p>关键在第三步：如果 16 条<strong>全部失败或全部成功</strong>，大家奖励一样，比不出谁更好，相对优势为零，这一组对训练毫无贡献。这也是后面 RLVP、过程奖励、部分进展奖励要解决的问题。<strong>PPO</strong> 则训练一个价值模型估计每一步“通常能做多好”，适合需要细粒度信用分配的长轨迹；两者都会限制单次更新幅度。<strong>DPO</strong> 不同，它直接学事先收集好的“好回答—差回答”偏好对，不在线 rollout。</p>
+    <p>原书还算了一笔时间账：复杂 Agent rollout 的墙钟时间由最慢那条决定，假设 2000 秒，加上 600 秒更新，一个 step 约 43 分钟，100 steps 就接近 72 小时。</p>
+    <p class="go">调整这一组里成功的条数，看相对优势怎么变。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一组 16 条 rollout</p>
+      <label class="ctl"><span>通过测试的条数 <output id="gN">4</output></span><input type="range" id="gNs" min="0" max="16" value="4"></label>
+      <div class="roll" id="gRoll"></div>
+      <p class="cap" id="gCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">一次训练要跑多久</p>
+      <label class="ctl"><span>最慢 rollout 秒 <output id="tR">2000</output></span><input type="range" id="tRs" min="100" max="6000" step="100" value="2000"></label>
+      <label class="ctl"><span>参数更新秒 <output id="tU">600</output></span><input type="range" id="tUs" min="100" max="3000" step="100" value="600"></label>
+      <label class="ctl"><span>训练 steps <output id="tS">100</output></span><input type="range" id="tSs" min="10" max="1000" step="10" value="100"></label>
+      <div class="read"><div><div class="v" id="tStep">0</div><div class="k">每个 step</div></div><div class="hl"><div class="v" id="tTot">0</div><div class="k">总墙钟时间</div></div></div>
+      <p class="note">ReTool 的 RL 训练时间是 SFT 的 200 倍以上（9 天 vs 1 小时）。这正是后面“蒸馏提升样本效率”要解决的问题。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-grpo"></div>
+</section>
+
+<section class="part" id="onpolicy">
+  <div class="part-head"><h2>名义上 on-policy，数值上已经 off-policy</h2><span class="meta">原书 8.8 节</span></div>
+  <div class="sec-lede">
+    <p>先分清两个词。<strong>Online</strong> 只表示数据在训练中不断交互产生；<strong>On-policy</strong> 要求生成 rollout 的行为策略 μ 和当前要优化的策略 π 相同或足够接近。异步集群哪怕一直在线生成，只要 rollout worker 落后几个 checkpoint，数据就已经陈旧，带上了 off-policy 成分。数据来自别的策略时要用<strong>重要性比率</strong> ρ = π(a|s)/μ(a|s) 纠正。真正新鲜的 on-policy rollout 在更新前 ρ = 1。原书的立场是：“on-policy 更好”不是普遍定理，但在当前 LLM 策略梯度里通常意味着更低的分布偏差和更稳定的优化。</p>
+    <p>一个容易被当作“小噪声”的大问题：大规模 RL 通常用 vLLM/SGLang 生成 rollout，再用 FSDP/Megatron 重算 log probability。即使加载同一份权重，浮点精度、归约顺序、并行方式、批大小、fused kernel 的差异，都会让同一个 token 的 log probability 略有不同，<strong>更新前本应为 1 的 ρ 已经偏离 1</strong>。放大链条是：小误差 → 指数化的比率偏差 → 长前缀上的累积 → 裁剪和优势加权改变 → 梯度方向改变，最终可能表现为比率尖峰、大量 token 被裁、响应长度突变，奖励和熵一起坍塌。</p>
+    <p>工程对策：参数更新前，用同一批轨迹比较 sampler 和 trainer 的 log probability，监控 ρ 的分位数、最大值、近似 KL、被裁比例，这是最直接的 on-policy 单元测试；同步的不只是权重，还有 LoRA、tokenizer、chat template；rollout 要保存生成时的 behavior log probability；对不齐就显式当作 off-policy 修正，并限制 staleness。</p>
+    <p class="go">用原书的例子算一算：每个 token 的 log 比率只偏 10⁻³，长轨迹上会放大成多少。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">微小偏差的累积</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每 token log 比率偏差 δ <output id="oD">0.001</output></span><input type="range" id="oDs" min="0.0001" max="0.005" step="0.0001" value="0.001"></label>
+      <label class="ctl"><span>轨迹 token 数 T <output id="oT">4000</output></span><input type="range" id="oTs" min="100" max="32000" step="100" value="4000"></label>
+    </div>
+    <div class="read"><div><div class="v" id="oTok">0</div><div class="k">单个 token 的比率 e^δ</div></div><div class="warn"><div class="v" id="oTraj">0</div><div class="k">若偏差同向，轨迹级比率 e^(Tδ)</div></div></div>
+    <p class="note">原书例子：4000 个 token、每个同向偏 10⁻³，轨迹级比率累积到 e⁴ ≈ 54.6。真实误差未必同号，但这说明了长序列为何会放大“每个 token 看起来很小”的误差。</p>
+  </div>
+  <div class="notes" id="n-onpolicy"></div>
+</section>
+
+<section class="part" id="reward">
+  <div class="part-head"><h2>环境与奖励：奖励结果，惩罚路径</h2><span class="meta">原书 8.9–8.11 节</span></div>
+  <div class="sec-lede">
+    <p>RL 的瓶颈常常不在算法，而在<strong>环境是否真实、可重置、可并行</strong>。环境一旦失真，模型学到的就是只在仿真里管用的“应试策略”，构建高保真环境往往比训练本身更贵。造不出环境时可以<strong>让模型扮演环境</strong>：ZeroSearch 用 LLM 扮演搜索引擎，并按课程逐渐掺入噪声；DreamGym 把环境动态蒸馏进一个经验模型。但模拟器的偏差就是训练的天花板，RL 还会主动利用模拟器的漏洞，所以要用真实交互定期校准。训练和评估可以共享任务生成器与验证代码，<strong>但不能共享同一批任务</strong>。多轮任务里还有一个实现细节：工具返回的 token 不是策略生成的，计算梯度时要屏蔽。</p>
+    <p>奖励设计有三个维度。<strong>来自哪里</strong>：最可靠的是可验证奖励（RLVR，测试、断言、状态差异）；目标难以规则化时用生成式奖励模型给诊断。要区分 <strong>reward hacking</strong>（钻规则漏洞）和 <strong>reward seeking</strong>（模型先猜评判器看什么，再给自己设一个过于简单的检查、刚好通过就结束）。<strong>什么时候给</strong>：结果奖励探索空间最大，过程奖励缓解信用分配但可能把模型限制在预设路径上。<strong>表达多少信息</strong>：有确定答案用二元标量，多个独立目标用向量，开放任务用生成式诊断；每多一个维度就多一种被钻空子的可能。</p>
+    <p><strong>RLVP</strong>（验证路径惩罚）解决“结果对了但路径违规”：改测试、跳过身份验证、执行破坏性命令也可能拿到表面成功。总奖励写成 <strong>R = O + βΦ</strong>，O 是结果，Φ 是确定性规则逐动作算出的路径信号。真实环境大多是<strong>非对称验证器</strong>：检测坏动作便宜可靠，证明“有意义的进展”很难。所以惩罚几乎总能恢复组内差异，进展奖励只在可达时才有效。原书实验：TerminalBench 上违规次数从 3.71 降到 0.66，成功率基本持平。</p>
+    <p class="go">一组 rollout 全部失败，看加上路径信号能不能恢复梯度。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">全败组里的路径信号</p>
+    <p class="lab-s">8 条 rollout 都没通过最终测试（O 全为 0）。其中一些改了测试文件或执行了危险命令。</p>
+    <div class="seg" id="rvSeg"><button data-v="o" aria-pressed="true">只用结果奖励</button><button data-v="p">加上路径惩罚</button></div>
+    <div class="roll" id="rvRoll"></div>
+    <p class="cap" id="rvCap"></p>
+  </div>
+  <div class="notes" id="n-reward"></div>
+</section>
+
+<section class="part" id="distill">
+  <div class="part-head"><h2>蒸馏：让一次 rollout 产生密集监督</h2><span class="meta">原书 8.12 节</span></div>
+  <div class="sec-lede">
+    <p>RL 样本效率低，根本原因是<strong>反馈太稀疏</strong>：一条 rollout 结束只得到一个成败标量。客服说“需要信用卡后四位”，人听一次就记住，模型却可能要几百次交互才偶然学会。蒸馏把一次 rollout 变成密集信号。</p>
+    <p><strong>在轨蒸馏</strong>（On-Policy Distillation）的分工是：<strong>学生决定走到哪里，教师在学生已经走到的位置给出下一步的完整概率分布</strong>，最小化两者的 KL。离轨 SFT 的监督密集，但只覆盖教师会走到的状态，学生一旦犯了教师不会犯的错，就进了训练数据没见过的地方；on-policy RL 在学生自己的状态上训练，但信号稀疏。在轨蒸馏把两者结合，一条长度 T 的 rollout 产生约 T 组逐 token 监督。原书说在数学等任务上，达到同等性能的步数约为纯 RL 的 1/10。它同样不能从零创造能力：学生至少要能走进教师可纠正的状态。</p>
+    <p>没有更强的教师怎么办？<strong>在轨自蒸馏</strong>（OPSD）让同一个模型分饰两角：教师版能看到标准答案这类“特权信息”，学生版只看到问题，在自己的轨迹上向教师版对齐。对着答案解释刚走过的路，比独立探索容易。特权信息只能在训练侧构造，绝不能泄露给部署时的 Agent。</p>
+    <p>SFT 侧也有几种常见蒸馏：<strong>Prompt 蒸馏</strong>把“长提示 + 思考型教师”压到“短提示 + 非思考学生”；<strong>CoT 蒸馏</strong>把开源教师的完整思考轨迹交给学生，配合<strong>拒绝采样</strong>只保留答案正确的轨迹（RFT）。原书提到一个现场：写蒸馏实验代码时，GPT 驱动的 Codex 和 Claude 驱动的 Claude Code 都拒绝了，最后用 Kimi K3 完成；对多数团队，用开源 SOTA 做教师已经够用。</p>
+    <p class="go">比较三种训练方式：谁来采样、每条轨迹给多少监督。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">三种方式</p>
+      <div class="tblw"><table class="cmpt"><thead><tr><th>方法</th><th>状态由谁采样</th><th>每条轨迹的监督</th></tr></thead><tbody>
+        <tr><td>SFT / 离轨蒸馏</td><td>人类或教师</td><td>逐 token，密集；但只覆盖教师会走到的状态</td></tr>
+        <tr><td>On-policy RL</td><td>当前学生</td><td>结果或过程奖励，通常稀疏</td></tr>
+        <tr class="on"><td>在轨蒸馏</td><td>当前学生</td><td>教师在学生前缀上的逐 token 分布，密集</td></tr>
+      </tbody></table></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">一条 rollout 能贡献多少信号</p>
+      <label class="ctl"><span>rollout 长度 T（token） <output id="dT">2000</output></span><input type="range" id="dTs" min="100" max="20000" step="100" value="2000"></label>
+      <div class="read"><div class="warn"><div class="v">1</div><div class="k">RL：一个结果标量</div></div><div class="good"><div class="v" id="dSig">0</div><div class="k">在轨蒸馏：逐 token 的教师分布</div></div></div>
+      <p class="note">代价是教师推理的计算量，但不需要再采一批环境轨迹。环境交互越贵越划算。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-distill"></div>
+</section>
+
+<section class="part" id="cases">
+  <div class="part-head"><h2>从问题案例到训练数据</h2><span class="meta">原书 8.13–8.14 节</span></div>
+  <div class="sec-lede">
+    <p>第 7 篇的评估资产可以直接变成训练输入：端到端回归任务（含验证器）→ RL 任务与可验证奖励、拒绝采样的采样池；轨迹前缀回归任务 → DPO 偏好对、决策边界示范、在轨蒸馏的教师状态；失败归因记录 → 过程监督负标签、RLVP 的惩罚规则；Rubric 多维评分 → 向量奖励、生成式奖励模型的训练数据。</p>
+    <p>原书给了三个案例。<strong>Coding Agent 过早结束</strong>：首错在“准备宣称完成”的决策边界。端到端侧用模型看不到的隐藏测试做奖励（通过 +1、不通过 −1）；前缀侧把过早宣称作为 rejected、“先跑测试逐条核对再下结论”作为 chosen，做 DPO。评估必须<strong>边界集和保留集都看</strong>，否则会把模型训练成永远不敢收尾。<strong>中文引号</strong>：用户说“直引号改弯引号”，但英文原文、代码、JSON、路径里的引号必须保留，先把作用域规则写成 Skill，再合成正反例做 SFT。<strong>编辑文件经常失败</strong>：沿字节到工具匹配的链路逐层找首个差异，只有模型输出是首个差异时才做复制训练；Qwen3-8B 的 byte-exact 准确率从 37.5% 提到 78.9%，而 tokenizer 无损往返本身只有 80.1%，说明这个数字已逼近 tokenizer 上限。</p>
+    <p>原书最后的核心原则：<strong>在投入大规模资源前，先用小规模实验验证关键假设</strong>，小批 Mid-training 看遗忘曲线，少量 SFT 看格式能否稳定，小批 rollout 看 pass@k、奖励差异和 sampler/trainer 一致性。快速失败比大规模失败更可接受。</p>
+    <p class="go">几道题回顾常见陷阱。</p>
+  </div>
+  <div class="lab"><div id="pitQ"></div></div>
+  <div class="notes" id="n-cases"></div>
+</section>
+===SCRIPT===
+/* ---------- 1 四阶段 ---------- */
+var stg = [
+  ['预训练', '通识教育', ['海量原始互联网文本', '预测下一个词', '语言规律、世界知识、基本推理', '极高（数百万～数千万美元）', '学完后博学但不好用：你提问，它可能续写出更多问题，因为互联网上问题后面常跟着另一个问题。']],
+  ['Mid-training', '集中研修专业教材', ['目标语言/领域/能力语料 + 通用保留数据', '继续预测下一个词（通常对全部 token 算损失）', '补齐领域知识、语言和基础能力', '中到高', '不是重建地基，而是补章节。韩语实验：Mistral 7B 用约 80% 韩语 + 20% 英语继续预训练，韩语改善但英语能力有所下降，遗忘要靠保留集监控。']],
+  ['SFT', '老师示范答题规范', ['几千～几万条输入—输出示范', '预测下一个词（只在回答上算损失）', '指令遵循、输出格式、风格、流程协议', '低（几小时～几天）', '固化的是“该怎么说、怎么做”的协议性知识。数据宁可一万条干净的，也不要十万条脏的：每处噪声都可能被忠实写进参数。']],
+  ['RL', '自己下场做题打磨', ['任务、环境 + 奖励信号（参考答案可选）', '最大化期望奖励', '可迁移的决策策略、探索出的新解法', '高（常是 SFT 的几十～上百倍）', '前提：输出能被验证，当前策略偶尔能成功。本章篇幅最大、最需要工程功力的一步。']]
+];
+var sb = $('#stg');
+function drawStg(i) {
+  var r = stg[i][2];
+  $('#stgT').innerHTML = [['用什么数据', r[0]], ['优化目标', r[1]], ['学到什么', r[2]], ['典型代价', r[3]], ['要点', r[4]]].map(function (x) { return '<tr><td>' + x[0] + '</td><td>' + x[1] + '</td></tr>'; }).join('');
+}
+stg.forEach(function (s, i) {
+  var b = h('button', { type: 'button', 'aria-pressed': String(i === 0), html: '<b>' + s[0] + '</b>' + s[1] }, sb);
+  b.addEventListener('click', function () { S.$$('button', sb).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); drawStg(i); });
+});
+drawStg(0);
+S.notes($('#n-stages'), {
+  c: [
+    ['预训练', '在海量文本上预测下一个词，形成语言、知识和基本推理的地基。'],
+    ['Mid-training', '从已有基模出发在目标分布上继续语言建模，补知识与基础能力（CPT/DAPT/TAPT）。'],
+    ['SFT', '用输入—输出示范训练，只在回答 token 上算损失，固化格式与流程。'],
+    ['RL', '让模型自己尝试，按奖励调整行为概率。'],
+    ['LoRA', '冻结原权重，只训练 1%–5% 参数量的低秩补丁；学习率约为全参的 10 倍。']
+  ],
+  p: [
+    ['训练 = 调整概率分布', '四个环节的差别只在“想要什么”和“用什么信号定义想要”。'],
+    ['SFT 与预训练是同一个任务', '只差两点：数据换成示范；loss masking 只算回答部分。'],
+    ['协议性知识 vs 事实性知识', 'SFT 固化前者；后者靠预训练、Mid-training 或 RAG。'],
+    ['先验 > 环境 > 算法', 'Q-learning 近万局才稳定通关；LLM Agent 第一局 18 步通关。'],
+    ['LoRA 实践', '加到所有主要权重矩阵（尤其 MLP）；SFT 用 rank 64–256，RL 用 8–32 甚至 1。']
+  ]
+});
+
+/* ---------- 2 选择 ---------- */
+function sup() {
+  var p = +$('#sps').value / 100, k = +$('#sks').value;
+  $('#sp').textContent = (p * 100).toFixed(1) + '%'; $('#sk').textContent = k;
+  var at = 1 - Math.pow(1 - p, k), all0 = Math.pow(1 - p, k);
+  $('#spk').textContent = S.pct(at); $('#sall').textContent = S.pct(all0); $('#swait').textContent = p > 0 ? Math.round(1 / p) + ' 次' : '∞';
+  $('#spCap').innerHTML = p === 0 ? '<b style="color:var(--alert)">pass@k = 0：</b>一组全是 0，组内优势消失，RL 只是在消耗采样预算。先补 Mid-training/SFT，或设计可达的课程与部分奖励。'
+    : at < 0.3 ? '<b style="color:var(--s2)">大多数组没有正样本。</b>RL 很难起步。考虑先做 SFT/蒸馏扩大有效支持，或拆成可达的子目标。'
+    : '<b>pass@k 明显上升：</b>正确策略已在模型分布里，只是概率小。RL、拒绝采样、蒸馏都有东西可放大。';
+}
+['#sps', '#sks'].forEach(function (s) { $(s).addEventListener('input', sup); }); sup();
+S.sortGame($('#chSort'), {
+  bins: [{ k: 'no', t: '不训练（提示/工具/RAG）' }, { k: 'mid', t: 'Mid-training' }, { k: 'sft', t: 'SFT' }, { k: 'rl', t: 'RL' }],
+  items: [
+    { t: '韩语文档完全读不懂，采样 64 次也答不对', k: 'mid', why: '知识和语言能力不在基模的有效支持里。' },
+    { t: '偶尔能做对，但工具调用 JSON 经常解析失败', k: 'sft', why: '行为协议没固化，奖励都算不出来，先用 SFT 或约束解码稳定格式。' },
+    { t: 'pass@16 有 60%，但 pass@1 只有 10%', k: 'rl', why: '已有非零成功率，好策略概率低，正是 RL 擅长推高的情形。' },
+    { t: '公司价目表每周变，回答要附出处', k: 'no', why: '动态、要引用的事实交给 RAG，不写进权重。' },
+    { t: '只有几百条稳定示范，没有可交互环境', k: 'sft', why: '先 SFT/RFT/离线偏好优化建立基线，再判断值不值得建 RL 环境。' },
+    { t: '规则能写清楚的转账审批流程', k: 'no', why: '确定性规则应由代码保障，而不是靠模型记忆。' }
+  ]
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['能力支持', '当前策略能否在合理采样下产生成功或部分成功的轨迹。'],
+    ['pass@k', '近似独立采样 k 次至少成功一次的概率 1 − (1 − p)^k。'],
+    ['双重回放', 'Mid-training 每阶段混入通用短数据，以及“长度提升后的旧任务”，防遗忘。'],
+    ['冷启动 SFT', '用少量示范先把格式和基本行为建立起来，让奖励可计算。']
+  ],
+  p: [
+    ['底座、协议、策略', 'Mid-training 补底座，SFT 立协议，RL 优化策略；不是微调力度的三档。'],
+    ['先排除不改权重的方案', '提示、工具、代码约束、上下文；动态事实用 RAG。'],
+    ['pass@k 近零别上 RL', '组内全 0 没有梯度，等一次成功约需 1/p 次采样。'],
+    ['不是仪式化流水线', '强基模可直接 RL（R1-Zero），格式任务可能只需 SFT。'],
+    ['把标称窗口当有效窗口是陷阱', '128K 能输入不等于 128K 上还会检索和推理，要用“能力 × 长度”矩阵检查。']
+  ]
+});
+
+/* ---------- 3 SFT vs RL ---------- */
+var gp = [
+  { rows: [['初始化', 11.5, 'dim'], ['继续 SFT', 3.4, 'alt'], ['继续 RL', 15.0, 'ok']], cap: 'GP-L 规则 OOD：RL +3.5（11.5% → 15.0%），SFT −8.1（→ 3.4%）。GP-VL 规则 OOD 上 RL +3.0，SFT −5.6。' },
+  { rows: [['初始化', 23.6, 'dim'], ['继续 SFT', 13.7, 'alt'], ['继续 RL', 41.2, 'ok']], cap: 'GP-VL 视觉 OOD：RL +17.6（23.6% → 41.2%），SFT −9.9（→ 13.7%）。追踪发现 RL 还改善了底层视觉识别，SFT 则因过拟合思考 token 模式而忽视了视觉 token。' }
+];
+function drawGp(i) { S.bars($('#gpBars'), gp[+i].rows.map(function (r) { return { label: r[0], value: r[1] / 45, text: r[1] + '%', cls: r[2] }; })); $('#gpCap').textContent = gp[+i].cap + ' 这是特定受控设置下的结果，不是 SFT 与 RL 的普遍属性。'; }
+S.seg($('#gpSeg'), drawGp); drawGp(0);
+var md = 'base';
+var drawMd = S.fit($('#mdChart'), 190, function (s, W, H) {
+  var modes = [[0.22, 0.07], [0.5, 0.06], [0.78, 0.07]];
+  var w = md === 'base' ? [0.4, 0.3, 0.3] : md === 'sft' ? [0.34, 0.33, 0.33] : [0.06, 0.88, 0.06];
+  var wid = md === 'rl' ? [0.07, 0.045, 0.07] : md === 'sft' ? [0.08, 0.07, 0.08] : [0.07, 0.06, 0.07];
+  var pts = [], L = 10, R = W - 10, B = H - 30, T = 10, mx = 0, xs = [];
+  for (var i = 0; i <= 200; i++) { var x = i / 200, y = 0; modes.forEach(function (m, j) { y += w[j] * Math.exp(-Math.pow(x - m[0], 2) / (2 * wid[j] * wid[j])) / wid[j]; }); xs.push([x, y]); mx = Math.max(mx, y); }
+  var sx = S.scale(0, 1, L, R), sy = S.scale(0, mx * 1.1, B, T);
+  xs.forEach(function (p) { pts.push([sx(p[0]), sy(p[1])]); });
+  S.svg('path', { d: S.path([[L, B]].concat(pts).concat([[R, B]])) + 'Z', class: 'f-s1s' }, s);
+  S.svg('path', { d: S.path(pts), class: 'ln k-s1' }, s);
+  S.svg('line', { x1: L, x2: R, y1: B, y2: B, class: 'ax' }, s);
+  ['A 类回答', 'B 类（奖励最高）', 'C 类回答'].forEach(function (t, j) { S.svg('text', { x: sx(modes[j][0]), y: H - 8, 'text-anchor': 'middle', class: j === 1 ? 'c-ok b' : '', text: t }, s); });
+});
+function setMd(v) { md = v; drawMd(); $('#mdCap').textContent = v === 'base' ? '基模在三类回答上都有一些概率。' : v === 'sft' ? '覆盖式：SFT 逐条学示范，示范里出现过的写法都保留下来。' : '寻峰式：RL 按奖励重新分配，配合反向 KL 时概率集中到奖励最高的 B 峰。最终保持多样还是收缩，还取决于 KL 系数、熵正则和采样温度。'; }
+S.seg($('#mdSeg'), setMd); setMd('base');
+S.notes($('#n-sftrl'), {
+  c: [
+    ['覆盖式 mass-covering', '极大似然 SFT 倾向于覆盖训练数据中出现过的多个模式。'],
+    ['寻峰式 mode-seeking', 'RL 配合反向 KL 倾向于把概率集中到少数高奖励的峰。'],
+    ['协变量漂移', '离线模仿的策略一旦偏离示范，进入数据没有的状态，就缺少恢复信号。'],
+    ['GeneralPoints', '类 24 点卡牌游戏，用 J/Q/K 取值变化和花色变化测试分布外泛化。']
+  ],
+  p: [
+    ['SFT 记忆，RL 泛化', '本章受控实验中观察到的倾向；示范多样时 SFT 也能泛化，奖励有偏时 RL 也会过拟合。'],
+    ['SFT 细致学地图，RL 拿指南针探路', '地图或指南针不准都会迷路，所以常先 SFT 再 RL。'],
+    ['在线反馈的三个机会', '评估示范外的候选；利用“验证比生成容易”；在当前策略的状态上训练。'],
+    ['特定设定下必须先 SFT', 'Llama-3.2-Vision-11B 不经 SFT 直接 RL 失败：输出不可解析，奖励算不出。'],
+    ['后训练塑造行动阈值', 'SFT 示范和 RL 奖励会把“读多少再动手”的习惯写进参数。']
+  ]
+});
+
+/* ---------- 4 GRPO ---------- */
+var gr = S.rng(5);
+function drawG() {
+  var n = +$('#gNs').value; $('#gN').textContent = n;
+  var mean = n / 16, sd = Math.sqrt(mean * (1 - mean));
+  var box = $('#gRoll'); box.innerHTML = '';
+  var order = []; for (var i = 0; i < 16; i++) order.push(i < n ? 1 : 0);
+  var kinds = ['补边界检查', '捕获异常掩盖', '改错了文件', '改了测试', '没跑测试就提交'];
+  order.forEach(function (r, i) {
+    var adv = sd ? (r - mean) / sd : 0;
+    h('div', { class: sd ? (r ? 'ok' : 'bad') : 'zero', html: '<b>' + (r ? '1' : '0') + '</b>' + (adv >= 0 ? '+' : '') + adv.toFixed(2) }, box);
+  });
+  $('#gCap').innerHTML = sd ? '组内平均 ' + mean.toFixed(2) + '。通过的 ' + n + ' 条优势为 +' + ((1 - mean) / sd).toFixed(2) + '，失败的为 ' + ((0 - mean) / sd).toFixed(2) + '：更新会提高前者里那些选择的概率、降低后者的。（每格：奖励 / 标准化后的相对优势）'
+    : '<b style="color:var(--alert)">16 条奖励全部相同，相对优势全为 0。</b>这一组对参数更新没有贡献。纯结果奖励在全败组和全胜组都会这样，RLVP 和部分进展奖励要恢复的就是这种差异。';
+  void kinds; void gr;
+}
+$('#gNs').addEventListener('input', drawG); drawG();
+function tm() {
+  var r = +$('#tRs').value, u = +$('#tUs').value, n = +$('#tSs').value;
+  $('#tR').textContent = r; $('#tU').textContent = u; $('#tS').textContent = n;
+  var st = r + u; $('#tStep').textContent = Math.round(st / 60) + ' 分钟'; $('#tTot').textContent = (st * n / 3600).toFixed(1) + ' 小时';
+}
+['#tRs', '#tUs', '#tSs'].forEach(function (s) { $(s).addEventListener('input', tm); }); tm();
+S.notes($('#n-grpo'), {
+  c: [
+    ['rollout', '策略模型在隔离环境里完整尝试一次任务的过程。'],
+    ['相对优势', '某条 rollout 相对于同组其他尝试的好坏，GRPO 用组内比较得到。'],
+    ['GRPO', '不训练价值模型，用同一问题多条回答互相比较算优势（DeepSeek 提出）。'],
+    ['PPO', '训练价值模型估计每一步的预期，用裁剪抑制大幅更新，适合细粒度信用分配。'],
+    ['DPO', '直接从事先收集的“较好—较差”偏好对做离线优化，不在线 rollout。']
+  ],
+  p: [
+    ['一个 step 四步', '同题多次 rollout → 验证器算奖励 → 组内相对优势 → 梯度下降更新。'],
+    ['全胜或全败组没有梯度', '奖励相同，优势全为 0。'],
+    ['墙钟时间由最慢的 rollout 决定', '2000 秒 + 600 秒更新 ≈ 43 分钟/step，100 steps 约 72 小时。'],
+    ['算法、奖励、环境各管一件事', '算法决定怎么比较和更新；奖励决定什么算成功；环境和数据决定模型能经历什么。']
+  ]
+});
+
+/* ---------- 5 On-policy ---------- */
+function op() {
+  var d = +$('#oDs').value, t = +$('#oTs').value;
+  $('#oD').textContent = d.toFixed(4); $('#oT').textContent = t;
+  $('#oTok').textContent = Math.exp(d).toFixed(4);
+  var v = Math.exp(t * d); $('#oTraj').textContent = v > 1e6 ? S.sci(v, 1) : v.toFixed(1);
+}
+['#oDs', '#oTs'].forEach(function (s) { $(s).addEventListener('input', op); }); op();
+S.notes($('#n-onpolicy'), {
+  c: [
+    ['Online', '数据在训练过程中不断通过交互产生。'],
+    ['On-policy', '生成 rollout 的行为策略与当前优化的策略相同或足够接近。'],
+    ['重要性比率 ρ', 'π(a|s) / μ(a|s)，用来纠正数据来自另一个策略造成的偏差；新鲜 on-policy 数据更新前 ρ = 1。'],
+    ['训练—推理数值失配', '推理引擎和训练引擎对同一 token 算出的 log probability 不同。'],
+    ['staleness', 'rollout 所用策略落后当前策略的程度。']
+  ],
+  p: [
+    ['异步在线 ≠ on-policy', 'rollout worker 落后几个 checkpoint，数据就已带 off-policy 成分。'],
+    ['放大链条', 'log prob 小误差 → 比率偏差 → 长前缀累积 → 裁剪与优势改变 → 梯度方向改变 → 崩溃。'],
+    ['最直接的单元测试', '更新前比较 sampler 与 trainer 的 log prob，监控 ρ 分位数、最大值、近似 KL、裁剪比例。'],
+    ['同步不只是权重', '还有 LoRA、tokenizer、chat template、模型 revision、位置编码配置。'],
+    ['对不齐就承认是 off-policy', '做重要性修正、监控有效样本数，别指望 PPO 裁剪自动兜底。']
+  ]
+});
+
+/* ---------- 6 RLVP ---------- */
+var rv = [[0, 0], [0, -1], [0, 0], [0, -1], [0, 0], [0, -2], [0, 0], [0, -1]];
+function drawRv(v) {
+  var p = v === 'p', rs = rv.map(function (r) { return r[0] + (p ? 0.5 * r[1] : 0); });
+  var mean = rs.reduce(function (a, b) { return a + b; }, 0) / rs.length;
+  var sd = Math.sqrt(rs.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0) / rs.length);
+  var box = $('#rvRoll'); box.innerHTML = '';
+  var labels = ['合规', '改测试', '合规', '跳过验证', '合规', 'rm -rf', '合规', '改测试'];
+  rs.forEach(function (r, i) { var a = sd ? (r - mean) / sd : 0; h('div', { class: sd ? (a > 0 ? 'ok' : 'bad') : 'zero', html: '<b>' + labels[i] + '</b>' + (sd ? (a >= 0 ? '+' : '') + a.toFixed(2) : '0') }, box); });
+  $('#rvCap').innerHTML = p ? '<b>差异恢复了。</b>R = O + βΦ（这里 β = 0.5，示意）。结果都失败，但违规的轨迹被扣分，合规轨迹的优势变成正的：即使没有一条成功，模型也学到了“别改测试、别跳验证、别执行破坏性命令”。原书强调：只惩罚具体动作，不惩罚“不够努力”；结果奖励始终保留，免得模型学会什么都不做。'
+    : '<b style="color:var(--alert)">全败组，优势全为 0。</b>纯结果奖励看不出改测试和老老实实修的区别，这一组的环境反馈全被浪费了。';
+}
+S.seg($('#rvSeg'), drawRv); drawRv('o');
+S.notes($('#n-reward'), {
+  c: [
+    ['RLVR', '可验证奖励：用测试、断言、状态差异直接判断结果。'],
+    ['生成式奖励模型 GRM', '不只打分，还生成“哪里好、哪里要改”的诊断。'],
+    ['reward hacking / seeking', '钻规则漏洞拿高分 / 先猜评判器看什么，再给自己设过于简单的检查。'],
+    ['结果奖励 ORM / 过程奖励 PRM', '只在结束时判断成败 / 在中间步骤给反馈。'],
+    ['RLVP', 'Reinforcement Learning with Verified Penalty：奖励结果，惩罚可验证的违规路径。']
+  ],
+  p: [
+    ['环境比算法更关键', '要真实、可重置、可并行；构建高保真环境常比训练本身更贵。'],
+    ['模型扮演环境', 'ZeroSearch、DreamGym；模拟器偏差是训练天花板，要用真实交互定期校准。'],
+    ['训练与评估不能共享同一批任务', '可共享生成器和验证代码；测试、隐藏状态、参考解留在验证器一侧。'],
+    ['屏蔽工具返回 token', '只对模型自己生成的思考和调用参数回传梯度。'],
+    ['R = O + βΦ', '非对称验证器：惩罚几乎总可达，进展奖励受可达性门控。'],
+    ['先测信号可达性再加维度', 'TerminalBench 违规 3.71 → 0.66、成功率持平；全零测试的软件修复里进展信号不可达。']
+  ]
+});
+
+/* ---------- 7 蒸馏 ---------- */
+function ds() { var t = +$('#dTs').value; $('#dT').textContent = t; $('#dSig').textContent = '≈ ' + S.big(t); }
+$('#dTs').addEventListener('input', ds); ds();
+S.notes($('#n-distill'), {
+  c: [
+    ['在轨蒸馏', '学生采样轨迹，教师在学生走到的每个位置给出逐 token 分布，最小化 KL。'],
+    ['在轨自蒸馏 OPSD', '同一模型分饰两角：教师版看特权信息（如标准答案），学生版只看问题。'],
+    ['Prompt 蒸馏', '把“长提示 + 思考型教师”的行为压缩到“短提示 + 非思考学生”。'],
+    ['CoT 蒸馏', '把教师完整思考轨迹转给学生，同等参数量下可恢复教师 70%–80% 的能力。'],
+    ['拒绝采样微调 RFT', '多次采样、验证器只留正确的，再拿去做 SFT。']
+  ],
+  p: [
+    ['样本效率的根因', '反馈太稀疏：一条 rollout 只换来一个成败标量。'],
+    ['学生决定走到哪，教师告诉下一步', '比离轨 SFT 更贴近学生会犯的错，比 RL 更密集、方差更低。'],
+    ['约 1/10 步数', '原书：数学等任务上达到同等性能的步数约为纯 RL 的 1/10。'],
+    ['蒸馏继承教师的边界', '教师的系统性错误和冗长习惯会被学生硬编码。'],
+    ['特权信息不得泄露到部署', '只能在训练侧构造，并检查答案遮蔽和遗忘风险。']
+  ]
+});
+
+/* ---------- 8 案例 ---------- */
+S.quiz($('#pitQ'), [
+  { q: '训练 Coding Agent 不再过早结束，评估时只看“任务未完成时是否继续验证”。会出什么问题？', o: ['没问题', '可能训练成永远不敢收尾：还要看保留集里“确实完成时能否正常宣称完成”'], a: 1, why: '边界集 + 保留集缺一不可，这是第 1 篇命名的模式在参数层面的版本。' },
+  { q: '奖励函数只检查模型是否说了“已运行测试”。', o: ['够用', '模型会学会口头承诺验证而不真验证；要用模型看不到的隐藏测试读取真实状态'], a: 1, why: '“通过 grader”不等于“完成任务”，判定要交给模型写不了的验证。' },
+  { q: 'edit_file 经常 old_string 不匹配，直接拿失败样本做复制 SFT？', o: ['直接训', '先沿字节→工具返回→序列化→上下文→模型输出→解析逐层找首个差异'], a: 1, why: '只有模型输出是首个差异时才是模型问题；工具、Harness、tokenizer 改了内容的，要修对应层。' },
+  { q: '损失持续下降，验证集却变差。', o: ['继续训', '在过拟合：Mid-training 会遗忘，SFT 会过拟合示范，RL 会过拟合奖励，都需要独立保留集和早停'], a: 1, why: '三种训练都有各自的过度训练形态。' },
+  { q: '一个需求 SFT 上已经表现良好，测试分布又和训练高度一致，要不要转 RL？', o: ['一定要', '可能不必：RL 常需 10–100 倍训练时间'], a: 1, why: '原书：很多场景下，只要底座和示范数据到位，甚至不需要做 RL。' }
+]);
+S.notes($('#n-cases'), {
+  c: [
+    ['评估资产 → 训练输入', '端到端回归 → RL 与 RFT；前缀回归 → DPO 与边界示范；归因 → PRM 负标签与 RLVP 规则；Rubric → 向量奖励与 GRM。'],
+    ['过早结束', '没有证据就下“已完成”结论；首错在准备宣称完成的那一步。'],
+    ['作用域敏感的最小编辑', '先判断片段属于中文正文、英文原文、代码还是 JSON，再决定改不改。'],
+    ['byte-exact', '逐字节完全一致；复制训练要同时报告 tokenizer 无损往返的上限。']
+  ],
+  p: [
+    ['数据和环境比算法更重要', 'Mid-training 语料、SFT 示范、RL 环境与奖励决定成败。'],
+    ['RAG、ICL、后训练分工', 'RAG 管动态事实，ICL 即时试策略，程序固化硬约束，Mid-training 吸收稳定知识，SFT/RL 塑造难以外部表达的行为。'],
+    ['先小规模验证再放大', '小批 Mid-training 看遗忘、少量 SFT 看格式、小批 rollout 看 pass@k 与数值一致性。'],
+    ['十一个常见陷阱', '用 SFT 塞知识、格式未稳就 RL、标称窗口当有效窗口、pass@k 近零上 RL、奖励不当、仿真失真、过度训练、价值崩溃、数值失配、低估 RL 成本、数据质量低。']
+  ]
+});

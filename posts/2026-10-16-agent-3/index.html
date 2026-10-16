@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆与知识库：跨会话记住</title>
+<meta name="description" content="深入理解 AI Agent 学习笔记（三）：用户记忆的提取、三层评估框架、四种存储格式、Mem0 的写入时与检索时消歧、RAG 分块与稠密/稀疏/混合检索、结构化索引、知识更新流水线、智能体化 RAG 与上下文感知检索。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-16-agent-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-16-agent-shared/series.js"></script>
+<style>
+.facts2 { list-style: none; margin: 8px 0 0; padding: 0; }
+.facts2 li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 16px; }
+.facts2 li.keep span { color: var(--ink); font-weight: 600; }
+.facts2 li.drop span { color: var(--ink-3); text-decoration: line-through; }
+.fmt { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 12px 14px; white-space: pre-wrap; color: var(--ink); min-height: 9em; }
+.dateins { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 8px 0; font-size: 16px; }
+.dateins input { font: inherit; font-size: 15px; padding: 4px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.alert { border-left: 4px solid var(--alert); background: var(--alert-soft); padding: 8px 12px; border-radius: 4px; font-size: 16px; }
+.okbox { border-left: 4px solid var(--ok); background: var(--ok-soft); padding: 8px 12px; border-radius: 4px; font-size: 16px; }
+.store { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.store > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+.store h5 { margin: 0 0 6px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.store ul { margin: 0; padding-left: 18px; font-size: 15px; }
+.store li.del { text-decoration: line-through; color: var(--ink-3); }
+@media (max-width: 640px) { .store { grid-template-columns: minmax(0, 1fr); } }
+.formula { font-family: var(--f-num); font-size: 15px; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; line-height: 1.8; color: var(--ink); overflow-x: auto; }
+.rrf td.n { font-family: var(--f-num); text-align: right; }
+.tickets { list-style: none; margin: 8px 0; padding: 0; }
+.tickets li { padding: 7px 10px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 15px; background: var(--bg); }
+.tickets li.rule { border-color: var(--s1); background: var(--s1-soft); }
+.chunk { font-size: 16px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); margin: 6px 0; }
+.chunk em { font-style: normal; color: var(--s1); }
+</style>
+</head>
+<body data-part="3">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>深入理解 AI Agent · 03</span><span>对应原书第三章</span><span>约 25 分钟</span><span>边读边点</span></p>
+  <h1>会话结束以后，它还<em>记得你</em>吗</h1>
+  <p class="lead">上一篇管的是一次任务之内的上下文；这一篇管跨会话的东西。对单个用户叫用户记忆，让 Agent 成为“懂你的助手”；对所有用户共享的叫知识库，让 Agent 成为“领域专家”。两者共用检索和压缩技术，也共享同样的麻烦：信息冲突、知识过期、检索不准。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">深入理解 AI Agent：设计原理与工程实践</a>》（李博杰 著，Apache-2.0 协议）的学习笔记。不逐段复述原书，而是用自己的话把关键概念讲一遍，配上能动手点的小实验；原书的实验代码和思考题推荐对照阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-agent/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-16-agent-1/" data-part="1"><b>01</b>Agent 入门</a>
+  <a href="../2026-10-16-agent-2/" data-part="2"><b>02</b>上下文工程</a>
+  <a href="../2026-10-16-agent-3/" aria-current="page" data-part="3"><b>03</b>记忆与知识库</a>
+  <a href="../2026-10-16-agent-4/" data-part="4"><b>04</b>工具</a>
+  <a href="../2026-10-16-agent-5/" data-part="5"><b>05</b>Coding Agent</a>
+  <a href="../2026-10-16-agent-6/" data-part="6"><b>06</b>交互扩展</a>
+  <a href="../2026-10-16-agent-7/" data-part="7"><b>07</b>评估</a>
+  <a href="../2026-10-16-agent-8/" data-part="8"><b>08</b>后训练</a>
+  <a href="../2026-10-16-agent-9/" data-part="9"><b>09</b>持续进化</a>
+  <a href="../2026-10-16-agent-10/" data-part="10"><b>10</b>多 Agent</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#extract">提取记忆</a><a href="#format">存储格式</a><a href="#mem0">冲突处理</a><a href="#rag">检索</a><a href="#organize">知识组织</a><a href="#update">知识更新</a><a href="#agentic">智能体化 RAG</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="extract">
+  <div class="part-head"><h2>记什么，以及怎样算记得好</h2><span class="meta">原书 3.1 节</span></div>
+  <div class="sec-lede">
+    <p>用户记忆不是把每句对话都存下来。对话结束后，框架会再调用一次 LLM，从对话里提取对未来有用的事实。原书给了三条规则：<strong>选择性</strong>（丢掉“搜索返回了 3 个选项”这类短期细节）、<strong>抽象化</strong>（把这次选了靠窗座位归纳成长期偏好）、<strong>结构化</strong>（用可检索的字段保存）。这和第 2 篇的上下文学习不同：上下文学习只在当前窗口生效，记忆则跨会话持久存在。</p>
+    <p>怎样算“记得好”？原书在 LoCoMo 等公开基准之上设计了一个更贴合 Agent 的<strong>三层评估框架</strong>。第一层<strong>基础回忆</strong>：用户说过会员号，需要时能准确给出。第二层<strong>多会话检索</strong>：用户有两辆车，说“帮我的车预约保养”时，要找出两辆车的信息并主动问是哪一辆，而不是随便猜。第三层<strong>主动服务</strong>：订国际航班时，主动想起几个月前存过的护照快过期了。</p>
+    <p class="go">先替 Agent 做一次记忆提取：下面这段订机票对话里，哪些值得长期记住？</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">从对话中提取记忆</p>
+      <div class="chat">
+        <div class="msgb user"><b>用户</b>帮我订下周五去东京的机票。我喜欢靠窗，我吃素，需要特殊餐食。</div>
+        <div class="msgb asst"><b>Agent</b>正在搜索……找到 3 个选项。已按您的偏好筛选靠窗座位，订 ANA 直飞吗？</div>
+        <div class="msgb user"><b>用户</b>好，用我的美联航常旅客号 12345678。</div>
+      </div>
+      <p class="lab-s" style="margin-top:12px">点“记 / 不记”，然后看原书的答案。</p>
+      <ul class="facts2" id="exList"></ul>
+      <p class="cap" id="exCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">这属于第几层能力</p>
+      <div id="lvSort"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-extract"></div>
+</section>
+
+<section class="part" id="format">
+  <div class="part-head"><h2>放哪里、怎么存、存什么</h2><span class="meta">原书 3.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书把记忆设计拆成三个互相正交的维度。<strong>放哪里</strong>：轨迹（单次会话的原始记录，只增不改，是流水账）和用户长期记忆（跨会话提炼出的稳定信息，会被反复改写合并，是档案），有的系统还有业务状态（“等待付款”这类任务阶段）。<strong>存什么</strong>：借用认知科学的分类，情景记忆是具体事件（“订了下周五的 ANA 航班”），语义记忆是抽象出的稳定特征（“用户吃素”），程序记忆是行为流程（“先搜直飞、确认座位、用常旅客号、订餐”）。</p>
+    <p><strong>怎么存</strong>有四种渐进的格式。Simple Notes 每条一个最小事实，最省但会把“在 TechCorp 当高级工程师负责推荐系统”拆成互不相关的三条；Enhanced Notes 存完整段落，语义完整但冗余难更新；JSON Cards 用“类别.子类别.键”三层结构，可局部更新但强制单一分类；Advanced JSON Cards 再加上来源背景（backstory）、主体（person）、关系（relationship）和时间戳，专门解决<strong>消歧</strong>：“张医生”是用户自己的牙医，还是父亲的心脏科医生？</p>
+    <p>原书的选择建议是混合：<strong>关键且少量</strong>的数据用 Advanced JSON Cards，<strong>大量且非关键</strong>的对话事实用 Simple Notes。更进一步的 <strong>User as Code</strong> 把用户状态写成带类型的对象、把规则写成函数，聚合、冲突检测、约束检查交给确定性代码，而不是让 LLM 心算。</p>
+    <p class="go">切换四种格式看同一份信息长什么样；再在右边改日期，看“代码化记忆”如何自动报警。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">同一份信息，四种存法</p>
+      <div class="seg" id="fmtSeg"><button data-v="0" aria-pressed="true">Simple Notes</button><button data-v="1">Enhanced Notes</button><button data-v="2">JSON Cards</button><button data-v="3">Advanced JSON Cards</button></div>
+      <div class="fmt" id="fmtOut" style="margin-top:12px"></div>
+      <p class="cap" id="fmtCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">User as Code：护照有效期检查</p>
+      <p class="lab-s">状态是带类型的对象，规则是普通函数，状态一更新就自动检查。国际行程要求护照在出发日后仍有至少 180 天有效期。</p>
+      <div class="dateins"><label>护照到期 <input type="date" id="ppExp" value="2025-02-18"></label><label>东京出发 <input type="date" id="ppDep" value="2025-01-15"></label></div>
+      <div class="formula">for trip in state.trips:<br>&nbsp;&nbsp;if trip.is_international:<br>&nbsp;&nbsp;&nbsp;&nbsp;days = expiry_date − departure_date<br>&nbsp;&nbsp;&nbsp;&nbsp;if days &lt; 180: alert(…)</div>
+      <div id="ppOut" style="margin-top:10px"></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">情景、语义还是程序记忆</p>
+    <div id="cogSort"></div>
+  </div>
+  <div class="notes" id="n-format"></div>
+</section>
+
+<section class="part" id="mem0">
+  <div class="part-head"><h2>冲突在写入时解决，还是读取时解决</h2><span class="meta">原书 3.1 节 · 记忆框架案例</span></div>
+  <div class="sec-lede">
+    <p>用户先说“我住在北京”，后来说“我搬到上海了”。记忆系统该怎么办？Mem0 的演进给了两种答案。2025 年论文和 v2 在<strong>写入时消歧</strong>：抽取候选事实后，向量检索找出相近的旧记忆，再让 LLM 在 ADD、UPDATE、DELETE、NOOP 中选一个，把“住北京”更新成“住上海”。好处是记忆库始终简洁一致；风险是一次错误的更新或删除会<strong>不可逆地丢掉历史</strong>，而且每条候选事实都要多一次检索和 LLM 判断。</p>
+    <p>2026 年的 v3 改成<strong>仅追加写入、检索时推理</strong>：只做 ADD，两条带时间的事实并存；查询时融合语义相似度、BM25 关键词、实体匹配，再按时间排序找出当前事实。Mem0 报告 LoCoMo 从 71.4 提到 92.5，LongMemEval 从 67.8 提到 94.4。另一个框架 Memobase 则聚焦用户画像（开发者配置的主题槽位）加事件时间线，用缓冲批处理摊薄 LLM 成本。</p>
+    <p class="go">逐条喂给两种系统几句话，其中一句容易被误读，看它们的记忆库分别变成什么样。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">写入时消歧 vs 仅追加</p>
+    <p class="lab-s">示意场景：用来说明原书指出的风险，“一次错误的更新会不可逆地丢掉历史”。</p>
+    <div class="store">
+      <div><h5>v2：写入时 ADD / UPDATE / DELETE</h5><ul id="m2"></ul></div>
+      <div><h5>v3：只 ADD，带时间</h5><ul id="m3"></ul></div>
+    </div>
+    <p class="cap" id="mCap2"></p>
+    <div id="mStep2"></div>
+  </div>
+  <div class="notes" id="n-mem0"></div>
+</section>
+
+<section class="part" id="rag">
+  <div class="part-head"><h2>检索：语义、关键词，和把两者合起来</h2><span class="meta">原书 3.2 节</span></div>
+  <div class="sec-lede">
+    <p>知识库的核心技术是 <strong>RAG</strong>：检索相关片段，注入上下文，让 LLM 基于它们生成答案。文档先要<strong>分块</strong>，常见起点是每块 256–1024 token、相邻重叠 10%–20%；块太小语义不完整（“该公司收入增长 3%”，哪家？），块太大主题混杂、向量被稀释。生产中最常用的是按标题、段落、句子递归切分。</p>
+    <p>检索有两条路线。<strong>稠密嵌入</strong>把文本变成向量，语义相近的向量方向相近，用<strong>余弦相似度</strong>比较；它懂同义词，但可能漏掉精确关键词（搜“HTTP-403”返回泛泛的“服务器错误”）。<strong>稀疏检索</strong>以 BM25 为代表，靠关键词匹配：词越稀有权重越高，词频有饱和、文档长度要归一化；它精确，但读不懂同义词（搜“kitty”找不到只写“cat”的文档）。</p>
+    <p><strong>混合检索</strong>两路都跑。两路得分尺度不同，常用<strong>倒数排名融合（RRF）</strong>只看排名合并：得分 = Σ 1/(k + 排名)，k 常取 60。之后再用跨编码器做<strong>重排序</strong>：把查询和候选拼在一起让模型逐词比对，像面试官和候选人深谈，比检索阶段“各自编码再比向量”的双编码器（像猎头看简历）准得多。验收指标看 recall@k（该找的找到没）、MRR（找到得够不够靠前）、nDCG（整个列表的质量）。</p>
+    <p class="go">先手动调一次 BM25，复现原书实验 3-5 的日志；再用 RRF 把两路排名合起来。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">BM25 计算器</p>
+      <p class="lab-s">语料 N = 10 篇，avgdl = 250 词。默认值对应原书日志里 doc_1 的“模型”一项。</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>词频 TF <output id="bTF">5</output></span><input type="range" id="bTFs" min="0" max="30" value="5"></label>
+        <label class="ctl"><span>文档长度 <output id="bL">200</output></span><input type="range" id="bLs" min="50" max="1000" step="10" value="200"></label>
+        <label class="ctl"><span>含该词的文档数 df <output id="bDF">3</output></span><input type="range" id="bDFs" min="1" max="9" value="3"></label>
+        <label class="ctl"><span>k₁（饱和速度） <output id="bK">1.5</output></span><input type="range" id="bKs" min="0.5" max="3" step="0.1" value="1.5"></label>
+        <label class="ctl"><span>b（长度归一化） <output id="bB">0.75</output></span><input type="range" id="bBs" min="0" max="1" step="0.05" value="0.75"></label>
+      </div>
+      <div class="read"><div><div class="v" id="bIdf">0</div><div class="k">IDF = ln((N−df+0.5)/(df+0.5))</div></div><div class="hl"><div class="v" id="bOut">0</div><div class="k">这个词的 BM25 贡献</div></div></div>
+      <p class="note">试试：TF 从 5 拉到 10，贡献远不到两倍（词频饱和）；把 df 调到 2，就是“蒸馏”那一项，单次出现贡献更大（更稀有）。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">倒数排名融合（RRF，k = 60）</p>
+      <p class="lab-s">文档和两路排名是示意数据，对应原书举的两类盲区。</p>
+      <div class="seg" id="rrfSeg"><button data-v="0" aria-pressed="true">查“HTTP-403”</button><button data-v="1">查“kitty 喂养”</button></div>
+      <div class="tblw" style="margin-top:10px"><table class="cmpt rrf"><thead><tr><th>文档</th><th>稠密排名</th><th>稀疏排名</th><th>RRF 得分</th></tr></thead><tbody id="rrfT"></tbody></table></div>
+      <p class="cap" id="rrfCap"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-rag"></div>
+</section>
+
+<section class="part" id="organize">
+  <div class="part-head"><h2>原始案例直接入库，远远不够</h2><span class="meta">原书 3.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书用两个案例说明扁平知识库的硬伤。<strong>黑猫白猫</strong>：100 个案例文档，90 黑 10 白，问比例时 top-k 只能取回 20 条，模型基于不完整的样本下结论。<strong>Xfinity 优惠资格</strong>：几百条客服工单，退伍军人 John 通过、医生 Sarah 拿到折扣、教师 Mike 不符合，但没有任何一条写着资格范围本身。护士来问能不能享受时，有三重障碍：<strong>最近邻偏置</strong>（“护士”离“医生”最近，Sarah 那条排第一）、<strong>边界语义缺失</strong>（“仅限……其他一律不适用”不存在于任何单条工单，调大 k 也没用）、<strong>完整性信号缺失</strong>（模型不知道自己有没有看全）。</p>
+    <p>结论是要在<strong>索引阶段</strong>投入计算：把 100 个案例压成统计摘要，把散落的个案提炼成带边界的规则卡。<strong>RAPTOR</strong> 自下而上聚类、递归摘要成一棵树，适合“从概念逐步钻进细节”；<strong>GraphRAG</strong> 抽取实体和关系建图，适合多跳问题（“我的医生所在医院的地址”）和实体消歧，但把自然语言变三元组会丢掉条件和时间逻辑。字节开源的 <strong>OpenViking</strong> 走文件系统范式：每个目录自动生成约 100 token 的 L0 摘要和约 2000 token 的 L1 概览，L2 全文按需加载，前提是文件之间像 Wikipedia 一样互相链接。</p>
+    <p class="go">让护士问几次，看检索结果的顺序怎么左右答案；再加上一张规则卡。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">护士能享受 Xfinity 优惠吗</p>
+      <div class="ctrls"><button class="btn pri" type="button" id="nuAsk">再问一次</button><label style="font-size:15px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="nuRule">索引阶段已提炼规则卡</label></div>
+      <ul class="tickets" id="nuList"></ul>
+      <p class="cap" id="nuCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">该用哪种组织方式</p>
+      <div id="orgQuiz"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-organize"></div>
+</section>
+
+<section class="part" id="update">
+  <div class="part-head"><h2>把知识库当代码库：每次修改都是一个 PR</h2><span class="meta">原书 3.3 节 · 知识应该如何更新</span></div>
+  <div class="sec-lede">
+    <p>上线运行的记忆和知识库会持续收到新信息。只更新不整理会越来越乱，只定期重写又不及时，所以要两条路径并行：<strong>事件触发的增量更新</strong>和<strong>周期触发的全量整理</strong>。</p>
+    <p>原书的工程答案是<strong>把知识库当代码库，把每次变更当成一个 PR</strong>，套用第 1 篇的提议者—审核者模式：Proposer Agent 先检索相关旧知识，提交尽量小而完整的 diff；Reviewer Agent 拿着变更前的知识、diff 和<strong>原始证据</strong>独立核对，不通过就给出指向具体证据和行号的意见；迭代到批准为止，超出预算转人工，不能默认放行；合入后跑 CI，再从这个版本重建索引。两者都应是能自己搜索、比对、跑检查的 Agent，而不是两次固定的 API 调用，最好用<strong>能力相近、来自不同家族</strong>的模型互审。</p>
+    <p>全量整理做三件事：去重去旧合并、<strong>回到原始数据核查</strong>（不能只在摘要之间互相改写）、冲突解决与<strong>场景限定</strong>（两种说法可能在不同时间、对象、地域下都成立，那就把适用条件写清，而不是删掉一条）。共享知识库还要按调用者权限过滤检索、做租户隔离，给内容加生效/失效时间。</p>
+    <p class="go">跟着一次知识更新 PR 走一遍。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一次知识更新</p>
+      <p class="lab-s">示意流程，沿用上一节的 Xfinity 例子。</p>
+      <p class="msg" id="prCap"></p>
+      <div class="chat" id="prChat" style="margin-top:8px"></div>
+      <div id="prStep"></div>
+    </div>
+    <div class="aside">
+      <p><strong>三层要分开：</strong></p>
+      <ul class="pts">
+        <li><strong>原始证据层</strong>：对话、轨迹、原始文档，只增不改。</li>
+        <li><strong>知识层</strong>：提炼后的 Markdown 或代码，进 Git，可修订、可回滚。</li>
+        <li><strong>服务层</strong>：从某个已合入版本生成的检索索引，是可重建的派生物。</li>
+      </ul>
+      <p style="margin-top:12px">每条线上知识都应能回答：从哪条证据来、谁在什么时候批准的。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-update"></div>
+</section>
+
+<section class="part" id="agentic">
+  <div class="part-head"><h2>让 Agent 自己决定查什么</h2><span class="meta">原书 3.3 节 · 智能体化 RAG 与上下文感知检索</span></div>
+  <div class="sec-lede">
+    <p>传统 RAG 是单向管道：查询直接检索，结果直接注入，模型直接回答。原书比喻为“图书馆里只能搜一次就得立刻写报告”。<strong>智能体化 RAG</strong> 把检索变成一个工具，Agent 用 ReAct 循环决定查什么、查完够不够、要不要换个关键词再查。简单问题（“正当防卫怎么规定”）两者差不多，传统 RAG 还更快；复杂问题（“醉酒过失致人重伤且有盗窃前科如何量刑”）差距就很明显。</p>
+    <p>另一个瓶颈在分块本身：块被切出来后丢了上下文，“该公司第二季度收入增长 3%”不知道指谁。Anthropic 的<strong>上下文感知检索</strong>在索引前让 LLM 给每块生成一句前缀，如“本段节选自 ACME 公司 2025 年 Q2 财报的关键业绩指标章节”，再连同原文一起索引，同时增强稀疏和稠密两路。据 Anthropic 数据，结合 BM25 检索失败率降 49%，再加重排序降 67%，借助提示缓存每百万文档 token 约 1 美元。注意它和第 2 篇的“上下文感知压缩”不同：一个在索引期做加法，一个在运行期做减法。</p>
+    <p>两条线最后汇合成<strong>双层记忆架构</strong>：Advanced JSON Cards 存少量关键事实常驻上下文，提供全局概览；上下文感知检索按需取回原始对话细节。主动服务之所以最难，是因为它同时需要概览和细节。检索内容也是间接提示注入的载体，要做来源标记，且不能仅凭检索内容就触发转账、删除这类操作。</p>
+    <p class="go">走一遍原书的量刑问题，再看一个分块加了前缀前后的差别。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">多轮检索的律师</p>
+      <div class="seg" id="arSeg"><button data-v="non" aria-pressed="true">非智能体化 RAG</button><button data-v="ag">智能体化 RAG</button></div>
+      <div class="chat" id="arChat" style="margin-top:12px"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">给分块补上下文</p>
+      <p class="lab-s">查询：“ACME 公司最近的收入增长情况”</p>
+      <div class="seg" id="ctxSeg"><button data-v="0" aria-pressed="true">传统分块</button><button data-v="1">上下文感知分块</button></div>
+      <div id="ctxOut" style="margin-top:10px"></div>
+      <p class="cap" id="ctxCap"></p>
+    </div>
+  </div>
+  <div class="aside" style="max-width:46em;margin-top:18px">
+    <p><strong>多模态记忆还在前沿。</strong>原书列了三种思路：存原图加文字描述再按描述检索；把人脸或声纹的嵌入存进上下文的一块区域，每个只占约 1 个 token；把嵌入写进 Engram 类模型的哈希槽位（User as Engram），扩展性更强但要模型本身支持。</p>
+  </div>
+  <div class="notes" id="n-agentic"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-agent-2/"><small>上一篇</small><span>02 · 上下文工程</span></a><a class="nx" href="../2026-10-16-agent-4/"><small>下一篇</small><span>04 · 工具</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">bojieli/ai-agent-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 1 提取 ---------- */
+var ex = [
+  { t: '用户偏好靠窗座位', k: 1, why: '抽象化：本次选择归纳为长期偏好。' },
+  { t: '用户吃素，航班需要特殊餐食', k: 1, why: '长期的饮食限制。' },
+  { t: '美联航常旅客号 12345678', k: 1, why: '结构化保存，下次直接用。' },
+  { t: '用户近期有东京行程', k: 1, why: '近期活动，后续可能用到（比如提醒护照）。' },
+  { t: '搜索返回了 3 个选项', k: 0, why: '选择性：短期细节，对未来没用。' },
+  { t: 'Agent 推荐了 ANA 直飞', k: 0, why: '本次会话的过程信息，不是关于用户的稳定事实。' }
+];
+var exUl = $('#exList'), exAns = {};
+function drawEx() {
+  exUl.innerHTML = '';
+  var done = 0, right = 0;
+  ex.forEach(function (f, i) {
+    var a = exAns[i];
+    var li = h('li', { class: a == null ? '' : a ? 'keep' : 'drop' }, exUl);
+    h('span', { text: f.t }, li);
+    var g = h('div', { class: 'opts' }, li);
+    var y = h('button', { class: 'opt' + (a === 1 ? (f.k ? ' right' : ' wrong') : ''), type: 'button', text: '记' }, g);
+    var n = h('button', { class: 'opt' + (a === 0 ? (f.k ? ' wrong' : ' right') : ''), type: 'button', text: '不记' }, g);
+    y.addEventListener('click', function () { exAns[i] = 1; drawEx(); $('#exCap').innerHTML = (f.k ? '<b>对。</b>' : '<b style="color:var(--alert)">不必记。</b>') + f.why; });
+    n.addEventListener('click', function () { exAns[i] = 0; drawEx(); $('#exCap').innerHTML = (!f.k ? '<b>对。</b>' : '<b style="color:var(--alert)">应该记。</b>') + f.why; });
+    if (a != null) { done++; if ((a === 1) === !!f.k) right++; }
+  });
+  if (done === ex.length) $('#exCap').innerHTML += '<br>全部完成，答对 ' + right + ' / ' + ex.length + '。原书提取结果正是前四条。';
+}
+drawEx();
+S.sortGame($('#lvSort'), {
+  bins: [{ k: 1, t: '第一层 基础回忆' }, { k: 2, t: '第二层 多会话检索' }, { k: 3, t: '第三层 主动服务' }],
+  items: [
+    { t: '“我的支票账户号是多少？”', k: 1, why: '用户直接提供过的、无歧义的信息，准确取回即可。' },
+    { t: '有两辆车的用户说“给我的车约保养”', k: 2, why: '要找出两辆车的信息并主动问是哪一辆。' },
+    { t: '取消“洛杉矶之旅”时关联机票和酒店', k: 2, why: '旅行是复合事件，要关联多次会话里的所有预订。' },
+    { t: '问贷款状态时忽略只咨询过的报价', k: 2, why: '分辨有效合同和未生效的报价。' },
+    { t: '订国际航班时提醒护照快过期', k: 3, why: '从很久以前的信息里发现关联，没人要求也主动预警。' },
+    { t: '报税季主动汇总全年的税务文件', k: 3, why: '综合多个会话的信息，主动给出待办清单。' }
+  ]
+});
+S.notes($('#n-extract'), {
+  c: [
+    ['用户记忆', '跨会话保存的、针对单个用户的个性化信息，由额外的 LLM 调用提取、压缩、审查。'],
+    ['知识库', '面向所有用户共享的集体知识，如法规、操作流程、技术文档。'],
+    ['LoCoMo', '长期对话记忆基准：平均约 300 轮、最多 35 个会话的超长对话。'],
+    ['LLM-as-a-judge', '用另一个 LLM 当评委，对比回答与参考答案打分。']
+  ],
+  p: [
+    ['提取三规则', '选择性、抽象化、结构化。'],
+    ['三层评估框架', '基础回忆 → 多会话检索 → 主动服务。'],
+    ['八项记忆能力', '个人信息、偏好、话题切换、记忆更新、多会话连续、复杂思考、时间感知、冲突解决。']
+  ]
+});
+
+/* ---------- 2 格式 ---------- */
+var fmts = [
+  ['- 用户在 TechCorp 工作\n- 用户职位：高级工程师\n- 用户负责推荐系统\n- 用户的牙医：张医生\n- 父亲的医生：张医生', 'Simple Notes：每条一个最小事实，开销极低。但同一份工作被拆成三条互不相关的碎片；两个“张医生”也分不清。'],
+  ['用户在 TechCorp 担任高级软件工程师，专注机器学习三年，目前领导一个 5 人的推荐系统项目。\n\n用户的牙医是张医生；用户父亲在看心脏科的张医生。', 'Enhanced Notes：保留叙事和语义完整。代价是冗余，职位一变要改多个段落。'],
+  ['{\n  "work": {\n    "company": {"name": "TechCorp"},\n    "position": {"title": "高级工程师"},\n    "project": {"name": "推荐系统"}\n  },\n  "health": {"doctor": {"name": "张医生"}}\n}', 'JSON Cards：类别 → 子类别 → 键值，可以局部更新。但刚性分类，而且“张医生”到底是谁的医生仍然丢了。'],
+  ['{\n  "fact": "牙科医生：张医生",\n  "person": "用户本人",\n  "relationship": "self",\n  "backstory": "用户 3 月预约洗牙时提到",\n  "timestamp": "2025-03-02"\n},\n{\n  "fact": "心脏科医生：张医生",\n  "person": "王建国",\n  "relationship": "父亲",\n  "backstory": "用户替父亲预约复查时提到",\n  "timestamp": "2025-05-11"\n}', 'Advanced JSON Cards：加上 person、relationship、backstory、时间戳，“为谁存、为什么存”一清二楚。用户说“帮我安排家人的年度体检”时，靠 relationship 就能找出所有家庭成员。代价是生成和维护成本高。']
+];
+function drawFmt(i) { $('#fmtOut').textContent = fmts[+i][0]; $('#fmtCap').innerHTML = fmts[+i][1]; }
+S.seg($('#fmtSeg'), drawFmt); drawFmt(0);
+function drawPp() {
+  var e = new Date($('#ppExp').value), d = new Date($('#ppDep').value);
+  if (isNaN(e) || isNaN(d)) { $('#ppOut').textContent = '请填写两个日期。'; return; }
+  var days = Math.round((e - d) / 864e5);
+  $('#ppOut').innerHTML = days < 180
+    ? '<div class="alert"><b>alert：</b>护照到期距出发只剩 ' + days + ' 天（少于 180 天），建议加急续签。</div>'
+    : '<div class="okbox">检查通过：出发时护照还有 ' + days + ' 天有效期。</div>';
+}
+$('#ppExp').addEventListener('input', drawPp); $('#ppDep').addEventListener('input', drawPp); drawPp();
+S.sortGame($('#cogSort'), {
+  bins: [{ k: 'epi', t: '情景记忆（具体事件）' }, { k: 'sem', t: '语义记忆（一般特征）' }, { k: 'pro', t: '程序记忆（行为流程）' }],
+  items: [
+    { t: '用户订了下周五去东京的 ANA 航班', k: 'epi', why: '一个具体事件：时间、对象、细节。' },
+    { t: '用户是素食者', k: 'sem', why: '从交互中提炼的稳定特征。' },
+    { t: '先搜直飞 → 确认座位 → 用常旅客号 → 订餐', k: 'pro', why: '从反复订票中学到的流程。' },
+    { t: '上次讨论预算是 3 月 12 日', k: 'epi', why: '带时间的具体事件，适合按时间维度检索。' },
+    { t: '用户偏好性价比高、重视评价的商品', k: 'sem', why: '从多次购物中抽象出的规律（原书说情景记忆可泛化为语义记忆）。' }
+  ]
+});
+S.notes($('#n-format'), {
+  c: [
+    ['轨迹', '单次会话完整原始记录，只增不改，是流水账。'],
+    ['用户长期记忆', '跨会话提炼的稳定信息，会被改写、合并、淘汰，是档案。'],
+    ['工作记忆', '对应上下文窗口：轨迹加上被激活加载进来的长期记忆，是按相关性裁剪的动态子集。'],
+    ['Advanced JSON Cards', '在事实之外加 person、relationship、backstory、时间戳，用于消歧。'],
+    ['User as Code', '用户状态写成带类型对象，规则写成函数；先追加日志，再定期重建状态。']
+  ],
+  p: [
+    ['三个正交维度', '放哪里（层次）× 怎么存（格式）× 存什么（情景/语义/程序）。'],
+    ['四种格式的递进', 'Simple Notes → Enhanced Notes → JSON Cards → Advanced JSON Cards。'],
+    ['混合选型', '关键且少量 → Advanced JSON Cards；大量且非关键 → Simple Notes。'],
+    ['记忆压缩三层', '重要性评分（频率、时间衰减、情感、独特性）→ 聚类摘要 → 抽象成语义或程序记忆。'],
+    ['日志脱敏用本地模型', '把含敏感信息的日志发到云端脱敏违背初衷；正则初筛 + 本地 LLM 精查。']
+  ]
+});
+
+/* ---------- 3 Mem0 ---------- */
+var mSeq = [
+  { say: '“我住在北京。”', v2: [['住在北京', '']], v3: [['[1月] 住在北京', '']], cap: '两边都写入一条。' },
+  { say: '“我下周去上海出差。”', v2: [['住在上海', 'UPDATE']], v3: [['[1月] 住在北京', ''], ['[3月] 下周去上海出差', '']], cap: '写入时消歧要当场判断这句和“住北京”冲不冲突。这里 LLM 误判为搬家，执行了 UPDATE，“住在北京”被覆盖，历史丢了。v3 只追加，两条并存。' },
+  { say: '“我搬到上海了。”', v2: [['住在上海', 'NOOP']], v3: [['[1月] 住在北京', ''], ['[3月] 下周去上海出差', ''], ['[6月] 搬到上海', '']], cap: 'v2 认为已经是“住上海”，NOOP。v3 继续追加。' },
+  { say: '问：“我 2 月份住哪？”', v2: [['住在上海', '']], v3: [['[1月] 住在北京', '命中'], ['[3月] 下周去上海出差', ''], ['[6月] 搬到上海', '']], cap: 'v2 的库里只剩“住在上海”，答错。v3 在检索时融合语义、关键词、实体和时间排序，能答出 2 月还住北京。代价是检索端更复杂。' }
+];
+S.stepper($('#mStep2'), mSeq.length, function (i) {
+  var s = mSeq[i];
+  function fill(ul, rows) { ul.innerHTML = ''; rows.forEach(function (r) { h('li', { html: r[0] + (r[1] ? ' <b style="color:var(--s2)">' + r[1] + '</b>' : '') }, ul); }); }
+  fill($('#m2'), s.v2); fill($('#m3'), s.v3);
+  $('#mCap2').innerHTML = '<b>' + s.say + '</b> ' + s.cap;
+});
+S.notes($('#n-mem0'), {
+  c: [
+    ['写入时消歧', '新事实写入时与旧记忆对比，由 LLM 选择 ADD / UPDATE / DELETE / NOOP。'],
+    ['仅追加 + 检索时推理', '只 ADD 带时间的事实，查询时融合多路信号和时间排序找出当前事实。'],
+    ['Memobase', '用户画像（可配置主题槽位）+ 事件时间线；缓冲批处理摊薄 LLM 成本。'],
+    ['Mem0-g', 'Mem0 早期的图记忆变体，当前开源版已移除，应视为历史设计。']
+  ],
+  p: [
+    ['写入时消歧：库简洁，但错误更新不可逆', '每条候选事实还要多一次检索和 LLM 判断。'],
+    ['仅追加：不丢历史，LLM 调用更少', 'Mem0 v3：LoCoMo 71.4 → 92.5，LongMemEval 67.8 → 94.4。'],
+    ['同一纪律', '与第 1 篇“只增不改”一致：原始证据只追加，派生视图可以重建。']
+  ]
+});
+
+/* ---------- 4 BM25 + RRF ---------- */
+function bm() {
+  var tf = +$('#bTFs').value, L = +$('#bLs').value, df = +$('#bDFs').value, k1 = +$('#bKs').value, b = +$('#bBs').value, N = 10, avg = 250;
+  $('#bTF').textContent = tf; $('#bL').textContent = L; $('#bDF').textContent = df; $('#bK').textContent = k1.toFixed(1); $('#bB').textContent = b.toFixed(2);
+  var idf = Math.log((N - df + 0.5) / (df + 0.5));
+  var sc = idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * L / avg));
+  $('#bIdf').textContent = idf.toFixed(2); $('#bOut').textContent = sc.toFixed(2);
+}
+['#bTFs', '#bLs', '#bDFs', '#bKs', '#bBs'].forEach(function (s) { $(s).addEventListener('input', bm); }); bm();
+var rrfData = [
+  { docs: [['A《HTTP-403 Forbidden 排查》', 4, 1], ['B《服务器错误的常见原因》', 1, 6], ['C《Nginx 权限配置》', 3, 2], ['D《网站打不开怎么办》', 2, 9]], cap: '稠密检索把泛泛的“服务器错误”排第一，稀疏检索靠精确关键词把真正的 403 文档排第一。融合后 A 胜出，因为它在两路里都不差。' },
+  { docs: [['A《猫咪饲养指南》（只写 cat）', 1, 0], ['B《Kitty 罐头促销》', 4, 1], ['C《幼猫喂食时间表》', 2, 0], ['D《Hello Kitty 周边》', 6, 2]], cap: '稀疏检索只认字面“kitty”，命中的却是促销和周边；只写“cat”的饲养指南它根本找不到（排名记为未召回）。稠密检索懂同义，融合后真正相关的 A、C 排在前面。' }
+];
+function drawRrf(i) {
+  var d = rrfData[+i], rows = d.docs.map(function (r) {
+    var s = (r[1] ? 1 / (60 + r[1]) : 0) + (r[2] ? 1 / (60 + r[2]) : 0);
+    return { n: r[0], a: r[1], b: r[2], s: s };
+  }).sort(function (x, y) { return y.s - x.s; });
+  $('#rrfT').innerHTML = rows.map(function (r, j) { return '<tr' + (j === 0 ? ' class="on"' : '') + '><td>' + r.n + '</td><td class="n">' + (r.a || '未召回') + '</td><td class="n">' + (r.b || '未召回') + '</td><td class="n">' + r.s.toFixed(4) + '</td></tr>'; }).join('');
+  $('#rrfCap').innerHTML = d.cap + ' 之后通常再接一个跨编码器重排序做精排。';
+}
+S.seg($('#rrfSeg'), drawRrf); drawRrf(0);
+S.notes($('#n-rag'), {
+  c: [
+    ['RAG', '检索相关片段 → 注入上下文 → LLM 基于上下文生成答案。'],
+    ['分块 Chunking', '把长文档切成适合独立检索的片段；递归/结构感知切分最常用。'],
+    ['稠密嵌入', '把文本映射为向量，语义相近方向相近，用余弦相似度比较。'],
+    ['BM25', '稀疏检索的经典算法：IDF 加权 + 词频饱和 + 长度归一化。'],
+    ['倒排索引', '从词到文档的反向映射，像书后的术语索引页。'],
+    ['跨编码器重排序', '把查询和候选拼在一起逐词比对打分，比双编码器准但慢。']
+  ],
+  p: [
+    ['BM25', 'Σ IDF(q)·TF(k₁+1) / (TF + k₁(1 − b + b·|D|/avgdl))；IDF = ln((N−df+0.5)/(df+0.5))。'],
+    ['RRF', '得分 = Σ 1/(k + rank)，k 常取 60；只看排名，不管原始分数尺度。'],
+    ['混合流水线', '并行检索 → 融合 → 重排序（重排序不替代融合）。'],
+    ['三个指标', 'recall@k（找到没）、MRR（够不够靠前）、nDCG（整个列表质量）。'],
+    ['ANN 索引', 'ANNOY 树：构建快、省内存、不支持增量；HNSW 图：精度高、支持增量、占内存。']
+  ]
+});
+
+/* ---------- 5 知识组织 ---------- */
+var tk = [
+  ['工单 #1021：退伍军人 John，审核通过', 'ok'],
+  ['工单 #0877：医生 Sarah，获得折扣', 'ok'],
+  ['工单 #1310：教师 Mike，不符合条件', 'no'],
+  ['工单 #0954：现役军人 Lee，审核通过', 'ok'],
+  ['工单 #1188：药剂师 Ann，等待材料', 'na']
+];
+var nr = S.rng(3);
+function drawNu() {
+  var ul = $('#nuList'); ul.innerHTML = '';
+  if ($('#nuRule').checked) {
+    h('li', { class: 'rule', html: '<b>规则卡：</b>Xfinity 优惠适用于现役与退伍军人、持证医护人员（含护士）；教师等其他职业不适用。' }, ul);
+    $('#nuCap').innerHTML = '<b>回答：可以。</b>规则卡给出了边界和全称否定，无论检索到的个案顺序如何，答案都稳定。';
+    return;
+  }
+  var order = [1, 2, 0, 3, 4].sort(function () { return nr() - 0.5; });
+  if (nr() < 0.6) order.sort(function (a, b) { return a === 1 ? -1 : b === 1 ? 1 : 0; });
+  order = order.slice(0, 3);
+  order.forEach(function (i) { h('li', { text: tk[i][0] }, ul); });
+  var top = tk[order[0]];
+  $('#nuCap').innerHTML = top[1] === 'ok' ? '<b>回答：应该可以</b>（看到 ' + top[0].split('：')[1].split('，')[0] + ' 通过了，护士和他们相近）。碰巧答对，但只是最近邻在起作用。' : top[1] === 'no' ? '<b>回答：恐怕不行</b>（看到教师不符合条件）。同一个问题，换一次检索顺序答案就反了。' : '<b>回答：不确定</b>，还在等材料……模型不知道自己有没有看全，也不会追问。';
+}
+$('#nuAsk').addEventListener('click', drawNu); $('#nuRule').addEventListener('change', drawNu); drawNu();
+S.quiz($('#orgQuiz'), [
+  { q: '“退款政策是什么？”', o: ['混合检索就够了', 'RAPTOR', 'GraphRAG'], a: 0, why: '只是找包含某信息的片段，混合检索（稠密 + 稀疏 + 重排序）足够，结构化索引要多花 LLM 调用。' },
+  { q: '“请解释 SSE 指令集”，希望从宏观概念讲到具体指令', o: ['混合检索', 'RAPTOR', 'GraphRAG'], a: 1, why: '从高层摘要往下钻到叶子节点，正是树状层次索引擅长的。' },
+  { q: '“我的医生所在医院的地址”', o: ['RAPTOR', 'GraphRAG', '固定大小分块'], a: 1, why: '用户 → 医生 → 医院 → 地址，沿关系边多跳遍历，还要区分同名医生。' },
+  { q: '“如果下周还下雨，我就取消海边计划改去博物馆”，要不要转成三元组存？', o: ['转成三元组更规范', '用自然语言保存，结构化元数据只做索引'], a: 1, why: '三元组会丢掉条件和时间依赖（语义降级）。原书推荐分层互补。' }
+]);
+S.notes($('#n-organize'), {
+  c: [
+    ['最近邻偏置', '语义最近的个案排在最前，模型顺势类推。'],
+    ['RAPTOR', '叶子块聚类、递归摘要成树，可在多个抽象层次检索。'],
+    ['GraphRAG', '抽取实体和关系建知识图谱，用社区发现生成主题摘要。'],
+    ['实体消歧', '区分现实中同名的两个实体（两个张医生），不同于词义消歧（bank 是银行还是河岸）。'],
+    ['OpenViking', '文件系统范式：viking:// 虚拟 URI，L0 摘要 / L1 概览 / L2 全文按需加载。']
+  ],
+  p: [
+    ['原始案例直接入库远远不够', '要在索引阶段把案例压成统计摘要、把个案提炼成带边界的规则。'],
+    ['RAPTOR 钻细节，GraphRAG 问关系', '生产中组合使用往往更好。'],
+    ['什么时候上结构化索引', '查询常需跨文档综合或多层次导航时才值得；否则混合检索就够。'],
+    ['文件系统范式的前提', '文件之间要像 Wikipedia 一样互相链接，并在写入提示词里明确要求维护链接和索引。']
+  ]
+});
+
+/* ---------- 6 知识更新 ---------- */
+var pr = [
+  { m: { r: 'tool', b: '新证据', t: '6 月 3 日通话录音：客服确认“护士持证也可享受优惠”。' }, c: '证据进入原始证据层，只追加。' },
+  { m: { r: 'asst', b: 'Proposer Agent · 提交 PR', t: '先检索已有的“Xfinity 优惠规则”条目，在工作分支修改一行：“持证医护人员（含护士）”，附证据 ID 和时间。同步更新相关链接和索引页。' }, c: 'Proposer 不是把对话追加到文件末尾，而是改对应条目，diff 尽量小而完整。' },
+  { m: { r: 'user', b: 'Reviewer Agent · 退回', t: '证据只说“持证护士”，diff 写成了“医护人员（含护士、护工）”，扩大了范围。见证据第 2 段第 14 行。' }, c: 'Reviewer 拿着原始证据独立核对，意见指向具体证据和行号。最好与 Proposer 来自不同模型家族。' },
+  { m: { r: 'asst', b: 'Proposer Agent · 修改', t: '删除“护工”，限定为“持证护士”。' }, c: '双方迭代；超过最大轮数或预算仍不收敛就转人工，不能默认放行。' },
+  { m: { r: 'user', b: 'Reviewer Agent · 批准', t: '断言均有证据支持，无冲突。批准合入。' }, c: '只有 Reviewer 明确批准才合入。' },
+  { m: { r: 'sys', b: 'CI 与发布', t: '检查格式、链接、元数据、权限标签 → 合入主分支 → 只重建受影响分块的摘要和向量索引。' }, c: '索引是派生物，Git 里审核过的知识才是来源。' }
+];
+S.stepper($('#prStep'), pr.length, function (i) {
+  var c = $('#prChat'); c.innerHTML = '';
+  for (var j = 0; j <= i; j++) S.msg(c, pr[j].m, j === i);
+  $('#prCap').textContent = pr[i].c;
+});
+S.notes($('#n-update'), {
+  c: [
+    ['增量更新', '事件触发：吸收一条新证据，对相关条目做局部修改。'],
+    ['全量整理', '周期触发：去重合并、回到原始数据核查、冲突解决与场景限定。'],
+    ['场景限定 qualification', '冲突的两种说法若在不同条件下都成立，就写清各自的适用条件，而不是删掉一条。'],
+    ['异源互审', 'Proposer 和 Reviewer 用能力相近、不同家族的模型，降低犯同类错误的概率。']
+  ],
+  p: [
+    ['知识库当代码库，变更当 PR', '差异审查、版本历史、责任追溯、一键回滚。'],
+    ['Proposer 和 Reviewer 都要是 Agent', '能自己搜索、比对、跑检查，并可查询授权范围内的完整知识库和证据库。'],
+    ['权限强制分工', 'Proposer 只写分支，Reviewer 只读证据并提交审核结果，只有合并流程能改主分支和线上索引。'],
+    ['共享知识库的边界', '检索按调用者权限过滤，租户之间索引隔离，内容带版本和生效/失效时间。']
+  ]
+});
+
+/* ---------- 7 智能体化 RAG ---------- */
+var ar = {
+  non: [
+    { r: 'user', t: '醉酒过失致人重伤，且有盗窃前科，如何量刑？' },
+    { r: 'tool', b: '检索一次（关键词：醉酒 重伤 量刑）', t: '命中：醉酒刑事责任的规定；一段故意伤害罪的量刑标准。' },
+    { r: 'asst', b: '直接生成', t: '醉酒不免除刑事责任，故意伤害致人重伤处三年以上……（用错了罪名，也没考虑前科）' }
+  ],
+  ag: [
+    { r: 'user', t: '醉酒过失致人重伤，且有盗窃前科，如何量刑？' },
+    { r: 'asst', b: '思考 · 第 1 轮', t: '拆成三个子问题并行检索：“过失致人重伤量刑标准”“醉酒刑事责任”“盗窃前科影响”。' },
+    { r: 'tool', b: '检索结果', t: '三个子问题的基本法条都找到了。' },
+    { r: 'asst', b: '思考 · 评估', t: '缺少把它们联系起来的信息：在过失致人重伤的判决里，不相关罪名的前科该怎么考虑？' },
+    { r: 'tool', b: '第 2 轮检索', t: '“过失伤害罪 累犯”“数罪并罚”：找到关于累犯在不同罪名下适用的司法解释。' },
+    { r: 'asst', b: '综合回答', t: '给出有法条依据、逻辑完整的分析。用速度换来了复杂问题上的准确率。' }
+  ]
+};
+function drawAr(v) { var c = $('#arChat'); c.innerHTML = ''; ar[v].forEach(function (m) { S.msg(c, m); }); }
+S.seg($('#arSeg'), drawAr); drawAr('non');
+var ctxCh = [
+  { t: '该公司第二季度的收入增长了 3%。', p: '[本段节选自 ACME 公司 2025 年 Q2 财务报告“关键业绩指标”一节]' },
+  { t: '行业整体收入增长放缓，平均增幅为 3%。', p: '[本段节选自某咨询机构 2023 年零售行业综述]' },
+  { t: '公司收入增长主要来自海外市场。', p: '[本段节选自 Globex 公司 2024 年年报“经营分析”一节]' }
+];
+function drawCtx(v) {
+  var on = v === '1', box = $('#ctxOut'); box.innerHTML = '';
+  var sc = on ? [0.91, 0.32, 0.41] : [0.62, 0.64, 0.58];
+  ctxCh.map(function (c, i) { return { c: c, s: sc[i] }; }).sort(function (a, b) { return b.s - a.s; }).forEach(function (x) {
+    h('div', { class: 'chunk', html: (on ? '<em>' + x.c.p + '</em> ' : '') + x.c.t + ' <span class="note" style="margin-left:6px">相关度 ' + x.s.toFixed(2) + '（示意）</span>' }, box);
+  });
+  $('#ctxCap').innerHTML = on ? '前缀给每块贴上了“身份标签”：关键词“ACME”“2025 Q2”能被 BM25 精确匹配，语义背景也进了向量。ACME 那块明显胜出。' : '三块都含“收入增长”，分数接近，排第一的甚至是行业综述。“该公司”是谁，块里根本没写。';
+}
+S.seg($('#ctxSeg'), drawCtx); drawCtx('0');
+S.notes($('#n-agentic'), {
+  c: [
+    ['智能体化 RAG', '把知识库检索变成工具，由 Agent 在 ReAct 循环里决定查什么、查几轮。'],
+    ['上下文感知检索', '索引前给每个分块生成一句上下文前缀，再连同原文一起索引。'],
+    ['双层记忆架构', 'Advanced JSON Cards 常驻上下文提供概览 + 上下文感知检索按需取细节。'],
+    ['间接提示注入', '恶意指令藏在会被检索命中的文档里；知识库投毒是同一道理。']
+  ],
+  p: [
+    ['简单问题传统 RAG 更快，复杂问题智能体化更准', '价值在“解决问题”而不只是“回答问题”。'],
+    ['上下文感知检索的效果', '据 Anthropic：结合 BM25 检索失败率 −49%，再加重排序 −67%；约 $1 / 百万文档 token。'],
+    ['检索（索引期加法）≠ 压缩（运行期减法）', '别把第 3 篇的上下文感知检索和第 2 篇的上下文感知压缩混为一谈。'],
+    ['主动服务需要概览 + 细节', '只靠常驻上下文会丢细节，只靠检索会缺全局视野。'],
+    ['RAG 安全两层', '检索内容做来源标记；不让检索内容直接触发高风险操作。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

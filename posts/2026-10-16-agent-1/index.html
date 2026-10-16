@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 入门：大脑、眼睛与手脚</title>
+<meta name="description" content="深入理解 AI Agent 学习笔记（一）：Agent = LLM + 上下文 + 工具，ReAct 循环，Harness 五要素，工作流与自主 Agent，三层护栏和五个贯穿全书的设计模式。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-16-agent-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-16-agent-shared/series.js"></script>
+<style>
+.task-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.task-list li { display: grid; grid-template-columns: 2em minmax(0, 1fr); gap: 6px; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 16px; }
+.task-list li i { font-style: normal; font-weight: 700; }
+.task-list li.y i { color: var(--ok); }
+.task-list li.n i { color: var(--ink-3); }
+.task-list li.n span { color: var(--ink-3); }
+.task-list small { display: block; color: var(--ink-3); font-size: 15px; }
+.abl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 20px; }
+.abl label { display: flex; gap: 8px; align-items: center; font-size: 16px; padding: 6px 0; cursor: pointer; }
+.abl input { accent-color: var(--s1); width: 18px; height: 18px; }
+.verdict { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.verdict > div { border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; background: var(--bg); }
+.verdict h5 { margin: 0 0 4px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.verdict .big { font-size: 20px; font-weight: 700; }
+.effects { list-style: none; margin: 12px 0 0; padding: 0; }
+.effects li { padding: 9px 0; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink-2); }
+.effects li b { color: var(--ink); }
+.ctxbar { display: flex; height: 30px; border-radius: 6px; overflow: hidden; margin: 8px 0 4px; background: var(--dim-soft); }
+.ctxbar span { display: block; height: 100%; transition: width .35s ease; }
+.ctxbar .pre { background: var(--ink-3); }
+.ctxbar .tr { background: var(--s1); }
+.ctxbar .nw { background: var(--s2); }
+.legend2 { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 15px; color: var(--ink-2); }
+.legend2 i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.nest { position: relative; }
+.nest .lvl { display: block; width: 100%; text-align: left; border: 2px solid var(--rule); background: transparent; border-radius: 10px; padding: 8px 12px 12px; cursor: pointer; color: var(--ink-2); font-size: 15px; }
+.nest .lvl .in { margin-top: 8px; }
+.nest .lvl[aria-pressed="true"] { border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 45%, transparent); color: var(--ink); }
+.nest b { font-weight: 650; color: var(--ink); }
+.flight { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.flight div { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 15px; text-align: center; background: var(--bg); }
+.flight div.hit { border-color: var(--s2); background: var(--s2-soft); }
+.flight div.ok { border-color: var(--ok); background: var(--ok-soft); }
+@media (max-width: 560px) { .flight { grid-template-columns: repeat(2, minmax(0, 1fr)); } .abl, .verdict { grid-template-columns: minmax(0, 1fr); } }
+.layers { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.layer { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+.layer b { font-size: 16px; }
+.layer span { font-size: 15px; color: var(--ink-2); }
+.layer.catch { border-color: var(--ok); background: var(--ok-soft); }
+.layer.miss { border-color: var(--alert); }
+.layer.off { opacity: .45; }
+.layer label { font-size: 15px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+@media (max-width: 560px) { .layer { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>深入理解 AI Agent · 01</span><span>对应原书第一章</span><span>约 20 分钟</span><span>边读边点</span></p>
+  <h1>Agent = <em>大脑</em> + 眼睛 + 手脚</h1>
+  <p class="lead">Cursor 改代码、Deep Research 写报告、Manus 操作浏览器，形态各异，骨架却相同：一个模型在循环里看信息、调工具、再看结果。这一篇把这副骨架拆开，再看生产级 Agent 在骨架外面加了哪些“缰绳”。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">深入理解 AI Agent：设计原理与工程实践</a>》（李博杰 著，Apache-2.0 协议）的学习笔记。不逐段复述原书，而是用自己的话把关键概念讲一遍，配上能动手点的小实验；原书的实验代码和思考题推荐对照阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-agent/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-16-agent-1/" aria-current="page" data-part="1"><b>01</b>Agent 入门</a>
+  <a href="../2026-10-16-agent-2/" data-part="2"><b>02</b>上下文工程</a>
+  <a href="../2026-10-16-agent-3/" data-part="3"><b>03</b>记忆与知识库</a>
+  <a href="../2026-10-16-agent-4/" data-part="4"><b>04</b>工具</a>
+  <a href="../2026-10-16-agent-5/" data-part="5"><b>05</b>Coding Agent</a>
+  <a href="../2026-10-16-agent-6/" data-part="6"><b>06</b>交互扩展</a>
+  <a href="../2026-10-16-agent-7/" data-part="7"><b>07</b>评估</a>
+  <a href="../2026-10-16-agent-8/" data-part="8"><b>08</b>后训练</a>
+  <a href="../2026-10-16-agent-9/" data-part="9"><b>09</b>持续进化</a>
+  <a href="../2026-10-16-agent-10/" data-part="10"><b>10</b>多 Agent</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#formula">核心公式</a><a href="#context">上下文</a><a href="#react">ReAct 循环</a><a href="#harness">Harness</a><a href="#orch">编排模式</a><a href="#guard">护栏</a><a href="#patterns">设计模式</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="formula">
+  <div class="part-head"><h2>三个部件，一个闭环</h2><span class="meta">原书 1.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书的核心公式只有一句：<strong>Agent = LLM + 上下文 + 工具</strong>。LLM 是大脑，负责理解意图、规划、判断下一步；上下文是眼睛，是 Agent 在每个决策点能看到的全部信息；工具是手脚，是它读取或改变外部世界的接口。三者缺一个，Agent 就要么看不见，要么动不了。</p>
+    <p>要注意这个公式只描述 Agent 边界<strong>以内</strong>的东西。文件、数据库、网页、用户、其他 Agent 都属于 <strong>Environment（环境）</strong>：环境给出观察，Agent 选择行动，行动改变环境，再产生新的观察。换成强化学习的说法，LLM 对应策略（Policy），上下文对应观察与历史，工具对应观察/行动接口。</p>
+    <p>原书由此推出一个很实用的判断：模型固定时，提升 Agent 表现最主要的工程手段，往往是<strong>扩展观察空间和动作空间</strong>。Manus 把 Deep Research、Coding、Computer Use 三条路线的“眼睛和手脚”取了并集；OpenClaw 又把接口延伸到用户已在用的聊天软件和本地文件。很多看似需要“更聪明的模型”的问题，其实只是接口问题。</p>
+    <p class="go">下面先看五类真实产品怎么分配眼睛和手脚，再亲手做一次“取并集”，看哪些任务因此变得可解。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">拆一个产品</p>
+      <div class="seg" id="prodSeg"><button data-v="0" aria-pressed="true">Cursor</button><button data-v="1">Deep Research</button><button data-v="2">Browser Use</button><button data-v="3">手机助手</button><button data-v="4">Pine AI</button></div>
+      <div class="tblw" style="margin-top:12px"><table class="cmpt"><tbody id="prodT"></tbody></table></div>
+      <p class="note">共同点：动作空间都是开放式的（能生成任意文本和代码，而不是从几个按钮里选），都会先内部思考，都会根据环境反馈不断调整。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">给 Agent 装上不同的眼睛和手脚</p>
+      <p class="lab-s">勾选要合并的能力来源，看下面的任务有几件能完成。</p>
+      <div class="chipset" id="spaceSeg"></div>
+      <ul class="task-list" id="spaceTasks"></ul>
+    </div>
+  </div>
+  <div class="notes" id="n-formula"></div>
+</section>
+
+<section class="part" id="context">
+  <div class="part-head"><h2>上下文的五个部分，缺哪个最疼</h2><span class="meta">原书 1.1 节 · 实验 1-1</span></div>
+  <div class="sec-lede">
+    <p>每次调用模型时，它看到的上下文由五部分拼成：<strong>系统提示词</strong>（开发者写的“岗位说明书”，也装着用户记忆和环境状态）、<strong>工具定义</strong>（有哪些工具、参数长什么样）、<strong>用户消息</strong>、<strong>模型回复</strong>（可能含思考过程、回复文本、工具调用三部分）、<strong>工具执行结果</strong>。前两项整轮对话不变，叫<strong>静态前缀</strong>；后三项随交互不断增长，叫<strong>轨迹</strong>。</p>
+    <p>它们是不是都同样重要？原书用<strong>消融实验</strong>回答：保留系统提示词，分别去掉另外四个组件中的一个，看 Agent 怎么变。结论有两层。一是组件并不等价，衡量标准是“它承载的信息能不能从别处重建”。二是对工程更重要的一条：<strong>“给出了回答”不等于“完成了任务”</strong>。上下文残缺时，典型的失败不是报错，而是一份看上去毫无破绽的答案。</p>
+    <p class="go">勾掉一个或几个组件，看 Agent 表面上的表现和真实结果有什么不同。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">上下文消融台</p>
+    <p class="lab-s">任务：查多个币种的实时汇率，算出年度总收入。系统提示词始终保留。</p>
+    <div class="abl" id="abl"></div>
+    <div class="verdict">
+      <div><h5>表面上</h5><div class="big" id="ablLook"></div></div>
+      <div><h5>实际上</h5><div class="big" id="ablReal"></div></div>
+    </div>
+    <ul class="effects" id="ablFx"></ul>
+    <p class="book-ref">结论依据原书实验 1-1。原书也提醒：模型迭代很快，同样的消融换到新模型上可能得出不同结论，这类判断要靠实测。</p>
+  </div>
+  <div class="notes" id="n-context"></div>
+</section>
+
+<section class="part" id="react">
+  <div class="part-head"><h2>想、做、看，再想</h2><span class="meta">原书 1.1 节 · ReAct 循环</span></div>
+  <div class="sec-lede">
+    <p>三个部件靠 <strong>ReAct</strong>（Reasoning + Acting）循环串起来：模型先思考该做什么，调用工具行动，再观察工具结果，接着思考下一步，直到不再调用工具、直接给出答案。名字里只有两个词，循环里其实有三个环节。</p>
+    <p>循环里不断变长的那串消息就是<strong>轨迹</strong>。每次调用模型时，Harness 把“静态前缀 + 当前轨迹”拼成完整上下文交给模型；模型的回复追加进轨迹，工具结果也追加进轨迹，下一轮再整体送进去。所以有一个关键等式：<strong>上下文 = 静态前缀 + 轨迹</strong>。</p>
+    <p>这种“只追加”的设计让模型始终清楚做到了哪一步，轨迹也天然可调试、可分析、可拿去训练。代价是每一轮都要把越来越长的上下文重新读一遍，累计读入量随轮数近似二次方增长，这正是第 2 篇 KV Cache 要解决的问题。</p>
+    <p class="go">按原书的多币种收入汇总例子走一遍：3 次迭代、4 次工具调用，留意上下文条怎么变长。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一条轨迹是怎么长出来的</p>
+      <div class="ctxbar" id="rBar"></div>
+      <div class="legend2"><span><i style="background:var(--ink-3)"></i>静态前缀（系统提示词 + 工具定义）</span><span><i style="background:var(--s1)"></i>已有轨迹</span><span><i style="background:var(--s2)"></i>这一步新增</span></div>
+      <div class="read"><div><div class="v" id="rIn">0</div><div class="k">本次调用模型读入的 token（估）</div></div><div class="hl"><div class="v" id="rSum">0</div><div class="k">累计读入</div></div></div>
+      <p class="msg" id="rCap"></p>
+      <div class="chat" id="rChat" style="margin-top:10px"></div>
+      <div id="rStep"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">轮数多了，读入量涨多快</p>
+      <p class="lab-s">每轮都要重读一遍“前缀 + 全部轨迹”。累计读入 ≈ N × 前缀 + 每轮新增 × N(N−1)/2。</p>
+      <label class="ctl"><span>迭代轮数 N <output id="qN">20</output></span><input type="range" id="qNs" min="1" max="100" value="20"></label>
+      <label class="ctl"><span>静态前缀 token <output id="qP">3000</output></span><input type="range" id="qPs" min="500" max="20000" step="500" value="3000"></label>
+      <label class="ctl"><span>每轮新增 token <output id="qG">800</output></span><input type="range" id="qGs" min="100" max="5000" step="100" value="800"></label>
+      <div class="read"><div class="hl"><div class="v" id="qOut">0</div><div class="k">累计读入 token</div></div><div><div class="v" id="qLast">0</div><div class="k">最后一轮的上下文长度</div></div></div>
+      <p class="note">把 N 从 20 拉到 40：最后一轮的上下文大约翻一倍，累计读入却接近翻两倍，原书思考题 2 问的就是这个。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-react"></div>
+</section>
+
+<section class="part" id="harness">
+  <div class="part-head"><h2>模型之外的竞争力：Harness</h2><span class="meta">原书 1.2 节</span></div>
+  <div class="sec-lede">
+    <p>能跑的 Demo 和可靠的产品之间差着一大截：模型会幻觉出不存在的工具、选错工具、出错后不会自救。原书把补这一截的工程叫 <strong>Harness</strong>（原意是马具：不是限制马的力气，而是把力气引到正确方向）。生产形态下的公式写成 <strong>Agent = Model + Harness</strong>，而 <strong>Harness = 上下文管理 + 工具接口 + 约束 + 验证 + 纠正</strong>。</p>
+    <p>边界要分清：Harness 是“Agent 边界内、模型之外”的运行与治理层。工具定义、调用适配器、沙箱的权限和重置机制属于 Harness；沙箱里随行动变化的文件、外部数据库、网页、用户本身属于环境。即使仿真环境和 Agent 跑在同一个进程里，它仍然是环境。</p>
+    <p>原书强调两类功能的重要性是不对称的：早期框架主要做上下文和工具，让 Agent “能做事”；生产级系统的重心转向约束、验证、纠正，让它“不做错事”。Claude Code 的 Harness 里，绝大部分代码就是权限分类、熔断器、多层压缩、错误恢复这类保障机制。</p>
+    <p class="go">先玩一局分类：把下面这些机制放进 Harness 的五个格子，或者判断它其实属于环境。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这属于 Harness 的哪一格</p>
+    <div id="hSort"></div>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">工程范式是一层套一层的</p>
+      <p class="lab-s">点任意一层看它比内层多管了什么。五个阶段不是替代，而是包含。</p>
+      <div class="nest" id="nest"></div>
+    </div>
+    <div class="aside">
+      <p id="nestCap"></p>
+      <p>一个例证：LangChain 在 Terminal Bench 2.0 上从 <strong>52.8% 提到 66.5%</strong>，排名从 30 名开外进入前 5，模型没换，改的是 Harness，比如让 Agent 自查执行结果、检测是否陷入重复循环。</p>
+      <p>原书对“模型会不会把 Harness 吃掉”的立场是：<strong>方向认同，节奏务实</strong>。模型每内化一层，Harness 就卸下一层，转去兜底新的能力前沿。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-harness"></div>
+</section>
+
+<section class="part" id="orch">
+  <div class="part-head"><h2>先简单，再复杂：工作流与自主 Agent</h2><span class="meta">原书 1.2 节 · 编排模式</span></div>
+  <div class="sec-lede">
+    <p><strong>工作流</strong>由代码写死执行路径，LLM 只在每个节点内部负责理解和生成。订机票可以设计成“核实身份 → 搜索航班 → 付款 → 确认预订”四个固定节点。好处是流程严格、攻击面小：提示注入最多影响当前节点，跳不到不该去的分支。坏处是不会变通，遇到预设外的情况只能走异常分支或交给人。</p>
+    <p><strong>自主 Agent</strong> 的路径由模型根据环境反馈实时决定，本质就是“在循环里用工具的 LLM”，也就是 ReAct。它适合步骤数难以预测的开放问题，代价是更高的成本、延迟和错误累积风险，而且必须有明确的停止条件。</p>
+    <p>原书给的顺序是：<strong>先试单次 LLM 调用，再考虑工作流，最后才上自主 Agent</strong>；两者也常混用，合规关键步骤用工作流，灵活部分交给自主。它还提醒一个反面典型：一上来画出一条十几个节点的“严谨”流水线，遇到新例外就继续加节点，越来越复杂、越来越不通用。用 Manus 的话说：Less structure, more intelligence。</p>
+    <p class="go">同一个订票任务，切换两种模式，再给它扔几个意外，看谁接得住。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">订机票：意外来了</p>
+    <div class="ctrls"><div class="seg" id="fMode"><button data-v="wf" aria-pressed="true">工作流</button><button data-v="ag">自主 Agent</button></div></div>
+    <div class="ctrls" id="fEv"></div>
+    <div class="flight" id="fNodes"></div>
+    <p class="cap" id="fCap"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">你的场景该选哪种</p>
+    <p class="lab-s">按原书“从简单到复杂”的顺序回答。</p>
+    <div id="pick"></div>
+    <p class="cap" id="pickOut"></p>
+  </div>
+  <div class="notes" id="n-orch"></div>
+</section>
+
+<section class="part" id="guard">
+  <div class="part-head"><h2>三层护栏，按“多难绕过”排序</h2><span class="meta">原书 1.2 节 · 护栏与安全性</span></div>
+  <div class="sec-lede">
+    <p>护栏（Guardrails）是分层防线。原书按防护位置分三层，但排序依据不是处理先后，而是<strong>被绕过的难度</strong>：越往下越不依赖模型自己的判断，越难被一次成功的攻击穿透。</p>
+    <p><strong>上下文层</strong>管“模型能看到什么”：相关性分类器、越狱和提示注入检测、内容审核、黑名单和正则规则。它有一个结构性上限：处在同一个上下文里的 Agent，很难判断自己是否已经被注入，所以这一层只能降低成功率。<strong>执行层</strong>管“模型能做什么”：按是否可逆、权限、财务影响给工具评风险等级，高风险操作由上下文之外的机制复核或人工确认；回复用户本身也是动作，所以 PII 过滤等输出检查也在这层。<strong>数据层</strong>管“世界最终能被改成什么样”：行级安全、约束校验、受控视图，即使上面两层都失守，越权操作仍会被数据库拒绝。</p>
+    <p>还有一类失败容易被忽略：<strong>误拒绝</strong>。护栏评估既要测该拦的有没有拦住，也要测该放的有没有放行。</p>
+    <p class="go">选一种攻击，开关三层护栏，看它在哪一层被拦住，或者一路穿透。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">攻击穿透模拟</p>
+    <div class="seg" id="gSeg"></div>
+    <div class="layers" id="gLayers"></div>
+    <p class="cap" id="gCap"></p>
+  </div>
+  <div class="notes" id="n-guard"></div>
+</section>
+
+<section class="part" id="patterns">
+  <div class="part-head"><h2>贯穿全书的五个设计模式</h2><span class="meta">原书 1.3 节</span></div>
+  <div class="sec-lede">
+    <p>后面九章会反复用到同一批模式，原书在第一章一次性命名。<strong>提议者—审核者</strong>：产出和评判由两个不共享上下文的角色承担，因为自审不可靠。<strong>渐进式披露</strong>：先给目录，按需加载细节。<strong>只增不改</strong>：状态只追加不回改，换来可缓存、可重放、可审计。<strong>边界集 + 保留集</strong>：任何修改都要同时在“该变的样本”和“不该受影响的样本”上验证。<strong>最小 diff + 可回滚</strong>：改动尽量小、带来源、能单独回滚。</p>
+    <p>同一节还讲了 Agent 改变行为的三条路径，它们按可回滚程度从高到低排列：<strong>上下文适应</strong>（任务内，示例和检索结果进上下文即时生效）、<strong>外部产物更新</strong>（跨任务，写成知识文档、Prompt、Skill、程序）、<strong>参数更新</strong>（训练周期，后训练改模型权重）。</p>
+    <p class="go">用几道题检验一下：每个场景对应哪个模式或哪条路径。</p>
+  </div>
+  <div class="lab"><div id="pQuiz"></div></div>
+  <div class="notes" id="n-patterns"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-agent/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-16-agent-2/"><small>下一篇</small><span>02 · 上下文工程</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">bojieli/ai-agent-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 1 产品拆解 + 空间并集 ---------- */
+var prods = [
+  ['需求、读到的代码片段、目录列表、终端输出', '代码搜索、文件读写、执行命令', '增量开发：理解需求 → 搜索代码 → 编辑 → 测试 → 调试修复'],
+  ['搜索结果、网页内容、论文摘要与引用', '搜索、读网页、生成报告', '迭代深化：根据已有信息调整搜索方向，逐步综合出报告'],
+  ['屏幕截图、DOM 或无障碍树、操作结果', '点击、输入、滚动、截图、执行代码', '观察屏幕 → 识别目标元素 → 操作 → 验证结果'],
+  ['手机截图、App 界面状态、系统反馈', '点击、滑动、输入、打开 App', '理解需求 → 定位 App → 操作 → 确认完成'],
+  ['经授权读取的账户记录、账单、服务商资料', '打电话、发邮件、填表单、与用户确认', '收集信息 → 制定策略 → 联系服务商 → 谈判 → 汇报']
+];
+function showProd(i) {
+  var p = prods[+i];
+  $('#prodT').innerHTML = '<tr><td>眼睛（感知）</td><td>' + p[0] + '</td></tr><tr><td>手脚（行动）</td><td>' + p[1] + '</td></tr><tr><td>策略</td><td>' + p[2] + '</td></tr>';
+}
+S.seg($('#prodSeg'), showProd); showProd(0);
+
+var spaces = [
+  { k: 'dr', t: 'Deep Research', on: true },
+  { k: 'code', t: 'Coding + 文件系统', on: false },
+  { k: 'cu', t: 'Computer Use', on: false },
+  { k: 'oc', t: '消息渠道 + 本地文件', on: false }
+];
+var tasks = [
+  { t: '调研某个技术的最新进展，写一份带引用的报告', need: ['dr'] },
+  { t: '搜集公开数据，写代码做统计分析并画图', need: ['dr', 'code'] },
+  { t: '登录一个没有 API 的网站下载报表，再清洗汇总', need: ['cu', 'code'] },
+  { t: '调研竞品，在浏览器里实际试用它们的注册流程', need: ['dr', 'cu'] },
+  { t: '在聊天软件里收到需求，处理我电脑上的文件，再把结果发回聊天', need: ['oc', 'code'] }
+];
+function drawSpaces() {
+  var box = $('#spaceSeg'); box.innerHTML = '';
+  spaces.forEach(function (s) {
+    var b = h('button', { class: 'chip2', type: 'button', text: s.t, 'aria-pressed': String(s.on) }, box);
+    b.addEventListener('click', function () { s.on = !s.on; drawSpaces(); });
+  });
+  var on = spaces.filter(function (s) { return s.on; }).map(function (s) { return s.k; });
+  var ul = $('#spaceTasks'); ul.innerHTML = '';
+  var n = 0;
+  tasks.forEach(function (t) {
+    var miss = t.need.filter(function (k) { return on.indexOf(k) < 0; });
+    if (!miss.length) n++;
+    var li = h('li', { class: miss.length ? 'n' : 'y' }, ul);
+    h('i', { text: miss.length ? '✕' : '✓' }, li);
+    h('span', { html: t.t + (miss.length ? '<small>还缺：' + miss.map(function (k) { return spaces.filter(function (s) { return s.k === k; })[0].t; }).join('、') + '</small>' : '') }, li);
+  });
+  var cnt = h('li', { class: 'y' }, ul);
+  h('i', { text: '=' }, cnt); h('span', { html: '<b>' + n + ' / ' + tasks.length + ' 件任务可完成。</b>模型一个都没换，变的只是眼睛和手脚。' }, cnt);
+}
+drawSpaces();
+
+S.notes($('#n-formula'), {
+  c: [
+    ['Agent', '在循环中感知环境、做决策、调用工具改变环境的智能系统；工程上 = LLM + 上下文 + 工具。'],
+    ['LLM（大脑）', '决策内核：理解意图、规划、判断下一步。能力来自预训练的知识和后训练固化的策略。'],
+    ['上下文（眼睛）', 'Agent 在每个决策点能看到的全部信息：观察、记忆、知识、自身状态、任务进展。'],
+    ['工具（手脚）', 'Agent 感知或改变外部世界的接口：工具定义、调用协议和适配器。'],
+    ['Environment', '与 Agent 交互的外部世界（文件、数据库、网页、用户、其他 Agent），不属于 Agent 本身。']
+  ],
+  p: [
+    ['直觉 / 实现 / 学术三套说法', '大脑·眼睛·手脚 ＝ LLM·上下文·工具 ≈ 策略·观察与历史·观察/行动接口。'],
+    ['模型固定时，最大的杠杆是扩展观察空间和动作空间', '把任务所需的数据放进上下文、把所需操作封装成工具，原本不可解的任务就可能可解。'],
+    ['Manus 取并集，OpenClaw 往外延伸', '通用性很大程度上来自接口边界的扩大，但扩大要按需进行，并配合权限和验证。'],
+    ['工具设计原则', '通用基础能力（代码解释器、虚拟目录）用于组合与探索；专用工具用于约束高风险和强业务规则操作。']
+  ]
+});
+
+/* ---------- 2 消融 ---------- */
+var abl = [
+  { k: 'def', t: '工具定义', look: 1, real: 0, fx: '<b>没有工具定义：</b>无法调用任何工具，但不会沉默。模型照样给出格式工整、语气笃定的答案，数据却来自参数记忆，和基于真实观测的答案排版一模一样。是坦白拒绝还是就地编造，取决于模型的幻觉率和诚实度；提示词里写“不得自行估计”只能降低概率。' },
+  { k: 'res', t: '工具执行结果', look: 0, real: 0, fx: '<b>没有工具执行结果：</b>闭环断了，Agent “盲目”执行，看不到调用发生了什么，于是反复重试，直到耗尽迭代预算。' },
+  { k: 'think', t: '思考过程（reasoning）', look: 1, real: 1, fx: '<b>没有历史思考过程：</b>思考记录“为什么这么做”，工具结果记录“发生了什么”。当前者能从后者重建时，从历史里丢掉它几乎没有代价。' },
+  { k: 'hist', t: '历史消息', look: 1, real: 0.5, fx: '<b>没有历史消息：</b>Agent 不知道之前做过什么，出现冗余操作，重复犯同样的错误。' }
+];
+var ablBox = $('#abl');
+abl.forEach(function (a) {
+  var l = h('label', null, ablBox);
+  var c = h('input', { type: 'checkbox', checked: 'checked' }, l);
+  h('span', { text: '保留 ' + a.t }, l);
+  a.cb = c; c.addEventListener('change', drawAbl);
+});
+function drawAbl() {
+  var off = abl.filter(function (a) { return !a.cb.checked; });
+  var look = off.every(function (a) { return a.look; });
+  var real = off.length ? Math.min.apply(null, off.map(function (a) { return a.real; })) : 1;
+  $('#ablLook').innerHTML = look ? '<span style="color:var(--ok)">给出了完整答案</span>' : '<span style="color:var(--alert)">反复重试，迟迟没有答案</span>';
+  $('#ablReal').innerHTML = real === 1 ? '<span style="color:var(--ok)">任务完成</span>' : real > 0 ? '<span style="color:var(--s2)">能完成，但做了重复功</span>' : '<span style="color:var(--alert)">任务没有真正完成</span>';
+  $('#ablFx').innerHTML = off.length ? off.map(function (a) { return '<li>' + a.fx + '</li>'; }).join('') : '<li><b>完整基线：</b>静态前缀 + 完整轨迹，Agent 查汇率、算总数、给出基于真实数据的答案。</li>';
+}
+drawAbl();
+
+S.notes($('#n-context'), {
+  c: [
+    ['系统提示词', '开发者写的“岗位说明书”，定义身份、权限、行为准则，也承载用户记忆和环境状态。'],
+    ['工具定义', '声明可用工具的名称、用途和参数格式。'],
+    ['静态前缀', '系统提示词 + 工具定义，整轮对话保持不变。'],
+    ['轨迹 trajectory', '用户消息 + 模型回复 + 工具结果，随交互不断增长的动态消息历史。'],
+    ['消融实验', '逐个去掉一个组件、观察系统变化，以判断每个组件的贡献。']
+  ],
+  p: [
+    ['上下文 = 静态前缀 + 轨迹', '五个组件：系统提示词、工具定义 | 用户消息、模型回复、工具结果。'],
+    ['模型回复最多三部分', 'reasoning（思考）、content（回复文本）、tool_calls（工具调用），不一定同时出现。'],
+    ['组件不等价', '衡量标准：它承载的信息能否从别处重建。思考过程常可重建，工具结果不可。'],
+    ['“给出了回答” ≠ “完成了任务”', '上下文残缺时的典型失败是一份看似毫无破绽的答案，而不是报错。']
+  ]
+});
+
+/* ---------- 3 ReAct ---------- */
+var PRE = 1200;
+var tr = [
+  { r: 'user', t: '季度收入：Q1 2.5M 美元，Q2 2.1M 欧元，Q3 1.8M 英镑，Q4 380M 日元。算年度总收入和季度平均。', n: 80 },
+  { r: 'asst', b: '模型 · 第 1 次迭代', t: '<code>reasoning</code> 需要把所有货币换成 USD…<br><code>tool_calls</code> convert_currency × 3（EUR、GBP、JPY）', n: 160 },
+  { r: 'tool', t: 'EUR→USD: 2282608.7', n: 25 },
+  { r: 'tool', t: 'GBP→USD: 2278481.01', n: 25 },
+  { r: 'tool', t: 'JPY→USD: 2541806.02', n: 25 },
+  { r: 'asst', b: '模型 · 第 2 次迭代', t: '<code>reasoning</code> 已拿到换算结果，开始汇总…<br><code>tool_calls</code> code_interpreter(total = 2500000 + …)', n: 90 },
+  { r: 'tool', t: 'Total: $9,602,895.73，Average: $2,400,723.93', n: 30 },
+  { r: 'asst', b: '模型 · 第 3 次迭代', t: '<code>reasoning</code> 计算完成，总结…<br><code>content</code> 总收入 $9,602,895.73，季度平均 $2,400,723.93。', n: 70 }
+];
+// 每一步：显示到第几条消息，这一步是不是一次模型调用
+var rSteps = [
+  { upto: 1, call: false, cap: '用户提出请求。轨迹里现在只有这一条；系统提示词和工具定义作为静态前缀，不写进轨迹。' },
+  { upto: 2, call: true, cap: '第 1 次调用模型：读入“前缀 + 轨迹”，决定一次并行调用三个换算工具。' },
+  { upto: 5, call: false, cap: 'Harness 校验并执行三个工具，三条结果依次追加到轨迹末尾。' },
+  { upto: 6, call: true, cap: '第 2 次调用模型：它看得到所有换算结果，决定用代码解释器汇总。' },
+  { upto: 7, call: false, cap: '代码执行结果追加到轨迹。' },
+  { upto: 8, call: true, cap: '第 3 次调用模型：这次没有工具调用，直接给出答案，循环结束。共 3 次迭代、4 次工具调用。' }
+];
+function trLen(k) { var s = 0; for (var i = 0; i < k; i++) s += tr[i].n; return s; }
+S.stepper($('#rStep'), rSteps.length, function (i) {
+  var st = rSteps[i], prev = i ? rSteps[i - 1].upto : 0;
+  var chat = $('#rChat'); chat.innerHTML = '';
+  for (var j = 0; j < st.upto; j++) S.msg(chat, tr[j], j >= prev);
+  var total = PRE + trLen(st.upto), max = PRE + trLen(tr.length);
+  var oldLen = PRE + trLen(prev);
+  $('#rBar').innerHTML = '<span class="pre" style="width:' + PRE / max * 100 + '%"></span><span class="tr" style="width:' + (oldLen - PRE) / max * 100 + '%"></span><span class="nw" style="width:' + (total - oldLen) / max * 100 + '%"></span>';
+  var sum = 0;
+  for (var k = 0; k <= i; k++) if (rSteps[k].call) sum += PRE + trLen(rSteps[k].upto - 1);
+  $('#rIn').textContent = st.call ? (PRE + trLen(st.upto - 1)).toLocaleString() : '—';
+  $('#rSum').textContent = sum.toLocaleString();
+  $('#rCap').textContent = st.cap;
+});
+function quad() {
+  var N = +$('#qNs').value, P = +$('#qPs').value, G = +$('#qGs').value;
+  $('#qN').textContent = N; $('#qP').textContent = P; $('#qG').textContent = G;
+  $('#qOut').textContent = S.big(N * P + G * N * (N - 1) / 2);
+  $('#qLast').textContent = S.big(P + G * (N - 1));
+}
+['#qNs', '#qPs', '#qGs'].forEach(function (s) { $(s).addEventListener('input', quad); }); quad();
+
+S.notes($('#n-react'), {
+  c: [
+    ['ReAct', 'Reasoning + Acting：思考 → 行动（调工具）→ 观察结果，循环直到给出答案。'],
+    ['迭代', '一次模型调用及其触发的工具执行。一次调用可以并行发出多个工具调用。'],
+    ['停止条件', '模型不再调用工具直接回答、调用最终输出工具、达到最大轮数或遇到不可恢复的错误。'],
+    ['模型即 Agent', '模型经强化学习把“何时调、调哪个、传什么”的决策内化为原生能力；工具实现和执行仍在模型之外。']
+  ],
+  p: [
+    ['上下文 = 静态前缀 + 轨迹', '每次调用都把两者拼起来；模型回复和工具结果都只追加到轨迹末尾。'],
+    ['累计读入 ≈ N·P + G·N(N−1)/2', 'N 轮数，P 前缀长度，G 每轮新增；轮数翻倍，累计读入约翻两倍。'],
+    ['RL 内化的是决策，不是执行', 'web_search 的真实实现、沙盒、结果回传都在模型之外的基础设施里。'],
+    ['轨迹的额外价值', '可解释、可调试；分析大量轨迹能改进工具设计，也能沉淀为知识或训练数据。']
+  ]
+});
+
+/* ---------- 4 Harness 分类 ---------- */
+S.sortGame($('#hSort'), {
+  bins: [{ k: 'ctx', t: '上下文管理' }, { k: 'tool', t: '工具接口' }, { k: 'con', t: '约束' }, { k: 'ver', t: '验证' }, { k: 'cor', t: '纠正' }, { k: 'env', t: '不属于 Harness（环境）' }],
+  items: [
+    { t: 'Agent 状态栏', k: 'ctx', why: '为模型提供感知信息，属于上下文管理（第 2 篇展开）。' },
+    { t: 'MCP 工具', k: 'tool', why: '为模型提供观察与行动手段，接口要命名直观、参数有例子。' },
+    { t: '每个工具默认需用户授权', k: 'con', why: '故障安全默认值：能力默认关闭，必须显式开放。' },
+    { t: 'Linter 检查', k: 'ver', why: '自动判断操作结果对不对。' },
+    { t: '连续失败时熔断', k: 'cor', why: '像保险丝跳闸，停止无效重试、回退到人工判断。' },
+    { t: '工具调用失败先静默重试', k: 'cor', why: '确认无法恢复之前不暴露半成品。' },
+    { t: '只看工具返回的 JSON 字段做安全检查', k: 'ver', why: '验证只看结构化数据，不看可能已被注入操纵的自由文本。' },
+    { t: '沙箱的权限与重置机制', k: 'con', why: '原书明确：沙箱的权限和重置属于 Harness；沙箱里的文件和进程才属于环境。' },
+    { t: '沙箱里被 Agent 改写的文件', k: 'env', why: '随行动变化的状态属于环境。' },
+    { t: '外部数据库', k: 'env', why: 'Harness 可以代理或隔离它，但不包含环境自身的状态。' },
+    { t: '知识库检索结果', k: 'ctx', why: '外部知识进入上下文，属于上下文管理（第 3 篇展开）。' }
+  ]
+});
+var nestData = [
+  ['提示工程', '优化给模型的自然语言指令。'],
+  ['上下文工程', '系统管理模型能看到的一切：指令、工具定义、对话历史、外部知识。'],
+  ['Harness 工程', '从“模型看到什么”扩展到“Agent 如何组织模型运行并与环境交互”：约束、验证、反馈、错误恢复。'],
+  ['Loop 工程', '从单次运行扩展到跨轮次的持续自主运转：谁发现下一件事、何时验证、何时才算真正完成。'],
+  ['Graph 工程', '把 Agent 循环、确定性程序、人工审批组织成显式执行图，节点是能力，边是路由与依赖，单个 Agent 循环只是图中一个节点。']
+];
+var nestBtns = [];
+(function build(i, parent) {
+  if (i < 0) return;
+  var b = h('div', { class: 'lvl', role: 'button', tabindex: '0', 'aria-pressed': 'false', html: '<b>' + nestData[i][0] + '</b>' }, parent);
+  b.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); pickNest(i); } });
+  nestBtns[i] = b;
+  b.addEventListener('click', function (e) { e.stopPropagation(); pickNest(i); });
+  var inner = h('div', { class: 'in' }, b);
+  build(i - 1, inner);
+})(4, $('#nest'));
+function pickNest(i) {
+  nestBtns.forEach(function (b, j) { b.setAttribute('aria-pressed', String(j === i)); });
+  $('#nestCap').innerHTML = '<strong>' + nestData[i][0] + '：</strong>' + nestData[i][1];
+}
+pickNest(2);
+
+S.notes($('#n-harness'), {
+  c: [
+    ['Harness', 'Agent 边界内、模型之外的运行与治理层：构造上下文、暴露工具、维护循环，并实施约束、验证、纠正。'],
+    ['约束 Constrain', '设定行为边界；故障安全默认值，能力默认关闭、显式开放。'],
+    ['验证 Verify', '自动判断操作对错；只看结构化数据，不看模型自由生成的文本。'],
+    ['纠正 Correct', '发现问题自动修正或回退；无法恢复前不暴露中间态。'],
+    ['熔断器', '错误连续发生时自动停止重试，防止系统陷入死循环。']
+  ],
+  p: [
+    ['Agent = Model + Harness', 'Harness = 上下文管理 + 工具接口 + 约束 + 验证 + 纠正；Agent ↔ Environment。'],
+    ['两类功能不对称', '上下文和工具让 Agent 能做事；约束、验证、纠正让它不做错事，是生产级系统的重心。'],
+    ['五个范式层层包含', '提示 ⊂ 上下文 ⊂ Harness ⊂ Loop ⊂ Graph 工程。'],
+    ['Anthropic 三原则', '保持简单；保持透明；从 Agent 视角设计工具接口（ACI），用“防呆”让错误无法发生。']
+  ]
+});
+
+/* ---------- 5 编排 ---------- */
+var fNodes = ['核实身份', '搜索航班', '付款', '确认预订'];
+var fEvents = [
+  { t: '一切正常', wf: [3, 'ok', '四个节点按顺序走完。付款前不能预订这类规则由代码强制，不依赖模型判断。'], ag: [3, 'ok', '同样能完成，但每一步都要模型决策，延迟和成本更高。'] },
+  { t: '付款时用户想改签', wf: [2, 'hit', '预设路径里没有“改签”分支，只能走异常处理或转人工。这是工作流的主要局限：缺乏变通。'], ag: [3, 'ok', '模型根据新情况回到搜索，询问用户新日期，再继续。路径是实时决定的。'] },
+  { t: '最便宜的航班要转机', wf: [1, 'hit', '节点内部的 LLM 可以把结果展示给用户，但“问用户是否接受转机、再调整条件重搜”的来回不在固定流程里。'], ag: [3, 'ok', '主动问用户是否接受转机；用户说不要，就调整搜索条件。'] },
+  { t: '航班备注里藏了注入指令', wf: [1, 'ok', '注入最多影响“搜索航班”这一个节点的输出，无法让流程跳到付款或其他分支，攻击面被限制在单个节点内。'], ag: [3, 'hit', '执行路径由模型决定，被注入后可能做出越界动作。需要护栏、权限和人在回路兜底（见下一节）。'] }
+];
+var fMode = 'wf', fCur = 0;
+var evBox = $('#fEv');
+fEvents.forEach(function (e, i) {
+  var b = h('button', { class: 'btn', type: 'button', text: e.t }, evBox);
+  b.addEventListener('click', function () { fCur = i; drawF(); });
+});
+S.seg($('#fMode'), function (v) { fMode = v; drawF(); });
+function drawF() {
+  var e = fEvents[fCur], r = e[fMode];
+  var box = $('#fNodes'); box.innerHTML = '';
+  if (fMode === 'wf') fNodes.forEach(function (n, i) { h('div', { class: i < r[0] ? 'ok' : i === r[0] && r[1] === 'hit' ? 'hit' : i === r[0] ? 'ok' : '', text: (i + 1) + '. ' + n }, box); });
+  else ['观察', '思考', '行动', '…直到完成'].forEach(function (n, i) { h('div', { class: r[1] === 'hit' && i === 2 ? 'hit' : 'ok', text: n }, box); });
+  $('#fCap').innerHTML = '<b>' + e.t + '：</b>' + r[2];
+  S.$$('button', evBox).forEach(function (b, i) { b.classList.toggle('pri', i === fCur); });
+}
+drawF();
+var qs = [
+  ['优化提示词和示例后，单次 LLM 调用能解决吗？', '单次 LLM 调用', '能解决就不要引入 Agent。Agent 用延迟和成本换任务表现，先确认这笔交换值得。'],
+  ['任务能清晰分解成固定的子任务吗？', '工作流', '路径固定、可审计、攻击面小。'],
+  ['有必须严格执行的合规步骤，又有需要灵活应对的部分吗？', '混合：关键步骤用工作流，其余交给自主 Agent', '例如 n8n 可以在同一个系统里混用工作流节点和 Agent 节点；也可以让 Agent 先写出工作流，再按确定性方式执行。'],
+  ['步骤数难以预测、需要根据反馈动态决策？', '自主 Agent', '配好停止条件、沙盒测试、护栏和人工检查点。']
+];
+var pk = $('#pick'), qi = 0;
+function drawPick() {
+  pk.innerHTML = '';
+  if (qi >= qs.length) { qi = qs.length - 1; }
+  var q = qs[qi];
+  h('p', { class: 'q', text: (qi + 1) + '. ' + q[0], style: 'font-size:17px;margin:0 0 8px' }, pk);
+  var row = h('div', { class: 'opts' }, pk);
+  var y = h('button', { class: 'opt', type: 'button', text: '是' }, row);
+  var n = h('button', { class: 'opt', type: 'button', text: '否' }, row);
+  y.addEventListener('click', function () { $('#pickOut').innerHTML = '推荐：<b>' + q[1] + '</b>。' + q[2]; });
+  n.addEventListener('click', function () { if (qi < qs.length - 1) { qi++; drawPick(); $('#pickOut').textContent = ''; } else $('#pickOut').innerHTML = '四个问题都是“否”？那多半还没想清楚任务本身，先回到第一个问题。'; });
+  if (qi) { var r = h('button', { class: 'btn', type: 'button', text: '从头问', style: 'margin-left:8px' }, row); r.addEventListener('click', function () { qi = 0; drawPick(); $('#pickOut').textContent = ''; }); }
+}
+drawPick();
+
+S.notes($('#n-orch'), {
+  c: [
+    ['工作流 Workflow', '预定义代码路径编排 LLM 和工具，执行路径确定，LLM 只在节点内部工作。'],
+    ['自主 Agent', '执行路径由模型根据环境反馈实时决定；本质是在循环中使用工具的 LLM。'],
+    ['适配层', '专门给工具或模型能力短板打补丁的 Harness 代码，如文生图前的提示词改写；会随模型变强被内化。'],
+    ['n8n', '可视化工作流自动化框架，可在同一系统混用工作流节点和 Agent 节点。']
+  ],
+  p: [
+    ['选择顺序', '单次 LLM 调用 → 工作流 → 自主 Agent；只在确有必要时增加复杂度。'],
+    ['工作流：流程严格、攻击面小；缺乏变通', '注入最多影响单个节点。'],
+    ['自主 Agent：灵活；成本高、错误会累积', '必须有停止条件，并配合护栏和人工检查点。'],
+    ['Less structure, more intelligence', 'Harness 重要 ≠ 越复杂越好：程序只固化必须始终成立的边界，边界内的决策还给模型。']
+  ]
+});
+
+/* ---------- 6 护栏 ---------- */
+var L = [
+  { k: 'ctx', t: '上下文层', d: '相关性/安全分类器、内容审核、规则过滤' },
+  { k: 'exe', t: '执行层', d: '工具风险评级、上下文外复核、人工确认、输出检查' },
+  { k: 'dat', t: '数据层', d: '行级安全、约束校验、受控视图' }
+];
+var on = { ctx: true, exe: true, dat: true };
+var atk = [
+  { t: '问编程助手“帝国大厦多高”', c: { ctx: 'sure' }, end: '跑题回答，浪费资源', why: '相关性分类器在内容进入上下文前就能标记偏题请求。' },
+  { t: '用户自己越狱', c: { ctx: 'maybe', exe: 'sure' }, end: '执行危险操作', why: '安全分类器能拦下大部分；漏网的，还要过执行层的风险评级和确认。' },
+  { t: '网页里藏指令：删除用户文件', c: { ctx: 'maybe', exe: 'sure' }, end: '用户文件被删除', why: '同一上下文里的 Agent 很难察觉自己被注入，所以上下文层只是“可能”拦住；删除是高风险、不可逆操作，执行层要求上下文之外的复核或人工确认。' },
+  { t: '注入得手，生成的代码漏写权限判断，去读别人的订单', c: { ctx: 'maybe', dat: 'sure' }, end: '越权读取他人数据', why: '代码本身看起来“合法”，执行层未必识别；数据库的行级安全不依赖上面两层是否正确，越权查询直接被拒。' },
+  { t: '回复里带出用户手机号', c: { exe: 'sure' }, end: '个人信息泄露', why: '回复用户本身也是一次动作，PII 过滤器属于执行层的输出检查。' }
+];
+var gi = 2;
+var gSeg = $('#gSeg');
+atk.forEach(function (a, i) { h('button', { type: 'button', 'data-v': i, 'aria-pressed': String(i === gi), text: a.t }, gSeg); });
+S.seg(gSeg, function (v) { gi = +v; drawG(); });
+function drawG() {
+  var a = atk[gi], box = $('#gLayers'); box.innerHTML = '';
+  var stoppedAt = null;
+  L.forEach(function (l) {
+    var c = a.c[l.k];
+    var state = !on[l.k] ? 'off' : stoppedAt ? '' : c === 'sure' ? 'catch' : c === 'maybe' ? 'miss' : '';
+    if (on[l.k] && !stoppedAt && c === 'sure') stoppedAt = l.t;
+    var d = h('div', { class: 'layer ' + state }, box);
+    h('b', { text: l.t }, d);
+    h('span', { text: !on[l.k] ? '已关闭' : stoppedAt && state !== 'catch' ? '（已在上一层拦住）' : c === 'sure' ? '拦住：' + l.d : c === 'maybe' ? '可能漏过：同一上下文里很难察觉被注入' : '与这类攻击无关，放行' }, d);
+    var lab = h('label', null, d);
+    var cb = h('input', { type: 'checkbox' }, lab); cb.checked = on[l.k];
+    h('span', { text: '启用' }, lab);
+    cb.addEventListener('change', function () { on[l.k] = cb.checked; drawG(); });
+  });
+  $('#gCap').innerHTML = stoppedAt ? '<b>在' + stoppedAt + '拦住。</b>' + a.why : '<b style="color:var(--alert)">穿透了：' + a.end + '。</b>' + a.why;
+}
+drawG();
+
+S.notes($('#n-guard'), {
+  c: [
+    ['越狱 Jailbreak', '用户自己试图诱导模型绕过安全限制。'],
+    ['提示注入 Prompt Injection', '攻击者通过网页、文档等外部数据，间接操纵模型行为。'],
+    ['工具风险评级', '按是否可逆、权限等级、财务影响给工具标低/中/高，高风险需额外审查或人工确认。'],
+    ['人在回路', '超过失败阈值或遇到高风险操作时，把控制权平稳移交给人。'],
+    ['误拒绝', '护栏把合法但形式敏感的任务也拦下来；评估时要同时测“该放的能不能放”。']
+  ],
+  p: [
+    ['三层按被绕过的难度排序', '上下文层（看到什么）< 执行层（能做什么）< 数据层（世界能被改成什么样）。'],
+    ['上下文层只能降概率', '同一上下文里的 Agent 很难判断自己是否被注入。'],
+    ['执行层的复核必须在上下文之外', '独立审查进程、最小权限凭证、沙盒、人在回路，否则会和被注入的 Agent 一起沦陷。'],
+    ['数据层不依赖上两层是否正确', '即使注入得手、代码漏写权限判断，越权操作仍被拒绝。'],
+    ['安全是架构问题', '从第一行代码就要考虑，而不是上线前打补丁。']
+  ]
+});
+
+/* ---------- 7 设计模式 ---------- */
+S.quiz($('#pQuiz'), [
+  { q: '让一个独立的模型只看渲染出来的 PPT 截图打分，而不看生成它的推理过程。', o: ['渐进式披露', '提议者—审核者', '只增不改'], a: 1, why: '产出与评判分属两个不共享上下文的角色，评判方只看产物本身。前提是自审不可靠。' },
+  { q: '上百个 Skill 只把名字和一句描述常驻上下文，需要时再加载正文。', o: ['渐进式披露', '最小 diff', '边界集 + 保留集'], a: 0, why: '先给可检索的目录，再按需加载细节，同时节省上下文预算、提高选择精度。' },
+  { q: '新工具的 schema 追加到轨迹末尾，而不是插回系统提示词里。', o: ['提议者—审核者', '只增不改', '最小 diff + 可回滚'], a: 1, why: '改动越靠前，作废的缓存越多；只追加能保住 KV Cache 前缀（第 2 篇展开）。' },
+  { q: '改了一条 Prompt 规则，既在本该修好的失败样本上测，也在原本就正确的样本上测。', o: ['边界集 + 保留集', '渐进式披露', '只增不改'], a: 0, why: '只测前者会把过拟合当进步，只测后者会把无效修改当安全。' },
+  { q: '用户说“下次回复简短些”，Agent 本次会话立刻照做，但下次会话又忘了。这是哪条更新路径？', o: ['上下文适应', '外部产物更新', '参数更新'], a: 0, why: '信息进了上下文就即时生效，但不改变下一次会话的持久状态。要跨会话保留，得写进记忆、Prompt 或 Skill。' },
+  { q: '想让模型学会一种难以用规则写清的医疗影像判断能力。', o: ['写进 Skill', '外部产物更新', '参数更新（后训练）'], a: 2, why: '高维、隐式的能力外部规则难以完整表达，需要后训练改参数，部署成本高但泛化广（第 8 篇展开）。' }
+]);
+S.notes($('#n-patterns'), {
+  c: [
+    ['提议者—审核者', '产出与评判由不共享上下文的两个角色承担，评判方只看产物。'],
+    ['渐进式披露', '先给目录，再按需加载细节。'],
+    ['只增不改', '状态只追加不回改：可缓存、可重放、可审计。'],
+    ['边界集 + 保留集', '修改要同时在“应改变的样本”和“不应受影响的样本”上验证。'],
+    ['最小 diff + 可回滚', '每次修改小、带来源、可单独回滚，让归因成为可能。']
+  ],
+  p: [
+    ['三条更新路径', '上下文适应（任务内）→ 外部产物更新（跨任务）→ 参数更新（训练周期）。'],
+    ['按可回滚程度从高到低排列', '上下文负责临场适应，外部产物负责可控积累，参数负责内化难以显式表达的能力。'],
+    ['自审不可靠', '同一上下文里的模型难以发现自己的盲区，也难以判断自己是否被注入。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

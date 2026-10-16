@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深入理解 AI Agent：学习笔记</title>
+<meta name="description" content="开源书《深入理解 AI Agent：设计原理与工程实践》（李博杰 著）的十篇互动学习笔记：从 Agent = LLM + 上下文 + 工具出发，讲上下文工程、记忆、工具、Coding Agent、交互扩展、评估、后训练、持续进化与多 Agent 协作。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-16-agent-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-16-agent-shared/series.js"></script>
+<style>
+.formula { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: center; margin-top: 8px; }
+.formula svg { width: 100%; height: auto; display: block; }
+.formula .part3 { cursor: pointer; }
+.formula .part3 rect { stroke-width: 2.5; transition: fill .2s; }
+.formula .part3.on rect { fill: var(--s1-soft); stroke: var(--s1); }
+.formula text { font-size: 16px; }
+@media (max-width: 760px) { .formula { grid-template-columns: minmax(0, 1fr); } }
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 6px; font-size: 19px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.patt { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-top: 12px; }
+.patt div { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; }
+.patt b { display: block; font-size: 16px; }
+.patt span { font-size: 15px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>系列 · 共 10 篇</span><span>每节都有小实验</span><span>每篇末尾有“记下来”</span></p>
+  <h1>Agent = LLM + <em>上下文</em> + 工具</h1>
+  <p class="lead">这是开源书《深入理解 AI Agent：设计原理与工程实践》的学习笔记，按原书十章拆成十篇。原书的出发点是：模型和产品迭代很快，但几乎所有成功的 Agent 系统都遵循同一批架构原则；掌握“为什么要这样设计”，比学会某个框架更持久。这里先给一张全书地图，再附上整个系列的速记，方便以后回来复习。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">深入理解 AI Agent：设计原理与工程实践</a>》（李博杰 著，Apache-2.0 协议）的学习笔记。原书全文、配图和 109 个配套实验都在 GitHub 开源，推荐对照阅读；本系列不逐段复述，而是用自己的话重讲关键概念，配上可以动手点的小实验，每节末尾整理成“记下来”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-agent/" aria-current="page"><b>总览</b>系列目录</a>
+  <a href="../2026-10-16-agent-1/" data-part="1"><b>01</b>Agent 入门</a>
+  <a href="../2026-10-16-agent-2/" data-part="2"><b>02</b>上下文工程</a>
+  <a href="../2026-10-16-agent-3/" data-part="3"><b>03</b>记忆与知识库</a>
+  <a href="../2026-10-16-agent-4/" data-part="4"><b>04</b>工具</a>
+  <a href="../2026-10-16-agent-5/" data-part="5"><b>05</b>Coding Agent</a>
+  <a href="../2026-10-16-agent-6/" data-part="6"><b>06</b>交互扩展</a>
+  <a href="../2026-10-16-agent-7/" data-part="7"><b>07</b>评估</a>
+  <a href="../2026-10-16-agent-8/" data-part="8"><b>08</b>后训练</a>
+  <a href="../2026-10-16-agent-9/" data-part="9"><b>09</b>持续进化</a>
+  <a href="../2026-10-16-agent-10/" data-part="10"><b>10</b>多 Agent</a>
+</nav>
+</section>
+
+
+<div class="wrap">
+<section class="part" id="map">
+  <div class="part-head"><h2>一个公式，三种说法</h2><span class="meta">原书引言 · 第一章</span></div>
+  <div class="sec-lede">
+    <p>原书的核心公式只有一句：<strong>Agent = LLM + 上下文 + 工具</strong>。直觉的说法是大脑、眼睛、手脚；强化学习的说法是策略、观察空间、动作空间。三种说法描述的是同一个对象，只是抽象层次不同。公式只描述 Agent 边界以内的东西，与它交互的环境（文件、网页、用户、其他 Agent、物理世界）在边界之外。</p>
+    <p>生产形态下，原书把它展开为 <strong>Agent = Model + Harness</strong>：Harness 是“Agent 边界内、模型之外”的运行与治理层，包括上下文管理、工具接口，以及约束、验证、纠正三层保障。原书认为，模型能力越接近，竞争优势就越转移到 Harness 上。</p>
+    <p class="go">点公式里的三个部件，看它们分别在哪几篇展开。</p>
+  </div>
+  <div class="formula">
+    <svg viewBox="0 0 540 310" id="fsvg" role="group" aria-label="Agent 公式"></svg>
+    <div class="aside" id="fcap"></div>
+  </div>
+</section>
+
+<section class="part" id="chapters">
+  <div class="part-head"><h2>十篇目录</h2><span class="meta">读过的会标绿</span></div>
+  <div class="sec-lede">
+    <p>原书分两部分：<strong>第一至六章“如何构建 Agent”</strong>，从基本概念出发，依次讨论上下文、记忆与知识、工具、Coding Agent、观察与动作空间的扩展；<strong>第七至十章“如何提升 Agent 能力”</strong>，先用评估建立可度量的反馈，再从模型参数（后训练）、单体系统（持续进化）、群体系统（多 Agent 协作）三个层面扩展能力。时间有限的话，原书建议优先读第一、二章；关注模型训练的，读第八章前最好先读第七章。</p>
+  </div>
+  <p class="parthd">第一部分 · 如何构建 Agent</p>
+  <div class="chap" id="chapA"></div>
+  <p class="parthd">第二部分 · 如何提升 Agent 能力</p>
+  <div class="chap" id="chapB"></div>
+</section>
+
+<section class="part" id="patterns">
+  <div class="part-head"><h2>贯穿全书的五个设计模式</h2><span class="meta">原书 1.3 节</span></div>
+  <div class="sec-lede"><p>原书在第一章一次性命名了五个模式，后面九章反复出现。读任何一篇时都可以问一句：这里用的是哪个模式？</p></div>
+  <div class="patt">
+    <div><b>提议者—审核者</b><span>产出与评判由不共享上下文的两个角色承担，评判方只看产物和独立证据。前提是自审不可靠。第 3、4、5、7、9、10 篇都会出现。</span></div>
+    <div><b>渐进式披露</b><span>先给可检索的目录，再按需加载细节：Skills、分层检索、主动工具发现。</span></div>
+    <div><b>只增不改</b><span>状态只追加不回改，换来可缓存、可重放、可审计：KV Cache 前缀、事件式记忆、原始证据层。</span></div>
+    <div><b>边界集 + 保留集</b><span>修改要同时在“该变的样本”和“不该受影响的样本”上验证：回归任务、训练评估隔离、更新提案验证。</span></div>
+    <div><b>最小 diff + 可回滚</b><span>每次修改小、带来源、能单独回滚，让归因成为可能：知识更新 PR、代码补丁、Prompt 更新。</span></div>
+  </div>
+</section>
+
+<section class="recap" id="recap">
+  <h2>全系列速记</h2>
+  <p>每篇最重要的几句话，展开后可以开自测遮住解释。完整的“记下来”在各篇每节末尾。</p>
+  <div id="recapBox"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a class="nx" href="../2026-10-16-agent-1/"><small>下一篇</small><span>01 · AI Agent 入门</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">bojieli/ai-agent-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var chs = [
+  ['1', 'Agent 入门', '大脑、眼睛、手脚；ReAct 循环；Harness 五要素；工作流与自主 Agent；三层护栏；五个设计模式。'],
+  ['2', '上下文工程', 'API 消息结构、KV Cache 与前缀稳定、Chat Template、提示工程、Skills、状态栏、压缩与隔离。'],
+  ['3', '用户记忆和知识库', '记忆提取与三层评估、四种存储格式、Mem0 的冲突处理、BM25 与混合检索、知识组织与更新、智能体化 RAG。'],
+  ['4', '工具', '五类工具、专用工具与 Skill 的取舍、描述与参数保真、MCP 安全、工具太多怎么办、执行工具的保险与幂等。'],
+  ['5', 'Coding Agent 与通用 Agent', '七个核心工具、Harness 四象限、故障分类与熔断、编辑方案、致命三要素、代码即规则、代码的六种用法。'],
+  ['6', '交互：观察与动作空间的扩展', '事件驱动与三种处理策略、兼容同步接口的占位符、语音三范式与快慢思考、Computer Use 定位与缩放、机器人分层控制。'],
+  ['7', 'Agent 的评估', 'τ²-bench 任务解剖、Pass@k 与 Pass^k、验证器与防泄漏、Rubric 与 LLM 评判、失败归因、统计显著性、从报告到改进。'],
+  ['8', '模型后训练', '四个训练阶段、何时选哪种、SFT 记忆与 RL 泛化、GRPO 一步、on-policy 与数值失配、RLVP、在轨蒸馏。'],
+  ['9', 'Agent 的持续进化', '三层轨迹验证、四种更新载体、从失败轨迹提炼规则、浏览器工作流固化、更新“更新方法”、双循环与睡眠学习。'],
+  ['10', '多 Agent 协作', '新信息判据、Skill 与角色切换、Agent 操作系统、Loop 工程、管理者与级联终止、handoff 与 A2A、六种失败、Agent 社会。']
+];
+var read = S.readList();
+chs.forEach(function (c, i) {
+  var a = h('a', { href: '../2026-10-16-agent-' + c[0] + '/', class: read.indexOf(c[0]) >= 0 ? 'done' : '' }, i < 6 ? $('#chapA') : $('#chapB'));
+  a.innerHTML = '<b>' + (c[0].length < 2 ? '0' : '') + c[0] + '</b><h3>' + c[1] + '</h3><p>' + c[2] + '</p>' + (read.indexOf(c[0]) >= 0 ? '<span class="tag">已读</span>' : '');
+});
+
+/* 公式图 */
+var NS = 'http://www.w3.org/2000/svg', svg = $('#fsvg');
+function sv(t, a, p) { return S.svg(t, a, p); }
+sv('rect', { x: 8, y: 8, width: 524, height: 294, rx: 14, class: 'f-panel k-rule', 'stroke-width': 2, 'stroke-dasharray': '6 6', fill: 'none' }, svg);
+sv('text', { x: 24, y: 34, class: 'c-3', text: 'Environment：文件、网页、用户、其他 Agent、物理世界' }, svg);
+sv('rect', { x: 30, y: 56, width: 480, height: 226, rx: 12, class: 'k-ink', fill: 'none', 'stroke-width': 2 }, svg);
+sv('text', { x: 50, y: 82, class: 'ink b', text: 'Agent = Model + Harness' }, svg);
+var parts = [
+  { k: 'llm', x: 56, t: 'LLM', s: '大脑 · 策略', ch: '1、8', cap: '<strong>LLM（大脑 / 策略）：</strong>理解意图、规划、判断下一步。能力来自预训练的知识和后训练固化的决策策略。第 1 篇讲它在循环里的角色，第 8 篇讲怎样通过 Mid-training、SFT、RL 把能力写进参数。' },
+  { k: 'ctx', x: 214, t: '上下文', s: '眼睛 · 观察', ch: '2、3', cap: '<strong>上下文（眼睛 / 观察）：</strong>模型在每个决策点能看到的一切。原书称第二章是全书最关键的一章：消息结构、KV Cache、提示词、Skills、状态栏、压缩；第 3 篇把它延伸到跨会话的记忆和知识库。' },
+  { k: 'tool', x: 372, t: '工具', s: '手脚 · 动作', ch: '4、5、6', cap: '<strong>工具（手脚 / 动作）：</strong>感知或改变世界的接口。第 4 篇讲工具设计与安全，第 5 篇讲代码这种“能创造工具的工具”，第 6 篇把观察和动作扩展到异步事件、语音、屏幕和机器人。' }
+];
+parts.forEach(function (p) {
+  var g = sv('g', { class: 'part3', tabindex: 0, role: 'button' }, svg);
+  sv('rect', { x: p.x, y: 100, width: 112, height: 92, rx: 10, class: 'k-rule f-bg' }, g);
+  sv('text', { x: p.x + 56, y: 136, 'text-anchor': 'middle', class: 'ink b', text: p.t }, g);
+  sv('text', { x: p.x + 56, y: 160, 'text-anchor': 'middle', text: p.s }, g);
+  sv('text', { x: p.x + 56, y: 182, 'text-anchor': 'middle', class: 'c-s1', text: '第 ' + p.ch + ' 篇' }, g);
+  function pick() { S.$$('.part3', svg).forEach(function (x) { x.classList.remove('on'); }); g.classList.add('on'); $('#fcap').innerHTML = '<p>' + p.cap + '</p>'; }
+  g.addEventListener('click', pick);
+  g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  if (p.k === 'ctx') pick();
+});
+sv('text', { x: 50, y: 230, text: 'Harness = 上下文管理 + 工具接口 + 约束 + 验证 + 纠正' }, svg);
+sv('text', { x: 50, y: 258, class: 'c-3', text: '评估（7）· 持续进化（9）· 多 Agent（10）让它变好' }, svg);
+
+/* 速记 */
+var recap = [
+  ['01 · Agent 入门', [
+    ['Agent = LLM + 上下文 + 工具', '大脑·眼睛·手脚；策略·观察·动作。环境在边界之外。'],
+    ['上下文 = 静态前缀 + 轨迹', '系统提示词、工具定义 | 用户消息、模型回复、工具结果。'],
+    ['Harness = 上下文 + 工具 + 约束 + 验证 + 纠正', '生产级系统的重心在后三者。'],
+    ['先单次调用，再工作流，最后自主 Agent', 'Less structure, more intelligence。'],
+    ['三层护栏按被绕过的难度排序', '上下文层 < 执行层 < 数据层。']
+  ]],
+  ['02 · 上下文工程', [
+    ['三条结论', '前缀定了别改；动态信息追加到末尾；用标准 API 格式。'],
+    ['缓存只保留到第一个不同 token 之前', '改动越靠前，重算越多；保留思考也绑定前缀。'],
+    ['Skills 渐进式披露', '目录常驻，正文按需追加。description 写成路由条件。'],
+    ['状态栏', '把隐式状态提炼成显式信息放末尾；尽量代码维护。'],
+    ['压缩与隔离', '接近阈值批量压；能隔离就别压缩。']
+  ]],
+  ['03 · 记忆与知识库', [
+    ['提取三规则', '选择性、抽象化、结构化。'],
+    ['三层评估', '基础回忆 → 多会话检索 → 主动服务。'],
+    ['仅追加 + 检索时推理', '避免错误 UPDATE 不可逆地丢历史。'],
+    ['混合检索', '稠密 + 稀疏（BM25）→ RRF 融合 → 跨编码器重排序。'],
+    ['原始案例直接入库远远不够', '索引阶段提炼摘要与规则；知识更新走 PR。']
+  ]],
+  ['04 · 工具', [
+    ['默认通用，除非有理由', '安全审计、平台差异、高频、参数复杂才退回专用工具。'],
+    ['写清边界，用例子', '频繁选错工具先查描述。'],
+    ['参数保真', '模型感知的世界与工具操作的世界不能有系统性偏差。'],
+    ['工具太多', '按需加载 → 主动发现 → Skills。'],
+    ['执行工具', '输入验证 → 权限 → 提议者—审核者 / Sidecar → 沙盒；幂等。']
+  ]],
+  ['05 · Coding Agent', [
+    ['通用 Agent = Coding Agent + 文件系统', '面向开放任务时成立。'],
+    ['Coding Agent 成熟是因为软件工程的基础设施', '测试、类型、Git 天然就是 Harness。'],
+    ['故障：先分类，再恢复，最后有上限', '熔断阈值来自生产数据。'],
+    ['致命三要素 + 持久记忆', '让 Agent 即使被注入也执行不出危险动作。'],
+    ['代码即规则', 'checklist 引导思考，服务端真值守门。']
+  ]],
+  ['06 · 交互扩展', [
+    ['回合制是约定，不是环境性质', '模态与时机是两根新轴。'],
+    ['取消、排队、并行', '按紧急度处理事件；取消式是主动制造安全点。'],
+    ['兼容同步接口', '打断时插明确的占位符；用 initiate_* 表达异步。'],
+    ['语音主线', '摆脱轮流说话；快慢分离能承接慢模型的迭代。'],
+    ['机器人', '走一步看一步，预测不能代替验收。']
+  ]],
+  ['07 · 评估', [
+    ['评估对象是模型 + Harness', '模型替换实验区分瓶颈在哪。'],
+    ['Pass@k vs Pass^k', '1−(1−p)^k 看上限，p^k 看可靠。'],
+    ['验证事实而不是陈述', 'FAIL_TO_PASS + PASS_TO_PASS。'],
+    ['失败归因找首个错误', '端到端回归 + 轨迹前缀回归。'],
+    ['SE ≈ √(p(1−p)/n)', '差异要超过噪声、配对成立、能复现。']
+  ]],
+  ['08 · 后训练', [
+    ['底座、协议、策略', 'Mid-training、SFT、RL 各管一件。'],
+    ['pass@k 近零别上 RL', '全败组没有梯度。'],
+    ['SFT 记忆，RL 泛化', '受控实验中的倾向，不是普遍定律。'],
+    ['On-policy 也会被数值失配破坏', '更新前比较 sampler 与 trainer 的 log prob。'],
+    ['R = O + βΦ；在轨蒸馏', '奖励结果、惩罚路径；一条 rollout 变成密集监督。']
+  ]],
+  ['09 · 持续进化', [
+    ['保存经历 ≠ 从经历中学习', '学习发生在评价、对照、归纳、验证之后。'],
+    ['四种载体', '知识、Prompt/Skill、程序/Harness、参数；按能力的表示性质选。'],
+    ['提炼产物要独立验证', '模型会把观察到的行为当成应然。'],
+    ['更新了 ≠ 用上了', '提案有效率 × 激活率 × 遵循率。'],
+    ['安全机制不可自我修改', '可信根在被修改者够不着的地方。']
+  ]],
+  ['10 · 多 Agent 协作', [
+    ['唯一判据：有没有新信息', '执行、视觉、工具反馈有效；同文本辩论不占优。'],
+    ['Skill vs transfer_to_agent', '知识风格差异用 Skill，权限隔离用独立 Agent。'],
+    ['多 Agent 就是一套操作系统', '轨迹是内存，工具调用是系统调用，级联取消防孤儿。'],
+    ['第一个已验证的成功', 'settle_once 要幂等。'],
+    ['可以外包思考，不能外包理解', '警惕理解债与认知投降。']
+  ]]
+];
+var rb = $('#recapBox');
+recap.forEach(function (r, i) {
+  var d = h('details', null, rb);
+  h('summary', { html: r[0] + '<small>' + r[1].length + ' 条</small>' }, d);
+  var n = h('div', null, d);
+  S.notes(n, { c: r[1].slice(0, 2), p: r[1].slice(2), ph: '要点' });
+  void i;
+});
+})();
+</script>
+</body>
+</html>

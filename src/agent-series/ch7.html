@@ -1,0 +1,477 @@
+---
+title: 评估：怎么知道 Agent 变好了
+desc: 深入理解 AI Agent 学习笔记（七）：模型替换与消融、τ²-bench 任务解剖、Pass@k 与 Pass^k、评估环境五要素、验证器与防泄漏、Rubric 与 LLM-as-a-Judge、失败归因与轨迹前缀回归、统计显著性、成本分析与从报告到改进。
+kicker: <span>深入理解 AI Agent · 07</span><span>对应原书第七章</span><span>约 25 分钟</span><span>边读边点</span>
+h1: 没有度量，<em>就没有改进</em>
+lead: 构建完成不等于构建正确。用什么模型、挂哪些工具、记忆怎么存、Harness 加哪些约束，这些选择大多没有显而易见的答案，只能靠评估来回答。这一篇按原书的四个环节走：什么算成功、任务从哪来、由谁验证、分数怎样变成决策。
+nav: why|为什么评估;anatomy|任务解剖;metric|指标;verify|验证器;judge|LLM 评判;attr|失败归因;decide|做决策;improve|从报告到改进
+---
+<style>
+.anat { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.anat button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); border-radius: 8px; padding: 10px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
+.anat button b { display: block; color: var(--ink); font-size: 16px; }
+.anat button[aria-pressed="true"] { border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 50%, transparent); }
+.code2 { font-family: var(--f-num); font-size: 15px; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; line-height: 1.7; margin-top: 10px; color: var(--ink); }
+@media (max-width: 760px) { .anat { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ans { display: flex; flex-direction: column; gap: 8px; }
+.ans button { font: inherit; font-size: 15px; text-align: left; border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; background: var(--bg); cursor: pointer; color: var(--ink); }
+.ans button[aria-pressed="true"] { border-color: var(--s1); box-shadow: 0 0 0 2px var(--s1-soft); }
+.score { list-style: none; margin: 10px 0 0; padding: 0; }
+.score li { display: grid; grid-template-columns: 7em 6em minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 15px; }
+.score li b { font-size: 15px; }
+.score .g { font-family: var(--f-num); font-weight: 700; }
+.score .veto { color: var(--alert); }
+.steps2 { list-style: none; margin: 8px 0 0; padding: 0; }
+.steps2 li { display: grid; grid-template-columns: 3.5em minmax(0, 1fr); gap: 8px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 15px; background: var(--bg); cursor: pointer; }
+.steps2 li i { font-style: normal; font-family: var(--f-num); color: var(--ink-3); }
+.steps2 li.right { border-color: var(--ok); background: var(--ok-soft); }
+.steps2 li.wrong { border-color: var(--alert); background: var(--alert-soft); }
+.ci { position: relative; height: 82px; margin-top: 12px; }
+.ci .axis { position: absolute; left: 0; right: 0; top: 50px; border-top: 1px solid var(--rule); }
+.ci .bar { position: absolute; height: 10px; border-radius: 5px; opacity: .55; }
+.ci .pt { position: absolute; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; }
+.ci .lbl { position: absolute; font-size: 15px; font-family: var(--f-num); }
+</style>
+===BODY===
+<section class="part" id="why">
+  <div class="part-head"><h2>评估的对象是模型 + Harness</h2><span class="meta">原书 7 章引言</span></div>
+  <div class="sec-lede">
+    <p>评估靠两种实验：<strong>对比实验</strong>（改一个变量看效果）和<strong>消融实验</strong>（逐个关掉组件看整体掉多少）。原书强调一个关键认识：<strong>评估的对象不应只是模型，而是模型与 Harness 的组合体</strong>。同一个模型换个 Harness，表现可能天差地别，所以评估体系要能区分“模型能力不足”和“Harness 设计缺陷”。</p>
+    <p>区分它们的常用手段是<strong>模型替换实验</strong>：固定 Harness，只换更强或更弱的模型。换强模型分数不涨，瓶颈在 Harness；分数随模型能力大幅波动，表现主要由模型决定。它和消融不同：消融定位 Harness 内部哪个部件重要，替换区分瓶颈在模型还是 Harness。</p>
+    <p>有了自己的评估集还有两个好处：新模型在公开榜上更好，不代表在你的任务上更好，可能反而退化，只有在自己的集合上跑才能决定升不升级；更进一步可以<strong>为未来的模型开发产品</strong>，先把产品和评估集做好，等模型达到门槛立即上线。</p>
+    <p class="go">看几组实验结果，判断瓶颈在哪。</p>
+  </div>
+  <div class="lab"><div id="swapQ"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="anatomy">
+  <div class="part-head"><h2>解剖一条评估任务：τ²-bench telecom</h2><span class="meta">原书 7.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书拿 τ²-bench（Sierra 的开源项目）telecom 领域的一条真实任务开刀：用户手机在法国上不了网，状态栏显示 No Service。任务定义分四部分：给 Agent 的<strong>工单</strong>、给用户模拟器的<strong>行为规范</strong>、运行前的<strong>初始状态</strong>、<strong>评分标准</strong>。</p>
+    <p>四处设计值得学。<strong>显式建模用户的认知边界</strong>：<code>known_info</code> 只有姓名、号码、所在国家，真正的故障原因（飞行模式开着、漫游关着）用户自己也不知道，Agent 只能靠提问和引导去发现。<strong>防止模拟器被 Agent 忽悠</strong>：只有测速为 excellent 才算解决，关于设备的回答必须以工具结果为依据，否则评估会退化成两个模型互相确认。<strong>双方都不具备完全信息</strong>：运营商侧漫游已开通，Agent 查数据库只会得出“配置正常”，故障在它看不见的用户设备侧，这就是<strong>双控</strong>，模拟用户也有自己的一套工具。<strong>多维度校验</strong>：终态断言、关键动作、信息告知。</p>
+    <p>原书还分析了一条满分轨迹里的瑕疵：政策写着“一次只调用一个工具”，Agent 却同时发了两个，验证器没管，因为这题只看终态。这不是疏漏，而是<strong>二元奖励的固有代价</strong>：用过程颗粒度换跨模型可比的单一数字。</p>
+    <p class="go">点四个部分看任务文件里写了什么。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一条任务的四个组成部分</p>
+    <div class="anat" id="anat"></div>
+    <div class="code2" id="anatCode"></div>
+    <p class="cap" id="anatCap"></p>
+  </div>
+  <div class="notes" id="n-anatomy"></div>
+</section>
+
+<section class="part" id="metric">
+  <div class="part-head"><h2>技术奇观看 Pass@k，业务可靠看 Pass^k</h2><span class="meta">原书 7.2 节</span></div>
+  <div class="sec-lede">
+    <p>五条任务过了四条，0.8 算好还是差？取决于场景。原书区分两种口径。<strong>Pass@k</strong>：同一任务跑 k 次，至少一次通过就算过（连续得分取最好的叫 Best@k）。它衡量“原则上做得到”，适合科研发现、漏洞挖掘、开放创作，人可以从 k 条候选里挑最好的。原书称之为<strong>技术奇观</strong>阶段：Manus 让人第一次看到 AI 像人一样操作电脑干半小时，OpenClaw 让人感到“活人感”，早期成功率并不高，但较高的 Pass@k 和社交网络上的传播是它们成功的关键。</p>
+    <p><strong>Pass^k</strong>（读作 Pass consecutive k）：同一任务连续跑 k 次，每次都要通过，且不能触发安全、合规、幻觉这类一票否决项。它回答“能否稳定交付”，才接近支付、退款、生产部署的要求。若每次独立、单次成功率为 p，则 <strong>Pass@k = 1 − (1 − p)<sup>k</sup></strong>，<strong>Pass^k = p<sup>k</sup></strong>。报告要写清 k 次是同一任务独立采样还是流水线上连续 k 个任务；有副作用的操作不能“重试到成功”，要在沙盒里采样并把每次失败都计入。</p>
+    <p class="go">拖动单次成功率和 k，看两条曲线如何分道扬镳。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同一个 p，两种口径</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>单次成功率 p <output id="pP">0.60</output></span><input type="range" id="pPs" min="0.05" max="0.99" step="0.01" value="0.6"></label>
+      <label class="ctl"><span>尝试次数 k <output id="pK">5</output></span><input type="range" id="pKs" min="1" max="20" value="5"></label>
+    </div>
+    <div class="read"><div class="good"><div class="v" id="pAt">0</div><div class="k">Pass@k：至少一次成功</div></div><div class="warn"><div class="v" id="pCons">0</div><div class="k">Pass^k：k 次全部成功</div></div></div>
+    <div class="box" id="pChart"></div>
+    <p class="note">原书的例子：p = 0.6、k = 5 时，Pass@5 ≈ 99.0%，Pass^5 ≈ 7.8%。</p>
+  </div>
+  <div class="notes" id="n-metric"></div>
+</section>
+
+<section class="part" id="verify">
+  <div class="part-head"><h2>环境五要素，和不被糊弄的验证器</h2><span class="meta">原书 7.3–7.4 节</span></div>
+  <div class="sec-lede">
+    <p>一个可重复运行的评估环境需要五个要素：<strong>数据集</strong>（每条用例打包初始状态、工单、模拟器规范、验收标准）、<strong>环境状态</strong>（必须可重置，每次回到同一起点）、<strong>工具接口</strong>（原子操作，不能有“解决用户上网问题”这种高层工具，否则规划被工具吸收）、<strong>评分标准</strong>、<strong>执行协议</strong>（交互顺序和终止条件，沟通效率太低也算失败）。没有对话对象的工具调用型任务（写代码、数据分析、数学）可以省掉用户模拟器，Verifiers 框架按是否保持状态、是否需要隔离分成四类环境。</p>
+    <p>Agent 很容易写一篇洋洋洒洒的报告说全做完了，所以<strong>验证器必须核实机器可独立复核的事实，而不是 Agent 的自我陈述</strong>。SWE-bench Verified 把“修好了”拆成两个命题：FAIL_TO_PASS（修复前失败修复后通过）和 PASS_TO_PASS（修复前后都通过）；只验前者，Agent 可以删断言蒙混。OSWorld 用 134 个评估函数直接查数据库、DOM、cookie。Terminal-Bench 要求从源码编译 Linux 内核并在启动日志里看到自定义 printk，没法伪造。</p>
+    <p>防泄漏有几招：GAIA 的题要组合多个信息源，还配了互联网上不存在的附件；AndroidWorld 用参数化模板每次随机生成实例；Terminal-Bench 在题面里嵌<strong>金丝雀 GUID</strong>，模型能吐出它就说明进了训练集。质量维护也很重：SWE-bench Verified 发布前请 93 名开发者筛掉 71% 的原始任务；OSWorld 发布后 15 个月暴露了 300 多个问题。生产中的评估集有三个来源：公开基准（粗筛和借鉴）、自建业务集（选型依据）、<strong>生产轨迹回流</strong>（成本最高也最准，上线后会成为主体）。</p>
+    <p class="go">把设计手法配到对应的基准上。</p>
+  </div>
+  <div class="lab"><div id="vSort"></div></div>
+  <div class="notes" id="n-verify"></div>
+</section>
+
+<section class="part" id="judge">
+  <div class="part-head"><h2>Rubric + LLM-as-a-Judge</h2><span class="meta">原书 7.5 节</span></div>
+  <div class="sec-lede">
+    <p>确定性验证器便宜、可复现，但只能说对不对，说不出错在哪；而且“这封投诉回复是否得体”根本写不成断言。所以生产评估要沿着“可机械验证程度”的谱系往右走：用 <strong>Rubric</strong> 把“好不好”拆成可分别打分的维度，用 <strong>LLM-as-a-Judge</strong> 在没有确定性判据时打分。能写成断言的仍然用断言。</p>
+    <p>原书引用 Scale AI 的 Rubric 四准则：<strong>基于专家指导</strong>；<strong>全面覆盖</strong>（包括要避开的陷阱项）；<strong>按重要性加权</strong>（必要、重要、可选、陷阱，并支持<strong>一票否决</strong>，如客服场景的幻觉）；<strong>评价标准自包含</strong>（不写“展示了深刻理解”，写“引用了至少两个权威理论并准确解释”）。要主动防<strong>奖励作弊</strong>：惩罚幻觉、讨好、关键词堆砌、回避难题。</p>
+    <p>评判模型自身有偏差。<strong>长度偏差</strong>：偏爱更长的回答，可在 Rubric 里惩罚冗长、定期审计分数与长度的相关性。<strong>位置偏差</strong>：配对比较时偏向先出现的候选，要交换顺序各评一次。<strong>同源问题</strong>：Agent 与评判模型同一家族时，Agent 会学会钻评判者的空子，这就是古德哈特定律，缓解办法是<strong>多源异构评判</strong>。</p>
+    <p class="go">用原书的用户记忆 Rubric 给四个回答打分。问题是“我女儿的儿科医生是谁？”，记忆里第一次对话说“女儿叫 Lily”，第二次说“带 Lily 去看了 Dr. Chen”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">选一个回答</p>
+      <div class="ans" id="ans"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">逐维评分</p>
+      <ul class="score" id="score"></ul>
+      <p class="cap" id="scoreCap"></p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书实验 7-4：同一套 60 题上的三种记忆方案</p>
+    <div class="seg" id="memSeg"><button data-v="0" aria-pressed="true">基础回忆</button><button data-v="1">多会话消歧</button><button data-v="2">跨会话隐藏关联</button><button data-v="3">总体</button></div>
+    <div id="memBars" style="margin-top:10px"></div>
+    <p class="note">原书点出两件事：混合方案并没有自然胜出；180 次评判里幻觉否决触发了 28 次。</p>
+  </div>
+  <div class="notes" id="n-judge"></div>
+</section>
+
+<section class="part" id="attr">
+  <div class="part-head"><h2>失败归因：找首个错误，不是最后一个报错</h2><span class="meta">原书 7.5 节 · 失败归因与回归任务</span></div>
+  <div class="sec-lede">
+    <p>端到端评估只说成功或失败。要驱动修复，得对每条失败轨迹做<strong>失败归因</strong>：标出错误类别、<strong>首次出现不可接受行为的那一步</strong>、对应的工具调用或模型输出，并附可复核的证据。后面的错误往往只是连锁反应。问题案例来自三类信号：用户明确纠正、用户点踩、事后由状态检查或 LLM 评审发现。原书提醒，归因可以借助 LLM 规模化，但不能完全依赖它，因为<strong>失败归因往往反映的是产品问题</strong>。规则先筛嫌疑轨迹、LLM 再定位首错，比全部喂给 LLM 更便宜也更准。</p>
+    <p>一类容易被总分掩盖的问题是<strong>“做对了但说错了”</strong>：环境状态全对，告诉用户的信息却错了。τ²-bench 公开基线里，有信息告知要求的 704 次运行失败 240 次，其中 80 次环境状态正确但告知错误。另一个案例来自 AndroidWorld 的纯文本 Agent T3A：把图片里的开销录入记账应用，32 步没有任何报错，验收却失败。往回看，第 8 步它自己写道“我其实看不到图片里的开销”，却没停也没报告，第 11 步凭空编出了四条数据。根因不是“模型不会 OCR”，而是<strong>它的观察空间里根本没有图像像素</strong>：Harness 缺了观察通道。记成模型能力问题，就会去换模型、做训练，修错方向。</p>
+    <p>归因之后，把修复目标写成<strong>回归任务</strong>。端到端回归从初始状态跑完整任务，最接近生产，但难以定位；<strong>轨迹前缀回归</strong>冻结首错之前的上下文和环境状态，只让 Agent 做下一步，答案是一个“可接受动作集合”加禁止动作。原书认为，对高可靠的生产 Agent，前缀回归集往往比端到端集更重要。</p>
+    <p class="go">读一遍 T3A 的轨迹摘要，点出首个错误在哪一步。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">首个错误在哪一步</p>
+      <p class="lab-s">任务：把图库中 expenses.jpg 里的开销录入记账应用。T3A 只能看到元素树，看不到图像像素。除第 8、11、32 步外，步号区间为示意。</p>
+      <ul class="steps2" id="t3a"></ul>
+      <p class="cap" id="t3aCap">点你认为的首错步骤。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">Coding Agent 的错误类别</p>
+      <div id="errSort"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-attr"></div>
+</section>
+
+<section class="part" id="decide">
+  <div class="part-head"><h2>分数怎样变成决策</h2><span class="meta">原书 7.6–7.8 节</span></div>
+  <div class="sec-lede">
+    <p>选型不是“选最强的”。要看<strong>延迟</strong>（TTFT 由排队加 prefill 决定，思考时长由 decode 速度决定，还要看 p95 尾延迟）、<strong>成本</strong>（便宜但成功率低、要频繁重试的模型可能更贵）、<strong>性能</strong>（日常看 Pass@1，关键操作看 Pass^k，探索看 Pass@k）、速率限制和可靠性。还要看<strong>预算—能力曲线</strong>：RE-Bench 里 2 小时预算下最佳 Agent 约为人类专家的 4 倍，但 8 小时人类略超，32 小时约为 Agent 的 2 倍。原书还提到<strong>行为策略</strong>差异：固定 Harness 下，有的模型改代码前读得多，有的读少数文件就动手、靠测试补齐认识。</p>
+    <p>成本要在完整任务里实测。原书实验在一个八轮客服退款任务上分别开关“稳定前缀”和“压缩历史”：单开前者省 28.3%，单开后者省 17.5%，两个一起只省 30%，因为压缩也缩短了能命中缓存的前缀。<strong>几项优化的节省比例不能直接相加</strong>。</p>
+    <p>最后是<strong>统计显著性</strong>。n 个用例测得成功率 p，标准误约为 √(p(1−p)/n)：100 题、70% 的 95% 置信区间约 ±9 个百分点，73% 对 70% 不足以支持切换。同一批任务比较两个配置要做<strong>配对分析</strong>（逐题看谁赢，McNemar 检验或配对 bootstrap），每个配置跑 3–5 个随机种子。分差要超过噪声、配对分析成立、能复现，才值得据此切换。</p>
+    <p class="go">输入两个配置的成绩，看差异是不是噪声；再看成本实验的四组对照。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">这个差异是真的吗</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>用例数 n <output id="sN">100</output></span><input type="range" id="sNs" min="20" max="2000" step="10" value="100"></label>
+        <label class="ctl"><span>旧配置成功率 <output id="sA">70%</output></span><input type="range" id="sAs" min="5" max="95" value="70"></label>
+        <label class="ctl"><span>新配置成功率 <output id="sB">73%</output></span><input type="range" id="sBs" min="5" max="95" value="73"></label>
+      </div>
+      <div class="ci" id="sCi"></div>
+      <p class="cap" id="sCap"></p>
+      <p class="note">这里用两个独立比例的近似判断，只为建立直觉；原书建议同一批任务上做配对检验，通常更灵敏。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">八轮任务的四组成本（实验 7-10）</p>
+      <div id="costBars"></div>
+      <p class="note">gpt-4o-mini，固定的八轮客服退款任务，基线总成本 $0.003776。基线每轮输入从 1,113 token 涨到 3,668 token；工具返回反复进入后续请求，累计占 9,544 个输入 token。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-decide"></div>
+</section>
+
+<section class="part" id="improve">
+  <div class="part-head"><h2>从 Benchmark 报告到系统改进</h2><span class="meta">原书 7.9–7.11 节</span></div>
+  <div class="sec-lede">
+    <p>原书的第一条原则：<strong>看到表现下降，先检查评测系统本身，再动 Agent</strong>。资源不足导致进程被杀、验证器有 bug、测试与生产脱节，在数字上都和模型退化一模一样，只有看完整轨迹才能区分。</p>
+    <p>然后是一次真实的 AndroidWorld 调优。116 项任务总成功率约 88%，但四项 Wi-Fi 设置任务里失败了三项。可能是不知道入口，也可能是界面信息不完整。原书只在这四项上做配对实验，每轮只改一个变量，从最便宜的改法开始。</p>
+    <p>评估最终要嵌进产品工程。原书以 OpenClaw 和头部 Coding Agent 为例：<strong>消融开关</strong>（一个总开关同时禁用思考、压缩、记忆等特性，看每个特性是真有用还是只是感觉有用，定期发现“特性债务”）；<strong>AB 测试</strong>要多臂、要设护栏指标，最重要的是<strong>区分机制指标和目标指标</strong>（缩短计划文件长度是机制，降低会话成本才是目标，计划太短反而可能增加编辑循环）；<strong>双层特性开关</strong>；把渲染后的系统提示词纳入版本快照和回归测试；从一开始就把隐私约束设计进分析系统。评估环境再往前一步就是<strong>仿真环境</strong>：验证器即奖励函数，但训练还要求可靠的 reset 和高得多的吞吐（第 8 篇）。</p>
+    <p class="go">按三轮实验一步步走。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">AndroidWorld Wi-Fi 子集的三轮实验</p>
+    <div class="tblw"><table class="cmpt"><thead><tr><th>实验</th><th>只改了什么</th><th>成功率 对照→实验</th><th>token 实验/对照</th></tr></thead><tbody id="hT"></tbody></table></div>
+    <p class="cap" id="hCap"></p>
+    <div id="hStep"></div>
+  </div>
+  <div class="lab"><div id="mechQ"></div></div>
+  <div class="notes" id="n-improve"></div>
+</section>
+===SCRIPT===
+/* ---------- 1 模型替换 ---------- */
+S.quiz($('#swapQ'), [
+  { q: '固定 Harness，把模型从中档换成最强的，成功率从 62% 到 63%。', o: ['瓶颈在模型', '瓶颈多半在 Harness'], a: 1, why: '换强模型分数不涨，说明限制来自 Harness：上下文、工具、反馈循环等。' },
+  { q: '固定 Harness，换成更弱的模型，成功率从 70% 跌到 30%。', o: ['当前表现主要由模型能力决定', 'Harness 一定设计得很好'], a: 0, why: '分数随模型能力大幅波动，最直接的解读是瓶颈在模型。至于是任务本身难还是 Harness 过度依赖模型先验，要进一步分析。' },
+  { q: '想知道“状态栏”这个组件到底有没有用，应该做什么实验？', o: ['模型替换', '消融：关掉状态栏，其他不变'], a: 1, why: '消融定位 Harness 内部哪个部件重要；模型替换区分瓶颈在模型还是 Harness。' },
+  { q: '新模型在公开榜上全面领先，你的业务该直接切换吗？', o: ['直接切', '先在自己的评估集上跑'], a: 1, why: '公开基准更好不代表你的任务更好，甚至可能出现退化。' }
+]);
+S.notes($('#n-why'), {
+  c: [
+    ['对比实验', '改变一个变量，观察效果变化。'],
+    ['消融实验', '逐一关闭某个组件，看整体性能变化，判断该组件的真实贡献。'],
+    ['模型替换实验', '固定 Harness，只换更强或更弱的模型，区分瓶颈在模型还是 Harness。'],
+    ['退化 regression', '新版本在某些方面不如旧版本。']
+  ],
+  p: [
+    ['评估对象 = 模型 + Harness', '要能区分“模型能力不足”和“Harness 设计缺陷”。'],
+    ['四个环节', '什么算成功、任务从哪来、由谁验证、分数如何变成决策。'],
+    ['为未来的模型开发产品', '先把产品和评估集做好，持续追踪新模型，达到门槛立即上线。']
+  ]
+});
+
+/* ---------- 2 任务解剖 ---------- */
+var anat = [
+  ['工单', '给 Agent', '"ticket": "用户手机无法上网，状态栏显示 \'No Service\'。客户 John Smith，\n  号码 555-123-2002，当前在法国。速度测试结果为 excellent 才算解决。\n  不更换套餐，必要时愿意充值 2.0 GB 流量。"', 'Agent 拿到的信息和真实客服差不多：有症状、有约束，但不知道原因。'],
+  ['用户规范', '给模拟器', '"known_info": "You are John Smith with phone number 555-123-2002.\n  You are currently abroad in France.",\n"task_instructions": "…express mild frustration after the first unsuccessful attempt.\n  You will consider the issue resolved only when speed test returns excellent…\n  always ground your responses on the results of tool calls.\n  Never make up the results of tool calls."', 'known_info 只有三项，故障原因不在其中，用户无法主动说出来：这是在任务定义层面实现“渐进式信息透露”。task_instructions 规定情绪、验收口径和事实锚定，防止模拟器被 Agent 带着走。'],
+  ['初始状态', '运行前重置', '"initialization_actions": [\n  { "env_type": "user", "func_name": "turn_airplane_mode_on" },\n  { "env_type": "user", "func_name": "turn_roaming_off" },\n  { "env_type": "assistant", "func_name": "enable_roaming", … }\n]', '两侧状态分开：用户设备侧飞行模式开、漫游关；运营商侧漫游已开通。Agent 查数据库只会看到“配置正常”，必须引导用户自己检查（双控）。'],
+  ['评分标准', '如何验收', '"actions": [ toggle_airplane_mode, toggle_roaming ]  (requestor: user)\n"env_assertions": [\n  assert_mobile_data_status == true,\n  assert_internet_speed: 200, "excellent"\n],\n"reward_basis": ["ENV_ASSERTION"]', '可以检查终态、关键动作、信息告知、自然语言断言四个维度。这题只按终态算分，所以 Agent 一次发两个工具调用违反了政策，也没被扣分：二元奖励用过程颗粒度换跨模型可比性。']
+];
+var ab = $('#anat');
+anat.forEach(function (a, i) {
+  var b = h('button', { type: 'button', 'aria-pressed': String(i === 1), html: '<b>' + a[0] + '</b>' + a[1] }, ab);
+  b.addEventListener('click', function () { S.$$('button', ab).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); $('#anatCode').textContent = a[2]; $('#anatCap').textContent = a[3]; });
+});
+$('#anatCode').textContent = anat[1][2]; $('#anatCap').textContent = anat[1][3];
+S.notes($('#n-anatomy'), {
+  c: [
+    ['τ²-bench', 'Sierra 的开源 Agent 基准，客服场景的人机交互与工具调用，用户由模拟器扮演。'],
+    ['渐进式信息透露', '把用户的知识范围建模成独立字段，用户不知道的 Agent 只能问出来。'],
+    ['事实锚定 Grounding', '模拟用户关于设备的回答必须以工具结果为依据，不能顺着 Agent 确认。'],
+    ['双控 Dual-Control', '模拟用户也有自己的工具集，一部分动作只能由用户在自己设备上完成。'],
+    ['二元奖励', '只给 0 或 1 的总分，可跨模型比较，但不说明哪里出错。']
+  ],
+  p: [
+    ['任务四部分', '工单、用户规范、初始状态、评分标准。'],
+    ['四处值得学的设计', '建模认知边界；防模拟器被忽悠；双方信息都不完全；多维度校验。'],
+    ['失败轨迹的典型形态', '纠正判断所需的证据已经在上下文里，Agent 读到了却没有据此回溯。']
+  ]
+});
+
+/* ---------- 3 Pass@k ---------- */
+var drawP = S.fit($('#pChart'), 200, function (s, W, H) {
+  var p = +$('#pPs').value, K = 20, L = 46, R = 20, T = 10, B = 30;
+  var x = S.scale(1, K, L, W - R), y = S.scale(0, 1, H - B, T);
+  [0, 0.5, 1].forEach(function (v) { S.svg('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'gl' }, s); S.svg('text', { x: L - 8, y: y(v) + 5, 'text-anchor': 'end', class: 'n', text: (v * 100) + '%' }, s); });
+  [1, 5, 10, 15, 20].forEach(function (k) { S.svg('text', { x: x(k), y: H - 8, 'text-anchor': 'middle', class: 'n', text: 'k=' + k }, s); });
+  var a = [], c = [];
+  for (var k = 1; k <= K; k++) { a.push([x(k), y(1 - Math.pow(1 - p, k))]); c.push([x(k), y(Math.pow(p, k))]); }
+  S.svg('path', { d: S.path(a), class: 'ln k-ok' }, s); S.svg('path', { d: S.path(c), class: 'ln k-al' }, s);
+  var kk = +$('#pKs').value;
+  S.svg('line', { x1: x(kk), x2: x(kk), y1: T, y2: H - B, class: 'ax', 'stroke-dasharray': '4 4' }, s);
+  S.svg('text', { x: W - R, y: y(1 - Math.pow(1 - p, K)) - 8, 'text-anchor': 'end', class: 'c-ok', text: 'Pass@k' }, s);
+  S.svg('text', { x: x(Math.min(K, 4)), y: y(Math.pow(p, Math.min(K, 4))) + 20, class: 'c-al', text: 'Pass^k' }, s);
+});
+function pk() {
+  var p = +$('#pPs').value, k = +$('#pKs').value;
+  $('#pP').textContent = p.toFixed(2); $('#pK').textContent = k;
+  $('#pAt').textContent = S.pct(1 - Math.pow(1 - p, k)); $('#pCons').textContent = S.pct(Math.pow(p, k));
+  drawP();
+}
+['#pPs', '#pKs'].forEach(function (s) { $(s).addEventListener('input', pk); }); pk();
+S.notes($('#n-metric'), {
+  c: [
+    ['Pass@k', '同一任务跑 k 次，至少一次通过就算通过；衡量能力上限。'],
+    ['Best@k', '输出为连续得分时，取 k 次中最好的一次。'],
+    ['Pass^k', 'Pass consecutive k：k 次每次都通过且不触发一票否决项；衡量业务可靠性。'],
+    ['技术奇观', '在大量尝试和人工筛选下展示的能力上限，只要有一次成功就证明“原则上做得到”。']
+  ],
+  p: [
+    ['Pass@k = 1 − (1 − p)^k', '随 k 增长迅速逼近 100%。'],
+    ['Pass^k = p^k', '随 k 增长迅速衰减；p = 0.6、k = 5 时只有约 7.8%。'],
+    ['报告要写清 k 的口径', '同一任务独立采样，还是流水线上连续 k 个任务。'],
+    ['有副作用的操作', '不能重试到成功，要在沙盒或可回滚环境采样，每次失败都计入。']
+  ]
+});
+
+/* ---------- 4 验证器 ---------- */
+S.sortGame($('#vSort'), {
+  bins: [{ k: 'swe', t: 'SWE-bench Verified' }, { k: 'gaia', t: 'GAIA' }, { k: 'aw', t: 'AndroidWorld' }, { k: 'tb', t: 'Terminal-Bench' }, { k: 'os', t: 'OSWorld' }],
+  items: [
+    { t: 'FAIL_TO_PASS + PASS_TO_PASS 双重验证', k: 'swe', why: '“已修复”与“未破坏”各自可证；只验前者 Agent 可以删断言蒙混。' },
+    { t: '发布前淘汰 71% 的原始任务', k: 'swe', why: '93 名 Python 开发者逐条检查，2294 个原始任务最终保留 500 个，评估成本下降约 80%。' },
+    { t: '题目要组合多个信息源，附带专门制作的附件', k: 'gaia', why: '单一网页查不到答案，部分附件在互联网上根本不存在。' },
+    { t: '三级难度（L3 人类 87.3%，GPT-4 0%）', k: 'gaia', why: '难度分层同时有诊断价值：L1 指向工具使用，L2 多步规划，L3 长序列思考。' },
+    { t: '参数化模板，每次随机生成实例', k: 'aw', why: '回放固定操作序列失效，还能固定部分参数测特定因素。' },
+    { t: '题面嵌入金丝雀 GUID', k: 'tb', why: '不阻止泄漏，但让泄漏可被检测。' },
+    { t: '编译 Linux 内核，启动日志里要出现自定义 printk', k: 'tb', why: '无法伪造输出，只能真正完成整个流程。' },
+    { t: '134 个评估函数，直连数据库核实 SQL 是否执行', k: 'os', why: '能发现表面完成但实质错误的情形。发布后 15 个月暴露 300 多个问题，多方合作修复。' }
+  ]
+});
+S.notes($('#n-verify'), {
+  c: [
+    ['环境五要素', '数据集、环境状态（可重置）、工具接口（原子操作）、评分标准、执行协议。'],
+    ['Verifiers 四类环境', 'SingleTurnEnv、ToolEnv、StatefulToolEnv、SandboxEnv。'],
+    ['金丝雀标识符', '题面里的唯一 GUID，模型能复现它即说明基准进了训练集。'],
+    ['陷阱任务', '用户声称“客服已批准取消”但不符合政策，检验 Agent 能否顶住误导。']
+  ],
+  p: [
+    ['验证事实，不验证陈述', '核实机器可独立复核的事实，而不是 Agent 自己说做完了。'],
+    ['工具要原子化', '高层抽象工具会把规划和推理吸收掉，评估退化为考单次函数调用。'],
+    ['三个来源', '公开基准（粗筛）→ 自建业务集（选型）→ 生产轨迹回流（上线后的主体）。'],
+    ['τ-bench → τ²-bench 的五处改进', '指令拆成已知信息和透露方式；成功条件可核实；模拟器有情绪和耐心；双控；实例动态生成。']
+  ]
+});
+
+/* ---------- 5 Rubric ---------- */
+var answers = [
+  { t: '“是 Dr. Chen，你上次带 Lily 去看过他。”', s: [4, 3, 4, 'pass'] },
+  { t: '“Dr. Chen。”', s: [3, 3, 3, 'pass'] },
+  { t: '“是 Dr. Chen，Lily 上周二去复诊，诊断是轻度过敏。”（记忆里没有复诊和诊断）', s: [4, 4, 4, 'fail'] },
+  { t: '“是 Dr. Wang。”（那是用户自己的医生）', s: [1, 1, 1, 'pass'] }
+];
+var dims = [['事实正确性', 'essential'], ['信息完整性', 'important'], ['思考正确性', 'important'], ['幻觉检测', 'veto']];
+var why = [
+  ['准确回答 Dr. Chen，且关联到女儿 Lily', '回答了核心问题，无遗漏', '正确关联“女儿 = Lily”和“Lily 的医生 = Dr. Chen”', '所有信息都能溯源到历史对话'],
+  ['准确回答 Dr. Chen，但未提及是 Lily 的医生', '回答了核心问题，无遗漏', '关联正确但思考路径不清晰', '所有信息都能溯源'],
+  ['准确回答 Dr. Chen 并关联 Lily', '看似补充了就诊时间和诊断', '关联正确', '编造了对话里不存在的复诊日期和诊断'],
+  ['给出错误的医生', '关键信息缺失', '错误关联：把用户自己的医生当成女儿的医生', '没有编造，只是答错']
+];
+var ansBox = $('#ans');
+answers.forEach(function (a, i) {
+  var b = h('button', { type: 'button', 'aria-pressed': String(i === 0), text: a.t }, ansBox);
+  b.addEventListener('click', function () { S.$$('button', ansBox).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); drawScore(i); });
+});
+function drawScore(i) {
+  var a = answers[i], ul = $('#score'); ul.innerHTML = '';
+  dims.forEach(function (d, j) {
+    var v = a.s[j], li = h('li', null, ul);
+    h('b', { text: d[0] }, li);
+    h('span', { class: 'g' + (v === 'fail' ? ' veto' : ''), text: typeof v === 'number' ? v + ' / 4' : (v === 'pass' ? '通过' : '否决') }, li);
+    h('span', { text: why[i][j], style: 'color:var(--ink-2)' }, li);
+  });
+  $('#scoreCap').innerHTML = a.s[3] === 'fail' ? '<b style="color:var(--alert)">总分归零。</b>其他维度看起来都是满分，甚至“信息更完整”，但编造了就诊日期和诊断，一票否决。这也能防住关键词堆砌式的作弊。' : i === 0 ? '<b>优秀。</b>每一档都对应可验证的具体行为，而不是“展示了深刻理解”。' : '逐维打分把笼统的“好不好”拆成了能修复的具体问题：是没检索到、关系想错了，还是补了无据的内容。';
+}
+drawScore(0);
+var mem = [['Advanced JSON Cards', [95, 60, 50, 68.3]], ['RAG', [90, 40, 15, 48.3]], ['混合系统', [80, 70, 50, 66.7]]];
+function drawMem(i) { S.bars($('#memBars'), mem.map(function (m, j) { return { label: m[0], value: m[1][+i] / 100, text: m[1][+i] + '%', cls: ['', 'alt', 'ok'][j] }; })); }
+S.seg($('#memSeg'), drawMem); drawMem(0);
+S.notes($('#n-judge'), {
+  c: [
+    ['Rubric', '评分标准：把“好不好”拆成多个可分别打分的维度，每档对应可验证的行为。'],
+    ['LLM-as-a-Judge', '让模型按专家定义的 Rubric 评判开放式输出。'],
+    ['一票否决 Veto', '一旦触发总分归零，如客服场景的幻觉。'],
+    ['长度偏差 / 位置偏差', '评判模型偏爱更长的回答 / 偏向先出现的候选。'],
+    ['古德哈特定律', '度量变成优化目标后，就不再是好的度量。']
+  ],
+  p: [
+    ['Rubric 四准则', '基于专家指导、全面覆盖（含陷阱）、按重要性加权（含否决）、标准自包含。'],
+    ['能写断言的继续用断言', 'LLM 评判只用于确实无法机械判定的维度。'],
+    ['防长度偏差', 'Rubric 惩罚冗长、限长、控制长度后再配对、审计分数与长度的相关性。'],
+    ['防位置偏差', '交换顺序各评一次，不一致记平局或送人工。'],
+    ['多源异构评判', '不同家族模型用同一 Rubric 分别评，偏见往往正交。'],
+    ['参考物也是评估设计', '用 Fish 的参考音色去比音色，天然有利于 Fish。']
+  ]
+});
+
+/* ---------- 6 失败归因 ---------- */
+var t3a = [
+  ['1–4', '授权相册访问，打开图库', 0], ['5–7', '搜索并打开 expenses.jpg', 0],
+  ['8', '思考：“I cannot actually see the content/details of the expenses in the image”，然后继续推进', 1],
+  ['9–10', '打开记账应用，进入新建记录页面', 0], ['11', '记录里出现四条数据：Coffee $4.50、Lunch $12.75……', 0],
+  ['12–31', '逐条填写、保存，没有任何报错', 0], ['32', '宣告任务完成；验收：应写入的 Dress ¥436.35 不存在', 0]
+];
+var tUl = $('#t3a');
+t3a.forEach(function (s) {
+  var li = h('li', { html: '<i>第 ' + s[0] + ' 步</i><span>' + s[1] + '</span>' }, tUl);
+  li.addEventListener('click', function () {
+    S.$$('li', tUl).forEach(function (x) { x.classList.remove('right', 'wrong'); });
+    li.classList.add(s[2] ? 'right' : 'wrong');
+    $('#t3aCap').innerHTML = s[2] ? '<b>对，第 8 步。</b>它已经知道自己没拿到数据，却既没停下也没报告。这一步既没报错，也不是工具调用。根因归属也要小心：T3A 的观察空间里根本没有图像像素，所以根因是 <b>Harness 的观察通道缺失</b>，不是“模型不会 OCR”。记错了就会去换模型或做 OCR 训练。'
+      : s[0] === '11' ? '第 11 步的幻觉数据是后果，不是首错。它源于更早一步已经知道看不到内容却继续推进。' : s[0] === '32' ? '最后的失败只是结果。不能把最后一个报错当根因。' : '这一步本身没有问题，再往前或往后找找。';
+  });
+});
+S.sortGame($('#errSort'), {
+  bins: [{ k: 'req', t: '需求理解' }, { k: 'proc', t: '流程与规范' }, { k: 'tool', t: '工具调用' }, { k: 'hack', t: 'hack 验证环境' }, { k: 'tell', t: '对用户反馈错误' }],
+  items: [
+    { t: '仓库里有两个同名配置，直接挑一个改，不说明也不追问', k: 'req', why: '歧义处理：应先澄清。' },
+    { t: '没跑单元测试就提交', k: 'proc', why: '定位第一次违反流程约定的动作，如首次 git commit。' },
+    { t: '同一文件反复编辑失败（old_string 不匹配）', k: 'tool', why: '记录第一次失败的编辑及原始请求；后面的重试是后果。' },
+    { t: '给失败的测试加了 skip', k: 'hack', why: '取第一次改动测试或验证逻辑的消息，再把完成声明与真实执行过的命令对照。' },
+    { t: '环境状态全对，却告诉用户“已全部完成”而其实只做了一半', k: 'tell', why: '把答复里每个事实断言与工具返回值逐条对齐。' }
+  ]
+});
+S.notes($('#n-attr'), {
+  c: [
+    ['失败归因', '标出错误类别、首个导致偏离的步骤、对应调用或输出，并附可复核证据。'],
+    ['首个错误', '最早且能解释后续失败的那个错误；后续错误多是连锁反应。'],
+    ['端到端回归任务', '从初始状态跑完整任务，检查终态、输出和安全条件。'],
+    ['轨迹前缀回归任务', '冻结首错前的上下文与环境，只考下一步；答案是可接受动作集合 + 禁止动作。'],
+    ['“做对了但说错了”', '环境状态正确，但告诉用户的信息错了；只检查终态的评估会漏掉。']
+  ],
+  p: [
+    ['问题案例三类信号', '用户明确纠正、用户点踩、事后状态检查或 LLM 评审发现。'],
+    ['归因记录要结构化', 'JSON/YAML：步骤号、工具名、证据、主因与后果、可恢复性、置信度。'],
+    ['规则先筛，LLM 再定位', '完成声明 vs 实际命令、diff 是否碰测试断言、是否改公开 API 无迁移。'],
+    ['根因归属决定修复方向', 'T3A 是观察通道缺失，不是模型不会 OCR。'],
+    ['old_string 失败要逐层找差异', '字节 → 工具返回 → 序列化 → 上下文 → 模型输出 → 解码 → 解析 → 匹配。']
+  ]
+});
+
+/* ---------- 7 决策 ---------- */
+function stat() {
+  var n = +$('#sNs').value, a = +$('#sAs').value / 100, b = +$('#sBs').value / 100;
+  $('#sN').textContent = n; $('#sA').textContent = Math.round(a * 100) + '%'; $('#sB').textContent = Math.round(b * 100) + '%';
+  var sa = Math.sqrt(a * (1 - a) / n), sb = Math.sqrt(b * (1 - b) / n), sd = Math.sqrt(sa * sa + sb * sb);
+  var box = $('#sCi'); box.innerHTML = '<div class="axis"></div>';
+  [0, 25, 50, 75, 100].forEach(function (t) { h('div', { class: 'lbl', style: 'left:calc(' + t + '% - ' + (t === 100 ? 34 : t ? 14 : 0) + 'px);top:54px;color:var(--ink-3)', text: t + '%' }, box); });
+  [[a, sa, 'var(--dim)', '旧', 6], [b, sb, 'var(--s1)', '新', 24]].forEach(function (r) {
+    var lo = Math.max(0, r[0] - 1.96 * r[1]), hi = Math.min(1, r[0] + 1.96 * r[1]);
+    h('div', { class: 'bar', style: 'left:' + lo * 100 + '%;width:' + (hi - lo) * 100 + '%;top:' + r[4] + 'px;background:' + r[2] }, box);
+    h('div', { class: 'pt', style: 'left:' + r[0] * 100 + '%;top:' + (r[4] - 1) + 'px;background:' + r[2] }, box);
+    h('div', { class: 'lbl', style: 'left:' + Math.min(92, hi * 100 + 1) + '%;top:' + (r[4] - 6) + 'px;color:' + r[2], text: r[3] }, box);
+  });
+  var z = Math.abs(b - a) / sd;
+  $('#sCap').innerHTML = '旧配置 95% 区间约 ±' + (1.96 * sa * 100).toFixed(1) + ' 个百分点。差值 ' + ((b - a) * 100).toFixed(1) + ' 个百分点，约为差值标准误的 ' + z.toFixed(1) + ' 倍：' + (z >= 1.96 ? '<b>大概率不是噪声</b>，但仍应做配对分析并复现。' : '<b style="color:var(--alert)">在噪声范围内</b>，不足以支持切换；先扩大样本（标准误按 1/√n 缩小）。');
+}
+['#sNs', '#sAs', '#sBs'].forEach(function (s) { $(s).addEventListener('input', stat); }); stat();
+S.bars($('#costBars'), [
+  { label: '无缓存、无压缩', value: 1, text: '基线', cls: 'dim' },
+  { label: '仅稳定前缀', value: 0.717, text: '−28.3%' },
+  { label: '仅压缩历史', value: 0.825, text: '−17.5%', cls: 'alt' },
+  { label: '稳定前缀 + 压缩', value: 0.70, text: '−30.0%', cls: 'ok' }
+]);
+S.notes($('#n-decide'), {
+  c: [
+    ['TTFT', '首字延迟 = 排队时间 + prefill 时间；上下文越长越大。'],
+    ['p95 尾部延迟', '95% 的请求都不超过的延迟，比平均值更反映真实体验。'],
+    ['预算—能力曲线', '性能随时间、token、工具调用或算力预算变化的曲线。'],
+    ['配对分析', '同一批任务上逐题比较两个配置，用 McNemar 检验或配对 bootstrap。'],
+    ['行动阈值', '模型在“继续收集信息”与“开始修改”之间的默认取舍，是后训练学到的行为策略。']
+  ],
+  p: [
+    ['SE ≈ √(p(1−p)/n)', '100 题 70% 的 95% 区间约 ±9 个百分点。'],
+    ['切换标准', '分差超过噪声、配对分析成立、能复现。'],
+    ['多重比较', '同时验证多个假设要收紧阈值或独立复跑。'],
+    ['优化的节省不能相加', '稳定前缀 −28.3%，压缩 −17.5%，一起只有 −30%。'],
+    ['短预算领先不能外推', 'RE-Bench：2 小时 Agent 约为人类 4 倍，32 小时人类约为 Agent 2 倍。'],
+    ['异构模型组合要评估', '把“9.9 和 9.11 哪个大”当简单题交给轻量模型可能出错。']
+  ]
+});
+
+/* ---------- 8 从报告到改进 ---------- */
+var hs = [
+  { r: ['H1', '增加 Wi-Fi 导航提示和终态检查要求', '25% → 25%', '0.47×'], c: '先试最便宜的：假设 Agent 只是“不知道路”。成功率没变，说明问题不在提示词。提示写得再详细，也补不回 Agent 根本没看到的信息。' },
+  { r: ['H5', 'accessibility feed 换成 UIAutomator 元素树', '25% → 100%', '2.498×'], c: '转而检查 Agent 到底“看见了什么”。API 35 上原来的 feed 不兼容。换了之后全部成功，但完整元素树太长，token 涨到 2.5 倍。' },
+  { r: ['H5C', '删掉不可见、无文字、不可操作的容器节点', '100% → 100%', '0.506×'], c: '不加新信息，只去噪声。成功率不变、token 减半，获得进入完整复测的资格：Pixel 6 / API 33、116 项任务 × 5 个种子，成功率不降、token 不超过 75%、延迟不超过 1.5 倍。在这之前，不能把子集上的 4/4 写成整体 100%。' }
+];
+S.stepper($('#hStep'), hs.length, function (i) {
+  $('#hT').innerHTML = hs.slice(0, i + 1).map(function (x, j) { return '<tr' + (j === i ? ' class="on"' : '') + '>' + x.r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('');
+  $('#hCap').textContent = hs[i].c;
+});
+S.quiz($('#mechQ'), [
+  { q: '你在 AB 测试“缩短计划文件长度”，实验组计划短了 40%。实验成功了吗？', o: ['成功了，计划确实变短了', '要看目标指标，比如会话级成本有没有降、编辑循环有没有变多'], a: 1, why: '计划长度是机制指标，不是目标。计划太短可能导致更多编辑-检查-编辑循环，总输出反而增加。' },
+  { q: '目标指标改善了，但用户满意度下降、错误率上升。怎么办？', o: ['照样上线', '停止实验：护栏指标是不能变差的底线'], a: 1, why: '多臂设计找剂量效应，护栏指标守底线，记录基线统计才能判断显著性。' },
+  { q: '为什么消融开关要在启动路径极早期注入？', o: ['为了性能', '要在任何模块级常量捕获配置之前生效，所以必须从一开始就设计进架构'], a: 1, why: '定期跑消融可以发现“特性债务”：曾经有效、随模型进化已不必要的特性。' },
+  { q: '评估环境要变成训练用的仿真环境，还需要补什么？', o: ['什么都不用补', '可靠的 reset 语义和高得多的吞吐'], a: 1, why: '验证器可以直接当奖励函数（RLVR），但训练要跑数百万个 episode，每个都要重置到干净状态。' }
+]);
+S.notes($('#n-improve'), {
+  c: [
+    ['特性债务', '曾经有效、随模型进化已不再必要的特性，靠定期消融发现。'],
+    ['机制指标 vs 目标指标', '你直接改变的东西 vs 你真正关心的东西。'],
+    ['护栏指标', '目标改善时也不能变差的底线指标。'],
+    ['双层特性开关', '编译时开关（代码物理移除）+ 运行时开关（服务端下发、本地缓存）。'],
+    ['仿真环境', '可反复练习、自动打分的虚拟操场；需要随机化、可靠 reset 和高吞吐。']
+  ],
+  p: [
+    ['先查评测系统，再动 Agent', '进程被杀、验证器 bug、测试与生产脱节，在数字上都像模型退化。'],
+    ['读报告找失败簇', '总分 88% 会掩盖集中在 Wi-Fi 任务上的失败。'],
+    ['每轮只改一个变量，从最便宜的开始', 'H1 提示 → H5 换观察源 → H5C 去噪。'],
+    ['一轮证据只支持与它规模相称的下一步', '子集 4/4 不能写成整体 100%。'],
+    ['提示词纳入 CI', '能确定性渲染、做版本快照、每次变更跑回归。'],
+    ['方法论', '观察 → 假设 → 实验 → 验证 → 新认识 → 新假设。']
+  ]
+});

@@ -1,0 +1,550 @@
+---
+title: 上下文工程：Agent 的眼睛
+desc: 深入理解 AI Agent 学习笔记（二）：API 消息结构、KV Cache 与前缀稳定、Chat Template、提示工程、Agent Skills 渐进式披露、Agent 状态栏、上下文压缩与子 Agent 隔离。
+kicker: <span>深入理解 AI Agent · 02</span><span>对应原书第二章</span><span>约 25 分钟</span><span>边读边点</span>
+h1: 前面<em>不能动</em>，后面可以压
+lead: 原书说这是全书最关键的一章：上下文决定 Agent 能力的上限。这一篇从一次 API 请求长什么样讲起，一路讲到为什么系统提示词改一个空格账单会翻倍、Skills 为什么按需加载、状态栏为什么能让小模型追上大模型，以及上下文太长时该怎么做减法。
+nav: msgs|消息结构;kv|KV Cache;tpl|Chat Template;prompt|提示工程;skills|Skills;status|状态栏;compress|压缩
+---
+<style>
+.toks2 { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+.toks2 span { font-size: 15px; padding: 6px 10px; border-radius: 6px; background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ink); transition: background-color .25s, border-color .25s; }
+.toks2 span.pre { background: var(--dim-soft); border-color: var(--ink-3); }
+.toks2 span.miss { background: var(--alert-soft); border-color: var(--alert); }
+.toks2 span.new { background: var(--s1-soft); border-color: var(--s1); }
+.toks2 span.gone { text-decoration: line-through; opacity: .5; background: none; border-style: dashed; border-color: var(--ink-3); }
+.stream { font-family: var(--f-num); font-size: 15px; line-height: 1.75; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 12px 14px; white-space: pre-wrap; word-break: break-all; color: var(--ink-2); }
+.stream .sp { color: var(--s3); font-weight: 600; }
+.stream .th { background: var(--s1-soft); color: var(--ink); }
+.stream .cut { background: var(--alert-soft); text-decoration: line-through; }
+.stream .tl { color: var(--s2); }
+.abl-bars { margin-top: 10px; }
+.skill-tree { list-style: none; margin: 8px 0 0; padding: 0; }
+.skill-tree li { padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 15px; background: var(--bg); color: var(--ink-3); }
+.skill-tree li.on { color: var(--ink); border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 50%, transparent); }
+.skill-tree li b { color: inherit; }
+.skill-tree li.l2 { margin-left: 18px; }
+.skill-tree li.l3 { margin-left: 36px; }
+.calls { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.calls span { width: 44px; height: 44px; border-radius: 8px; display: grid; place-items: center; background: var(--s1-soft); color: var(--ink); font-family: var(--f-num); }
+.calls span.bad { background: var(--alert-soft); color: var(--alert); border: 1px solid var(--alert); }
+.thinkbox { font-size: 15px; background: var(--bg); border: 1px dashed var(--rule); border-radius: 6px; padding: 10px 12px; color: var(--ink-2); min-height: 4.5em; }
+.cats { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); gap: 3px; margin: 8px 0; }
+.cats i { aspect-ratio: 1; border-radius: 3px; background: var(--ink); }
+.cats i.w { background: var(--rule); }
+.cats i.hl { outline: 2px solid var(--s2); outline-offset: 1px; }
+</style>
+===BODY===
+<section class="part" id="msgs">
+  <div class="part-head"><h2>上下文就是一个消息列表</h2><span class="meta">原书 2.1–2.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书开篇用了一个比喻：一位天才工程师加入你的团队，却对产品架构、业务规则、团队约定一无所知，他再聪明也发挥不出价值。Agent 就是这个“永远的新员工”。<strong>模型的智力只是基础，上下文的质量才是 Agent 能力的关键</strong>；中等模型配上组织良好的上下文，常常胜过顶级模型在信息匮乏下的摸索。这也是个组织问题：对远程协作友好、文档化程度高的团队，往往也对 Agent 友好。</p>
+    <p>技术上，上下文就是一次 API 请求里的<strong>消息列表</strong>。每条消息有一个角色：<code>system</code>（开发者写的规则）、<code>user</code>（用户输入）、<code>assistant</code>（模型之前的回复，含工具调用请求）、<code>tool</code>（框架执行工具后的结果，用 <code>tool_call_id</code> 对应到具体调用）。工具定义不是消息，而是请求顶层的 <code>tools</code> 字段。四种角色加 <code>tools</code> 字段，正好覆盖第 1 篇说的五个组成部分。</p>
+    <p>两件事一定要记住。一是 <strong>API 是无状态的</strong>：模型不记得上一次请求，框架每次都要把完整历史送回去。二是<strong>模型只发出调用请求，真正执行工具的是框架</strong>：模型负责决策，框架负责执行。原书说，Agent 框架的核心工作就是管理这个消息列表，本章后面所有技术，本质都是在优化这个列表的内容和结构。</p>
+    <p class="go">用原书的“温哥华现在几点、天气如何”走一遍两次 API 调用，看列表每一步多了什么、是谁写进去的。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">两次 API 调用里的消息列表</p>
+      <p class="msg" id="mCap"></p>
+      <div class="chat" id="mChat" style="margin-top:8px"></div>
+      <div id="mStep"></div>
+    </div>
+    <div class="aside">
+      <p><strong>为什么两个工具能并行？</strong>查时间要的时区、查天气要的城市都能直接确定，两者互不依赖，所以模型在一次回复里同时发出两个调用。如果后一个工具的参数要用前一个的结果，就只能分两轮串行。</p>
+      <p><strong>工具清单是静态的。</strong>无论用户问天气还是订机票，发出去的都是同一份 <code>tools</code>。并不是框架先把问题拆成两个子任务再生成工具描述，拆解发生在模型一侧，就是响应里的 <code>tool_calls</code>。</p>
+      <p><strong>小模型也能用工具。</strong>原书实验 2-1 用 0.6B 参数的 Qwen3 在 M2 芯片上跑，超过每秒 100 token，合理设计提示词后就能可靠地调用工具。</p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">它在请求的哪个位置</p>
+    <div id="roleSort"></div>
+  </div>
+  <div class="notes" id="n-msgs"></div>
+</section>
+
+<section class="part" id="kv">
+  <div class="part-head"><h2>改一个空格，账单翻倍：KV Cache</h2><span class="meta">原书 2.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书讲了一个故事：某团队的客服 Agent 每天 10 万次对话，工程师为了让它“知道时间”，在系统提示词里加了一行 <code>Current time: {{now}}</code>。第二天首 token 延迟从 0.5 秒涨到 3–5 秒，月度账单几乎翻倍。代码没错，模型没换，问题出在<strong>缓存</strong>。</p>
+    <p>模型生成每个新 token 时，都要用它的 Query 去和前文每个 token 的 Key 做匹配，再按匹配度加权取各自的 Value。前文 token 的 K、V 算过一次就可以存起来复用，这就是 <strong>KV Cache</strong>。API 服务商在多次请求之间复用相同前缀的 KV，叫 <strong>Prompt Cache</strong>，缓存读取通常只要首次计算的十分之一左右的价钱。复用有个前提：<strong>前缀必须逐 token 相同</strong>。模型是多层串联的，第 k 个 token 一变，它之后每一层的表示都会变，所以缓存只能保留到第一个不同的 token 之前。</p>
+    <p>时间戳放在系统提示词里，等于每次请求都在最前面改了一处，后面几乎全部要重算。原书给不想深究原理的读者三条结论：<strong>系统提示词和工具定义定下来就别改；动态信息永远追加到末尾；用标准 API 格式，不要自己拼字符串</strong>。</p>
+    <p class="go">在下面的上下文上做几种常见改动，看缓存从哪里开始失效、要重算多少。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">前缀缓存模拟器</p>
+    <p class="lab-s">每块代表一段上下文，数字是它的 token 数。灰色是静态前缀，绿色是命中缓存，红色是要重新计算，蓝色是新追加的内容。</p>
+    <div class="seg" id="kvSeg">
+      <button data-v="0" aria-pressed="true">正常追加一轮</button>
+      <button data-v="1">系统提示词里写时间戳</button>
+      <button data-v="2">按使用频率重排工具</button>
+      <button data-v="3">滑动窗口丢掉最早一轮</button>
+      <button data-v="4">把状态追加到末尾</button>
+      <button data-v="5">压缩中间一段工具结果</button>
+    </div>
+    <div class="toks2" id="kvToks"></div>
+    <div class="read"><div class="good"><div class="v" id="kvHit">0</div><div class="k">命中缓存的 token</div></div><div class="warn"><div class="v" id="kvMiss">0</div><div class="k">需要重算的 token</div></div><div><div class="v" id="kvCost">0</div><div class="k">本次输入成本（以全部重算为 100%）</div></div></div>
+    <p class="cap" id="kvCap"></p>
+    <p class="note">成本按“缓存读取约为首次计算的十分之一”粗算，各家计费不同，实际以文档为准。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">注意力在找什么</p>
+      <p class="lab-s">读到“怎么样”时，模型给前面每个词打的注意力权重（原书图 2-6 的示意值）。</p>
+      <div id="attBars"></div>
+      <p class="note">权重总和必须是 1（softmax 保证），模型没法表达“谁都不关注”，所以真实模型常把多余的权重倒给第一个 token，叫<strong>注意力储存池</strong>（attention sink）。另外，开头和结尾的信息更容易被注意，中间的更容易被忽视。</p>
+    </div>
+    <div class="aside">
+      <p><strong>“改前缀”不只是多花钱。</strong>原书提到，Claude 新模型的“保留思考”机制用签名把每个 thinking block 绑定到它产生时的前缀上，前缀一改，这段思考和之后的思考全部失效，模型只能从头想。于是“只追加、不改写”从性能建议变成了<strong>正确性要求</strong>。</p>
+      <p><strong>缓存是架构约束。</strong>Claude Code 把系统提示词用一个缓存边界分成两半：边界前跨用户全局缓存，边界后放用户和会话相关的内容。每个放在边界前的二值运行时条件都会让缓存变体翻倍，3 个条件就是 8 种。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-kv"></div>
+</section>
+
+<section class="part" id="tpl">
+  <div class="part-head"><h2>信封格式：Chat Template</h2><span class="meta">原书 2.3 节</span></div>
+  <div class="sec-lede">
+    <p>API 里的消息是结构化的 JSON，模型真正读的却是一条线性的 token 流。负责翻译的是 <strong>Chat Template</strong>：用 <code>&lt;|im_start|&gt;system</code>、<code>&lt;|im_end|&gt;</code> 这类特殊 token 标出每条消息的角色和边界。原书把它比作信封格式，不同模型家族的“信封”写法不同，vLLM、Ollama 等服务端会自动套用，开发者一般不用手写。</p>
+    <p>理解它有两个实际用处。第一，<strong>它解释了为什么不能自己拼消息</strong>。以 Qwen3 为例，多轮工具调用中，模型会保留之前 <code>&lt;think&gt;</code> 里的推导，就像草稿纸；但模板一检测到新的用户提问，就认为换了话题，把草稿清掉。如果你把工具结果当成 user 消息传进去，就会误触发清理，模型算到一半草稿被收走。第二，<strong>它解释了 KV Cache 为什么对前缀敏感</strong>：系统提示词和工具定义被翻译成固定的 token 序列放在最前面，多一个空格，序列就变了。</p>
+    <p>各家对“历史思考要不要回传”的规定也在变：DeepSeek R1 时代要求剥离历史思考，V4 则反转为只要带 <code>tools</code> 就必须原样回传 <code>reasoning_content</code>，否则直接报 400；Kimi K2、GLM-5 也采用同样的协议。使用前要查各家最新文档。</p>
+    <p class="go">切换两种传法，看模型实际读到的 token 流有什么不同。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">工具结果用什么角色传</p>
+    <div class="seg" id="tplSeg"><button data-v="tool" aria-pressed="true">按标准用 tool 角色</button><button data-v="user">自己拼成 user 消息</button></div>
+    <div class="stream" id="tplOut" style="margin-top:12px"></div>
+    <p class="cap" id="tplCap"></p>
+  </div>
+  <div class="notes" id="n-tpl"></div>
+</section>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>系统提示词：一份员工手册</h2><span class="meta">原书 2.4 节</span></div>
+  <div class="sec-lede">
+    <p>原书给系统提示词的检验标准很朴素：<strong>如果一个聪明的新员工读完还不知道该怎么做，Agent 也不知道</strong>。几条经验：语气上可以用大写的 “NEVER” 强调关键约束，但用多了会被稀释；格式上用 Markdown 标题给人看层次、用 XML 标签给模型精确语义；组织上用<strong>流程驱动</strong>（像新员工 SOP：第一步验证、第二步分类……），而不是上百条零散规则堆在一起。</p>
+    <p>原书实验 2-4 在 Tau-Bench 的航空和零售客服场景里做了消融：换语气（甚至换成夸张自信的“特朗普风”）对完成率影响有限；<strong>打乱规则的组织结构，成功率掉 30% 以上</strong>，“先验证身份再退款”被拆散后，Agent 会跳过验证直接退款；<strong>去掉工具的描述文字，工具调用错误率增加 45%</strong>。</p>
+    <p>最容易被忽视的是<strong>业务规则细化</strong>，这是产品问题，不是技术问题。原书举了打电话帮用户办账单的计费例子：“根据任务情况选择合适的计费类型”这种模糊规则会让 Agent 行为飘忽，“退衣服”算省钱吗？“取消 Netflix”算省钱吗？必须写到可执行，比如“NEVER use percentage_based for refunds and service cancellations”。原书认为，好的 Agent 公司里提示词通常由产品经理设计，工程师负责准确编码。</p>
+    <p class="go">先看消融结果，再用原书的计费规则给几个任务归类。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">提示工程消融（实验 2-4）</p>
+      <div class="seg" id="peSeg"><button data-v="0" aria-pressed="true">换语气风格</button><button data-v="1">打乱信息组织</button><button data-v="2">删掉工具描述</button></div>
+      <div class="abl-bars" id="peBars"></div>
+      <p class="cap" id="peCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">规则写到可执行：这单怎么收费</p>
+      <p class="lab-s">规则：按省钱提成只用于“通过谈判降低现有账单”；退款、取消服务一律不按提成；成功率很低的任务预收款。</p>
+      <div id="billSort"></div>
+    </div>
+  </div>
+  <div class="aside" style="margin-top:20px;max-width:46em">
+    <p><strong>Few-shot 示例什么时候给？</strong>输出难用规则说清时（文案风格、报告格式、客服分寸），两三个覆盖边界情况的示例胜过一大段定义；模型本来就擅长的任务，示例只是浪费 token。示例位于上下文靠前，应当固定，按请求动态挑“最相关”的示例等于每次改前缀。</p>
+    <p><strong>提示注入怎么在上下文层防？</strong>帮模型分清“指令”和“数据”：外部内容用 <code>&lt;external_content source="webpage"&gt;</code> 这类标记包起来；严格按角色传消息；过滤“忽略之前指令”之类短语（容易被绕过，只能辅助）。这一层只能降低成功率，执行层和数据层的防线见第 1、4、5 篇。</p>
+  </div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="skills">
+  <div class="part-head"><h2>按需加载：Agent Skills</h2><span class="meta">原书 2.5 节</span></div>
+  <div class="sec-lede">
+    <p>Agent 覆盖的场景越多，系统提示词越长：退款规则、代码规范、文档格式全塞进去，既浪费 token，又稀释注意力。<strong>Agent Skills</strong> 的做法是把能力拆成可按需加载的知识包，用<strong>渐进式披露</strong>分三层：第一层只有元数据（<code>SKILL.md</code> 开头的 <code>name</code> 和 <code>description</code>），作为目录常驻；Agent 判断需要时才加载第二层完整的 <code>SKILL.md</code>；正文里再引用第三层的细则子文档和脚本，用到才读。</p>
+    <p><code>description</code> 是路由的关键。它要短，但写法要像<strong>路由条件</strong>而不是功能介绍：写清“何时用我、何时不用我”，给几条反例。“help with backend” 这种描述等于任何后端工作都能触发。原书引用宝玉的建议，一份 Skill 包含四部分：角色与读者、三到五条核心原则（配正反例）、禁止清单（写清例外）、参考资料。</p>
+    <p>Skill 正文被调用时<strong>追加</strong>到轨迹里（Claude Code 作为一条 user 消息注入），不回头改写前缀，所以对缓存友好。但原书提醒“友好”不等于“零成本”：目录和正文首次进入时都要计算一次。还有安全面：第三方 Skill 本质是“把外部内容当指令加载”，装之前要像审代码一样审它。</p>
+    <p class="go">选一个任务，看三层里加载了哪些；再拖滑块，比较“全塞进系统提示词”和“渐进式披露”的常驻成本。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">这个任务会加载什么</p>
+      <div class="seg" id="skSeg"><button data-v="0" aria-pressed="true">闲聊一句</button><button data-v="1">把论文做成 PPT</button><button data-v="2">用 HTML 模板做 PPT</button><button data-v="3">改一份 Word 合同</button></div>
+      <ul class="skill-tree" id="skTree"></ul>
+      <div class="read"><div class="hl"><div class="v" id="skTok">0</div><div class="k">本任务载入的 Skill 相关 token（示意）</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">常驻成本对比</p>
+      <label class="ctl"><span>Skill 数量 <output id="skN">40</output></span><input type="range" id="skNs" min="1" max="200" value="40"></label>
+      <label class="ctl"><span>每个 Skill 正文 token <output id="skB">3000</output></span><input type="range" id="skBs" min="500" max="10000" step="500" value="3000"></label>
+      <label class="ctl"><span>每条元数据 token <output id="skM">60</output></span><input type="range" id="skMs" min="20" max="200" step="10" value="60"></label>
+      <div class="read"><div class="warn"><div class="v" id="skAll">0</div><div class="k">全部塞进系统提示词</div></div><div class="good"><div class="v" id="skCat">0</div><div class="k">只常驻目录</div></div></div>
+      <p class="note">此外，Skill + 通用执行器的模式让工具数量始终很少（第 5 篇会看到只需七个核心工具）。</p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">哪条 description 更好</p>
+    <div id="descQuiz"></div>
+  </div>
+  <div class="notes" id="n-skills"></div>
+</section>
+
+<section class="part" id="status">
+  <div class="part-head"><h2>让模型瞥一眼就知道：Agent 状态栏</h2><span class="meta">原书 2.6 节</span></div>
+  <div class="sec-lede">
+    <p>原书的场景：系统提示词规定每个商家最多打 3 次电话，可打完 3 次后 Agent 常常数不清，又打了第 4 次，甚至反复拨同一个号。原因在于注意力的一个特性：<strong>上下文学习更像检索而非推理</strong>。原书的说法是“上下文窗口是一台只有一半的检索引擎”：查找某条原始记录很强，但没有“提炼层”，“一共打了几次”这种结论每次都要从原始记录里现算，内容越多越容易算错。</p>
+    <p><strong>Agent 状态栏</strong>就是由框架把隐式状态提炼成显式信息，追加在上下文末尾：已调用次数、当前时间、TODO 进度、工作目录等。它像手机顶部的状态栏，不是主内容，但随时能瞥一眼。放在末尾还有一个好处：离即将生成的 token 最近，注意力权重最高。原书引用的实验显示，有了提前算好的状态栏，<strong>较小开源模型的准确率可以接近前沿大模型</strong>，每轮思考 token、延迟、花费约降一个数量级。</p>
+    <p>两条维护纪律：<strong>状态栏尽量用代码维护</strong>，因为模型几乎无条件相信它，写错了就会照错的做，这也意味着状态栏可以被投毒；<strong>谨慎删除原始记录</strong>，状态栏是一次有损投影，只算了你预想会被问到的维度。</p>
+    <p class="go">先看有无状态栏时模型怎么决定要不要打第 4 次电话，再算一笔“每轮替换 vs 持久追加”的缓存账。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">要不要再打一次电话</p>
+      <p class="lab-s">约束：每个商家最多 3 次。轨迹里已经有 3 次通话，中间穿插了几次网络搜索。用户问：“能不能再打电话催一下？”</p>
+      <div class="seg" id="stSeg"><button data-v="0" aria-pressed="true">没有状态栏</button><button data-v="1">末尾有状态栏</button></div>
+      <div class="calls" id="stCalls"></div>
+      <div class="thinkbox" id="stThink"></div>
+      <p class="cap" id="stCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">状态更新：替换还是追加</p>
+      <p class="lab-s">原书的粗略模型：替换 ≈ (N−1)(1−α)R，追加 ≈ αSN(N−1)/2。</p>
+      <label class="ctl"><span>状态大小 S（token） <output id="cS">150</output></span><input type="range" id="cSs" min="20" max="3000" step="10" value="150"></label>
+      <label class="ctl"><span>两次更新间新增 R（token） <output id="cR">2000</output></span><input type="range" id="cRs" min="100" max="20000" step="100" value="2000"></label>
+      <label class="ctl"><span>更新次数 N <output id="cN">30</output></span><input type="range" id="cNs" min="2" max="200" value="30"></label>
+      <label class="ctl"><span>缓存单价 α（相对普通输入） <output id="cA">0.10</output></span><input type="range" id="cAs" min="0.05" max="0.5" step="0.01" value="0.10"></label>
+      <div class="read"><div><div class="v" id="cRep">0</div><div class="k">每轮替换的额外成本</div></div><div><div class="v" id="cApp">0</div><div class="k">持久追加的额外成本</div></div></div>
+      <p class="msg" id="cWin"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-status"></div>
+</section>
+
+<section class="part" id="compress">
+  <div class="part-head"><h2>做减法：压缩与隔离</h2><span class="meta">原书 2.7 节</span></div>
+  <div class="sec-lede">
+    <p>压缩有三个动机。最直观的是<strong>长度和成本</strong>：工具结果动辄几万字符，几轮就能撑满窗口。更深一层是<strong>提升思考质量</strong>：原书的宠物店例子里，100 个笼子 90 黑 10 白，问“37 号笼是什么猫”是查找，注意力很擅长；问“一共几只黑猫”是统计，要遍历全部记录。提前总结成“黑猫 90、白猫 10”，就把需要思考才能得到的结论变成了可以直接检索的知识。第三是缓解<strong>上下文焦虑</strong>：模型觉得窗口快满时会提前收尾。</p>
+    <p>还有一种更隐蔽的问题叫<strong>上下文腐化</strong>（Context Rot）：窗口远没满，Agent 却找不到关键信息、反复纠结已解决的问题。溢出是“装不下”，腐化是“装得下但找不到”。</p>
+    <p>压缩和 KV Cache 并不矛盾：系统提示词和工具定义永远不动，压缩的对象是对话历史里的工具结果，替换点之前的缓存仍然有效。所以要<strong>接近阈值时批量压</strong>，别每轮都压。比压缩更彻底的是<strong>隔离</strong>：把“在代码库里大范围搜索”这种会产生海量中间内容的活交给子 Agent，主上下文只多两条消息，一条任务、一条结论。</p>
+    <p class="go">先数一次猫，再看原书实验 2-10 里六种压缩策略的成绩单。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">查找 vs 统计</p>
+      <div class="cats" id="cats"></div>
+      <div class="ctrls"><button class="btn" type="button" id="catFind">问：37 号笼是什么猫</button><button class="btn" type="button" id="catCount">问：一共几只黑猫</button><button class="btn pri" type="button" id="catSum">先写一行总结</button></div>
+      <p class="cap" id="catCap">上下文里有 100 条巡查记录。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">六种压缩策略（实验 2-10）</p>
+      <p class="lab-s">任务：追踪 OpenAI 联合创始人的职业状态，上下文限制在 128K。</p>
+      <div class="seg" id="cmpSeg"><button data-v="it" aria-pressed="true">迭代次数</button><button data-v="tok">总 token</button></div>
+      <div id="cmpBars" style="margin-top:10px"></div>
+      <p class="cap" id="cmpCap"></p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">生产级的五层压缩（以 Claude Code 为参照）</p>
+    <div class="tblw"><table class="cmpt"><thead><tr><th>层</th><th>做法</th><th>要点</th></tr></thead><tbody>
+      <tr><td>1 工具结果预算</td><td>大输出存磁盘，模型只看摘要预览</td><td>替换字符串首次出现就冻结，保证缓存一致</td></tr>
+      <tr><td>2 噪声直接删</td><td>只被用了几行的搜索结果直接移除</td><td>对噪声做摘要是浪费 token</td></tr>
+      <tr><td>3 API 层微压缩</td><td>让服务端从前缀里移除指定工具结果</td><td>移除点之后仍要重建缓存，适合快溢出时用</td></tr>
+      <tr><td>4 归档式摘要</td><td>逐轮结构化摘要，像 git log 而非 git squash</td><td>保留逻辑脉络</td></tr>
+      <tr><td>5 全量压缩</td><td>LLM 驱动的完整压缩，先压会话记忆再全量</td><td>配熔断器，避免在反复压缩失败的会话上烧钱</td></tr>
+    </tbody></table></div>
+    <p class="note">压缩最容易丢的是早期架构决策、约束背后的理由和失败的路径。原书建议让 Agent 定期把进展写进文档，而不是只留在执行历史里。</p>
+  </div>
+  <div class="notes" id="n-compress"></div>
+</section>
+===SCRIPT===
+/* ---------- 1 消息列表 ---------- */
+var M = [
+  { r: 'sys', t: 'You are a helpful assistant. Use the provided tools to get real-time information when needed.', who: '开发者' },
+  { r: 'user', t: "What's the current time and weather in Vancouver?", who: '用户' },
+  { r: 'asst', b: '模型 · tool_calls', t: '<code>get_current_time</code>(timezone="America/Vancouver")<br><code>get_weather</code>(city="Vancouver", unit="celsius")', who: '模型' },
+  { r: 'tool', b: '工具结果 · call_abc123', t: '{"datetime": "2025-09-13T05:18:47", "day_of_week": "Saturday"}', who: '框架' },
+  { r: 'tool', b: '工具结果 · call_def456', t: '{"temperature": 13.2, "conditions": "clear", "humidity": 93}', who: '框架' },
+  { r: 'asst', b: '模型 · 最终回复', t: "It's currently 5:18 AM on Saturday… 13.2°C with clear skies. You might want to grab a jacket.", who: '模型' }
+];
+var mSteps = [
+  [2, '第 1 次请求：框架发出 system + user，外加顶层 tools 字段（两个工具的定义）。'],
+  [3, '模型返回的不是答案，而是两个工具调用请求，content 为空。框架把这条 assistant 消息原样追加进列表。'],
+  [5, '框架真正执行两个工具，用 tool_call_id 把结果对应到各自的调用，追加两条 tool 消息。'],
+  [6, '第 2 次请求带上全部历史（API 无状态）。这次模型不再调用工具，直接回答，循环结束。']
+];
+S.stepper($('#mStep'), mSteps.length, function (i) {
+  var c = $('#mChat'); c.innerHTML = '';
+  var prev = i ? mSteps[i - 1][0] : 0;
+  for (var j = 0; j < mSteps[i][0]; j++) {
+    var e = S.msg(c, { r: M[j].r, t: M[j].t, b: (M[j].b || ({ sys: 'system', user: 'user', asst: 'assistant', tool: 'tool' })[M[j].r]) + ' · 由' + M[j].who + '写入' }, j >= prev);
+    void e;
+  }
+  $('#mCap').textContent = mSteps[i][1];
+});
+S.sortGame($('#roleSort'), {
+  bins: [{ k: 'system', t: 'system 消息' }, { k: 'user', t: 'user 消息' }, { k: 'assistant', t: 'assistant 消息' }, { k: 'tool', t: 'tool 消息' }, { k: 'tools', t: '顶层 tools 字段' }],
+  items: [
+    { t: '“你是航空公司客服，退款前必须核实身份”', k: 'system', why: '开发者写的身份和规则，放在列表最前面。' },
+    { t: 'get_weather 的参数 schema', k: 'tools', why: '工具定义不是消息，是请求顶层的独立字段。' },
+    { t: '“帮我改签到周五”', k: 'user', why: '来自终端用户的输入。' },
+    { t: '模型上一轮发出的 tool_calls', k: 'assistant', why: '模型之前的回复（包括工具调用请求）原样放回，让它看到自己做过什么。' },
+    { t: '{"temperature": 13.2}', k: 'tool', why: '框架执行工具后的结果，用 tool_call_id 对应到调用。' },
+    { t: '模型上一轮的 reasoning 思考', k: 'assistant', why: '思考过程是 assistant 消息的一部分。' },
+    { t: '框架注入的 <agent_status> 状态栏', k: 'user', why: '原书：状态栏借用 user 角色的槽位追加到末尾，内容其实由框架生成（本篇后面会讲）。' }
+  ]
+});
+S.notes($('#n-msgs'), {
+  c: [
+    ['消息列表 messages', 'API 请求的核心，每条消息带一个角色：system、user、assistant、tool。'],
+    ['tools 字段', '工具定义，作为请求顶层的独立字段传入，不是消息。'],
+    ['tool_call_id', '把 tool 结果消息关联到对应工具调用请求的编号。'],
+    ['无状态', '模型不记得上一次请求，框架每次都要把需要的信息完整送回。'],
+    ['并行工具调用', '互不依赖的多个调用可在一次回复中同时发出，由框架并行执行。']
+  ],
+  p: [
+    ['四种角色 + tools 字段 = 五个上下文组成部分', 'system / user / assistant / tool 对应系统提示词、用户消息、模型回复、工具结果。'],
+    ['模型决策，框架执行', '模型只发出调用请求；真正调 API、跑代码的是框架。'],
+    ['核心循环', '有 tool_calls 就执行并继续，没有就输出并退出；生产代码要加最大迭代次数。'],
+    ['上下文质量 > 模型智力', 'Agent 是永远的新员工；对远程协作友好的团队也对 Agent 友好。']
+  ]
+});
+
+/* ---------- 2 KV Cache ---------- */
+var blocks = [
+  { t: 'system', n: 2000, pre: 1 }, { t: 'tools', n: 3000, pre: 1 },
+  { t: '第 1 轮', n: 1500 }, { t: '第 2 轮', n: 1500 }, { t: '第 3 轮', n: 8000, big: 1 }, { t: '第 4 轮', n: 1500 }
+];
+var kvCases = [
+  { cap: '<b>正常追加：</b>前面全部命中，只有新追加的这一轮要算。这是理想状态。', fn: function () { return blocks.map(function (b) { return { t: b.t, n: b.n, s: 'hit' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }]); } },
+  { cap: '<b>时间戳写进系统提示词：</b>第一个块就变了，之后所有块都要重算。这就是原书开头那个账单翻倍的故事。正确做法：把时间作为消息追加到末尾，或需要时用工具查。', fn: function () { return blocks.map(function (b, i) { return { t: i === 0 ? 'system*' : b.t, n: b.n, s: 'miss' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }]); } },
+  { cap: '<b>重排工具：</b>system 还命中，从第一个变动的工具开始全部失效。原书实验 2-3：保持固定顺序对选工具能力几乎没影响，性能提升却很明显。', fn: function () { return blocks.map(function (b, i) { return { t: i === 1 ? 'tools*' : b.t, n: b.n, s: i === 0 ? 'hit' : 'miss' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }]); } },
+  { cap: '<b>滑动窗口：</b>丢掉最早一轮，后面每一轮的位置都变了，缓存失效。更糟的是，第 1 轮里读到的关键内容没了，原书实验里这样的 Agent 经常反复执行同样的工具调用。', fn: function () { return blocks.map(function (b, i) { return { t: b.t, n: b.n, s: i < 2 ? 'hit' : i === 2 ? 'gone' : 'miss' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }]); } },
+  { cap: '<b>状态追加到末尾：</b>只多算状态这一小块，前缀全部命中。这就是“动态信息永远追加到末尾”。', fn: function () { return blocks.map(function (b) { return { t: b.t, n: b.n, s: 'hit' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }, { t: '状态栏', n: 150, s: 'new' }]); } },
+  { cap: '<b>压缩第 3 轮的大工具结果：</b>压缩点之前仍然命中，之后要重算一次，但上下文从此变短。这是有意识的权衡，所以要接近阈值时批量压，而不是每轮都压。', fn: function () { return blocks.map(function (b, i) { return { t: i === 4 ? '第 3 轮（摘要）' : b.t, n: i === 4 ? 400 : b.n, s: i < 4 ? 'hit' : 'miss' }; }).concat([{ t: '新一轮', n: 1500, s: 'new' }]); } }
+];
+function drawKv(i) {
+  var bs = kvCases[+i].fn(), box = $('#kvToks'); box.innerHTML = '';
+  var hit = 0, miss = 0;
+  bs.forEach(function (b, j) {
+    var cls = b.s === 'hit' ? (j < 2 ? 'pre' : '') : b.s;
+    h('span', { class: cls, text: b.t + ' · ' + b.n }, box);
+    if (b.s === 'hit') hit += b.n; else if (b.s !== 'gone') miss += b.n;
+  });
+  $('#kvHit').textContent = hit.toLocaleString();
+  $('#kvMiss').textContent = miss.toLocaleString();
+  $('#kvCost').textContent = Math.round((hit * 0.1 + miss) / (hit + miss) * 100) + '%';
+  $('#kvCap').innerHTML = kvCases[+i].cap;
+}
+S.seg($('#kvSeg'), drawKv); drawKv(0);
+S.bars($('#attBars'), [
+  { label: '北京', value: 0.35, text: '0.35' }, { label: '的', value: 0.05, text: '0.05', cls: 'dim' },
+  { label: '天气', value: 0.55, text: '0.55' }, { label: '怎么样（自身）', value: 0.05, text: '0.05', cls: 'dim' }
+]);
+S.notes($('#n-kv'), {
+  c: [
+    ['Q / K / V', 'Query 是当前词的“搜索请求”，Key 是每个词被匹配的“标签”，Value 是匹配后被取走的“内容”。'],
+    ['KV Cache', '推理时把已算过的 token 的 K、V 存起来，新 token 直接复用，不必重算前文。'],
+    ['Prompt Cache', '服务商在多次请求之间复用相同前缀的 KV Cache，读取价通常约为首次计算的 1/10。'],
+    ['注意力储存池', '权重必须加起来为 1，多余的权重常被倒给第一个 token。'],
+    ['位置偏好', '开头和结尾的信息更受注意，中间的容易被忽视（Lost in the Middle）。']
+  ],
+  p: [
+    ['三条结论', '前缀定了别改；动态信息追加到末尾；用标准 API 格式不要自己拼。'],
+    ['缓存只保留到第一个不同 token 之前', '改动越靠前，要重算和计费的 token 越多。'],
+    ['常见错误', '动态系统提示词、动态用户配置、动态排序工具、滑动窗口、拼成纯文本。'],
+    ['缓存是前置的架构约束', '边界前放全局不变内容；每多一个二值条件，缓存变体翻一倍。'],
+    ['保留思考绑定前缀', '前缀一改 thinking 失效，“只追加不改写”成了正确性要求。']
+  ]
+});
+
+/* ---------- 3 Chat Template ---------- */
+function drawTpl(v) {
+  var std = v === 'tool';
+  var s = '<span class="sp">&lt;|im_start|&gt;system</span>\nYou are a helpful assistant…<span class="sp">&lt;|im_end|&gt;</span>\n' +
+    '<span class="sp">&lt;|im_start|&gt;user</span>\n现在温哥华几点、天气如何？<span class="sp">&lt;|im_end|&gt;</span>\n' +
+    '<span class="sp">&lt;|im_start|&gt;assistant</span>\n<span class="' + (std ? 'th' : 'th cut') + '">&lt;think&gt;两件事互不依赖，可以并行查；查完再按温度给穿衣建议…&lt;/think&gt;</span>\n<span class="tl">&lt;tool_call&gt;get_current_time…&lt;/tool_call&gt;</span><span class="sp">&lt;|im_end|&gt;</span>\n' +
+    (std ? '<span class="sp">&lt;|im_start|&gt;user</span>\n<span class="sp">&lt;tool_response&gt;</span>{"datetime": "05:18"}<span class="sp">&lt;/tool_response&gt;</span><span class="sp">&lt;|im_end|&gt;</span>'
+         : '<span class="sp">&lt;|im_start|&gt;user</span>\n工具结果：{"datetime": "05:18"}<span class="sp">&lt;|im_end|&gt;</span>');
+  $('#tplOut').innerHTML = s;
+  $('#tplCap').innerHTML = std
+    ? '<b>标准传法：</b>模板把工具结果包在 &lt;tool_response&gt; 里，模型知道这是工具返回，不是新的提问，之前 &lt;think&gt; 里的推导（蓝底）继续保留。'
+    : '<b>自己拼成 user：</b>模板把它当成一次新的用户提问，按 Qwen3 的规则清掉了之前的思考（红色删除线）。模型算到一半草稿被收走，只能从头再来；这也抹掉了模型辨别“指令”和“数据”来源的依据。';
+}
+S.seg($('#tplSeg'), drawTpl); drawTpl('tool');
+S.notes($('#n-tpl'), {
+  c: [
+    ['Chat Template', '把结构化消息翻译成模型训练时见过的线性 token 流，用特殊 token 标出角色和边界。'],
+    ['特殊 token', '如 Qwen 的 &lt;|im_start|&gt;、&lt;|im_end|&gt;，不同模型家族各不相同。'],
+    ['思维链保留', '多轮工具调用中保留之前的思考，像草稿纸；遇到新的用户提问时可能被清理。'],
+    ['reasoning_content', 'DeepSeek 等 API 中承载模型思考的字段。']
+  ],
+  p: [
+    ['不要自己拼消息', '把工具结果当 user 传会误触发思考清理，也会削弱多步思考能力。'],
+    ['缓存只认 token 字节', '自己拼的前缀只要字节稳定也能命中，但偏离训练格式的代价是能力下降。'],
+    ['历史思考的回传规则因模型而异', 'R1 剥离；V4、Kimi K2、GLM-5 带 tools 时必须回传；Claude 要连同签名原样回传。']
+  ]
+});
+
+/* ---------- 4 提示工程 ---------- */
+var pe = [
+  { cap: '<b>换语气：</b>无论专业中立、夸张自信还是轻松加表情，任务完成率变化不大，模型的风格适应能力很强。', rows: [{ label: '基线', value: 1, text: '基线' }, { label: '换语气', value: 0.96, text: '影响有限', cls: 'ok' }] },
+  { cap: '<b>打乱组织：</b>规则内容一条没删，只是去掉标题层次、把流程拆成无序规则，成功率下降超过 30%，Agent 会跳过“先验证身份”直接退款。', rows: [{ label: '基线', value: 1, text: '基线' }, { label: '打乱组织', value: 0.68, text: '−30%+', cls: 'alt' }] },
+  { cap: '<b>删工具描述：</b>函数签名和参数都在，只删描述文字，工具调用错误率增加 45%，常传无效参数或误解参数含义。', rows: [{ label: '基线错误率', value: 0.4, text: '基线' }, { label: '删描述后', value: 0.58, text: '+45%', cls: 'alt' }] }
+];
+function drawPe(i) { S.bars($('#peBars'), pe[+i].rows); $('#peCap').innerHTML = pe[+i].cap; }
+S.seg($('#peSeg'), drawPe); drawPe(0);
+S.sortGame($('#billSort'), {
+  bins: [{ k: 'pct', t: '按省钱提成' }, { k: 'fix', t: '固定费用' }, { k: 'pre', t: '预收款，不退' }],
+  items: [
+    { t: '帮我把宽带月费从 $80 谈到 $60', k: 'pct', why: '通过谈判降低现有账单，正是提成适用的场景。' },
+    { t: '帮我退掉上个月买的衣服', k: 'fix', why: '退款一律不按提成；这是取回本属于用户的钱。' },
+    { t: '帮我取消 Netflix 订阅', k: 'fix', why: '取消服务一律不按提成，哪怕未来确实少付钱。' },
+    { t: '帮我订一家餐厅', k: 'fix', why: '不涉及省钱的服务性任务，按复杂度收固定费。' },
+    { t: '让航空公司补偿五年前的延误', k: 'pre', why: '成功率很低的任务预收款且不退，用来过滤不靠谱的请求。' },
+    { t: '“不砍价明年会涨到 $180，帮我维持 $150”', k: 'fix', why: '原书特意点名：“节省”只按现有账单算，避免未来涨价不算省钱。' }
+  ]
+});
+S.notes($('#n-prompt'), {
+  c: [
+    ['系统提示词', 'Agent 的员工手册：身份、规则、约束、工作流程。'],
+    ['流程驱动', '像 SOP 一样分步骤组织，模型随时知道自己在哪一步、下一步去哪。'],
+    ['业务规则细化', '把模糊规则写到可执行，例如明确哪些任务绝不按提成收费。'],
+    ['Few-shot', '在上下文里给两三个输入-输出示例，让模型临时学会难以用规则描述的模式。'],
+    ['来源标记', '用标签包裹外部内容并标注来源，帮模型区分指令和数据。']
+  ],
+  p: [
+    ['检验标准', '聪明的新员工读完不知道怎么做，Agent 也不知道。'],
+    ['Markdown 给人看，XML 给模型看', '标题提供层次，标签名本身携带语义。'],
+    ['实验 2-4', '语气影响有限；打乱组织 −30% 以上；删工具描述错误率 +45%。'],
+    ['示例要固定', '按请求动态挑示例等于每次改前缀；两三个覆盖边界的示例胜过十个相似的。'],
+    ['提示词由产品经理设计', '工程师负责准确编码，不擅自决定业务逻辑。']
+  ]
+});
+
+/* ---------- 5 Skills ---------- */
+var tree = [
+  { t: '<b>目录</b>：pptx · docx · pdf · xlsx … 每个只有 name + description', l: 1, n: 40 * 60 },
+  { t: '<b>pptx/SKILL.md</b>：核心流程（markitdown 提取文本、解压看 XML、路径约定）', l: 2, n: 3000 },
+  { t: '<b>pptx/html2pptx.md</b>：用 HTML 模板生成 PPT 的详细工作流', l: 3, n: 4000 },
+  { t: '<b>pptx/scripts/thumbnail.py</b>：生成预览缩略图的脚本', l: 3, n: 0 },
+  { t: '<b>docx/SKILL.md</b>：Word 文档处理流程', l: 2, n: 3000 }
+];
+var skTasks = [[0], [0, 1, 3], [0, 1, 2, 3], [0, 4]];
+function drawSk(i) {
+  var on = skTasks[+i], ul = $('#skTree'); ul.innerHTML = '';
+  var tot = 0;
+  tree.forEach(function (t, j) { var o = on.indexOf(j) >= 0; if (o) tot += t.n; h('li', { class: 'l' + t.l + (o ? ' on' : ''), html: t.t + (o ? '' : '（未加载）') }, ul); });
+  $('#skTok').textContent = tot.toLocaleString();
+}
+S.seg($('#skSeg'), drawSk); drawSk(0);
+function skCalc() {
+  var n = +$('#skNs').value, b = +$('#skBs').value, m = +$('#skMs').value;
+  $('#skN').textContent = n; $('#skB').textContent = b; $('#skM').textContent = m;
+  $('#skAll').textContent = S.big(n * b); $('#skCat').textContent = S.big(n * m);
+}
+['#skNs', '#skBs', '#skMs'].forEach(function (s) { $(s).addEventListener('input', skCalc); }); skCalc();
+S.quiz($('#descQuiz'), [
+  { q: '一个处理后端数据库迁移的 Skill，description 怎么写？', o: ['Help with backend.', 'Use when writing or reviewing database schema migrations (Alembic, Flyway). Not for query tuning or ORM model changes.'], a: 1, why: '写成路由条件：何时用、何时不用。太宽泛的描述会让任何后端工作都触发它。' },
+  { q: '用户输入 /pptx，Skill 正文是怎么进入上下文的？', o: ['模型先调用 Skill 工具，多一次往返', '客户端在本地拦截展开，作为 user 消息追加，模型不必先发起工具调用', '替换系统提示词里的对应段落'], a: 1, why: '显式斜杠命令由客户端展开；模型自主判断需要时才调用 Skill 工具。两条路径都是追加，不改写前缀。' },
+  { q: '从网上找到一个第三方 Skill，装之前该做什么？', o: ['直接装，Skill 只是文档', '像审查要执行的代码一样审查它的内容'], a: 1, why: 'Skill 是“把外部内容当指令加载”的制度化形式，藏有恶意指令时比网页隐藏文本更直接。' }
+]);
+S.notes($('#n-skills'), {
+  c: [
+    ['Agent Skill', '可按需加载的领域能力包，核心是一份 SKILL.md，可捆绑脚本和模板。'],
+    ['渐进式披露', '元数据常驻 → 选中后加载正文 → 按需读细则子文档。'],
+    ['description', '常驻目录里的路由条件：写清何时用、何时不用，配反例。'],
+    ['上下文腐化', '无关内容过多，模型装得下却找不到关键信息。']
+  ],
+  p: [
+    ['少量目录常驻，完整正文按需加载', '各家实现不同（Claude Code、Codex），原则相同。'],
+    ['正文追加而不改写', '对 KV Cache 友好，但首次加载仍要计算一次，不是零成本。'],
+    ['Skill 四部分', '角色与读者、三到五条核心原则（配正反例）、禁止清单（写清例外）、参考资料。'],
+    ['与厂商训练方式保持一致', '基础模型公司推行的用法，往往是它们专门训练过的模式。']
+  ]
+});
+
+/* ---------- 6 状态栏 ---------- */
+function drawSt(v) {
+  var on = v === '1', c = $('#stCalls'); c.innerHTML = '';
+  ['搜索', '☎ 1', '搜索', '☎ 2', '搜索', '搜索', '☎ 3'].forEach(function (t) { h('span', { text: t, style: t.length > 2 ? 'width:auto;padding:0 8px' : '' }, c); });
+  if (!on) h('span', { class: 'bad', text: '☎ 4?' }, c);
+  $('#stThink').innerHTML = on
+    ? '<b>模型思考：</b>状态栏写着 phone_call → Xfinity: 3/3 max。已到上限，不能再打。改为发邮件催办，或告诉用户需要等待。'
+    : '<b>模型思考：</b>往前翻……第一次通话在搜索之后……这一条是第二次吗？中间还有几次搜索……好像打了两次？那可以再打一次。';
+  $('#stCap').innerHTML = on
+    ? '末尾的 <code>&lt;agent_status&gt;</code> 把“打了几次”直接写好了。注意力集中在状态栏上，思考简短而且稳定守住约束。'
+    : '“已经打了几次”散落在原始通话记录里，模型要花思考 token 去数，还容易数错。原书说 Qwen3-0.6B 在这种情况下经常违反约束继续拨打。';
+}
+S.seg($('#stSeg'), drawSt); drawSt('0');
+function stCalc() {
+  var Sx = +$('#cSs').value, R = +$('#cRs').value, N = +$('#cNs').value, a = +$('#cAs').value;
+  $('#cS').textContent = Sx; $('#cR').textContent = R; $('#cN').textContent = N; $('#cA').textContent = a.toFixed(2);
+  var rep = (N - 1) * (1 - a) * R, app = a * Sx * N * (N - 1) / 2;
+  $('#cRep').textContent = S.big(rep); $('#cApp').textContent = S.big(app);
+  $('#cWin').innerHTML = app < rep ? '这组参数下<b>持久追加</b>更省：状态小、两次更新间新增的消息多。' : '这组参数下<b>每轮替换</b>更省：状态大、更新频繁或轨迹很长。';
+}
+['#cSs', '#cRs', '#cNs', '#cAs'].forEach(function (s) { $(s).addEventListener('input', stCalc); }); stCalc();
+S.notes($('#n-status'), {
+  c: [
+    ['Agent 状态栏', '框架把隐式运行时状态提炼成结构化摘要，追加到上下文末尾。'],
+    ['“只有一半的检索引擎”', '注意力擅长查找原始记录，但不会自动统计、索引、总结。'],
+    ['侧信道信息', '附在事件上的辅助元数据：精确时间、地点、距上次回复的间隔。'],
+    ['状态栏投毒', '模型几乎无条件相信状态栏，状态来源一旦可被外部污染就会被利用。']
+  ],
+  p: [
+    ['构成', '任务规划（TODO）、事件侧信道信息、环境当前状态摘要（时间、目录、重复调用提醒）。'],
+    ['位置', '作为一条 user 角色消息追加到末尾，用 &lt;agent_status&gt; 标签包裹；不改 system。'],
+    ['替换 vs 追加', '替换 ≈ (N−1)(1−α)R，追加 ≈ αSN(N−1)/2；αSN/2 < (1−α)R 时选追加。'],
+    ['实验 2-9 数据', 'TODO：15 次迭代 vs 21 次；详细错误信息：找到替代方案的成功率 60% → 95%。'],
+    ['两条纪律', '尽量用代码维护；状态栏是有损投影，谨慎删除原始记录。']
+  ]
+});
+
+/* ---------- 7 压缩 ---------- */
+var catsBox = $('#cats'), rng = S.rng(7), white = [];
+while (white.length < 10) { var k = Math.floor(rng() * 100); if (white.indexOf(k) < 0) white.push(k); }
+for (var ci = 0; ci < 100; ci++) h('i', { class: white.indexOf(ci) >= 0 ? 'w' : '', title: '笼子 ' + (ci + 1) }, catsBox);
+var cells = S.$$('i', catsBox), summed = false, timer = null;
+$('#catFind').addEventListener('click', function () {
+  clearInterval(timer); cells.forEach(function (c) { c.classList.remove('hl'); });
+  cells[36].classList.add('hl');
+  $('#catCap').innerHTML = '<b>查找：</b>注意力一步定位到 37 号笼，是' + (white.indexOf(36) >= 0 ? '白猫' : '黑猫') + '。这是上下文学习的强项。';
+});
+$('#catCount').addEventListener('click', function () {
+  clearInterval(timer);
+  if (summed) { $('#catCap').innerHTML = '<b>直接检索到总结：</b>“黑猫 90 只，白猫 10 只”。不用再数。'; return; }
+  var i = 0, n = 0;
+  cells.forEach(function (c) { c.classList.remove('hl'); });
+  timer = setInterval(function () {
+    if (i > 0) cells[i - 1].classList.remove('hl');
+    if (i >= 100) { clearInterval(timer); $('#catCap').innerHTML = '<b>数完了：</b>黑猫 ' + n + ' 只。每问一次都要从头遍历一遍，Agent 场景里这类统计常被反复用到，思考成本会累积。'; return; }
+    cells[i].classList.add('hl'); if (white.indexOf(i) < 0) n++;
+    $('#catCap').textContent = '统计中……第 ' + (i + 1) + ' 个笼子，已数到 ' + n + ' 只黑猫';
+    i++;
+  }, S.reduce ? 0 : 25);
+});
+$('#catSum').addEventListener('click', function () {
+  summed = true; clearInterval(timer);
+  $('#catCap').innerHTML = '已在上下文里追加一行：“当前统计：黑猫 90 只，白猫 10 只”。现在再问“一共几只黑猫”试试。';
+});
+var cmp = [
+  ['无压缩', 5, 165000, '第 5 次迭代就超过 128K（约 165K token），触发溢出保护，任务失败。', 'al'],
+  ['个体摘要', 12, 276608, '每个结果单独摘要，压缩率 10.9%。信息碎片化，同一事件被多个页面重复描述。', 'dim'],
+  ['组合摘要', 10, 93449, '合并后一起摘要，压缩率 4.3%。输入超长时要截断，可能丢末尾信息。', 'dim'],
+  ['上下文感知', 7, 40157, '压缩时带上当前查询和已有上下文，整体压缩率约 3.0%，单次可把约 150K 字符压到 2K 仍保留关键信息。', 'ok'],
+  ['带引用的上下文感知', 0, 0, '在上一种基础上给每条事实附来源 URL：内容有损，但索引无损，可以回溯原文。原书没有单独给出这一种的数字。', 'ok'],
+  ['自适应窗口', 0, 174601, '原书未给迭代次数。超过窗口 80% 才批量压缩所有未压缩结果，并打 [COMPRESSED] 标记防重复。总 token 较多，但前期保留了完整原文。', '']
+];
+function drawCmp(m) {
+  var max = m === 'it' ? 12 : 276608;
+  S.bars($('#cmpBars'), cmp.map(function (c) {
+    var v = m === 'it' ? c[1] : c[2];
+    return { label: c[0], value: v / max, text: v ? (m === 'it' ? v + ' 次' : S.big(v)) : '—', cls: c[4] === 'al' ? 'alt' : c[4] };
+  }), { onPick: function (i) { $('#cmpCap').innerHTML = '<b>' + cmp[i][0] + '：</b>' + cmp[i][3]; } });
+  $('#cmpCap').textContent = '点左边的策略名看说明。';
+}
+S.seg($('#cmpSeg'), drawCmp); drawCmp('it');
+S.notes($('#n-compress'), {
+  c: [
+    ['上下文腐化 Context Rot', '窗口没满，但无关内容太多，关键信息找不到了。与溢出（装不下）不同。'],
+    ['上下文焦虑', '模型觉得窗口快满时提前收尾。'],
+    ['上下文感知压缩', '压缩时把当前查询意图和已有信息一起交给压缩模型，只保留任务需要的部分。'],
+    ['子 Agent 隔离', '把会产生海量中间内容的任务交给子 Agent，主上下文只收结论。']
+  ],
+  p: [
+    ['三个动机', '控制长度和成本；把要“现算”的结论变成可检索的知识；缓解上下文焦虑。'],
+    ['压缩与缓存互补', '前缀不动，只压历史里的工具结果；接近阈值时批量压，不要每轮压。'],
+    ['四条设计原则', '信息价值不均；语义完整（时间、公司名不能丢）；任务相关；压缩即理解。'],
+    ['隔离优于压缩', '压缩是有损的事后补救；隔离让噪声从一开始就不进主上下文。代价是子 Agent 的任务描述必须自包含。'],
+    ['让 Agent 写文档', '早期决策、约束理由、失败路径最容易在压缩中丢失。']
+  ]
+});

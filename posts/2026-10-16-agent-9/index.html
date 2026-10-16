@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>持续进化：从经验里长进</title>
+<meta name="description" content="深入理解 AI Agent 学习笔记（九）：保存经历不等于学习、三层轨迹验证、四种更新载体（知识、Prompt 与 Skill、程序与 Harness、参数）、从失败轨迹提炼规则、浏览器工作流固化、更新“更新方法”、双循环、更新能力与受益能力、安全边界与睡眠学习。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../2026-10-16-agent-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../2026-10-16-agent-shared/series.js"></script>
+<style>
+.wf { list-style: none; margin: 8px 0 0; padding: 0; counter-reset: w; }
+.wf li { display: grid; grid-template-columns: 2.2em minmax(0, 1fr); gap: 8px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 15px; background: var(--bg); opacity: .35; }
+.wf li.on { opacity: 1; border-color: var(--s1); }
+.wf li i { font-style: normal; font-family: var(--f-num); color: var(--s1); font-weight: 700; }
+.wf li b { font-size: 16px; }
+.lv5 { display: flex; flex-direction: column; gap: 6px; }
+.lv5 button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); border-radius: 8px; padding: 9px 12px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
+.lv5 button b { color: var(--ink); font-size: 16px; margin-right: 8px; }
+.lv5 button[aria-pressed="true"] { border-color: var(--s1); background: color-mix(in srgb, var(--s1-soft) 50%, transparent); }
+.funnel { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.funnel div { height: 34px; border-radius: 6px; background: var(--s1); color: #fff; font-size: 15px; display: flex; align-items: center; padding: 0 10px; white-space: nowrap; transition: width .3s; min-width: 7em; }
+.funnel div:nth-child(2) { background: color-mix(in srgb, var(--s1) 80%, var(--ok)); }
+.funnel div:nth-child(3) { background: color-mix(in srgb, var(--s1) 55%, var(--ok)); }
+.funnel div:nth-child(4) { background: var(--ok); }
+</style>
+</head>
+<body data-part="9">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>深入理解 AI Agent · 09</span><span>对应原书第九章</span><span>约 20 分钟</span><span>边读边点</span></p>
+  <h1>处理一万次之后，<em>还在犯第一天的错</em></h1>
+  <p class="lead">今天的 Agent 能零样本解决没见过的复杂任务，却可能在处理一万次相似任务后，第二天还犯第一天的错。模型自己还做不好可靠的持续学习，所以原书主张先在模型外围搭一套系统：记录证据、验证结果、提炼共性、选对更新位置，所有修改先成为待验证版本，过了回归和安全检查才生效。原书把它叫持续进化。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">深入理解 AI Agent：设计原理与工程实践</a>》（李博杰 著，Apache-2.0 协议）的学习笔记。不逐段复述原书，而是用自己的话把关键概念讲一遍，配上能动手点的小实验；原书的实验代码和思考题推荐对照阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-agent/"><b>总览</b>系列目录</a>
+  <a href="../2026-10-16-agent-1/" data-part="1"><b>01</b>Agent 入门</a>
+  <a href="../2026-10-16-agent-2/" data-part="2"><b>02</b>上下文工程</a>
+  <a href="../2026-10-16-agent-3/" data-part="3"><b>03</b>记忆与知识库</a>
+  <a href="../2026-10-16-agent-4/" data-part="4"><b>04</b>工具</a>
+  <a href="../2026-10-16-agent-5/" data-part="5"><b>05</b>Coding Agent</a>
+  <a href="../2026-10-16-agent-6/" data-part="6"><b>06</b>交互扩展</a>
+  <a href="../2026-10-16-agent-7/" data-part="7"><b>07</b>评估</a>
+  <a href="../2026-10-16-agent-8/" data-part="8"><b>08</b>后训练</a>
+  <a href="../2026-10-16-agent-9/" aria-current="page" data-part="9"><b>09</b>持续进化</a>
+  <a href="../2026-10-16-agent-10/" data-part="10"><b>10</b>多 Agent</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#signal">学习信号</a><a href="#carriers">四种载体</a><a href="#rules">写成规则</a><a href="#program">写成程序</a><a href="#meta">更新方法</a><a href="#loop">双循环</a><a href="#safe">安全与睡眠</a></div>
+</nav>
+<div class="wrap">
+<section class="part" id="signal">
+  <div class="part-head"><h2>保存经历，不等于从经历中学习</h2><span class="meta">原书 9 章引言、9.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书先厘清一个容易混淆的区别：<strong>保存经历不等于从经历中学习</strong>。把一百条轨迹放进长上下文或向量库，能帮模型找回某个案例，却不会自动完成跨案例比较：哪些步骤在成功轨迹里反复出现？哪些做法只在旧版接口上有效？某次成功是策略对了还是环境碰巧？学习发生在“评价、对照、归纳、验证”之后，而不是日志写进磁盘的那一刻。第 3 篇的用户记忆沉淀“用户与世界是什么样的”，这一篇要沉淀“<strong>在什么条件下应该怎样行动</strong>”，前者让 Agent 记得更多，后者让它从聪明变得熟练。</p>
+    <p>为什么不让模型每次任务后直接训练自己？因为生产环境很少给干净的信号：用户满意不代表合规，局部参数更新可能遗忘、漂移、安全退化，未经验证的反馈和提示注入还会被固化放大。</p>
+    <p>持续进化的起点是评估。原书把一条轨迹的评价分成三层：<strong>结果验证器</strong>回答“事情是否真的办成”（读测试、数据库、工具返回，最优先建立）；<strong>过程验证器</strong>回答“是否以允许的方式办成”（删掉失败测试也能让测试通过，口头承诺“7 天内退款”也能让用户暂时满意，这些要查规则、权限、动作序列）；<strong>质量验证器</strong>回答“是否让用户舒服”（耐心、变通、简洁，用 LLM-as-a-Judge 按 Rubric 打分并引用证据）。验证器要输出四样东西才能成为学习信号：成败等级、每个维度的结论、每条结论的证据位置、失败类型标签；证据不足时可以拒绝评分，把这个案例排除在学习集外。</p>
+    <p class="go">把客服 Agent 的七个评价维度放进三层。</p>
+  </div>
+  <div class="lab"><div id="vSort"></div></div>
+  <div class="notes" id="n-signal"></div>
+</section>
+
+<section class="part" id="carriers">
+  <div class="part-head"><h2>经验该写到哪里：四种载体</h2><span class="meta">原书 9.2 节</span></div>
+  <div class="sec-lede">
+    <p>学习信号只说明 Agent 该改，没说明改在哪里。原书给了四种载体。<strong>经验知识库</strong>：事实、经验规律、例外和来源，更新快、可追溯，但依赖检索和模型正确应用。<strong>Prompt 与 Skill</strong>：需要理解语境、例外和优先级、但还能用自然语言说清的判断原则，可解释、作用范围可控，但容易膨胀冲突。<strong>程序与 Harness</strong>：可确定执行和验证的流程、高风险硬约束，稳定便宜，开发维护成本高。<strong>模型参数</strong>：高维感知、生成风格、隐式策略，泛化强，更新和回归成本高。</p>
+    <p>四者常常组合：医疗影像 Agent 靠参数识别病灶，靠知识库提供最新指南，靠代码算风险指标；客服的自然语气来自后训练，企业政策由知识和 Skill 提供，关键合规由服务端代码兜底。原书强调，是否参数化不由“任务是否长期稳定”单独决定，<strong>真正决定主要载体的是能力的表示性质</strong>：能被外部符号完整表达的，就不必写进参数。</p>
+    <p>写成知识时，原始轨迹不能直接当知识单元，它又长又嘈杂。更稳妥的是三层：不可变的原始轨迹用于审计，单次运行分析记录成败和经验草案，再对多条同类轨迹做比较、聚类、归纳，形成写清适用场景、推荐策略、禁止做法、例外、证据来源和最近验证时间的 Markdown 文档。真正有迁移价值的内容来自<strong>对照</strong>：成功轨迹做了什么、失败轨迹缺了什么。Reflexion 式的自然语言反思可以参与起草，但<strong>反思本身不是证据</strong>。</p>
+    <p class="go">给几条经验选载体。</p>
+  </div>
+  <div class="lab"><div id="cSort"></div></div>
+  <div class="notes" id="n-carriers"></div>
+</section>
+
+<section class="part" id="rules">
+  <div class="part-head"><h2>把失败轨迹提炼成规则</h2><span class="meta">原书 9.2 节 · 将经验写成指令</span></div>
+  <div class="sec-lede">
+    <p>Karpathy 把这种做法叫<strong>系统提示学习</strong>：遇到问题后，用一句清楚的话提醒未来的自己。DSPy、OPRO、GEPA 等方法可以离线批量优化提示；生产中更适合可审计的<strong>最小 diff</strong>，而不是让模型每次重写整份 Prompt，而且待验证版本必须同时在触发失败的<strong>边界集</strong>和正常工作的<strong>保留集</strong>上测试。</p>
+    <p>原书的例子来自 τ²-bench telecom：关于转接人工，政策只有两条原则。换成较弱的模型，工具报错后 Agent 反复重试，最后转人工收场，提炼集 20 条里有 19 条如此。把这 19 条失败轨迹交给模型归纳规则、追加到政策末尾，在未参与提炼的任务上通过率从 <strong>12.3% 升到 19.3%</strong>，原本通过的任务一条没被改坏。</p>
+    <p>这个过程有三个值得记住的发现。<strong>提炼材料决定能归纳出什么</strong>：只给失败摘要，得到“同一工具反复报错就别再调”这种教训；补上双方各自的工具清单，得到“网络状态、SIM 卡、APN 属于用户设备侧，应引导用户操作”这种对职责的理解。<strong>模型会把观察到的行为当成应然的行为</strong>：轨迹里最常出现的是转人工，模型就写出“连续三次失败即转人工”，等于把失败写进了规范，所以提炼产物必须经过独立验证才能发布。<strong>被修复的往往是很朴素的缺陷</strong>：有条轨迹里 Agent 想问用户要电话号码，却把“请您提供电话号码”填进了查询工具的参数，连调五次。</p>
+    <p class="go">按顺序看一次规则提炼的过程。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">从 19 条失败轨迹到一条规则</p>
+    <p class="msg" id="rCap"></p>
+    <div class="chat" id="rChat" style="margin-top:8px"></div>
+    <div id="rStep"></div>
+  </div>
+  <div class="aside" style="max-width:46em;margin-top:18px">
+    <p><strong>另一个例子：需求澄清 Skill。</strong>问得太少会返工，问得太多会打扰。Skill 要表达的不是“所有任务都先确认”，而是一条带作用域的判断：低风险、易撤销的小改动说明假设后直接做；涉及架构、数据、权限、公开接口的，集中问少量真正改变方案的问题，再出一份短 Spec 确认。进化时要把反馈和具体轨迹、任务类型、结果关联起来，单独一句抱怨不足以触发更新。Skill 负责理解语境和提问，Harness 负责在缺少确认时否决高风险写入。</p>
+  </div>
+  <div class="notes" id="n-rules"></div>
+</section>
+
+<section class="part" id="program">
+  <div class="part-head"><h2>把重复的探索编译成程序</h2><span class="meta">原书 9.2 节 · 将经验写成程序</span></div>
+  <div class="sec-lede">
+    <p>当经验描述的是稳定、重复、可验证的操作时，每次都让模型重新读文档推理并不经济，更合适的是把它编译成工作流、工具或 Harness 代码。可改的对象不只是新工具：操作层（把浏览器轨迹编译成参数化工作流）、控制层（重试、熔断、压缩策略）、验证层（新增参数检查和回归测试）、架构层（加一个 Reviewer Agent）。</p>
+    <p>浏览器工作流像电子表格的宏录制：第一次发邮件，多模态 Agent 要从像素和 DOM 里找“撰写、收件人、主题、正文、发送”；第二次只是收件人和内容不同，没必要再找一遍。PreAct 的实验在重复任务上做到了 8.5–13 倍端到端加速，回放不需要逐步调用模型。但原书强调更重要的结论：流程记忆必须同时有<strong>动作前验证、动作后验证和独立回放验证</strong>，否则会得到危险的假象：每个按钮都点过了，某个字段其实为空，任务从没真正完成。</p>
+    <p>Agent 修改自己的代码，也不意味着运行中的进程直接覆盖自己：从稳定版本建隔离分支，生成最小补丁，依次过静态检查、单元测试、安全扫描、失败轨迹重放、旧任务回归，再灰度发布。每个修改还应是一份<strong>可证伪的变更契约</strong>：失败证据、推断根因、归属组件、修改提案、预期修好什么、可能弄坏什么，以及分别验证两者的用例。DeepSeek Harness 走得更远，“一切皆插件”，连主循环都是插件，靠可撤销效果和反应式依赖声明实现运行时安全装卸；原书的判断是，<strong>自我进化的上限取决于承载它的系统有多强的可组合性</strong>。</p>
+    <p class="go">走一遍浏览器工作流的生命周期，看最终状态检查怎么拦住“假成功”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">浏览器轨迹 → 可验证工作流</p>
+      <ul class="wf" id="wf"></ul>
+      <div id="wfStep"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">回放一次：发邮件</p>
+      <div class="seg" id="rpSeg"><button data-v="ok" aria-pressed="true">页面正常</button><button data-v="empty">正文框没填进去</button><button data-v="moved">发送按钮换了位置</button></div>
+      <div class="chat" id="rpChat" style="margin-top:10px"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-program"></div>
+</section>
+
+<section class="part" id="meta">
+  <div class="part-head"><h2>不只更新产物，还更新“更新方法”</h2><span class="meta">原书 9.2 节</span></div>
+  <div class="sec-lede">
+    <p>四种载体回答“写到哪里”，另一条正交的轴是“优化的是产物内容，还是产生和管理产物的方法”。原书引用 Lilian Weng 的划分，优化对象逐层扩大：<strong>单条规则或记忆 → 结构化上下文 → 工作流 → Harness 代码 → 产生更新提案的优化器代码</strong>。这是五种搜索尺度，不是五种新载体。</p>
+    <p>最内层只改内容，作用面小、好归因、好回滚，应是默认选择。但反复让模型重写整份 Prompt 会退化：为了简洁，少数重要细节在多轮改写后逐渐消失。ACE 把上下文维护成带稳定标识符的条目集合，增量更新再确定性合并。往外一层，MCE 把“上下文里有什么”和“上下文怎么构造”拆成内外两个循环；AFlow 把多次 LLM 调用组成的工作流表示为代码图来搜索；Meta-Harness 让 Coding Agent 读候选 Harness 的源码、分数和轨迹去搜索更好的 Harness。</p>
+    <p>最外层的代表是 Dream-RSI：把已完成的发现过程存成<strong>发现树</strong>，当作离线<strong>回放模拟器</strong>，让候选的探索策略在旧树上比较“先展开哪个分支、并行几个、何时停”，而不必重新调用 Agent 和评估器。它和前面两种复用历史的方式不同：轨迹总结改变 Agent <strong>知道什么</strong>，工作流回放改变它<strong>怎样重复执行</strong>，发现树回放比较它<strong>怎样组织探索</strong>。它只能重组历史里实际走过的分支，旧树上更高分的策略不保证能迁移。</p>
+    <p class="go">点每一层看它在优化什么。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">五种搜索尺度</p>
+      <div class="lv5" id="lv5"></div>
+    </div>
+    <div class="aside"><p id="lv5Cap"></p></div>
+  </div>
+  <div class="notes" id="n-meta"></div>
+</section>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>双循环，以及“更新了”不等于“用上了”</h2><span class="meta">原书 9.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书推荐的结构是<strong>双循环</strong>：在线执行循环只完成任务、记录证据，不直接改写正式 Agent；离线进化循环聚合轨迹、诊断根因、生成更新提案，过了验证门槛才发布新版本。Voyager 在 Minecraft 里展示了一个完整的例子：<strong>自动课程</strong>提出难度适中的下一个目标，<strong>技能库</strong>把验证成功的程序存成可组合的代码，<strong>迭代提示</strong>把环境观察、执行错误和自验证结果带回下一轮。缺一不可：没有课程不知道学什么，没有环境验证技能库会积累错误，没有持久化每次都从头开始。这背后就是数百年来的科学方法：假设、实验、评估、反馈。</p>
+    <p>原书特别区分两种能力。<strong>Harness 更新能力</strong>是从轨迹中产生有价值的持久修改；<strong>Harness 受益能力</strong>是任务 Agent 后续能找到、激活并正确使用这些修改。一个 Skill 写得完全正确，较弱的任务模型却没在合适场景加载它，或加载了也没坚持遵循，最终成绩都会显得“没进化”。所以要分层评估：更新提案有效率、产物激活率、遵循成功率、保留任务集增益。长期还要看回退、泛化、token 效率、安全性和工程质量。</p>
+    <p>开放任务的闭环最难。原书引用一项研究：四次从想法到论文的端到端自动科研尝试，三次在实现或评估阶段失败。问题包括<strong>实现漂移</strong>（方案一难就退回熟悉但偏离假设的实现）、<strong>认识论上的过度乐观</strong>（把噪声解释成发现）、<strong>隐性判断力不足</strong>（不知道哪个基线重要、何时放弃）。对策：结论与证据分离、保留负面结果、维护搜索多样性、让人在定义问题和评价标准的层面介入。</p>
+    <p class="go">拖动三个环节的比率，看端到端增益怎样被层层打折。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">从更新到受益</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>更新提案有效率 <output id="fA">60%</output></span><input type="range" id="fAs" min="0" max="100" value="60"></label>
+      <label class="ctl"><span>产物激活率 <output id="fB">50%</output></span><input type="range" id="fBs" min="0" max="100" value="50"></label>
+      <label class="ctl"><span>激活后的遵循成功率 <output id="fC">70%</output></span><input type="range" id="fCs" min="0" max="100" value="70"></label>
+    </div>
+    <div class="funnel" id="fun"></div>
+    <p class="cap" id="funCap"></p>
+    <p class="note">示意性的乘法模型，用来说明为什么不能只用端到端分数反推更新器的好坏。原书引用的模型替换实验表明，这两种能力与基础模型能力的关系并不相同。</p>
+  </div>
+  <div class="notes" id="n-loop"></div>
+</section>
+
+<section class="part" id="safe">
+  <div class="part-head"><h2>安全边界与睡眠学习</h2><span class="meta">原书 9.3 节</span></div>
+  <div class="sec-lede">
+    <p>自我进化可能把一次错误变成长期风险：网页里的注入被总结成经验后跨会话反复生效；自动搜来的恶意软件包被封装成工具后扩散到所有后续任务；有缺陷的验证器持续批准看似进步、实际退化的版本。原书设了三道边界。<strong>证据与指令隔离</strong>：原始网页、工具输出及其 LLM 摘要都是不可信证据，总结不是净化；按固定 schema 提取主张、原文位置、采集时间，模型给的置信度不能当批准门槛。<strong>待验证能力与正式能力隔离</strong>：新东西先进不服务真实流量的待验证区，过安全检查和回归才转正。<strong>安全机制不可自我修改</strong>：业务 Agent 可以改 Prompt、Skill、知识库、工具，但不能改批准自身更新的验证器、测试用例、发布门槛、审计日志和稳定版本备份，否则降低阈值、删掉失败用例就能把退化伪装成进步。</p>
+    <p><strong>睡眠学习</strong>是对离线整合的类比：在线 Agent 只完成任务、追加证据；后台在空闲期或满足条件时整理一批新经历。分开采集和整理，可以防止一次偶发成功、网络故障或恶意输入立刻改写长期能力。持续进化也不是无限增长：上下文腐化会在更长的时间尺度上重现，经验相互冲突、Prompt 被边界规则淹没、Skill 重复、多次微调灾难性遗忘，所以要周期性合并、下沉、删除、重训。原书提到 Hermes 的做法：独立的 Curator 跟踪 Skill 的使用、陈旧和归档状态，在空闲期做确定性修剪，变更前存快照，可以回滚。</p>
+    <p class="go">按步骤看一个睡眠学习周期。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一个睡眠学习周期</p>
+    <ul class="wf" id="sl"></ul>
+    <div id="slStep"></div>
+  </div>
+  <div class="notes" id="n-safe"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-agent-8/"><small>上一篇</small><span>08 · 模型后训练</span></a><a class="nx" href="../2026-10-16-agent-10/"><small>下一篇</small><span>10 · 多 Agent 协作</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-agent-book" rel="noopener">bojieli/ai-agent-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 1 三层验证 ---------- */
+S.sortGame($('#vSort'), {
+  bins: [{ k: 'r', t: '结果层：事情办成了吗' }, { k: 'p', t: '过程层：以允许的方式办成了吗' }, { k: 'q', t: '质量层：用户舒服吗' }],
+  items: [
+    { t: '任务结果：核心诉求是否解决', k: 'r', why: '看最终环境状态和工具结果。' },
+    { t: '规则遵从：是否违反政策、权限或必要流程', k: 'p', why: '政策库和动作轨迹可以精确表达，可由代码判定。' },
+    { t: '隐私边界：是否泄露不该提供的信息', k: 'p', why: '查回复文本和数据访问记录。' },
+    { t: '承诺—行动一致性：声称完成的操作是否真的发生', k: 'p', why: '回复与工具日志对照。“7 天内退款”的口头承诺能让用户暂时满意，却可能根本没有发起退款。' },
+    { t: '表达质量：自然、简洁，避免模板化', k: 'q', why: '用语言 Rubric 和对话全文评估。' },
+    { t: '合规变通：原方案不行时是否找到允许的替代路径', k: 'q', why: '看用户目标、政策和后续动作。' }
+  ]
+});
+S.notes($('#n-signal'), {
+  c: [
+    ['持续学习', '模型权重层面从经验中自主学习；遗忘只是其中一个子问题。'],
+    ['持续进化', '本书用语：在模型外围搭建的、记录证据、验证、提炼、选择载体、发布的自主系统。'],
+    ['三层轨迹验证', '结果验证器 → 过程验证器 → 质量验证器（LLM Rubric）。'],
+    ['事实可靠性', '横跨两层：能和工具返回逐一比对的由代码核验，其余交给 Rubric。']
+  ],
+  p: [
+    ['保存经历 ≠ 从经历中学习', '学习发生在评价、对照、归纳、验证之后。'],
+    ['用户记忆 vs 行动经验', '前者是“世界是什么样”，后者是“在什么条件下该怎样做”。'],
+    ['不直接在线训练自己', '信号不干净；遗忘、漂移、安全退化；注入会被固化放大。'],
+    ['可学习的评价包含四项', '成败等级、各维度结论、证据位置、失败类型；证据不足就拒绝评分。']
+  ]
+});
+
+/* ---------- 2 四种载体 ---------- */
+S.sortGame($('#cSort'), {
+  bins: [{ k: 'k', t: '经验知识库' }, { k: 'p', t: 'Prompt / Skill' }, { k: 'c', t: '程序 / Harness' }, { k: 'w', t: '模型参数' }],
+  items: [
+    { t: '该航空公司特殊餐食要提前 24 小时预订', k: 'k', why: '领域事实，可检索、可追溯、可更新。' },
+    { t: '订票前先检查特殊餐食截止时间，避免付款后才发现不行', k: 'k', why: '原书的例子：这是行动经验，适合写进经验文档，写清适用场景和证据。' },
+    { t: '普通政策争议不转人工；只有用户明确要求或涉及安全时才转', k: 'p', why: '需要理解语境和例外，但能用自然语言说清。' },
+    { t: '不可重试的错误不要反复调用', k: 'c', why: '能确定性执行的约束进程序（重试与熔断策略），而不是继续堆在 Prompt 里。' },
+    { t: '高风险写入必须先经用户确认', k: 'c', why: '不可绕过的硬约束由程序门控，且门控本身不能被提案修改。' },
+    { t: '消除文本的模板化“AI 味”', k: 'w', why: '高维、隐式的生成风格，难以压缩成规则。' },
+    { t: '新影像设备带来的病灶识别偏移', k: 'w', why: '原书：域偏移的感知能力仍可能需要 LoRA 或持续微调。' }
+  ]
+});
+S.notes($('#n-carriers'), {
+  c: [
+    ['经验知识库', '事实、经验规律、例外与来源；优势更新快可追溯，局限依赖检索和模型正确应用。'],
+    ['Prompt 与 Skill', '能用语言说清、需要理解语境的判断原则；可解释但易膨胀冲突。'],
+    ['程序与 Harness', '可确定执行和验证的流程、硬约束；稳定便宜但开发维护成本高。'],
+    ['模型参数', '高维感知、生成风格、隐式策略；泛化强但更新和回归成本高。']
+  ],
+  p: [
+    ['选载体看能力的表示性质', '能被外部符号完整表达的不必进参数；稳定性只影响更新频率和成本。'],
+    ['同一能力可拆到多个载体', '事实进知识库，例外原则进 Skill，硬约束由程序门控，识别能力进参数。'],
+    ['知识提炼三层数据', '不可变原始轨迹 → 单次运行分析 → 跨轨迹归纳的正式文档。'],
+    ['迁移价值来自对照', '成功做了什么、失败缺了什么、在哪些版本和前提下失效。'],
+    ['反思不是证据', '与环境结果相符、跨轨迹支持、在新任务上正向迁移，才进正式文档。']
+  ]
+});
+
+/* ---------- 3 规则提炼 ---------- */
+var rs = [
+  { m: [{ r: 'tool', b: '基线', t: '弱模型跑 τ²-bench telecom 提炼集：20 条里 19 条以转接人工收场。' }], c: '原始政策只有两条原则：超出动作范围才转接；转接前先尽力解决。' },
+  { m: [{ r: 'asst', b: '只给失败摘要和错误文本时，模型归纳出', t: '“同一工具反复报错，就不应继续调用。”' }], c: '这是一条教训，记录了“别再做什么”。' },
+  { m: [{ r: 'asst', b: '补上双方各自的工具清单后，模型归纳出', t: '“网络状态、SIM 卡、APN 等属于用户设备侧，应引导用户自行操作，而不是直接调用。”' }], c: '提炼材料决定能归纳出什么：这一条理解的是职责归属。' },
+  { m: [{ r: 'user', b: '第一版里还混进了这两条', t: '“连续三次调用失败即转接人工。”<br>“用户两次未提供号码即转接人工。”' }], c: '模型会把观察到的行为当成应然的行为。轨迹里最常见的就是转人工，但在这套评估里转人工必然判失败，这等于把失败写进了规范。所以提炼产物必须经过与提炼者独立的验证。' },
+  { m: [{ r: 'sys', b: '在未参与提炼的迁移集上', t: '通过率 12.3% → 19.3%，原本通过的任务一条没被改坏。越界调用用户侧工具、参数缺失就发起调用的次数都下降约八成。' }], c: '修复的往往是很朴素的缺陷：有条轨迹里，Agent 把“请您提供您的电话号码”填进了查询工具的参数，连续五次报错。规则生效后，它先在对话里问用户，拿到号码再查。' }
+];
+S.stepper($('#rStep'), rs.length, function (i) { var c = $('#rChat'); c.innerHTML = ''; for (var j = 0; j <= i; j++) rs[j].m.forEach(function (m) { S.msg(c, m, j === i); }); $('#rCap').textContent = rs[i].c; });
+S.notes($('#n-rules'), {
+  c: [
+    ['系统提示学习', 'Karpathy 的说法：遇到问题后，用一句清楚的话提醒未来的自己。'],
+    ['DSPy / OPRO / GEPA', '离线搜索或演化提示词与示例的方法，适合批量优化。'],
+    ['最小 diff', '带来源的局部修改，而不是让模型每次重写整份 Prompt。'],
+    ['需求澄清 Skill', '按歧义、风险、返工成本决定直接做、先问、还是出 Spec 确认。']
+  ],
+  p: [
+    ['边界集 + 保留集', '前者要改善，后者不能退化。'],
+    ['提炼材料决定归纳深度', '只给错误文本得到教训；给上工具清单得到职责理解。'],
+    ['模型会把观察到的当应然的', '提炼产物不能直接发布，要独立验证。'],
+    ['单独一句抱怨不足以触发更新', '反馈要和轨迹、任务类型、结果关联起来。'],
+    ['Skill 与 Harness 的边界', 'Skill 理解语境、提问、写 Spec；Harness 否决越界的高风险操作。']
+  ]
+});
+
+/* ---------- 4 程序 ---------- */
+var wfs = [
+  ['捕获轨迹', '记录导航、点击、输入，保存 URL 和 XPath/CSS 定位证据。定位信息只用于再次找元素，不能证明任务完成。'],
+  ['参数化', '把 test@example.com、主题、正文替换成 {recipient}、{subject}、{content}，其余稳定动作不变。'],
+  ['定义状态检查', '每个动作加执行前检查（“发送按钮可见”）和执行后检查；整个工作流加最终状态检查，必须读真实页面或后端状态。'],
+  ['独立回放验证', '把沙盒账号重置到干净初始状态，完整回放；所有检查都通过才发布。'],
+  ['匹配与回放', '新任务按意图匹配工作流、提取参数，由 Playwright 直接执行，不再逐步调用 LLM。'],
+  ['失效与重学', '找不到元素、状态检查不过、API 变了、最终状态错误，就回退到完整 Agent 模式重新探索。']
+];
+var wfUl = $('#wf');
+wfs.forEach(function (w, i) { var li = h('li', null, wfUl); h('i', { text: i + 1 }, li); h('div', { html: '<b>' + w[0] + '</b><br><span style="color:var(--ink-2)">' + w[1] + '</span>' }, li); });
+S.stepper($('#wfStep'), wfs.length, function (i) { S.$$('li', wfUl).forEach(function (li, j) { li.classList.toggle('on', j <= i); }); });
+var rp = {
+  ok: [{ r: 'tool', b: '回放', t: '打开撰写 ✓ → 填收件人 ✓ → 填主题 ✓ → 填正文 ✓ → 点发送 ✓' }, { r: 'sys', b: '最终状态检查', t: '已发送文件夹里有这封邮件，收件人、主题、正文都对。' }, { r: 'asst', b: '结果', t: '任务完成。整条路径没有调用 LLM。' }],
+  empty: [{ r: 'tool', b: '回放', t: '打开撰写 ✓ → 填收件人 ✓ → 填主题 ✓ → 填正文（动作执行成功）→ 点发送 ✓' }, { r: 'sys', b: '动作后检查 / 最终状态检查', t: '正文字段为空；已发送邮件的正文为空。' }, { r: 'user', b: '结果', t: '拒绝报告成功，回退到完整 Agent 重新探索。没有这一步，就是“每个按钮都点过了，任务却从未真正完成”。' }],
+  moved: [{ r: 'tool', b: '回放', t: '打开撰写 ✓ → 填收件人 ✓ → 填主题 ✓ → 填正文 ✓ → 找发送按钮：按原定位器找不到' }, { r: 'sys', b: '动作前检查', t: '“发送按钮可见”不成立。' }, { r: 'user', b: '结果', t: '工作流失效，回退到完整 Agent 模式，重新探索后可以生成新版本的工作流。' }]
+};
+function drawRp(v) { var c = $('#rpChat'); c.innerHTML = ''; rp[v].forEach(function (m) { S.msg(c, m); }); }
+S.seg($('#rpSeg'), drawRp); drawRp('ok');
+S.notes($('#n-program'), {
+  c: [
+    ['可验证工作流', '从一次成功轨迹编译出的带参数、带状态检查、带版本的小程序。'],
+    ['三重验证', '动作前验证、动作后验证、独立回放验证。'],
+    ['变更契约', '失败证据、根因、归属组件、修改提案、预期修好的、可能弄坏的、对应的验证用例。'],
+    ['时间 / 空间可组合性', '组件移除时副作用能否完整撤销 / 组件间依赖能否结构化声明和解析（Cordis）。']
+  ],
+  p: [
+    ['可修改的四层', '操作层（工作流、适配器）、控制层（路由、重试、熔断）、验证层（检查、回归测试）、架构层（Reviewer Agent）。'],
+    ['PreAct', '重复任务 8.5–13 倍加速；但没有三重验证就会得到“点完了却没完成”的假象。'],
+    ['自我修改走发布流程', '隔离分支 → 最小补丁 → 静态检查、测试、安全扫描、失败重放、旧任务回归 → 灰度。'],
+    ['提案输入不只有失败', '还要给必须保留的成功行为和此前被拒的修改记录（Self-Harness）。'],
+    ['可组合性决定进化上限', 'DeepSeek Harness：一切皆插件，不存在只能由人维护的特权内核。']
+  ]
+});
+
+/* ---------- 5 更新方法 ---------- */
+var lv5 = [
+  ['单条规则或记忆', '只改产物内容', '给系统提示加一条局部规则，或给经验文档补一个例外。作用面小、易归因、易回滚，应是默认选择。风险是反复整份重写会让重要细节逐渐消失；ACE 用带稳定标识符的条目集合做增量合并来避免。'],
+  ['结构化上下文', '改“上下文怎么构造”', 'MCE 拆成内外两个循环：内层在给定方法下优化当前上下文，外层根据多轮结果修改搜索、选择、过滤、格式化这些操作本身。改一条检索规则是改内容管理机制；比较多种机制并保留迁移更好的，才是在学“如何管理上下文”。'],
+  ['工作流', '改调用编排', 'AFlow 把多次 LLM 调用组成的工作流表示成代码图，用执行反馈搜索节点和控制流的组合。'],
+  ['Harness 代码', '改整个运行与治理层', 'Meta-Harness 让 Coding Agent 读候选 Harness 的源码、分数和轨迹，搜索决定信息如何存储、检索、呈现的代码。代码连同评估历史一起成为持续搜索的对象。'],
+  ['优化器代码', '改“如何提出更新”', 'Dream-RSI：把发现过程存成发现树，当作离线回放模拟器，让候选探索策略比较分支、顺序、并行和停止时机，不必重新调用 Agent 和评估器。产物仍是程序，新意在于把历史变成可反复交互的离线评估环境。']
+];
+var lvBox = $('#lv5');
+lv5.forEach(function (l, i) {
+  var b = h('button', { type: 'button', 'aria-pressed': String(i === 0), html: '<b>' + (i + 1) + '. ' + l[0] + '</b>' + l[1] }, lvBox);
+  b.addEventListener('click', function () { S.$$('button', lvBox).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); $('#lv5Cap').innerHTML = '<strong>' + l[0] + '：</strong>' + l[2]; });
+});
+$('#lv5Cap').innerHTML = '<strong>' + lv5[0][0] + '：</strong>' + lv5[0][2];
+S.notes($('#n-meta'), {
+  c: [
+    ['五种搜索尺度', '单条规则 → 结构化上下文 → 工作流 → Harness 代码 → 优化器代码。'],
+    ['ACE', 'Agentic Context Engineering：上下文是带稳定 ID 的条目集合，增量更新、确定性合并。'],
+    ['发现树', '保存每次从历史状态继续尝试后的工作区快照、产物、诊断和分数。'],
+    ['回放模拟器', '用旧发现树离线评估探索策略，只揭示已记录的结果，不偷看未来。']
+  ],
+  p: [
+    ['默认从最内层改起', '作用面小、可归因、可回滚。'],
+    ['三种历史复用', '轨迹总结改变“知道什么”；工作流回放改变“怎样重复执行”；发现树回放比较“怎样组织探索”。'],
+    ['回放的边界', '只能重组历史中走过的分支；旧树上更好的策略不保证迁移。'],
+    ['历史回放不是第五种载体', '是一种产生并验证更新提案的新机制。']
+  ]
+});
+
+/* ---------- 6 双循环 ---------- */
+function fun() {
+  var a = +$('#fAs').value / 100, b = +$('#fBs').value / 100, c = +$('#fCs').value / 100;
+  $('#fA').textContent = Math.round(a * 100) + '%'; $('#fB').textContent = Math.round(b * 100) + '%'; $('#fC').textContent = Math.round(c * 100) + '%';
+  var rows = [['提出的更新', 1], ['其中有效的', a], ['被正确激活的', a * b], ['激活后被遵循的', a * b * c]];
+  var box = $('#fun'); box.innerHTML = '';
+  rows.forEach(function (r) { h('div', { style: 'width:' + Math.max(12, r[1] * 100) + '%', text: r[0] + ' ' + Math.round(r[1] * 100) + '%' }, box); });
+  $('#funCap').innerHTML = '只有 <b>' + Math.round(a * b * c * 100) + '%</b> 的更新真正转化为行为改变。' + (b < 0.5 ? '激活率是瓶颈：Skill 写对了，任务模型却没在该用的时候加载它。' : c < 0.5 ? '遵循率是瓶颈：加载了，却没能长期按新规则执行。' : a < 0.5 ? '更新器提出的有效修改太少。' : '最后还要看保留任务集上有没有整体增益、有没有回退。');
+}
+['#fAs', '#fBs', '#fCs'].forEach(function (s) { $(s).addEventListener('input', fun); }); fun();
+S.notes($('#n-loop'), {
+  c: [
+    ['双循环', '在线执行循环只做任务记证据；离线进化循环生成、验证、发布更新。'],
+    ['Voyager', 'Minecraft 里的持续进化：自动课程 + 技能库 + 迭代提示，三者缺一不可。'],
+    ['Harness 更新能力', '从轨迹中产生有价值的持久修改。'],
+    ['Harness 受益能力', '任务 Agent 能找到、激活并正确使用这些修改。'],
+    ['实现漂移', '原方案一变难，Agent 就退回训练数据里更熟悉、但偏离假设的实现。']
+  ],
+  p: [
+    ['发现循环就是科学方法', '假设、实验、评估、反馈。'],
+    ['四层评估指标', '提案有效率、产物激活率、遵循成功率、保留任务集增益。'],
+    ['长期看五类结果', '回退、泛化、token 效率、安全性、长期工程质量。'],
+    ['开放任务的对策', '结论与证据分离、保留负面结果、维护搜索多样性、人在更高层介入。'],
+    ['只修好当前失败不算进化', '在其他已有案例或新领域退化，就不是成功的持续进化。']
+  ]
+});
+
+/* ---------- 7 安全与睡眠 ---------- */
+var sl = [
+  ['触发', '达到时间间隔、新增轨迹数、存储容量或错误频率门槛，并确认没有高优先级在线任务。'],
+  ['定向', '读取正式知识、Prompt、Skill 目录及版本，弄清已有能力和不可修改的边界。'],
+  ['采集与整合', '从近期已评价轨迹中找新信号，合并重复，标记冲突与适用条件，优先生成局部补丁。'],
+  ['验证与审批', '在迁移集、保留集、安全集上评估待验证版本，高风险写入等人工批准。'],
+  ['修剪与索引', '更新检索索引，把长期不用或被推翻的能力标为过期、归档或删除，保留来源和回滚版本。']
+];
+var slUl = $('#sl');
+sl.forEach(function (w, i) { var li = h('li', null, slUl); h('i', { text: i + 1 }, li); h('div', { html: '<b>' + w[0] + '</b><br><span style="color:var(--ink-2)">' + w[1] + '</span>' }, li); });
+S.stepper($('#slStep'), sl.length, function (i) { S.$$('li', slUl).forEach(function (li, j) { li.classList.toggle('on', j <= i); }); });
+S.notes($('#n-safe'), {
+  c: [
+    ['证据与指令隔离', '网页、工具输出及其摘要都是不可信证据，不能当指令执行或直接写进 Skill。'],
+    ['待验证区', '新知识、Prompt、Skill、程序、参数先放在不服务真实流量的区域。'],
+    ['可信根', '批准更新的验证器、测试、发布门槛、审计日志、稳定版本备份，业务 Agent 无权修改。'],
+    ['睡眠学习', '在线只记证据，后台在空闲期整合、遗忘、提出并验证更新。'],
+    ['Curator', 'Hermes 中跟踪 Skill 使用、陈旧、归档状态并做修剪的独立组件，变更前存快照。']
+  ],
+  p: [
+    ['三道边界', '证据与指令隔离；待验证与正式隔离；安全机制不可自我修改。'],
+    ['总结不是净化', 'LLM 摘要只是转换；模型给的置信度不能当批准门槛。'],
+    ['睡眠学习五步', '触发 → 定向 → 采集与整合 → 验证与审批 → 修剪与索引。'],
+    ['进化也要做减法', '合并重复、局部规则下沉到 Skill、删除被推翻的知识、从原始基座重训 LoRA。'],
+    ['分开采集和整理', '防止偶发成功、网络故障或恶意输入立刻改写长期能力。']
+  ]
+});
+})();
+</script>
+</body>
+</html>
