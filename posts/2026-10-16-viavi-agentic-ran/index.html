@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读 VIAVI 智能体 RAN 白皮书</title>
+<meta name="description" content="VIAVI 白皮书《From RAN Simulation Digital Twins to the Self-Aware, Agentic RAN》中文导读：原作的核心观点、平台构成、Claude 的角色、用例数据与自治分级。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='2' width='14' height='20' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='7' y='9' width='10' height='11' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/site.js"></script>
+<style>
+/* ---------- 首屏 ---------- */
+.hero { padding-top: 64px; padding-bottom: 32px; }
+.kicker { color: var(--ink-3); font-size: 15px; margin: 0 0 18px; }
+.kicker span + span::before { content: "·"; margin: 0 10px; color: var(--rule); }
+.hero h1 { font-size: clamp(38px, 6.6vw, 84px); line-height: 1.08; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 24px; max-width: 13em; }
+.hero h1 em { font-style: normal; color: var(--s1); }
+.hero .lead { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 38em; margin: 0; }
+
+/* 原文引语 */
+.quote { margin: 0; padding: 4px 0 4px 22px; border-left: 4px solid var(--s1); }
+.quote p { margin: 0; font-size: clamp(20px, 2.2vw, 26px); line-height: 1.5; font-weight: 650; color: var(--ink); }
+.quote .en { display: block; margin-top: 8px; font-size: 15px; font-weight: 400; color: var(--ink-3); line-height: 1.6; font-style: italic; }
+.quote cite { display: block; margin-top: 6px; font-size: 15px; font-style: normal; color: var(--ink-3); }
+.hero .quote { margin-top: 40px; max-width: 46em; }
+
+/* 一页读懂 */
+.tldr { margin-top: 56px; border-top: 2px solid var(--ink); }
+.tldr h2 { font-size: 20px; margin: 14px 0 4px; }
+.tldr ol { list-style: none; margin: 0; padding: 0; counter-reset: t; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 32px; }
+.tldr li { counter-increment: t; padding: 14px 0 14px 40px; position: relative; border-top: 1px solid var(--hair); font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.tldr li::before { content: counter(t); position: absolute; left: 0; top: 14px; width: 26px; height: 26px; border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--f-num); font-size: 15px; text-align: center; line-height: 26px; }
+.tldr li b { color: var(--ink); font-weight: 650; }
+.tldr li a { color: inherit; text-decoration: none; display: block; }
+.tldr li a:hover b { color: var(--s1); }
+
+.caveat { margin-top: 28px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; font-size: 16px; color: var(--ink-2); max-width: 52em; }
+.caveat b { color: var(--ink); }
+
+/* 来源标签 */
+.src-tag { display: inline-block; font-size: 15px; line-height: 1.4; padding: 0 8px; border-radius: 6px; white-space: nowrap; vertical-align: 1px; }
+.src-tag.ext { background: var(--dim-soft); color: var(--ink-2); }
+.src-tag.ven { background: var(--s2-soft); color: var(--s2); }
+
+/* 章节导航 */
+.secnav { position: sticky; top: 0; z-index: 20; margin-top: 56px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.secnav .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.secnav .wrap::-webkit-scrollbar { display: none; }
+.secnav a { flex: none; padding: 12px 14px; color: var(--ink-3); text-decoration: none; font-size: 15px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.secnav a:first-child { padding-left: 0; }
+.secnav a.on { color: var(--ink); border-bottom-color: var(--s1); }
+
+/* 节 */
+.sec { padding-top: 88px; scroll-margin-top: 40px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+.sec-head h2 { margin: 0; font-size: clamp(30px, 4.4vw, 52px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.sec-head .meta { color: var(--ink-3); font-size: 15px; }
+.sec-lede { max-width: 44em; margin: 22px 0 28px; }
+.sec-lede p { font-size: 17px; line-height: 1.85; color: var(--ink-2); margin: 0 0 12px; }
+.sec-lede p strong { color: var(--ink); font-weight: 650; }
+.sec-lede p.go { color: var(--ink); font-weight: 500; }
+.view { background: var(--ink); color: var(--bg); border-radius: 8px; padding: 14px 20px; margin: 0 0 28px; max-width: 52em; font-size: 17px; line-height: 1.7; }
+.view b { color: var(--bg); font-weight: 700; margin-right: 8px; }
+.sub { font-size: clamp(22px, 2.6vw, 28px); font-weight: 750; margin: 48px 0 12px; letter-spacing: -0.01em; }
+.p { color: var(--ink-2); max-width: 44em; margin: 0 0 14px; }
+.pg { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+
+.viz { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 20px 22px 18px; margin: 0; min-width: 0; }
+.viz-title { font-weight: 650; font-size: 16px; line-height: 1.5; margin: 0 0 4px; }
+.viz-sub { color: var(--ink-3); font-size: 15px; margin: 0 0 12px; line-height: 1.5; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 880px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+/* 分段按钮 */
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 8px; padding: 3px; gap: 3px; margin: 2px 0 14px; }
+.seg button { font: inherit; font-size: 15px; color: var(--ink-2); background: none; border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+
+/* 数字块 */
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 24px; border-top: 1px solid var(--rule); }
+.stat { padding: 16px 0; border-bottom: 1px solid var(--hair); transition: opacity .25s ease; }
+.stat.off { opacity: .18; }
+.stat .v { font-family: var(--f-num); font-variant-numeric: tabular-nums; font-size: clamp(30px, 3.4vw, 40px); font-weight: 600; letter-spacing: -0.04em; line-height: 1.15; color: var(--ink); }
+.stat .k { font-size: 16px; color: var(--ink); font-weight: 600; line-height: 1.5; margin-top: 4px; }
+.stat .n { font-size: 15px; color: var(--ink-2); line-height: 1.55; margin: 2px 0 6px; }
+
+/* 演进阶梯 */
+.ladder { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; align-items: end; height: 220px; }
+.ladder button { font: inherit; border: 0; cursor: pointer; border-radius: 6px 6px 0 0; background: var(--dim-soft); color: var(--ink-2); font-size: 15px; line-height: 1.35; padding: 8px 6px; text-align: left; display: flex; align-items: flex-start; transition: background-color .2s ease; }
+.ladder button.fut { background: var(--s1-soft); color: var(--ink); }
+.ladder button[aria-pressed="true"] { background: var(--s1); color: #fff; }
+.ladder-cap { margin-top: 14px; min-height: 5.2em; }
+.ladder-cap b { display: block; font-size: 17px; }
+.ladder-cap p { margin: 4px 0 0; color: var(--ink-2); font-size: 16px; }
+.ladder-key { font-size: 15px; color: var(--ink-3); margin-top: 6px; }
+.ladder-key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin: 0 6px 0 0; }
+@media (max-width: 640px) { .ladder { height: 260px; gap: 4px; } .ladder button { font-size: 15px; padding: 6px 4px; writing-mode: vertical-rl; align-items: center; justify-content: flex-start; } }
+
+/* 四个问题 */
+.qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 24px; margin-top: 8px; }
+.qs div { padding: 12px 0; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink); }
+.qs span { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+
+.needs { margin: 0; padding: 0; list-style: none; }
+.needs li { padding: 9px 0 9px 18px; position: relative; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink-2); }
+.needs li::before { content: ""; position: absolute; left: 0; top: 19px; width: 7px; height: 7px; border-radius: 50%; background: var(--s1); }
+
+/* 挑战 ↔ 回应 */
+.cr { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.cr-list { display: flex; flex-direction: column; border-right: 1px solid var(--hair); }
+.cr-list button { font: inherit; font-size: 16px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--hair); padding: 13px 16px; cursor: pointer; color: var(--ink-2); }
+.cr-list button:last-child { border-bottom: 0; }
+.cr-list button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.cr-list button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+.cr-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.cr-body > div { padding: 18px 22px; }
+.cr-body > div + div { border-left: 1px solid var(--hair); background: color-mix(in srgb, var(--s1-soft) 35%, transparent); }
+.cr-body h4 { margin: 0 0 8px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.cr-body p { margin: 0 0 10px; font-size: 16px; color: var(--ink); line-height: 1.75; }
+.cr-body ul { margin: 0; padding: 0 0 0 18px; font-size: 16px; color: var(--ink); line-height: 1.75; }
+@media (max-width: 880px) { .cr { grid-template-columns: minmax(0, 1fr); } .cr-list { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--hair); } .cr-list button { border-bottom: 0; flex: 1 1 33%; padding: 10px 12px; } .cr-body { grid-template-columns: minmax(0, 1fr); } .cr-body > div + div { border-left: 0; border-top: 1px solid var(--hair); } }
+
+/* 引擎图 */
+.engine { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: 24px; align-items: center; }
+.engine svg { width: 100%; height: auto; display: block; }
+.engine .node { cursor: pointer; }
+.engine .node polygon { stroke-width: 3; transition: fill .2s ease; }
+.engine .node text { font-size: 15px; pointer-events: none; }
+.engine .node .t1 { font-weight: 700; font-size: 17px; }
+.engine .verb { fill: var(--ink-3); font-size: 15px; font-style: italic; }
+.engine .wire { stroke: var(--rule); stroke-width: 2; stroke-dasharray: 5 5; }
+.engine .n-hub polygon { fill: var(--panel); stroke: var(--s1); }
+.engine .n-sat polygon { fill: var(--panel); stroke: var(--ink-3); }
+.engine .node.on polygon { fill: var(--s1); stroke: var(--s1); }
+.engine .node text { fill: var(--ink); }
+.engine .node.on text { fill: #fff; }
+.eng-cap h4 { margin: 0 0 2px; font-size: 20px; }
+.eng-cap .role { color: var(--s1); font-size: 15px; margin: 0 0 10px; }
+.eng-cap p { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; }
+.eng-cap ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 16px; }
+@media (max-width: 880px) { .engine { grid-template-columns: minmax(0, 1fr); } }
+
+/* 表格 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 16px; }
+.tbl th { text-align: left; font-size: 15px; color: var(--ink-3); font-weight: 600; padding: 8px 12px 8px 0; border-bottom: 2px solid var(--ink); }
+.tbl td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--hair); vertical-align: top; color: var(--ink-2); line-height: 1.65; }
+.tbl td:first-child { color: var(--ink); font-weight: 650; }
+.tbl-wrap { overflow-x: auto; }
+@media (max-width: 640px) { .tbl.stack thead { display: none; } .tbl.stack tr { display: block; border-bottom: 1px solid var(--hair); padding: 8px 0; } .tbl.stack td { display: block; border: 0; padding: 2px 0; } }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.chips li { font-size: 15px; border: 1px solid var(--rule); border-radius: 999px; padding: 2px 12px; color: var(--ink-2); }
+.chips li.k { border-color: var(--s1); color: var(--s1); }
+
+/* Claude 演示 */
+.nl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.say { background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; font-size: 16px; color: var(--ink); }
+.say b { display: block; font-size: 15px; color: var(--ink-3); font-weight: 600; margin-bottom: 4px; }
+.btn { font: inherit; font-size: 15px; background: var(--s1); color: #fff; border: 0; border-radius: 8px; padding: 7px 16px; cursor: pointer; margin-top: 12px; }
+.btn.ghost { background: none; color: var(--ink-2); border: 1px solid var(--rule); }
+.btn:disabled { opacity: .45; cursor: default; }
+.outs { list-style: none; margin: 0; padding: 0; }
+.outs li { padding: 12px 0 12px 34px; border-top: 1px solid var(--hair); position: relative; opacity: .22; transition: opacity .4s ease; }
+.outs li.on { opacity: 1; }
+.outs li::before { content: "→"; position: absolute; left: 6px; top: 12px; color: var(--s1); font-weight: 700; }
+.outs b { display: block; font-size: 16px; }
+.outs span { font-size: 15px; color: var(--ink-2); }
+
+/* 护栏 */
+.guard { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.guard li { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--hair); background: var(--bg); }
+.guard li i { font-style: normal; font-family: var(--f-num); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--s1-soft); color: var(--s1); font-weight: 700; }
+.guard li.ind { border-color: var(--s2); }
+.guard li.ind i { background: var(--s2-soft); color: var(--s2); }
+.guard b { display: block; font-size: 16px; }
+.guard span { font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.guard-arrow { text-align: center; color: var(--ink-3); font-size: 15px; }
+
+.qa { margin: 0; }
+.qa dt { font-weight: 650; font-size: 16px; padding-top: 14px; border-top: 1px solid var(--hair); }
+.qa dt:first-child { border-top: 0; padding-top: 0; }
+.qa dd { margin: 4px 0 14px; color: var(--ink-2); font-size: 16px; }
+
+/* 工作流 */
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.flow .st { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.flow .st[aria-pressed="true"] { background: var(--s1); color: #fff; border-color: var(--s1); }
+.flow .ar { color: var(--ink-3); }
+.flow.old .st { cursor: default; border-style: dashed; }
+.loopnote { font-size: 15px; color: var(--s1); margin: 4px 0 0; }
+.loopnote.old { color: var(--ink-3); }
+.flow-cap { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hair); min-height: 7em; }
+.flow-cap .who { font-size: 15px; color: var(--s1); font-weight: 600; }
+.flow-cap p { margin: 4px 0 0; font-size: 16px; color: var(--ink); }
+.goal { font-size: 18px; font-weight: 650; color: var(--ink); margin: 0 0 4px; }
+
+/* 自治行为 */
+.beh { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.beh > div { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 18px; }
+.beh h4 { margin: 0 0 4px; font-size: 17px; }
+.beh p { margin: 0 0 10px; font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.beh ul { margin: 0; padding: 0; list-style: none; }
+.beh li { font-size: 15px; color: var(--ink); padding: 5px 0; border-top: 1px solid var(--hair); }
+
+/* 用例 */
+.cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.case { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; }
+.case h4 { margin: 0 0 6px; font-size: 17px; }
+.case .big { font-family: var(--f-num); font-size: 30px; font-weight: 600; letter-spacing: -0.03em; color: var(--s1); line-height: 1.2; }
+.case .big small { font-family: var(--f-sans); font-size: 15px; color: var(--ink-2); font-weight: 400; letter-spacing: 0; margin-left: 6px; }
+.case p { margin: 8px 0 10px; font-size: 15px; color: var(--ink-2); line-height: 1.7; flex: 1; }
+.case .ft { font-size: 15px; color: var(--ink-3); }
+
+/* 自治分级 */
+.lv { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.lv button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 8px; padding: 10px 4px; cursor: pointer; line-height: 1.35; }
+.lv button b { display: block; font-family: var(--f-num); font-size: 22px; color: var(--ink); }
+.lv button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.lv button[aria-pressed="true"] b { color: #fff; }
+.lv-band { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.lv-band span { grid-column: 2 / 5; background: var(--s2-soft); color: var(--s2); font-size: 15px; text-align: center; border-radius: 6px; padding: 3px 6px; line-height: 1.4; }
+.lv-cap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--hair); }
+.lv-cap h4 { margin: 0 0 4px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.lv-cap p { margin: 0; font-size: 16px; color: var(--ink); }
+@media (max-width: 640px) { .lv, .lv-band { grid-template-columns: repeat(3, minmax(0, 1fr)); } .lv-band span { grid-column: 1 / -1; } .lv-cap { grid-template-columns: minmax(0, 1fr); } }
+
+.who-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0 28px; }
+.who-list div { padding: 12px 0; border-top: 1px solid var(--hair); }
+.who-list b { display: block; font-size: 16px; }
+.who-list span { font-size: 15px; color: var(--ink-2); }
+
+/* 金句 */
+.quotes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 28px 40px; }
+
+/* 读后 */
+.mine { background: var(--panel); border: 1px dashed var(--ink-3); border-radius: 8px; padding: 20px 24px; }
+.mine h3 { margin: 0 0 4px; font-size: 20px; }
+.mine .hint { margin: 0 0 12px; font-size: 15px; color: var(--ink-3); }
+.mine ol { margin: 0; padding-left: 22px; }
+.mine li { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; }
+.mine li b { color: var(--ink); }
+
+.about { margin-top: 64px; padding: 28px 0 0; border-top: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px 56px; }
+.about h2 { margin: 0; font-size: 24px; }
+.about p { margin: 0 0 12px; color: var(--ink-2); font-size: 16px; }
+@media (max-width: 880px) { .about { grid-template-columns: minmax(0, 1fr); } }
+
+@media (prefers-reduced-motion: reduce) { .stat, .outs li, .ladder button, .engine .node polygon { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>报告解读</span><span>VIAVI 白皮书 · 2026 年 9 月</span><span>约 15 分钟读完</span></p>
+  <h1>AI 进 RAN，缺的不是算法，是<em>练兵场</em></h1>
+  <p class="lead">VIAVI 发布的白皮书《From RAN Simulation Digital Twins to the Self-Aware, Agentic RAN》（AI RSG 白皮书 2.0，正文 30 页）。它的判断是：运营商大多还卡在试点阶段，问题不在 AI 模型本身，而在缺少能让 AI 安全训练、验证、上线的基础设施。VIAVI 给出的答案是把 RAN 仿真数字孪生升级成“AI 工程平台”，并把 Claude 接进来做自然语言的工程助手。</p>
+
+  <blockquote class="quote">
+    <p>难点已经不是造 AI 模型，而是造一套可信的基础设施，让 AI 能学习、验证决策，并安全地运营自治网络。</p>
+    <span class="en">“The challenge is no longer building AI models — it is building trusted infrastructure that allows AI to learn, validate decisions, and safely operate autonomous networks.”</span>
+    <cite>原文第 2 页 · 执行摘要</cite>
+  </blockquote>
+
+  <div class="tldr">
+    <h2>一页读懂：原作的七个观点</h2>
+    <ol>
+      <li><a href="#why"><b>AI-RAN 到了拐点。</b>从人工优化、SON 到 AI 辅助，下一步是“自感知 RAN”，再往后是“智能体 RAN”，原文称这是 LTE 以来最大的架构变化之一。</a></li>
+      <li><a href="#why"><b>落地卡住了，卡在基础设施。</b>88% 运营商自评在 TM Forum 自治等级 L1–L3；缺的是真实数据、安全试验环境、可重复的验证和高效开发流程。</a></li>
+      <li><a href="#challenges"><b>六类挑战都能在孪生里化解。</b>数据稀缺、无处试错、模型漂移、LLM 幻觉、监管审计、多厂商集成。</a></li>
+      <li><a href="#platform"><b>数字孪生要从“复现”走向“预判”。</b>AI RSG 不止是仿真器，而是覆盖数据生成、开发、验证、部署全生命周期的 AI 工程平台。</a></li>
+      <li><a href="#claude"><b>LLM 是智能层，但必须关在笼子里。</b>Claude 只调用已验证的工具函数、参数经 schema 校验、关键节点人工审批、AVE 在 LLM 之外独立验证。</a></li>
+      <li><a href="#flow"><b>开发模式从线性变成闭环。</b>一句意图 → AI 生成 → 孪生运行 → 验证 → 洞察 → 再迭代，全程不碰一个现网小区。</a></li>
+      <li><a href="#road"><b>每一级自治都靠信任，信任靠验证。</b>从 L0 到 L5，每一级都需要 AI 先在可信环境里学会，再去影响现网。</a></li>
+    </ol>
+  </div>
+
+  <div class="caveat">
+    <b>读的时候留意：</b>这是一份厂商产品白皮书，主角是 VIAVI 的 TeraVM AI RSG 平台。文中的数字有两类来源，本文逐一标注：<span class="src-tag ext">第三方</span> 指 NVIDIA 调研、Dell'Oro、TM Forum、3GPP 等外部来源；<span class="src-tag ven">VIAVI</span> 指 VIAVI 内部实验或产品规格，原文附录注明“所有 VIAVI 验证结果都基于 AI RSG 仿真”。
+  </div>
+</section>
+
+<nav class="secnav" aria-label="章节">
+  <div class="wrap" id="secnav">
+    <a href="#why">拐点与停滞</a><a href="#challenges">六类挑战</a><a href="#platform">平台构成</a><a href="#claude">Claude 的角色</a><a href="#flow">意图到部署</a><a href="#cases">用例数据</a><a href="#road">自治分级</a><a href="#quotes">原文金句</a><a href="#glossary">术语速查</a><a href="#after">读后</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ======================= 1 ======================= -->
+<section class="sec" id="why">
+  <div class="sec-head"><h2>拐点已到，落地却停滞了</h2><span class="meta">原文第 2–7 页</span></div>
+  <div class="sec-lede">
+    <p>白皮书开篇先讲“势”：NVIDIA 2026 年电信 AI 调研里，90% 的运营商说 AI 已经在增收或降本，89% 计划加大 AI 投入；主要 RAN 厂商都有 AI 原生路线图，3GPP、O-RAN 联盟、TM Forum、AI-RAN 联盟都在把 AI 写进架构。</p>
+    <p>接着讲“困”：尽管势头很猛，<strong>大多数运营商仍停留在试点或零散的 AI 项目上</strong>。原文把原因归到一句话：不是算法不够，而是基础设施不够。</p>
+    <p class="go">先看原文怎么画这条演进路线，点任意一级看它的含义。</p>
+  </div>
+
+  <div class="view"><b>原作观点</b>未来的 RAN 不再优化孤立的参数，而是持续理解网络状态、预测未来行为、在相互冲突的目标之间推理、验证备选动作，然后自主执行最优决策。</div>
+
+  <figure class="viz">
+    <p class="viz-title">移动网络智能的演进</p>
+    <p class="viz-sub">原文第 6 页右侧的阶梯图，蓝色为原文所说的“下一步”。</p>
+    <div class="ladder" id="ladder"></div>
+    <div class="ladder-key"><i style="background:var(--dim-soft)"></i>已经走过 <i style="background:var(--s1-soft);margin-left:14px"></i>原文描述的未来阶段</div>
+    <div class="ladder-cap" id="ladder-cap" aria-live="polite"></div>
+  </figure>
+  <p class="pg">原文第 5、6 页</p>
+
+  <h3 class="sub">一组数字：热度和瓶颈</h3>
+  <p class="p">原文第 4 页和第 7 页列了一排数字。按来源筛选一下，能看清哪些是行业共识，哪些是 VIAVI 自己的平台指标。</p>
+  <div class="seg" role="group" aria-label="按来源筛选" id="stat-filter">
+    <button type="button" aria-pressed="true" data-f="all">全部</button>
+    <button type="button" aria-pressed="false" data-f="ext">只看第三方</button>
+    <button type="button" aria-pressed="false" data-f="ven">只看 VIAVI</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <p class="pg">原文第 4、7 页，来源见原文附录第 26–29 页</p>
+
+  <h3 class="sub">上线 AI 之前，运营商要回答的四个问题</h3>
+  <div class="two">
+    <div>
+      <div class="qs">
+        <div><span>Q1</span>能生成足够真实的数据来训练 AI 模型吗？</div>
+        <div><span>Q2</span>能在部署前安全地测试自治行为吗？</div>
+        <div><span>Q3</span>能用运营 KPI 客观地验证 AI 的决策吗？</div>
+        <div><span>Q4</span>能在不增加运营风险的前提下加快 AI 创新吗？</div>
+      </div>
+      <p class="pg">原文第 5 页 · 原文认为传统实验室和现网都没法在 AI 原生网络需要的规模上回答它们。</p>
+    </div>
+    <div>
+      <p class="viz-title" style="margin-bottom:8px">原文列出的 AI 系统需要什么</p>
+      <ul class="needs">
+        <li>海量、真实的训练数据</li>
+        <li>不影响现网用户的安全试验环境</li>
+        <li>上线前可重复、客观的验证</li>
+        <li>能跟上 AI/ML 迭代节奏的开发流程</li>
+        <li>随网络变化持续学习、刷新模型</li>
+      </ul>
+      <p class="pg">原文第 7 页 · “现网没法安全地提供这些能力，RAN 仿真数字孪生可以。”</p>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 2 ======================= -->
+<section class="sec" id="challenges">
+  <div class="sec-head"><h2>六类挑战，各自的解法</h2><span class="meta">原文第 8–9 页</span></div>
+  <div class="sec-lede">
+    <p>这两页是全文最“硬”的部分：原文把 AI 进 RAN 时遇到的问题归成六类，每一类先说挑战是什么，再说 AI RSG 怎么应对。开头一句是原文的定调：部署 AI 带来的挑战，远不止算法开发本身。</p>
+    <p class="go">点左边的挑战，右边对照看原文的回应。</p>
+  </div>
+  <div class="cr" id="cr">
+    <div class="cr-list" role="group" aria-label="六类挑战"></div>
+    <div class="cr-body">
+      <div><h4>挑战</h4><div id="cr-c"></div></div>
+      <div><h4>AI RSG 的回应</h4><div id="cr-r"></div></div>
+    </div>
+  </div>
+  <p class="pg">原文第 8、9 页</p>
+</section>
+
+<!-- ======================= 3 ======================= -->
+<section class="sec" id="platform">
+  <div class="sec-head"><h2>从数字孪生到 AI 工程平台</h2><span class="meta">原文第 10–15 页</span></div>
+  <div class="sec-lede">
+    <p>原文对数字孪生的定位有一个转折：<strong>传统数字孪生复现网络行为，下一代要预判网络行为</strong>。于是 AI RSG 不再只是系统级仿真器，而是覆盖场景生成、数据集制作、强化学习、深度学习、应用开发、AI 评测、闭环验证、AI 辅助优化、持续部署的整条链。</p>
+    <p>原文用一张“引擎图”概括这套平台：中间是 AI RSG 数字孪生，四周各挂一个组件，每条连线标了一个动词。</p>
+    <p class="go">点图中任一六边形，看原文对它的说明。</p>
+  </div>
+
+  <div class="view"><b>原作观点</b>AI RSG 要做的不是验证某一个 AI 模型，而是支撑持续的 AI 创新。</div>
+
+  <figure class="viz">
+    <p class="viz-title">TeraVM AI RSG 引擎</p>
+    <p class="viz-sub">按原文第 11 页重绘，连线上的动词是原图标注。</p>
+    <div class="engine">
+      <svg viewBox="0 0 560 420" id="engine" role="group" aria-label="AI RSG 引擎组成"></svg>
+      <div class="eng-cap" id="eng-cap" aria-live="polite"></div>
+    </div>
+  </figure>
+  <p class="pg">原文第 11–14 页</p>
+
+  <h3 class="sub">五个组件一览</h3>
+  <div class="tbl-wrap">
+  <table class="tbl stack">
+    <thead><tr><th>组件</th><th>主要角色</th><th>业务价值</th></tr></thead>
+    <tbody>
+      <tr><td>AI RSG（AI RAN 场景生成器）</td><td>城市级/网络级高保真 RAN 数字孪生和场景生成</td><td>为 AI 训练、测试、仿真提供真实且可扩展的环境</td></tr>
+      <tr><td>Hybrid Data Layer（混合数据层）</td><td>生成 AI 可用的数据集</td><td>把合成场景与真实网络数据结合，提升模型精度</td></tr>
+      <tr><td>App Twin ADK</td><td>基于 Python 的应用开发沙箱</td><td>加快 xApp/rApp 开发、快速原型、CI/CD 集成、可复现测试</td></tr>
+      <tr><td>AVE（应用验证引擎）</td><td>闭环 AI 验证</td><td>按运营商 KPI 和部署护栏客观评测 AI 决策</td></tr>
+      <tr><td>Claude AI 集成</td><td>智能工程助手</td><td>用自然语言生成场景、编写 ADK 流程、分析结果，提高开发效率</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="pg">原文第 12 页</p>
+
+  <h3 class="sub">孪生能仿真什么、跑多快</h3>
+  <div class="two">
+    <div>
+      <p class="p">原文列出的仿真对象：</p>
+      <ul class="chips">
+        <li class="k">10 万+ 小区</li><li class="k">100 万+ UE</li><li>动态移动性</li><li>Massive MIMO</li><li>波束赋形</li><li>RF 传播</li><li>业务行为</li><li>O-RAN 接口</li><li>多厂商环境</li><li>指挥控制操作</li><li>大型活动</li><li>异常仿真</li><li>边缘场景</li>
+      </ul>
+    </div>
+    <div>
+      <p class="p">部署形态：纯软件、容器化、云原生，不需要专用硬件；离线运行时<strong>最高可达实时的 100 倍</strong><span class="src-tag ven">VIAVI</span>，用于快速实验和大规模强化学习。单实例 1000+ 小区，集群模式 100 个实例可到 10 万小区、100 万 UE。</p>
+    </div>
+  </div>
+  <p class="pg">原文第 4、12 页</p>
+
+  <h3 class="sub">原文总结的四个差异点</h3>
+  <div class="who-list">
+    <div><b>可信的 AI 基础设施</b><span>高保真孪生提供安全、可重复的环境，AI 学习不影响现网。</span></div>
+    <div><b>AI 原生开发</b><span>ADK 让开发者用熟悉的 Python 和 CI 流水线做原型、训练、测试、迭代。</span></div>
+    <div><b>智能化工程</b><span>Claude 把复杂的仿真环境变成用自然语言驱动的意图式工作流。</span></div>
+    <div><b>客观验证</b><span>AVE 让每个 AI 决策都对照运营商定义的目标来度量。</span></div>
+  </div>
+  <p class="pg">原文第 15 页</p>
+</section>
+
+<!-- ======================= 4 ======================= -->
+<section class="sec" id="claude">
+  <div class="sec-head"><h2>Claude：平台的“智能层”</h2><span class="meta">原文第 16–17 页</span></div>
+  <div class="sec-lede">
+    <p>白皮书专门用两页讲 Claude 在平台里的角色。原文的说法是：LLM 是 AI-RAN 工程的下一次大演进，<strong>Claude 让 AI RSG 从一个复杂的仿真平台，变成每个网络工程师都能用的意图驱动工程环境</strong>，而不只是仿真专家的工具。</p>
+    <p>工程师不需要懂仿真工具的配置细节，只要用自然语言说目标；Claude 会追问关键参数（多少 UE、要不要加移动模式、建模哪些频段），保证配置完整。</p>
+    <p class="go">用原文举的例子走一遍：点“发出请求”，看 Claude 依次生成哪四样东西。</p>
+  </div>
+
+  <div class="nl viz">
+    <div>
+      <div class="say"><b>工程师</b>“建一个 50 小区的密集城区场景，在重载业务下评估一个节能 xApp，其中 20% 是异常移动事件。”</div>
+      <button class="btn" type="button" id="nl-go">发出请求</button>
+      <button class="btn ghost" type="button" id="nl-reset">重来</button>
+    </div>
+    <ol class="outs" id="nl-outs">
+      <li><b>校验过的 YAML 场景定义</b><span>小区拓扑、UE 密度、业务模型、移动性随机种子</span></li>
+      <li><b>ADK Python 工作流</b><span>仿真搭建、异常注入、KPI 采集</span></li>
+      <li><b>AVE 验证配置</b><span>能耗 KPI 目标、QoS 护栏</span></li>
+      <li><b>执行摘要</b><span>附带优化建议</span></li>
+    </ol>
+  </div>
+  <p class="pg">原文第 16 页</p>
+
+  <p class="p" style="margin-top:20px">在开发全周期里，原文还列出了 Claude 的其他用途：</p>
+  <ul class="chips">
+    <li>生成 ADK Python 脚本</li><li>总结 AVE 验证报告</li><li>解释 KPI 结果</li><li>生成参数扫描</li><li>根因分析</li><li>辅助调试</li><li>推荐优化策略</li><li class="k">降低 AI-RAN 开发门槛</li>
+  </ul>
+
+  <h3 class="sub">LLM 会幻觉，原文怎么防</h3>
+  <div class="view"><b>原作观点</b>Claude 不生成自由格式的网络配置。它在受限的工具调用框架内工作，任何输出进入系统前都要过校验，最后还有一道完全在语言模型之外的独立验证。</div>
+  <div class="two">
+    <figure class="viz">
+      <p class="viz-title">从 LLM 输出到网络之间的四道关</p>
+      <p class="viz-sub">按原文第 9 页“幻觉风险”一段整理，顺序是数据流经的先后。</p>
+      <ol class="guard">
+        <li><i>1</i><div><b>受限的工具调用</b><span>只调用已验证的 AI RSG 函数，参数是带类型、经 schema 校验的，不自由生成配置。</span></div></li>
+        <li><i>2</i><div><b>Schema 校验</b><span>所有 LLM 输出在进入系统前先过 schema 校验。</span></div></li>
+        <li><i>3</i><div><b>人工审批门</b><span>在“启动仿真”和“部署”两个边界强制人工审批。</span></div></li>
+        <li class="ind"><i>4</i><div><b>AVE 独立验证</b><span>基于 KPI 的客观验证，独立于 LLM，是完全在语言模型之外的兜底。</span></div></li>
+      </ol>
+    </figure>
+    <div class="viz">
+      <p class="viz-title">原文自问自答的三个问题</p>
+      <dl class="qa">
+        <dt>Claude 不可用怎么办？</dt>
+        <dd>平台照常工作。场景生成、ADK 开发、AVE 验证都有原生接口（YAML、Python SDK、REST API）。Claude 是“加速层，不是架构依赖”；API 暂时不通时，自动退回基于模板的引导式配置。</dd>
+        <dt>是不是绑死 Anthropic？</dt>
+        <dd>不是。LLM 集成层按模型无关设计，支持任何兼容 OpenAI 或 Anthropic API 的模型，包括本地部署的开源模型，满足数据主权或物理隔离需求。</dd>
+        <dt>为什么选 Claude 作参考集成？</dt>
+        <dd>Claude 是经过端到端验证、默认出厂的参考集成（AI RSG v2.8 起，需 TVM6245 许可附加项），原文给出的理由是结构化的工具调用框架、可靠的结构化输出，以及企业级 API。</dd>
+      </dl>
+    </div>
+  </div>
+  <p class="pg">原文第 9、17 页</p>
+</section>
+
+<!-- ======================= 5 ======================= -->
+<section class="sec" id="flow">
+  <div class="sec-head"><h2>从意图到部署</h2><span class="meta">原文第 18 页</span></div>
+  <div class="sec-lede">
+    <p>原文用两条流程对比新旧开发模式。传统流程是线性、人工的：配置、测试、分析、修改、再重复，每一轮要几天，还得排队等专门的实验室。</p>
+    <p>智能体流程则是连续、自动、闭环的。原文举的例子是运营商只说了一句目标：<strong>“能耗降低 30%，同时 QoE 保持在约定的 SLA 之上。”</strong>剩下的事由 Claude、AI RSG、ADK、AVE 接力完成。</p>
+    <p class="go">切换两种流程；在智能体流程里点“下一步”，跟着这句意图走完一轮。</p>
+  </div>
+
+  <figure class="viz">
+    <div class="seg" role="group" aria-label="流程类型" id="flow-mode">
+      <button type="button" aria-pressed="false" data-m="old">传统流程</button>
+      <button type="button" aria-pressed="true" data-m="new">智能体流程</button>
+    </div>
+    <div id="flow-box"></div>
+  </figure>
+  <div class="view" style="margin-top:20px"><b>原作观点</b>从工程师的意图到可部署的 AI 应用，整个生命周期变成闭环、自动、可复现的，而且不触碰任何一个现网小区。</div>
+  <p class="pg">原文第 18 页</p>
+</section>
+
+<!-- ======================= 6 ======================= -->
+<section class="sec" id="cases">
+  <div class="sec-head"><h2>自治行为与用例数据</h2><span class="meta">原文第 19–22 页</span></div>
+  <div class="sec-lede">
+    <p>原文强调：<strong>自感知 RAN 不是由一个个孤立的优化应用定义的，而是由经过 AI 持续打磨的“智能行为”定义的。</strong>它给出六类自治行为，每类配三个衡量 KPI。</p>
+    <p>随后是八个用例。这部分数字最多，也最需要看清来源：除了引用 3GPP 和 NVIDIA 平台的背景介绍，用例结果基本来自 VIAVI 自己或与合作方的仿真验证。</p>
+  </div>
+
+  <h3 class="sub" style="margin-top:8px">六类自治行为和它们的 KPI</h3>
+  <div class="beh">
+    <div><h4>节能</h4><p>优化全网能耗，降低运营成本和碳排放。</p><ul><li>能耗（kWh）</li><li>节能比例（%）</li><li>减少的 CO₂（吨）</li></ul></div>
+    <div><h4>移动性</h4><p>为移动中的用户保证无缝连接和稳定性能。</p><ul><li>切换成功率（%）</li><li>切换掉话率（%）</li><li>移动中用户吞吐（Mbps）</li></ul></div>
+    <div><h4>波束管理</h4><p>把无线信号聚焦到用户，提升覆盖、容量和频谱效率。</p><ul><li>波束赋形增益（dB）</li><li>频谱效率（bps/Hz）</li><li>覆盖提升（%）</li></ul></div>
+    <div><h4>QoE</h4><p>在各类业务上满足用户预期，提供更好的体验。</p><ul><li>QoE 评分（0–100）</li><li>视频体验评分（MOS）</li><li>应用/页面加载时间（s）</li></ul></div>
+    <div><h4>Massive MIMO</h4><p>用大规模天线阵列换取容量、可靠性和频谱效率。</p><ul><li>吞吐提升（倍）</li><li>UE 容量（用户/扇区）</li><li>可靠性（BLER %）</li></ul></div>
+    <div><h4>自愈</h4><p>自动发现、诊断、解决问题，把影响降到最低。</p><ul><li>故障发现时间（s）</li><li>自愈成功率（%）</li><li>业务恢复时间（s）</li></ul></div>
+  </div>
+  <p class="pg">原文第 19 页 · 第 20 页另列了干扰抑制、切片保障、业务疏导、FR3 优化、多 RAT 频谱共享、预测性维护等能力。</p>
+
+  <h3 class="sub">八个用例</h3>
+  <div class="seg" role="group" aria-label="用例筛选" id="case-filter">
+    <button type="button" aria-pressed="true" data-f="all">全部</button>
+    <button type="button" aria-pressed="false" data-f="num">只看有量化结果的</button>
+  </div>
+  <div class="cases" id="cases-box"></div>
+  <p class="pg">原文第 21、22 页，结果来源见附录第 13–16 条</p>
+</section>
+
+<!-- ======================= 7 ======================= -->
+<section class="sec" id="road">
+  <div class="sec-head"><h2>通往自治网络的路</h2><span class="meta">原文第 23–24 页</span></div>
+  <div class="sec-lede">
+    <p>原文用 TM Forum 的自治网络分级（L0 人工运维到 L5 完全自治）收尾，并给每一级配上 AI RSG 能做的事。结合前面的数据：<strong>88% 的运营商自评处在 L1–L3</strong><span class="src-tag ext">第三方</span>，2025 年只有 17% 的 CSP 在至少一个运营域达到 L3。</p>
+    <p class="go">点每一级，看 TM Forum 的定义和原文给 AI RSG 安排的角色。</p>
+  </div>
+
+  <figure class="viz">
+    <div class="lv" id="lv" role="group" aria-label="自治等级"></div>
+    <div class="lv-band"><span>88% 的运营商自评在这三级</span></div>
+    <div class="lv-cap" id="lv-cap" aria-live="polite"></div>
+  </figure>
+  <p class="pg">原文第 24 页 · 分级框架为 TM Forum IG1230</p>
+
+  <div class="quote" style="margin:36px 0 0"><p>每一级自治都依赖信任，信任依赖验证。</p><span class="en">“Every level of autonomy depends on trust. Trust depends on validation.”</span><cite>原文第 24 页</cite></div>
+
+  <h3 class="sub">原文点名的五类用户</h3>
+  <div class="who-list">
+    <div><b>运营商（CSP）</b><span>上线前安全验证 AI，优化现网不碰 SLA，加速走向 L5。</span></div>
+    <div><b>设备商（NEM）</b><span>在 CI/CD 里做互通、标准符合性、回归测试和 AI 评测。</span></div>
+    <div><b>xApp/rApp 开发者</b><span>本地原型、训练模型、注入异常、跑基准，用 ADK 快速迭代。</span></div>
+    <div><b>研究机构</b><span>生成可复现数据集，发表可复现实验，支撑标准制定。</span></div>
+    <div><b>政府与国防</b><span>物理隔离的孪生，用于专网 5G、关键任务通信和电子战韧性测试。</span></div>
+  </div>
+  <p class="pg">原文第 23 页</p>
+</section>
+
+<!-- ======================= 8 ======================= -->
+<section class="sec" id="quotes">
+  <div class="sec-head"><h2>原文金句</h2><span class="meta">按出现顺序</span></div>
+  <div class="sec-lede"><p>这几句话最能代表作者的立场，引用、转述时可以直接用。中文是我的翻译，下方附英文原句。</p></div>
+  <div class="quotes">
+    <blockquote class="quote"><p>挑战不在于缺少 AI 算法，而在于缺少基础设施。</p><span class="en">“The challenge is not a shortage of AI algorithms but one of infrastructure.”</span><cite>第 7 页</cite></blockquote>
+    <blockquote class="quote"><p>现网没法安全地提供这些能力，RAN 仿真数字孪生可以。</p><span class="en">“Real production networks cannot provide these capabilities safely but RAN Simulation Digital Twins can.”</span><cite>第 7 页</cite></blockquote>
+    <blockquote class="quote"><p>传统数字孪生复现网络行为，下一代要预判网络行为。</p><span class="en">“Traditional digital twin solutions reproduced network behavior. The next generation anticipate network behavior.”</span><cite>第 10 页</cite></blockquote>
+    <blockquote class="quote"><p>AI 系统没法只靠现网安全地学习。</p><span class="en">“AI systems cannot safely learn from production networks alone.”</span><cite>第 10 页</cite></blockquote>
+    <blockquote class="quote"><p>Claude 是加速层，不是架构依赖。</p><span class="en">“Claude is an accelerator layer, not an architectural dependency.”</span><cite>第 17 页</cite></blockquote>
+    <blockquote class="quote"><p>网络自动化已经超过客户体验，成为 AI 投资、部署和回报的第一优先级。</p><span class="en">“Network automation has now overtaken customer experience as the top priority for AI investment, deployment, and ROI impact.”</span><cite>第 6 页，引自 NVIDIA 2026 电信 AI 调研</cite></blockquote>
+    <blockquote class="quote"><p>AI 原生网络的未来不只是自治，还要可信、经过验证、协作，并且持续学习。</p><span class="en">“The future of AI-native networking is not only autonomous, but trusted, validated, collaborative, and continuously learning.”</span><cite>第 25 页 · 结论</cite></blockquote>
+    <blockquote class="quote"><p>用可复现的数字工程，替代高风险的外场试验。</p><span class="en">“…replaces risky field experimentation with reproducible digital engineering…”</span><cite>第 25 页 · 结论</cite></blockquote>
+  </div>
+</section>
+
+<!-- ======================= 9 ======================= -->
+<section class="sec" id="glossary">
+  <div class="sec-head"><h2>术语速查</h2><span class="meta">按原文用法解释</span></div>
+  <div class="tbl-wrap" style="margin-top:20px">
+  <table class="tbl stack">
+    <thead><tr><th>术语</th><th>原文里的意思</th></tr></thead>
+    <tbody>
+      <tr><td>Self-Aware RAN（自感知 RAN）</td><td>网络用可信 AI 持续观察、预测、验证、适应。是 AI 辅助之后的下一阶段。</td></tr>
+      <tr><td>Agentic RAN（智能体 RAN）</td><td>多个 AI 系统协作、推理、生成应用、优化流程，并在验证过的运营护栏内自主执行运营商意图。是自感知之后的阶段。</td></tr>
+      <tr><td>TeraVM AI RSG</td><td>AI RAN Scenario Generator，VIAVI 的城市级 RAN 仿真数字孪生，白皮书的主角。</td></tr>
+      <tr><td>Hybrid Data Layer</td><td>把合成场景和现网 OSS KPI、地理、天气、业务、移动轨迹数据混合，生成 AI 可用的数据集，也用来持续对齐仿真和现网。</td></tr>
+      <tr><td>App Twin ADK</td><td>Python 开发套件，用与生产一致的业务逻辑写 xApp/rApp 原型，本地运行，接 GitLab CI/CD、pytest，支持参数扫描和确定性种子回放。</td></tr>
+      <tr><td>AVE</td><td>Application Validation Engine，自动度量目标达成、节能、吞吐、覆盖、移动稳定性、QoE、SLA 符合度，输出可进 CI/CD 的通过/失败报告。</td></tr>
+      <tr><td>确定性种子回放</td><td>用同一随机种子精确重现任一场景，便于定位根因，原文说这是现网上做不到的。</td></tr>
+      <tr><td>E2AP / O1 NETCONF / A1</td><td>O-RAN 接口。AI RSG 充当这些接口的“常在线对端”，在每次代码提交时做回归测试。</td></tr>
+      <tr><td>SMO</td><td>Service Management and Orchestration，管理 rApp、xApp 和 non-RT RIC 的编排层；原文用集群模式对它做 10 万小区规模的压测。</td></tr>
+      <tr><td>TM Forum L0–L5</td><td>自治网络分级（IG1230）：L0 人工运维、L1 辅助、L2 部分自治、L3 有条件自治、L4 高度自治、L5 完全自治。</td></tr>
+      <tr><td>3GPP Rel-18 / Rel-19 AI/ML</td><td>Rel-18（2024 年 6 月冻结）规定了节能、负载均衡、移动性优化三个 AI/ML 用例；Rel-19 扩展到网络切片和覆盖容量优化（CCO）。</td></tr>
+      <tr><td>TRL 8</td><td>技术成熟度第 8 级。原文称 AI RSG 自 2020 年起商用，30+ 客户，覆盖五大洲。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ======================= 10 ======================= -->
+<section class="sec" id="after">
+  <div class="sec-head"><h2>读后</h2><span class="meta">以下是我的整理，不是原文内容</span></div>
+  <div class="two" style="margin-top:24px">
+    <div class="mine">
+      <h3>从这份白皮书看到的行业动向</h3>
+      <p class="hint">只做归纳，不做延伸。</p>
+      <ol>
+        <li><b>大模型进入网络工程工具链。</b>测试测量厂商把 Claude 作为出厂默认集成写进产品，定位是“意图驱动的工程助手”，而不是直接配置网络的决策者。</li>
+        <li><b>LLM 落地网络的安全范式在成形。</b>受限工具调用、schema 校验、人工审批门、LLM 之外的独立 KPI 验证，加上模型无关、可退回无 LLM 模式。</li>
+        <li><b>“验证”成为自治网络的主线。</b>原文把信任和验证放在每一级自治的前提位置，数字孪生的价值从“仿真”转向“AI 上线前的考场”。</li>
+        <li><b>标准和产业节奏。</b>3GPP Rel-18 已规定三个 AI/ML 用例、Rel-19 加 CCO 和切片；Dell'Oro 预计 2026–2030 年 AI-RAN 累计收入 350 亿美元；FR3 与 FR1 共存的频谱共享已经出现在用例里。</li>
+      </ol>
+    </div>
+    <div class="mine">
+      <h3>引用数字前要核对的地方</h3>
+      <p class="hint">都来自原文本身的前后对照。</p>
+      <ol>
+        <li><b>能耗占 OPEX 比例。</b>第 4 页写“20–40%”，附录里 GSMA 的原话是“平均 15–20%”，20–40% 出自 Rohde &amp; Schwarz。</li>
+        <li><b>仿真倍速。</b>第 12 页说离线最高 100 倍实时，第 18 页的流程示例写的是 10 倍实时。</li>
+        <li><b>用例结果多为 VIAVI 仿真结果。</b>附录第 13–16 条均为 VIAVI 内部来源，节能 10–20% 是对比规则基线得出的。</li>
+        <li><b>引用年份。</b>附录第 17 条的产品文档标注“v2.9，2026 年 6 月发布”，Claude 集成从 v2.8 起提供。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="about" aria-labelledby="about-h">
+  <h2 id="about-h">关于这篇解读</h2>
+  <div>
+    <p>内容来自 VIAVI Solutions 发布的白皮书《From RAN Simulation Digital Twins to the Self-Aware, Agentic RAN — How VIAVI AI RAN Scenario Generator (AI RSG), App Twin ADK, Application Validation Engine (AVE), and Claude Accelerate AI-Native Networks》（AI RSG Whitepaper 2.0，2026 年 9 月）。原文可在 <a href="https://www.viavisolutions.com" rel="noopener">viavisolutions.com</a> 获取。</p>
+    <p>本文以转述原文观点为主，每一节都标注了原文页码；数字按来源标注为第三方或 VIAVI。“读后”一节是我的归纳，与原文区分开。产品名称、数据以原文为准。</p>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>原文：VIAVI《From RAN Simulation Digital Twins to the Self-Aware, Agentic RAN》</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+function $(s, r) { return (r || document).querySelector(s); }
+function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function tag(t) { return t === 'ext' ? '<span class="src-tag ext">第三方</span>' : '<span class="src-tag ven">VIAVI</span>'; }
+function press(group, btn) { group.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); }); }
+
+/* ---------- 演进阶梯 ---------- */
+var steps = [
+  ['人工网络', '完全依赖人工优化。', 0],
+  ['SON 自动化', '自组织网络（SON）把移动性优化、负载均衡等特定功能自动化。', 0],
+  ['AI 辅助 RAN', '机器学习在部分领域实现预测性优化。今天的网络大多在这里：被动优化、基于规则的自动化、AI 辅助优化。', 0],
+  ['自感知 RAN', '网络借助可信 AI 持续观察、预测、验证和适应。不再优化孤立参数，而是理解状态、预测行为、在冲突目标间推理、验证备选动作、自主执行最优决策。', 1],
+  ['智能体 AI RAN', 'AI 系统彼此协作、推理、生成工作流、构建应用，通过闭环学习持续改进，同时与运营商意图保持一致，并在验证过的运营护栏内执行。', 1],
+  ['意图驱动的自治网络', '演进阶梯的顶端：运营商表达意图，网络自主完成。原文把这一整段转变称为 LTE 以来最大的架构变化之一。', 1]
+];
+var lad = $('#ladder'), ladCap = $('#ladder-cap');
+steps.forEach(function (s, i) {
+  var b = h('button', s[2] ? 'fut' : '', s[0]);
+  b.type = 'button';
+  b.style.height = (34 + i * 13) + '%';
+  b.addEventListener('click', function () { press(lad, b); ladCap.innerHTML = '<b>' + s[0] + '</b><p>' + s[1] + '</p>'; });
+  lad.appendChild(b);
+  if (i === 3) b.click();
+});
+
+/* ---------- 数字 ---------- */
+var stats = [
+  ['90%', '运营商称 AI 带来回报', 'AI 正在增收或降本；调研对象 1000+ 名电信从业者', 'ext', 'NVIDIA 2026 电信 AI 调研'],
+  ['89%', '计划 2026 年加大 AI 投入', '原文称一年前是 65%，同比 +24 个百分点', 'ext', 'NVIDIA 2026 电信 AI 调研'],
+  ['54%', '运营商正在使用 AI', '同比 +17%', 'ext', 'NVIDIA 调研（原文第 7 页）'],
+  ['$35B', 'AI-RAN 2026–2030 累计收入', '2025 年约 30 亿美元', 'ext', "Dell'Oro 预测"],
+  ['88%', '运营商自评在 L1–L3', 'TM Forum 自治框架', 'ext', 'NVIDIA 调研 / RCR Wireless'],
+  ['17%', 'CSP 在任一域达到 L3', '截至 2025 年；46% 把 L3 当近期目标', 'ext', 'TM Forum 调研（经 MapYourTech）'],
+  ['20–40%', '能耗占网络 OPEX', '5G 能耗中 60–80% 来自 RAN（射频单元/基站）', 'ext', 'Rohde & Schwarz / GSMA'],
+  ['20–30%', 'AI 可节省的能耗', '通过动态调度和休眠模式', 'ext', 'Market Intelo 2025'],
+  ['$6–12M+', '一套实体 Open RAN 实验室', '平均搭建成本，采购周期 6–12 个月', 'ext', 'NTIA VALOR / O-RAN 测试白皮书'],
+  ['TRL 8', '技术成熟度', '2020 年起商用，30+ 客户，五大洲', 'ven', 'VIAVI'],
+  ['1000+', '单实例仿真小区数', '集群模式：10 万小区、100 万+ UE', 'ven', 'AI RSG 产品规格'],
+  ['10–20%', 'AVE 验证后 KPI 提升', '一次 AVE 验证循环后的典型提升', 'ven', 'VIAVI 实验室'],
+  ['100×', '仿真速度', '离线运行最高相对实时', 'ven', 'AI RSG 产品规格']
+];
+var sBox = $('#stats');
+stats.forEach(function (s) {
+  var d = h('div', 'stat', '<div class="v">' + s[0] + '</div><div class="k">' + s[1] + '</div><div class="n">' + s[2] + '</div>' + tag(s[3]) + ' <span class="n" style="display:inline">' + s[4] + '</span>');
+  d.dataset.s = s[3];
+  sBox.appendChild(d);
+});
+var sf = $('#stat-filter');
+sf.addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  press(sf, b);
+  sBox.querySelectorAll('.stat').forEach(function (d) { d.classList.toggle('off', b.dataset.f !== 'all' && d.dataset.s !== b.dataset.f); });
+});
+
+/* ---------- 挑战 / 回应 ---------- */
+var cr = [
+  ['数据质量与稀缺',
+   '<p>用不具代表性的数据训练的模型，上线后会明显退化。</p><p>罕见事件和边缘场景恰恰最影响模型鲁棒性，却没法在现网上按训练所需的量安全采集。</p>',
+   '<p><b>混合数据层</b>把合成场景与现网 OSS KPI、地理、业务模式、天气、移动轨迹结合。</p><ul><li>几小时生成几个月的带标签 RAN 事件</li><li>干扰、小区故障、切换异常等边缘场景按需、可重复地生成</li><li>不需要接触现网用户数据</li></ul>'],
+  ['没有安全的试验环境',
+   '<p>应用和算法出错会直接影响现网用户，SLA 违约有监管和商业风险，运维团队不让未验证算法进现网。</p><p>实体实验室缺少足够的射频规模和真实度；现网发现的 bug 也没法安全复现做根因分析。</p>',
+   '<p><b>城市级数字孪生</b>：1000+ 小区、100 万+ UE，全在隔离的软件里跑，零用户风险。</p><ul><li>确定性种子回放，任一场景都能精确重现</li><li>集群模式 100 个实例扩到 10 万小区，与生产规模相当</li></ul>'],
+  ['模型漂移',
+   '<p>用静态数据集训练的 RAN 模型，会随着真实业务和网络条件变化而退化。</p><p>仿真到生产之间的领域差距，让模型上线后表现不同。</p>',
+   '<ul><li>混合数据层持续摄入现网 OSS 遥测，让仿真场景与现网保持一致</li><li>AVE 按当前 KPI 基准重新评估已部署模型</li><li>性能漂出可接受范围时，闭环反馈自动触发重训练</li></ul>'],
+  ['LLM 辅助流程的幻觉风险',
+   '<p>大模型在没有校验护栏的情况下生成网络配置，可能产生无效参数定义或不安全的运行范围。</p><p>如果直接下发到现网网元，后果可能很严重。</p>',
+   '<ul><li>Claude 在受限的工具调用框架里，调用已验证的 AI RSG 函数，参数带类型并经 schema 校验，不生成自由格式配置</li><li>所有 LLM 输出入库前都过 schema 校验</li><li>仿真启动和部署边界强制人工审批</li><li>AVE 提供独立于 LLM 的 KPI 验证兜底</li></ul>'],
+  ['监管约束',
+   '<p>ETSI ENI 和 3GPP Rel-18 要求 AI 决策可审计。</p><p>数据保护法规限制在 AI 训练管线里使用用户数据。</p>',
+   '<ul><li>AVE 为每个 AI 决策输出结构化、可审计的通过/失败报告，满足可追溯要求且不增加人工文档</li><li>混合数据层支持完全合成模式，不涉及用户个人信息</li><li>可物理隔离部署，适用于涉密和国防环境</li></ul>'],
+  ['多厂商集成复杂',
+   '<p>Open RAN 的多厂商架构让接口故障点成倍增加。</p><p>人工接口测试跟不上软件发布节奏。</p>',
+   '<ul><li>AI RSG 提供常在线的 O-RAN 对端，仿真 E2AP、O1 NETCONF、A1 接口</li><li>直接接入 CI/CD，每次代码提交都做自动回归测试</li><li>接口验证从几周压缩到几小时</li></ul><p style="margin-top:10px">原文引用 O-RAN 联盟 2024 年 PlugFest（29 家运营方共同主办、全球 28 个实验室）说明多厂商集成测试的规模和复杂度。</p>']
+];
+var crList = $('#cr .cr-list');
+cr.forEach(function (c) {
+  var b = h('button', '', c[0]); b.type = 'button';
+  b.addEventListener('click', function () { press(crList, b); $('#cr-c').innerHTML = c[1]; $('#cr-r').innerHTML = c[2]; });
+  crList.appendChild(b);
+});
+crList.firstChild.click();
+
+/* ---------- 引擎图 ---------- */
+var NS = 'http://www.w3.org/2000/svg';
+function sv(t, a, p) { var e = document.createElementNS(NS, t); for (var k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+function hex(cx, cy, r) { var pts = []; for (var i = 0; i < 6; i++) { var a = Math.PI / 6 + i * Math.PI / 3; pts.push((cx + r * Math.cos(a)).toFixed(1) + ',' + (cy + r * Math.sin(a)).toFixed(1)); } return pts.join(' '); }
+var eng = [
+  { id: 'hub', x: 280, y: 210, r: 92, l: ['AI RSG', '数字孪生'], verb: '', role: 'Simulate 仿真', body: '<p>城市级/网络级高保真 RAN 数字孪生，负责场景生成与仿真，是整个引擎的核心。</p><p>它通过<b>混合数据层</b>把合成场景与历史、实时 KPI 趋势结合，产出贴近真实网络行为的 AI 数据集。原文强调：AI 模型的质量取决于训练数据的质量。</p><ul><li>数据来源：合成场景、历史 KPI、地理信息、天气、业务模式、移动趋势、运营遥测</li></ul>' },
+  { id: 'claude', x: 470, y: 76, r: 62, l: ['Claude AI', '加速创新'], verb: 'Configure 配置', vx: 400, vy: 140, role: 'Configure 配置', body: '<p>智能工程助手。用自然语言生成场景、编写 ADK 工作流、分析结果，提高开发效率。</p><p>原文定位：加速层，而不是架构依赖。</p>' },
+  { id: 'ave', x: 470, y: 344, r: 62, l: ['AVE', '应用验证引擎'], verb: 'Score 评分', vx: 400, vy: 296, role: 'Score 评分', body: '<p>把仿真输出变成客观的 AI 评测，替代人工翻看成千上万个 KPI。</p><ul><li>自动度量：目标达成、节能、吞吐、覆盖、移动稳定性、QoE、SLA 符合度</li><li>可同时对比多个 AI 模型</li><li>输出结构化通过/失败结果，可直接用于 CI/CD</li></ul><p style="margin-top:10px">原文称典型部署在 AI RSG + AVE 验证后 KPI 提升 10–20%。</p>' },
+  { id: 'adk', x: 90, y: 76, r: 62, l: ['ADK', '应用开发套件'], verb: 'Measure 测量', vx: 160, vy: 140, role: 'Measure 测量', body: '<p>App Twin ADK 把数字孪生扩展成完整的 AI 开发环境。</p><ul><li>Python SDK，用与生产应用相同的业务逻辑写 xApp/rApp 原型</li><li>本地运行，不需要专用硬件，直接接入现有 Python AI/ML 流程</li><li>支持 GitLab CI/CD、pytest、批量参数扫描、确定性种子回放、快速离线执行</li></ul><p style="margin-top:10px">原文说法：迭代、复现问题、验证改动，从“几天”缩到“几秒”。</p>' },
+  { id: 'oran', x: 90, y: 344, r: 62, l: ['O-RAN /', '专用适配器'], verb: 'Standardize 标准化', vx: 160, vy: 296, role: 'Standardize 标准化', body: '<p>REST、E2、O1、A1 等标准接口和专用适配器，让孪生能对接真实的 O-RAN 组件。</p><p>在多厂商集成场景里，AI RSG 就是这些接口的“常在线对端”。</p>' }
+];
+var es = $('#engine'), ecap = $('#eng-cap');
+eng.slice(1).forEach(function (n) { sv('line', { x1: 280, y1: 210, x2: n.x, y2: n.y, class: 'wire' }, es); });
+eng.slice(1).forEach(function (n) { var t = sv('text', { x: n.vx, y: n.vy, class: 'verb', 'text-anchor': 'middle' }, es); t.textContent = n.verb.split(' ')[0]; });
+eng.forEach(function (n) {
+  var g = sv('g', { class: 'node ' + (n.id === 'hub' ? 'n-hub' : 'n-sat'), tabindex: 0, role: 'button', 'aria-label': n.l.join(' ') }, es);
+  sv('polygon', { points: hex(n.x, n.y, n.r) }, g);
+  var t1 = sv('text', { x: n.x, y: n.y - 4, 'text-anchor': 'middle', class: 't1' }, g); t1.textContent = n.l[0];
+  var t2 = sv('text', { x: n.x, y: n.y + 18, 'text-anchor': 'middle' }, g); t2.textContent = n.l[1];
+  function pick() {
+    es.querySelectorAll('.node').forEach(function (x) { x.classList.remove('on'); });
+    g.classList.add('on');
+    ecap.innerHTML = '<h4>' + n.l.join(' ').replace('/ ', '/') + '</h4><p class="role">' + n.role + '</p>' + n.body;
+  }
+  g.addEventListener('click', pick);
+  g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  if (n.id === 'hub') pick();
+});
+
+/* ---------- Claude 演示 ---------- */
+var outs = document.querySelectorAll('#nl-outs li'), go = $('#nl-go'), timers = [];
+go.addEventListener('click', function () {
+  go.disabled = true;
+  outs.forEach(function (li, i) { timers.push(setTimeout(function () { li.classList.add('on'); }, 350 + i * 550)); });
+});
+$('#nl-reset').addEventListener('click', function () {
+  timers.forEach(clearTimeout); timers = [];
+  outs.forEach(function (li) { li.classList.remove('on'); });
+  go.disabled = false;
+});
+
+/* ---------- 工作流 ---------- */
+var flowNew = [
+  ['意图', '运营商', '说出一句目标：“能耗降低 30%，同时 QoE 保持在约定的 SLA 之上。”'],
+  ['AI 生成', 'Claude 生成', '几秒内生成 YAML 场景定义、ADK Python 工作流和 AVE 的 KPI 目标。'],
+  ['数字孪生', 'AI RSG 构建并运行', '城市级数字孪生以 10 倍实时速度运行；混合数据层注入有代表性的业务模式，包括边缘场景的异常事件。随后 ADK 测量：xApp 或 rApp 逻辑在仿真上执行，参数扫描找出多个冲突目标之间的帕累托最优配置。'],
+  ['验证', 'AVE 认证', '生成结构化的通过/失败报告，对照运营商定义的目标核实 KPI 提升；CI/CD 门禁通过或不通过，并给出具体、可执行的修复建议。'],
+  ['AI 洞察', 'Claude 分析', '对失败做根因分析，给下一轮迭代提优化建议，输出部署就绪总结。然后进入下一轮持续改进循环。']
+];
+var flowOld = ['配置', '测试', '分析', '修改', '重复'];
+var fBox = $('#flow-box'), fMode = $('#flow-mode'), cur = 0;
+function drawFlow(m) {
+  fBox.innerHTML = '';
+  if (m === 'old') {
+    var f = h('div', 'flow old');
+    flowOld.forEach(function (s, i) { if (i) f.appendChild(h('span', 'ar', '→')); var b = h('span', 'st', s); f.appendChild(b); });
+    fBox.appendChild(f);
+    fBox.appendChild(h('p', 'loopnote old', '顺序执行、人工操作'));
+    fBox.appendChild(h('div', 'flow-cap', '<p>每一轮要几天，还需要专门的实验室资源。原文用它和右边的智能体流程做对照。</p>'));
+    return;
+  }
+  fBox.appendChild(h('p', 'goal', '“能耗降低 30%，同时 QoE 保持在约定的 SLA 之上。”'));
+  var f = h('div', 'flow');
+  flowNew.forEach(function (s, i) {
+    if (i) f.appendChild(h('span', 'ar', '→'));
+    var b = h('button', 'st', s[0]); b.type = 'button';
+    b.addEventListener('click', function () { show(i); });
+    f.appendChild(b);
+  });
+  fBox.appendChild(f);
+  fBox.appendChild(h('p', 'loopnote', '↺ 持续改进循环：连续、自动、闭环'));
+  var cap = h('div', 'flow-cap'); cap.setAttribute('aria-live', 'polite'); fBox.appendChild(cap);
+  var nx = h('button', 'btn', '下一步'); nx.type = 'button';
+  nx.addEventListener('click', function () { show((cur + 1) % flowNew.length); });
+  fBox.appendChild(nx);
+  function show(i) {
+    cur = i;
+    f.querySelectorAll('.st').forEach(function (b, j) { b.setAttribute('aria-pressed', j === i ? 'true' : 'false'); });
+    cap.innerHTML = '<div class="who">第 ' + (i + 1) + ' 步 · ' + flowNew[i][1] + '</div><p>' + flowNew[i][2] + '</p>';
+    nx.textContent = i === flowNew.length - 1 ? '回到第一步' : '下一步';
+  }
+  show(0);
+}
+fMode.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(fMode, b); drawFlow(b.dataset.m); });
+drawFlow('new');
+
+/* ---------- 用例 ---------- */
+var cases = [
+  ['AI 驱动的节能', '10–20%', '节能', '在密集城区孪生里模拟真实业务、移动性和受控异常，用 AVE 对比 AI 决策与基线模型反复打磨。原文同时列出：QoS 维持 99.9%、仿真 100 倍速、验证用时 4 小时。附录补充：对比规则基线，QoS 保持在 SLA 内。', 'ven', '附录 13 · VIAVI 实验室，2024'],
+  ['预测性波束管理', '最高 +20%', '吞吐', '深度学习模型在信号劣化前预测最优波束，减少信令开销，把释放的资源用于数据传输。附录补充：上行容量最多多出 16%，波束失败事件减少。', 'ven', '附录 4、14 · 与日本一级运营商，MWC 2026 演示'],
+  ['多 RAT 频谱共享（FR1 + FR3）', '+4.4% / +13.7%', '频谱效率', '用 RL-PPO 做 FR1/FR3 动态频谱分配，对比静态五五分。标准场景 +4.4%；用户在 FR1/FR3 覆盖边界反向移动的高对比场景 +13.7%。孪生让几十种场景变体的 what-if 分析成为可能，找出动态分配何时值得用。', 'ven', '附录 15 · 与某头部 RAN 厂商，2025'],
+  ['SMO 规模压测', '10 万小区', '100 万 UE', '集群模式：100 个 AI RSG 实例、500 个 vCPU 核，端到端验证 AI RSG 到 SMO 和 non-RT RIC 的 PM/CM 数据流，满负载测试 O1 NETCONF，按生产规模训练节能 rApp。', 'ven', '附录 16 · VIAVI SMO 压测，2025'],
+  ['AI 原生 Massive MIMO', '', '', '与 NVIDIA Aerial Omniverse 数字孪生集成，用射线追踪做站点级传播建模，支持高级波束赋形、CSI 优化、干扰抑制和 MU-MIMO 调度。', '', '原文第 21 页'],
+  ['覆盖与容量优化（CCO）', '', '', '3GPP Rel-19 规定的 AI/ML 用例，延续 Rel-18 的负载均衡和移动性。结合 Aerial Omniverse 射线追踪、真实业务需求模型和完整 Massive MIMO 行为，对电下倾、方位角、功率扫描数百种变体，上线前量化 RSRP 覆盖改善和容量提升。', '', '原文第 22 页'],
+  ['O-RAN CI/CD', '', '', '作为 E2AP、O1 NETCONF、A1 的常在线对端接入 CI/CD，每次提交都做接口回归测试，缩短开发周期。', '', '原文第 21 页'],
+  ['AI 数据集生成', '', '', '研究人员和 AI 开发者用可重复的仿真场景生成几十万条带标签 RAN 事件，大幅缩短构建训练集的时间。', '', '原文第 21 页']
+];
+var cBox = $('#cases-box');
+cases.forEach(function (c) {
+  var d = h('div', 'case');
+  d.innerHTML = '<h4>' + c[0] + '</h4>' + (c[1] ? '<div class="big">' + c[1] + '<small>' + c[2] + '</small></div>' : '') +
+    '<p>' + c[3] + '</p><div class="ft">' + (c[4] ? tag(c[4]) + ' ' : '') + c[5] + '</div>';
+  d.dataset.n = c[1] ? '1' : '0';
+  cBox.appendChild(d);
+});
+var cf = $('#case-filter');
+cf.addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  press(cf, b);
+  cBox.querySelectorAll('.case').forEach(function (d) { d.hidden = b.dataset.f === 'num' && d.dataset.n === '0'; });
+});
+
+/* ---------- 自治分级 ---------- */
+var lvs = [
+  ['L0', '人工运维', '所有操作由人完成：人工配置、排障、优化。', '对照参考 gNB 验证脚本，不需要硬件。'],
+  ['L1', '辅助运维', '脚本工具辅助工程师，所有决策和动作都由人把关。', '在每一次 CI/CD 提交流水线里充当常在线的 O-RAN 对端。'],
+  ['L2', '部分自治', '自动监控，部分自愈。AI 标出问题，人来决定。', 'AVE 在上线前以城市规模验证闭环 xApp。'],
+  ['L3', '有条件自治', '限定场景下由 AI 闭环，例外情况需要人工批准。', 'ADK 生成 10 万+ 带标签 RAN 事件，用来训练 ML 模型。'],
+  ['L4', '高度自治', '多个领域接近全自动。AI 做决定，人设定意图。', '用 1 万 UE 规模的场景测试自治 xApp 的决策。'],
+  ['L5', '完全自治', '100% 自治、意图驱动，无需人工介入，是最终愿景。', '对照 3GPP Rel-18/19 和 O-RAN 规范验证 AI 原生 RAN 设计。']
+];
+var lvBox = $('#lv'), lvCap = $('#lv-cap');
+lvs.forEach(function (l) {
+  var b = h('button', '', '<b>' + l[0] + '</b>' + l[1]); b.type = 'button';
+  b.addEventListener('click', function () { press(lvBox, b); lvCap.innerHTML = '<div><h4>TM Forum 定义</h4><p>' + l[2] + '</p></div><div><h4>原文给 AI RSG 安排的角色</h4><p>' + l[3] + '</p></div>'; });
+  lvBox.appendChild(b);
+});
+lvBox.children[3].click();
+
+/* ---------- 章节导航高亮 ---------- */
+var links = document.querySelectorAll('#secnav a');
+if ('IntersectionObserver' in window) {
+  var secIo = new IntersectionObserver(function (es2) {
+    es2.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id); });
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  document.querySelectorAll('.sec').forEach(function (s) { secIo.observe(s); });
+}
+})();
+</script>
+</body>
+</html>

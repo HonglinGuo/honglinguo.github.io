@@ -13,6 +13,12 @@
 .intro h1 { font-size: clamp(44px, 8vw, 96px); line-height: 1.04; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 22px; }
 .intro p { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 32em; margin: 0; }
 
+.kinds { margin: 32px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px 40px; max-width: 900px; }
+.kinds div { border-top: 1px solid var(--rule); padding-top: 12px; }
+.kinds dt { font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.kinds dd { margin: 4px 0 0; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.cat-dot { width: 12px; height: 12px; border-radius: 3px; background: var(--s1); display: inline-block; }
+.cat-dot.rep { background: var(--s2); }
 .list-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
 .list-head h2 { margin: 0; font-size: 20px; }
 .list-head span { color: var(--ink-3); font-size: 15px; }
@@ -24,6 +30,17 @@
 .post a:hover h3 { color: var(--s1); }
 .post p { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tags .cat { color: #fff; border-color: transparent; background: var(--s1); font-weight: 600; }
+.tags .cat.rep { background: var(--s2); }
+.filter { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 4px; }
+.filter button { font: inherit; font-size: 15px; color: var(--ink-2); background: none; border: 1px solid var(--rule); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+.filter button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.post[hidden] { display: none; }
+.thumb-hex { width: 100%; height: 120px; padding-top: 6px; }
+.thumb-hex polygon { fill: none; stroke: var(--ink); stroke-width: 3; }
+.thumb-hex polygon.c { fill: var(--s2); stroke: var(--s2); }
+.thumb-hex line { stroke: var(--rule); stroke-width: 3; stroke-dasharray: 5 5; }
+@media (max-width: 760px) { .thumb-hex { height: 72px; max-width: 200px; order: -1; margin-bottom: 8px; } }
 .tags span { font-size: 15px; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 10px; }
 
 /* 文章缩略图：小量筒 */
@@ -84,52 +101,72 @@
   <section class="intro">
     <h1>把 AI 的进展<br>画出来看</h1>
     <p>读报告、看数据、做实验。这里记录我对 AI 的观察，尽量用图表和数字说话，每篇都注明出处。</p>
+    <dl class="kinds">
+      <div><dt><span class="cat-dot"></span>技术学习</dt><dd>把一个具体技术拆开学懂：用交互实验讲清原理和易混概念，每节末尾有“记下来”，方便复习。</dd></div>
+      <div><dt><span class="cat-dot rep"></span>报告解读</dt><dd>快速掌握行业报告、白皮书的观点和新动向：尊重原文、标注页码和数据来源，突出原作的判断，个人整理单独分开。</dd></div>
+    </dl>
   </section>
 
   <section aria-labelledby="list-h">
-    <div class="list-head"><h2 id="list-h">文章</h2><span>共 4 篇</span></div>
+    <div class="list-head"><h2 id="list-h">文章</h2><span id="count">共 5 篇</span></div>
+    <div class="filter" role="group" aria-label="按类型筛选" id="filter">
+      <button type="button" aria-pressed="true" data-k="all">全部</button>
+      <button type="button" aria-pressed="false" data-k="learn">技术学习</button>
+      <button type="button" aria-pressed="false" data-k="report">报告解读</button>
+    </div>
     <ul class="posts">
-      <!-- 新文章加在最上面 -->
-      <li class="post">
+      <!-- 新文章加在最上面；data-kind：learn 技术学习 / report 报告解读 -->
+      <li class="post" data-kind="report">
+        <a href="posts/2026-10-16-viavi-agentic-ran/">
+          <time datetime="2026-10-16">2026.10.16</time>
+          <div>
+            <h3>AI 进 RAN，缺的不是算法，是练兵场：读 VIAVI 智能体 RAN 白皮书</h3>
+            <p>VIAVI 说运营商的 AI 卡在试点，缺的是能安全训练、验证、上线的基础设施。七个核心观点、六类挑战与解法、Claude 被关进四道护栏，以及从 L0 到 L5 的自治路线，数字逐条标注来源。</p>
+            <div class="tags"><span class="cat rep">报告解读</span><span>RAN</span><span>数字孪生</span><span>智能体</span></div>
+          </div>
+          <svg class="thumb-hex" viewBox="0 0 220 120" aria-hidden="true"><line x1="110" y1="60" x2="40" y2="22"/><line x1="110" y1="60" x2="180" y2="22"/><line x1="110" y1="60" x2="40" y2="98"/><line x1="110" y1="60" x2="180" y2="98"/><polygon class="c" points="140,60 125,86 95,86 80,60 95,34 125,34"/><polygon points="58,22 49,38 31,38 22,22 31,6 49,6"/><polygon points="198,22 189,38 171,38 162,22 171,6 189,6"/><polygon points="58,98 49,114 31,114 22,98 31,82 49,82"/><polygon points="198,98 189,114 171,114 162,98 171,82 189,82"/></svg>
+        </a>
+      </li>
+      <li class="post" data-kind="learn">
         <a href="posts/2026-10-15-agent-ui-protocols/">
           <time datetime="2026-10-15">2026.10.15</time>
           <div>
             <h3>Agent 干活的时候，界面谁来画：<span style="white-space:nowrap">AG-UI</span>、A2UI、MCP Apps 点一遍就懂</h3>
             <p>跟着一次机票改签，把三个协议拆开再拼回去：看事件流驱动两种前端，让 Agent 出界面描述却被组件目录拦下，在沙盒 iframe 里选座，最后在一张工作台上看三者怎么配合、又会在哪里对不上。</p>
-            <div class="tags"><span>实践笔记</span><span>Agent</span><span>前端</span></div>
+            <div class="tags"><span class="cat">技术学习</span><span>Agent</span><span>前端</span></div>
           </div>
           <svg class="thumb-agui" viewBox="0 0 220 120" aria-hidden="true"><rect class="a" x="4" y="8" width="66" height="104" rx="8"/><rect class="b" x="80" y="8" width="136" height="104" rx="8"/><rect class="c" x="98" y="52" width="100" height="46" rx="6"/><path class="a" d="M16 34H58M16 52H50M16 70H58"/><path class="b" d="M96 28H170"/></svg>
         </a>
       </li>
-      <li class="post">
+      <li class="post" data-kind="learn">
         <a href="posts/2026-10-15-llm/">
           <time datetime="2026-10-15">2026.10.15</time>
           <div>
             <h3>动手拆一个大语言模型</h3>
             <p>六篇可交互的小实验，从“猜下一个词”拆到聊天助手：猜数字讲熵、帐篷拼曲线、拖学习率下山、切换注意力头、调温度抽词、规模定律计算器。</p>
-            <div class="tags"><span>系列</span><span>交互图解</span><span>原理</span></div>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>原理</span></div>
           </div>
           <svg class="thumb-llm" viewBox="0 0 220 120" aria-hidden="true"><rect x="0" y="70" width="34" height="50" rx="3"/><rect x="46" y="18" width="34" height="102" rx="3" class="hi"/><rect x="92" y="52" width="34" height="68" rx="3"/><rect x="138" y="88" width="34" height="32" rx="3"/><rect x="184" y="104" width="34" height="16" rx="3"/></svg>
         </a>
       </li>
-      <li class="post">
+      <li class="post" data-kind="learn">
         <a href="posts/2026-git-playground/">
           <time datetime="2026-10-15">2026.10.15</time>
           <div>
             <h3>AI 把代码改崩了，怎么救回来：一张能点的 Git 地图</h3>
             <p>不讲长篇原理，直接上手点：看 AI 改崩项目再被 reflog 救回来，在沙盒里开分支、合并、rebase，跟着向导选对撤销命令，再玩一局 bisect 找元凶。</p>
-            <div class="tags"><span>实践笔记</span><span>Git</span><span>AI 编程</span></div>
+            <div class="tags"><span class="cat">技术学习</span><span>Git</span><span>AI 编程</span></div>
           </div>
           <svg class="thumb-git" viewBox="0 0 220 120" aria-hidden="true"><path d="M20 80H200M70 80C100 80 100 30 130 30H160" fill="none" stroke-width="4"/><circle cx="20" cy="80" r="11"/><circle cx="70" cy="80" r="11"/><circle cx="200" cy="80" r="11"/><circle class="b" cx="130" cy="30" r="11"/><circle class="b gone" cx="160" cy="30" r="11"/></svg>
         </a>
       </li>
-      <li class="post">
+      <li class="post" data-kind="report">
         <a href="posts/2026-state-of-ai/">
           <time datetime="2026-10-11">2026.10.11</time>
           <div>
             <h3>题目刚出，就被做完了：图解 State of AI 2026</h3>
             <p>244 页的年度报告，挑出 30 多组关键数据重新绘制：三强格局、AI 研发 AI、1050 亿美元收入、被电力卡住的算力，以及评测中真的攻进了 Hugging Face 的智能体蜂群。</p>
-            <div class="tags"><span>报告图解</span><span>行业</span><span>安全</span></div>
+            <div class="tags"><span class="cat rep">报告解读</span><span>行业</span><span>安全</span></div>
           </div>
           <div class="thumb" aria-hidden="true"><i style="--v:95"></i><i style="--v:100"></i><i style="--v:63"></i><i style="--v:68"></i></div>
         </a>
@@ -145,5 +182,18 @@
   </div>
 </footer>
 
+<script>
+(function () {
+  var f = document.getElementById('filter'), posts = document.querySelectorAll('.posts .post');
+  var count = document.getElementById('count');
+  f.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    f.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    var n = 0;
+    posts.forEach(function (p) { var show = b.dataset.k === 'all' || p.dataset.kind === b.dataset.k; p.hidden = !show; if (show) n++; });
+    count.textContent = (b.dataset.k === 'all' ? '共 ' : '本类 ') + n + ' 篇';
+  });
+})();
+</script>
 </body>
 </html>
