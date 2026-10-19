@@ -1,0 +1,380 @@
+---
+title: 最优状态值与贝尔曼最优方程：策略改进、收缩映射、贪心最优策略
+desc: 强化学习的数学原理学习笔记（三）：用动作值改进策略、最优策略与最优状态值的定义、贝尔曼最优方程（BOE）及右端最大化的解法、收缩映射定理（存在、唯一、指数收敛）、BOE 右端是收缩映射、贪心最优策略、最优策略不唯一，以及 γ、奖励大小、奖励仿射变换对最优策略的影响。
+kicker: <span>技术学习</span><span>强化学习的数学原理 · 03</span><span>对应原书第 3 章（第 35–55 页）</span><span>约 45 分钟</span>
+h1: 最优策略<em>一定存在</em>，而且可以算出来
+lead: 强化学习的终极目标是找到最优策略。可“最优”是什么意思？它存不存在、唯不唯一、是确定的还是随机的？这一章用一个方程回答所有问题：贝尔曼最优方程。它看起来比贝尔曼方程更难（多了一个 max、两个未知数），但它的右端是一个收缩映射——于是解存在、唯一、能用最简单的迭代求出来，而解出来的就是最优状态值和最优策略。
+nav: improve|改进策略;boe|最优与 BOE;contract|收缩映射;solve|解出最优策略;factors|影响因素;back|三个问题
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>为什么“选动作值最大的动作”能改进策略？最优策略是怎么定义的？</li>
+  <li>贝尔曼最优方程有两个未知数，怎么解？收缩映射定理保证了什么？</li>
+  <li>哪些因素会改变最优策略？给每步加一个 −1 能让智能体“走得更快”吗？</li>
+</ol></div>
+
+<section class="part" id="improve">
+  <div class="part-head"><h2>从一个例子出发：怎么改进策略</h2><span class="meta">原书 3.1 节 · 第 36–37 页</span></div>
+  <div class="sec-lede">
+    <p>原书图 3.2：2×2 网格，s<sub>2</sub> 是禁区，s<sub>4</sub> 是目标，策略在 s<sub>1</sub> 向右（进禁区），其余都对。直觉上把 s<sub>1</sub> 改成向下就好。数学上怎么得出这个结论？</p>
+    <p>两步。先<strong>评估</strong>：γ = 0.9 时解贝尔曼方程得 v<sub>π</sub>(s<sub>2</sub>) = v<sub>π</sub>(s<sub>3</sub>) = v<sub>π</sub>(s<sub>4</sub>) = 10，v<sub>π</sub>(s<sub>1</sub>) = −1 + 0.9 × 10 = 8。再看 s<sub>1</sub> 的五个<strong>动作值</strong>：q(s<sub>1</sub>, a<sub>1</sub>) = −1 + γv(s<sub>1</sub>) = 6.2，q(s<sub>1</sub>, a<sub>2</sub>) = 8，q(s<sub>1</sub>, a<sub>3</sub>) = 0 + γv(s<sub>3</sub>) = 9，q(s<sub>1</sub>, a<sub>4</sub>) = 6.2，q(s<sub>1</sub>, a<sub>5</sub>) = 7.2。向下的动作值最大，把策略改成选它。</p>
+    <p>这就是许多强化学习算法的基本思想：<strong>评估当前策略 → 选动作值最大的动作</strong>。但这个例子太简单，策略只在一个状态上不好。如果到处都不好，这样改还能保证变好吗？最优策略一定存在吗？这一章就回答这些问题。</p>
+    <p class="go">在 s<sub>1</sub> 换不同的动作，看状态值和动作值怎么变；然后自己算一个动作值。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 3.2：只在 s<sub>1</sub> 选动作（γ = 0.9）</p>
+      <div class="lab-split">
+        <div><div id="imG"></div></div>
+        <div><div class="btnrow" id="imA"></div><div id="imB"></div></div>
+      </div>
+      <p class="cap" id="imW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">手算</p><div id="imC"></div></div>
+  </div>
+  <div class="notes" id="n-improve"></div>
+</section>
+
+<section class="part" id="boe">
+  <div class="part-head"><h2>最优策略与贝尔曼最优方程</h2><span class="meta">原书 3.2–3.3.2 节 · 第 37–40 页</span></div>
+  <div class="sec-lede">
+    <p><strong>定义 3.1</strong>：如果对<strong>所有</strong>状态 s 和<strong>任意</strong>其他策略 π 都有 v<sub>π*</sub>(s) ≥ v<sub>π</sub>(s)，π* 就是最优策略，它的状态值叫最优状态值。注意这是逐状态的比较——要求一个策略在每个格子上都不输。这个定义立刻引出四个问题：存在吗？唯一吗？是随机的还是确定的？怎么求？</p>
+    <p>分析工具是<strong>贝尔曼最优方程</strong>（BOE）：</p>
+    <div class="eq">v(s) = max<sub>π(s)</sub> Σ<sub>a</sub> π(a|s) q(s, a)，q(s, a) = Σ<sub>r</sub> p(r|s, a) r + γΣ<sub>s′</sub> p(s′|s, a) v(s′)<small>原书式 (3.1)</small></div>
+    <p>它和贝尔曼方程只差一个 max，但现在有两个未知数：v 和 π。原书用两个小例子说明怎么“一个方程解两个未知数”。<strong>例 3.1</strong>：x = max<sub>y</sub>(2x − 1 − y<sup>2</sup>)。不管 x 是多少，右边的最大值总在 y = 0 取到，等于 2x − 1；再解 x = 2x − 1 得 x = 1。<strong>先把 max 里的变量解掉，再解剩下的方程</strong>。<strong>例 3.2</strong>：在 c<sub>1</sub> + c<sub>2</sub> + c<sub>3</sub> = 1、c<sub>i</sub> ≥ 0 的约束下最大化 Σc<sub>i</sub>q<sub>i</sub>，最优解是把全部权重放在最大的 q<sub>i</sub> 上。套到 BOE：Σ<sub>a</sub>π(a|s)q(s, a) ≤ max<sub>a</sub> q(s, a)，等号在 π 把概率 1 给 a* = argmax<sub>a</sub> q(s, a) 时取到。</p>
+    <p>于是 BOE 化为 v(s) = max<sub>a</sub> q(s, a)。写成矩阵形式：v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v) ≐ f(v)（max 逐元素进行）。这是一个关于 v 的非线性方程 v = f(v)，下一节用收缩映射定理来分析它。</p>
+    <p class="go">拖动三个权重，验证“凸组合 ≤ 最大值”；看哪种 c 能让它取到等号。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书例 3.2：max Σc<sub>i</sub>q<sub>i</sub>，约束 Σc<sub>i</sub> = 1（权重自动归一化；q 取原书图 3.2 中 s<sub>1</sub> 的三个动作值）</p>
+    <div class="lab-split">
+      <div class="ctl-grid">
+        <label class="ctl"><span>c<sub>1</sub>（向右，q = 8） <output id="cw1v">0.33</output></span><input type="range" id="cw1" min="0" max="1" step="0.01" value="0.33"></label>
+        <label class="ctl"><span>c<sub>2</sub>（向下，q = 9） <output id="cw2v">0.33</output></span><input type="range" id="cw2" min="0" max="1" step="0.01" value="0.33"></label>
+        <label class="ctl"><span>c<sub>3</sub>（原地，q = 7.2） <output id="cw3v">0.34</output></span><input type="range" id="cw3" min="0" max="1" step="0.01" value="0.34"></label>
+      </div>
+      <div><div id="cwB"></div><p class="cap" id="cwW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-boe"></div>
+</section>
+
+<section class="part" id="contract">
+  <div class="part-head"><h2>收缩映射定理</h2><span class="meta">原书 3.3.3–3.3.4 节 · 第 40–46 页</span></div>
+  <div class="sec-lede">
+    <p>考虑 f: ℝ<sup>d</sup> → ℝ<sup>d</sup>。满足 f(x*) = x* 的点叫<strong>不动点</strong>。如果存在 γ ∈ (0, 1) 使 ‖f(x<sub>1</sub>) − f(x<sub>2</sub>)‖ ≤ γ‖x<sub>1</sub> − x<sub>2</sub>‖ 对任意 x<sub>1</sub>、x<sub>2</sub> 成立，f 就是<strong>收缩映射</strong>——它把任意两点之间的距离至少缩小一个固定比例。原书举的例子：f(x) = 0.5x；f(x) = Ax 且 ‖A‖ ≤ γ &lt; 1；f(x) = 0.5 sin x（由中值定理 |0.5 cos x<sub>3</sub>| ≤ 0.5）。</p>
+    <p><strong>收缩映射定理</strong>（定理 3.1）：若 f 是收缩映射，则 x = f(x) 的不动点<strong>存在</strong>、<strong>唯一</strong>，并且迭代 x<sub>k+1</sub> = f(x<sub>k</sub>) 从<strong>任意初值</strong>出发都<strong>指数快速</strong>收敛到它。证明的骨架（原书框 3.1）：相邻两步的距离 ‖x<sub>k+1</sub> − x<sub>k</sub>‖ ≤ γ<sup>k</sup>‖x<sub>1</sub> − x<sub>0</sub>‖；只有“相邻距离 → 0”还不够（√n 就是反例），要进一步证明 ‖x<sub>m</sub> − x<sub>n</sub>‖ ≤ γ<sup>n</sup>/(1 − γ) · ‖x<sub>1</sub> − x<sub>0</sub>‖，所以是柯西序列、必收敛；极限满足 f(x*) = x*；若有两个不动点，‖x′ − x*‖ ≤ γ‖x′ − x*‖ 只能为 0；误差 ‖x* − x<sub>n</sub>‖ ≤ γ<sup>n</sup>/(1 − γ) · ‖x<sub>1</sub> − x<sub>0</sub>‖。</p>
+    <p>关键的一步是<strong>定理 3.2</strong>：BOE 右端的 f(v) 在最大范数下是收缩映射，‖f(v<sub>1</sub>) − f(v<sub>2</sub>)‖<sub>∞</sub> ≤ γ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub>，收缩系数正是折扣率 γ。证明（框 3.2）的思路：记 π<sub>1</sub>*、π<sub>2</sub>* 分别是对 v<sub>1</sub>、v<sub>2</sub> 取 max 的策略，可以把 f(v<sub>1</sub>) − f(v<sub>2</sub>) 夹在 γP<sub>π<sub>2</sub>*</sub>(v<sub>1</sub> − v<sub>2</sub>) 和 γP<sub>π<sub>1</sub>*</sub>(v<sub>1</sub> − v<sub>2</sub>) 之间；P 的每行非负且和为 1，所以每个分量都不超过 γ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub>。</p>
+    <p class="go">左边是一维迭代的“蛛网图”：选一个 f、拖动初值，看收缩映射怎么把任何起点拉到同一个不动点，非收缩时又会怎样。右边在 5×5 网格上，从两个完全不同的初值迭代 BOE，看两条轨迹的距离怎么按 γ<sup>k</sup> 缩小。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">蛛网图：x<sub>k+1</sub> = f(x<sub>k</sub>)</p>
+      <div class="seg" id="cbF"><button data-v="a" aria-pressed="true">0.5x</button><button data-v="b">0.5 sin x</button><button data-v="c">0.5x + 1</button><button data-v="d">1.3x（非收缩）</button></div>
+      <label class="ctl"><span>初值 x<sub>0</sub> <output id="cbXv">3.0</output></span><input type="range" id="cbX" min="-4" max="4" step="0.1" value="3"></label>
+      <div id="cbC"></div>
+      <p class="cap" id="cbW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">5×5 网格：BOE 迭代从两个初值出发（r<sub>forbidden</sub> = −1）</p>
+      <label class="ctl"><span>γ <output id="ctGv">0.90</output></span><input type="range" id="ctG" min="0.5" max="0.98" step="0.01" value="0.9"></label>
+      <div id="ctC"></div>
+      <p class="cap" id="ctW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-contract"></div>
+</section>
+
+<section class="part" id="solve">
+  <div class="part-head"><h2>从 BOE 解出最优策略</h2><span class="meta">原书 3.4 节 · 第 46–48 页</span></div>
+  <div class="sec-lede">
+    <p>有了定理 3.2，收缩映射定理直接给出<strong>定理 3.3</strong>：BOE 的解 v* <strong>总是存在</strong>、<strong>唯一</strong>，可以用 v<sub>k+1</sub> = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>) 从任意初值迭代求出，并且指数快速收敛。这个迭代算法有专门的名字：<strong>值迭代</strong>，第 4 章会细讲。</p>
+    <p>求出 v* 后，取 π* = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v*)，代回去得 v* = r<sub>π*</sub> + γP<sub>π*</sub>v*——所以 v* 就是 π* 的状态值，<strong>BOE 是一个特殊的贝尔曼方程</strong>，对应的策略是 π*。<strong>定理 3.4</strong> 说它确实最优：对任意 π 有 v* ≥ v<sub>π</sub>。证明只要一行：v* − v<sub>π</sub> ≥ γP<sub>π</sub>(v* − v<sub>π</sub>) ≥ … ≥ γ<sup>n</sup>P<sub>π</sub><sup>n</sup>(v* − v<sub>π</sub>) → 0。</p>
+    <p><strong>定理 3.5</strong>：确定性的贪心策略 π*(a|s) = 1（当 a = argmax<sub>a</sub> q*(s, a)）就是最优策略。于是四个问题都有了答案：最优策略<strong>存在</strong>；最优状态值唯一，但最优策略<strong>不一定唯一</strong>（几个动作的 q* 一样大时任选，或按任意比例混合）；最优策略可以是随机的，但<strong>一定存在确定性的</strong>最优策略；求法就是值迭代。</p>
+    <p class="go">下面是原书基准设置（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = 1）的 v* 和 π*。打开“显示并列”，看哪些格子有不止一个最优动作。点格子查看它的 q*。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">最优状态值与最优策略（原书图 3.4a 的设置）</p>
+    <div class="selrow"><span>箭头</span><div class="seg" id="svT"><button data-v="0" aria-pressed="true">一个贪心最优策略</button><button data-v="1">显示所有并列最优动作</button></div></div>
+    <div class="lab-split">
+      <div><div id="svG"></div><div id="svL"></div></div>
+      <div><div id="svB"></div><p class="cap" id="svW"></p></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：贝尔曼方程 vs 贝尔曼最优方程</h4>
+    <p><b>贝尔曼方程</b> v = r<sub>π</sub> + γP<sub>π</sub>v：策略给定，线性方程，解出来是这个策略的状态值（策略评估）。<b>贝尔曼最优方程</b> v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v)：策略也是未知数，非线性，解出来是最优状态值和最优策略。</p>
+    <p><b>联系</b>：BOE 是 π = π* 时的贝尔曼方程。两者右端都是收缩映射（收缩系数都是 γ），所以都能从任意初值迭代求解。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：最优状态值唯一，最优策略不唯一</h4>
+    <p><b>v*</b>：BOE 的解，唯一。<b>π*</b>：所有在 v* 下取到 max 的策略都最优；并列时可任选、可混合，所以可以有多个甚至无穷多个，但一定有一个是确定性的贪心策略。</p>
+  </div>
+  <div class="notes" id="n-solve"></div>
+</section>
+
+<section class="part" id="factors">
+  <div class="part-head"><h2>什么会改变最优策略</h2><span class="meta">原书 3.5 节 · 第 49–53 页</span></div>
+  <div class="sec-lede">
+    <p>看 BOE 的式子，最优策略只由三样东西决定：即时奖励 r、折扣率 γ、模型 p。模型是环境给定的，能调的只有 r 和 γ。原书图 3.4 做了四组对照。<strong>基准</strong>（γ = 0.9，r<sub>forbidden</sub> = −1）：从 (4,1) 出发的智能体不怕穿过禁区，因为绕远路的累计回报更低——γ 大，它是<strong>远视</strong>的。<strong>γ = 0.5</strong>：不敢冒险了，宁可绕远路避开所有禁区。<strong>γ = 0</strong>：极度短视，只看即时奖励，大部分格子根本到不了目标。<strong>r<sub>forbidden</sub> = −10</strong>：加重惩罚，最优策略就绕开所有禁区。另外所有例子里离目标越近值越大，原因还是折扣：路越长，奖励被折扣得越多。</p>
+    <p>但改奖励不一定改策略。<strong>定理 3.6</strong>：把所有奖励做仿射变换 r → αr + β（α &gt; 0），最优状态值变成 v′ = αv* + β/(1 − γ)·𝟙，最优策略<strong>不变</strong>。原因是所有动作值整体缩放、整体平移，相对大小不变。</p>
+    <p>一个常见误解由此澄清：为了让智能体“尽快”到达目标，要不要给每一步加一个 −1？<strong>不需要</strong>。第一，给每步加 −1 是仿射变换（β = −1），最优策略不变。第二，折扣率本身就在惩罚绕路：原书图 3.5 里，s<sub>2</sub> 直接向下到目标的回报是 1/(1 − γ) = 10，先绕一圈再到目标的回报是 γ<sup>2</sup>/(1 − γ) = 8.1。路越长，正奖励来得越晚，被折扣得越多。</p>
+    <p class="go">拖动参数，实时重算 v* 与 π*。可以先点四个按钮复现原书图 3.4，再试试 α、β：值整体变了，箭头却一个都不动。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">最优策略实验台（每次拖动都重新解 BOE）</p>
+    <div class="btnrow" id="fcP"><button class="btn" type="button" data-p="a">图 3.4(a) 基准</button><button class="btn" type="button" data-p="b">(b) γ = 0.5</button><button class="btn" type="button" data-p="c">(c) γ = 0</button><button class="btn" type="button" data-p="d">(d) r<sub>forbidden</sub> = −10</button></div>
+    <div class="lab-split">
+      <div><div id="fcG"></div></div>
+      <div>
+        <div class="ctl-grid">
+          <label class="ctl"><span>γ <output id="fgV">0.90</output></span><input type="range" id="fg" min="0" max="0.99" step="0.01" value="0.9"></label>
+          <label class="ctl"><span>r<sub>forbidden</sub> <output id="ffV">-1</output></span><input type="range" id="ff" min="-12" max="1" step="1" value="-1"></label>
+          <label class="ctl"><span>r<sub>target</sub> <output id="ftV">1</output></span><input type="range" id="ft" min="-1" max="3" step="0.5" value="1"></label>
+          <label class="ctl"><span>r<sub>boundary</sub> <output id="fbV">-1</output></span><input type="range" id="fb" min="-5" max="1" step="1" value="-1"></label>
+          <label class="ctl"><span>仿射：缩放 α <output id="faV">1.0</output></span><input type="range" id="fa" min="0.5" max="3" step="0.5" value="1"></label>
+          <label class="ctl"><span>仿射：平移 β <output id="fbeV">0</output></span><input type="range" id="fbe" min="-2" max="2" step="0.5" value="0"></label>
+        </div>
+        <p class="cap" id="fcW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">先估再算：原书图 3.5 的绕路回报</p><div id="dtG"></div></div>
+    <div class="lab"><p class="lab-t">判断</p><div id="fcQ"></div></div>
+  </div>
+  <div class="notes" id="n-factors"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">最优策略：对所有 s 和任意 π，v<sub>π*</sub>(s) ≥ v<sub>π</sub>(s)</div>
+    <div class="fx">BOE：v(s) = max<sub>π(s)</sub> Σ<sub>a</sub> π(a|s) q(s, a) = max<sub>a</sub> q(s, a)；矩阵形式 v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v) = f(v)</div>
+    <div class="fx">收缩映射：‖f(x<sub>1</sub>) − f(x<sub>2</sub>)‖ ≤ γ‖x<sub>1</sub> − x<sub>2</sub>‖ ⇒ 不动点存在、唯一，x<sub>k+1</sub> = f(x<sub>k</sub>) 指数收敛</div>
+    <div class="fx">误差界：‖x* − x<sub>n</sub>‖ ≤ γ<sup>n</sup>/(1 − γ) · ‖x<sub>1</sub> − x<sub>0</sub>‖</div>
+    <div class="fx">BOE 右端收缩：‖f(v<sub>1</sub>) − f(v<sub>2</sub>)‖<sub>∞</sub> ≤ γ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub></div>
+    <div class="fx">贪心最优策略：π*(a|s) = 1 当 a = argmax<sub>a</sub> q*(s, a)，q*(s, a) = Σ<sub>r</sub> p(r|s,a)r + γΣ<sub>s′</sub> p(s′|s,a)v*(s′)</div>
+    <div class="fx">仿射不变：r → αr + β（α &gt; 0）⇒ v′ = αv* + β/(1 − γ)·𝟙，π* 不变</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>为什么选动作值最大的动作能改进策略？最优策略怎么定义？
+      <details><summary>先自己答，再点开</summary><p class="ans">在 v<sub>π</sub> 下选 argmax q 得到的新策略满足 r<sub>π′</sub> + γP<sub>π′</sub>v<sub>π</sub> ≥ v<sub>π</sub>，展开可证 v<sub>π′</sub> ≥ v<sub>π</sub>（第 4 章引理 4.1）。最优策略是在每个状态上状态值都不小于任何其他策略的策略。</p></details></li>
+    <li>BOE 两个未知数怎么解？收缩映射定理保证什么？
+      <details><summary>先自己答，再点开</summary><p class="ans">先解右端的 max：最优的 π 把概率 1 给 argmax<sub>a</sub> q(s, a)，方程化为 v = f(v)。f 是系数为 γ 的收缩映射，所以解存在、唯一、能从任意初值迭代指数收敛（值迭代）；解 v* 是最优状态值，对应的贪心策略最优。</p></details></li>
+    <li>什么改变最优策略？每步加 −1 有用吗？
+      <details><summary>先自己答，再点开</summary><p class="ans">γ 和奖励的相对大小（模型固定）。γ 小则短视、避险，γ 大则远视、敢冒险；加重禁区惩罚会绕开禁区。每步加 −1 是仿射变换，最优策略不变；而且折扣本身就会惩罚绕路。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 改进策略：2×2 ---------- */
+var E22 = RL.env({ rows: 2, cols: 2, forbid: [[0, 1]], target: [[1, 1]] });
+var imA = 1;
+var imDraw = RL.grid($('#imG'), E22, { cell: 86 });
+RL.ANAME.forEach(function (nm, a) {
+  var b = h('button', { class: 'btn', type: 'button', text: 's1 选 ' + RL.AN[a] + ' ' + nm }, $('#imA'));
+  b.addEventListener('click', function () { imA = a; im(); });
+});
+function im() {
+  var pi = RL.det([imA, 2, 1, 4]), v = RL.evalExact(E22, pi), q = RL.qFromV(E22, v)[0];
+  imDraw({ v: v, pi: pi, hl: { 0: 'on' } });
+  S.$$('#imA button').forEach(function (b, k) { b.classList.toggle('pri', k === imA); });
+  var mx = Math.max.apply(null, q), best = RL.argmax(q);
+  S.bars($('#imB'), q.map(function (x, a) { return { label: 'q(s1, a' + (a + 1) + ' ' + RL.AN[a] + ')', value: (x - 5) / (mx - 5 + 1e-9), text: S.f(x, 2), cls: a === best ? 'ok' : a === imA ? '' : 'dim' }; }));
+  $('#imB').classList.add('wide');
+  $('#imW').innerHTML = '当前 v<sub>π</sub>(s1) = <b>' + S.f(v[0], 2) + '</b>。' + (imA === best ? '这已经是动作值最大的动作，策略在 s1 上不能再改进了。' : '动作值最大的是 ' + RL.AN[best] + '（' + S.f(q[best], 2) + '）。把 s1 改成它，v<sub>π</sub>(s1) 至少会升到 ' + S.f(q[best], 2) + '。') + '条形长度从 5 起算，便于比较。';
+}
+im();
+RL.check($('#imC'), { q: '在原书图 3.2 的策略下（s<sub>1</sub> 向右，γ = 0.9，v<sub>π</sub>(s<sub>1</sub>) = 8，其余为 10），q<sub>π</sub>(s<sub>1</sub>, a<sub>5</sub>)（原地不动）= ？', ans: 7.2, d: 1, why: '原地不动：即时奖励 0，下一状态还是 s<sub>1</sub>，之后按 π 走，所以 q = 0 + γv<sub>π</sub>(s<sub>1</sub>) = 0.9 × 8 = <b>7.2</b>。别忘了“之后按 π 走”——s<sub>1</sub> 的值用的是旧策略的 8。' });
+S.notes($('#n-improve'), {
+  c: [
+    ['策略改进的思路', '先评估当前策略，再在每个状态选动作值最大的动作。'],
+    ['为什么需要动作值', '比较“现在换一个动作、之后照旧”的后果。'],
+    ['本章要回答的', '到处都不好时还能改进吗？最优策略存在吗？']
+  ],
+  p: [
+    ['图 3.2 的状态值', 'v(s<sub>2</sub>) = v(s<sub>3</sub>) = v(s<sub>4</sub>) = 10，v(s<sub>1</sub>) = 8'],
+    ['s<sub>1</sub> 的动作值', '6.2、8、9、6.2、7.2，向下最大'],
+    ['改进规则', 'π<sub>new</sub>(s) = argmax<sub>a</sub> q<sub>π</sub>(s, a)']
+  ]
+});
+
+/* ---------- 凸组合 ---------- */
+function cw() {
+  var c = [1, 2, 3].map(function (i) { return +$('#cw' + i).value; }), s = c[0] + c[1] + c[2] || 1;
+  c = c.map(function (x) { return x / s; });
+  [1, 2, 3].forEach(function (i) { $('#cw' + i + 'v').textContent = S.f(c[i - 1], 2); });
+  var q = [8, 9, 7.2], val = c[0] * q[0] + c[1] * q[1] + c[2] * q[2];
+  S.bars($('#cwB'), [{ label: 'Σc<sub>i</sub>q<sub>i</sub>', value: (val - 7) / 2.2, text: S.f(val, 3), cls: '' }, { label: 'max q<sub>i</sub>', value: (9 - 7) / 2.2, text: '9.000', cls: 'ok' }]);
+  S.$$('#cwB .lb').forEach(function (e) { e.innerHTML = e.textContent; });
+  $('#cwW').innerHTML = val > 8.999 ? '<b>取到等号</b>：全部权重放在最大的 q 上。这就是“贪心”：BOE 右端的 max 总能由一个确定性策略取到。' : '还差 ' + S.f(9 - val, 3) + '。任何凸组合都不超过最大值：Σc<sub>i</sub>q<sub>i</sub> ≤ Σc<sub>i</sub> max q = max q。把 c<sub>2</sub> 拖到 1、其余拖到 0 试试。';
+}
+[1, 2, 3].forEach(function (i) { $('#cw' + i).addEventListener('input', cw); }); cw();
+S.notes($('#n-boe'), {
+  c: [
+    ['最优策略', '在每个状态上状态值都不小于任何其他策略。'],
+    ['最优状态值', '最优策略的状态值。'],
+    ['BOE', '贝尔曼方程右端套一个对策略的 max；v 和 π 都是未知数。'],
+    ['先解 max', '例 3.1：先对内层变量取最优，再解剩下的方程。'],
+    ['凸组合 ≤ 最大值', '例 3.2：Σc<sub>i</sub>q<sub>i</sub> 在全部权重给最大 q 时取最大。']
+  ],
+  p: [
+    ['逐元素 BOE', 'v(s) = max<sub>π(s)</sub> Σ<sub>a</sub> π(a|s) q(s, a) = max<sub>a</sub> q(s, a)'],
+    ['矩阵形式', 'v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v) ≐ f(v)'],
+    ['例 3.1', 'x = max<sub>y</sub>(2x − 1 − y<sup>2</sup>) ⇒ y = 0，x = 1'],
+    ['四个问题', '存在性、唯一性、随机还是确定、怎么求']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 蛛网图 ---------- */
+var CBF = {
+  a: { f: function (x) { return 0.5 * x; }, n: '0.5x', fp: 0, txt: '收缩系数 0.5，不动点 x* = 0。' },
+  b: { f: function (x) { return 0.5 * Math.sin(x); }, n: '0.5 sin x', fp: 0, txt: '由中值定理 |f′| ≤ 0.5，是收缩映射，不动点 x* = 0。' },
+  c: { f: function (x) { return 0.5 * x + 1; }, n: '0.5x + 1', fp: 2, txt: '加常数不改变收缩性，不动点移到 x* = 2。' },
+  d: { f: function (x) { return 1.3 * x; }, n: '1.3x', fp: 0, txt: '|f′| = 1.3 &gt; 1，不是收缩映射。0 仍然是不动点，但迭代会远离它——只要起点不是恰好 0。' }
+};
+var cbK = 'a';
+var cbChart = S.chart($('#cbC'), { h: 300, x: [-4, 4], y: [-4, 4], xt: [-4, -2, 0, 2, 4], yt: [-4, -2, 0, 2, 4], xl: 'x' });
+function cb() {
+  var F = CBF[cbK], x0 = +$('#cbX').value; $('#cbXv').textContent = S.f(x0, 1);
+  var pts = [[x0, -4.2]], x = x0, seq = [x0];
+  pts = [[x0, x0]];
+  for (var k = 0; k < 14; k++) { var y = F.f(x); pts.push([x, y]); pts.push([y, y]); x = y; seq.push(x); if (Math.abs(x) > 20) break; }
+  cbChart({ curves: [{ f: function (t) { return t; }, c: 'dim', dash: 1, label: 'y = x' }, { f: F.f, c: 'c1', w: 3, label: 'y = ' + F.n }, { pts: pts, c: 'c2', w: 2, label: '迭代路径' }], dots: [{ x: x0, y: x0, c: 'c2' }, { x: F.fp, y: F.fp, c: 'ok', label: '不动点' }] });
+  $('#cbW').innerHTML = F.txt + ' x<sub>0</sub> = ' + S.f(x0, 1) + ' → ' + seq.slice(1, 6).map(function (v) { return S.f(v, 3); }).join(' → ') + ' → …' + (cbK !== 'd' ? '　任何起点都走向同一个点，这就是“存在、唯一、任意初值都收敛”。' : '');
+}
+S.seg($('#cbF'), function (v) { cbK = v; cb(); });
+$('#cbX').addEventListener('input', cb); cb();
+
+/* ---------- 网格上的收缩 ---------- */
+var ctChart = S.chart($('#ctC'), { h: 260, x: [0, 40], y: [-4, 2], xt: [0, 10, 20, 30, 40], yt: [-4, -3, -2, -1, 0, 1, 2], xl: '迭代次数 k', yl: 'log₁₀ ‖v_k − v′_k‖∞' });
+function ct() {
+  var g = +$('#ctG').value; $('#ctGv').textContent = S.f(g, 2);
+  var E = RL.book5({ gamma: g }), va = new Array(25).fill(0), r = S.rng(3), vb = va.map(function () { return 60 * (r() - 0.5); });
+  var pts = [], d0 = RL.maxAbs(va, vb), ratios = [];
+  for (var k = 0; k <= 40; k++) {
+    var d = RL.maxAbs(va, vb); pts.push([k, Math.log10(Math.max(1e-4, d))]);
+    var na = RL.qFromV(E, va).map(function (q) { return Math.max.apply(null, q); }), nb = RL.qFromV(E, vb).map(function (q) { return Math.max.apply(null, q); });
+    var d2 = RL.maxAbs(na, nb); if (d > 1e-9) ratios.push(d2 / d);
+    va = na; vb = nb;
+  }
+  ctChart({ curves: [{ pts: pts, c: 'c1', label: '两条迭代的距离' }, { f: function (x) { return Math.log10(d0) + x * Math.log10(g); }, c: 'dim', dash: 1, label: 'γ^k × 初始距离' }] });
+  $('#ctW').innerHTML = '一条从 v = 0 出发，一条从 [−30, 30] 里的随机值出发。每迭代一次，距离缩小的比例最大是 <b>' + S.f(Math.max.apply(null, ratios), 3) + '</b> ≤ γ = ' + S.f(g, 2) + '（定理 3.2）。实际曲线贴着或低于虚线：γ 是上界。两条轨迹最终重合到同一个 v*。';
+}
+$('#ctG').addEventListener('input', ct); ct();
+S.notes($('#n-contract'), {
+  c: [
+    ['不动点', 'f(x*) = x*。'],
+    ['收缩映射', '把任意两点的距离至少缩小到 γ 倍（γ &lt; 1）。'],
+    ['收缩映射定理', '不动点存在、唯一，迭代从任意初值指数收敛。'],
+    ['柯西序列', '后面的元素彼此任意接近；仅相邻差 → 0 不够（√n 反例）。'],
+    ['定理 3.2', 'BOE 右端在最大范数下是收缩映射，系数就是 γ。']
+  ],
+  p: [
+    ['定义', '‖f(x<sub>1</sub>) − f(x<sub>2</sub>)‖ ≤ γ‖x<sub>1</sub> − x<sub>2</sub>‖'],
+    ['相邻差', '‖x<sub>k+1</sub> − x<sub>k</sub>‖ ≤ γ<sup>k</sup>‖x<sub>1</sub> − x<sub>0</sub>‖'],
+    ['误差界', '‖x* − x<sub>n</sub>‖ ≤ γ<sup>n</sup>/(1 − γ)·‖x<sub>1</sub> − x<sub>0</sub>‖'],
+    ['BOE 收缩', '‖f(v<sub>1</sub>) − f(v<sub>2</sub>)‖<sub>∞</sub> ≤ γ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub>'],
+    ['证明关键', 'P 的每行非负、和为 1 ⇒ |p<sup>T</sup>(v<sub>1</sub> − v<sub>2</sub>)| ≤ ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub>']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 解出最优策略 ---------- */
+var E5 = RL.book5({ gamma: 0.9 }), vS = RL.vStar(E5), qS = RL.qFromV(E5, vS), svTie = false, svS = 15;
+var svDraw = RL.grid($('#svG'), E5, { cell: 76, labels: true, onCell: function (s) { svS = s; sv(); } });
+RL.legend($('#svL'));
+function sv() {
+  var pi = svTie ? RL.ties(qS) : RL.greedy(qS), hl = {}; hl[svS] = 'on';
+  svDraw({ v: vS, pi: pi, hl: hl });
+  var q = qS[svS], mx = Math.max.apply(null, q), mn = Math.min.apply(null, q);
+  S.bars($('#svB'), q.map(function (x, a) { return { label: 'q*' + E5.label(svS) + ', ' + RL.AN[a], value: (x - mn + 0.3) / (mx - mn + 0.3), text: S.f(x, 2), cls: x > mx - 1e-6 ? 'ok' : 'dim' }; }));
+  $('#svB').classList.add('wide');
+  var nt = q.filter(function (x) { return x > mx - 1e-6; }).length;
+  var nTie = qS.filter(function (row) { var m = Math.max.apply(null, row); return row.filter(function (x) { return x > m - 1e-6; }).length > 1; }).length;
+  $('#svW').innerHTML = '格子 ' + E5.label(svS) + '：v*(s) = max<sub>a</sub> q*(s, a) = <b>' + S.f(mx, 2) + '</b>' + (nt > 1 ? '，有 <b>' + nt + '</b> 个动作并列最优——这里选哪个、怎么混合都最优。' : '，最优动作唯一。') + ' 全网格共有 ' + nTie + ' 个格子存在并列，所以最优策略不唯一；但 v* 只有一个。注意 (4,1) 向右穿过禁区 (4,2)：γ = 0.9 时这比绕远路划算（原书图 3.4a 的现象）。';
+}
+S.seg($('#svT'), function (v) { svTie = v === '1'; sv(); });
+sv();
+S.notes($('#n-solve'), {
+  c: [
+    ['定理 3.3', 'BOE 的解 v* 存在、唯一，值迭代从任意初值指数收敛到它。'],
+    ['定理 3.4', 'v* 就是最优状态值，对应的 π* 是最优策略。'],
+    ['定理 3.5', '确定性的贪心策略（选 argmax q*）是最优策略。'],
+    ['BOE 是特殊的贝尔曼方程', 'v* = r<sub>π*</sub> + γP<sub>π*</sub>v*。'],
+    ['不唯一', 'v* 唯一；π* 可以不唯一，可以随机，但总有确定性的。']
+  ],
+  p: [
+    ['值迭代', 'v<sub>k+1</sub> = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)'],
+    ['取出策略', 'π* = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v*)'],
+    ['最优性证明', 'v* − v<sub>π</sub> ≥ γ<sup>n</sup>P<sub>π</sub><sup>n</sup>(v* − v<sub>π</sub>) → 0'],
+    ['原书适用范围', '“逐状态比较”的最优定义只适用于表格情形；函数近似时要换标量指标（第 8、9 章）']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 影响因素 ---------- */
+var fcRef = null;
+var fcDraw = RL.grid($('#fcG'), E5, { cell: 76, labels: true });
+function fc() {
+  var g = +$('#fg').value, rf = +$('#ff').value, rt = +$('#ft').value, rb = +$('#fb').value, al = +$('#fa').value, be = +$('#fbe').value;
+  $('#fgV').textContent = S.f(g, 2); $('#ffV').textContent = rf; $('#ftV').textContent = S.f(rt, 1); $('#fbV').textContent = rb; $('#faV').textContent = S.f(al, 1); $('#fbeV').textContent = S.f(be, 1);
+  var E = RL.book5({ gamma: g, rf: al * rf + be, rt: al * rt + be, rb: al * rb + be, ro: be });
+  var v = RL.vStar(E), q = RL.qFromV(E, v), pi = RL.greedy(q);
+  fcDraw({ v: v, pi: pi });
+  var base = RL.book5({ gamma: g, rf: rf, rt: rt, rb: rb, ro: 0 }), v0 = RL.vStar(base), pi0 = RL.greedy(RL.qFromV(base, v0));
+  var same = pi.every(function (p, s) { return p.indexOf(Math.max.apply(null, p)) === pi0[s].indexOf(Math.max.apply(null, pi0[s])); });
+  var pred = v0.map(function (x) { return al * x + be / (1 - g); });
+  var txt = '';
+  if (al !== 1 || be !== 0) txt += '仿射变换 r → ' + S.f(al, 1) + 'r ' + (be >= 0 ? '+ ' : '− ') + S.f(Math.abs(be), 1) + '：每一格 v′ 与 αv* + β/(1 − γ) 的最大差 = <b>' + S.f(RL.maxAbs(v, pred), 4) + '</b>，箭头' + (same ? '<b>完全不变</b>（定理 3.6）。' : '有变化——只发生在并列动作之间的取舍上。') + ' ';
+  var nf = 0; for (var s = 0; s < 25; s++) { var a = pi[s].indexOf(Math.max.apply(null, pi[s])); var m = E.move(s, a); if (E.type[m[0]] === 'f' && E.type[s] !== 'f') nf++; }
+  txt += g < 0.05 ? 'γ ≈ 0：只看即时奖励。只有目标和紧挨目标的格子有正值，其余格子根本不往目标走。' : nf ? '有 ' + nf + ' 个格子的最优动作会走进禁区：抄近路的总回报更高。' : '没有任何格子主动走进禁区。';
+  $('#fcW').innerHTML = txt;
+}
+['fg', 'ff', 'ft', 'fb', 'fa', 'fbe'].forEach(function (id) { $('#' + id).addEventListener('input', fc); });
+var FCP = { a: [0.9, -1], b: [0.5, -1], c: [0, -1], d: [0.9, -10] };
+S.$$('#fcP button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var p = FCP[b.getAttribute('data-p')];
+    $('#fg').value = p[0]; $('#ff').value = p[1]; $('#ft').value = 1; $('#fb').value = -1; $('#fa').value = 1; $('#fbe').value = 0; fc();
+  });
+});
+fc();
+S.guess($('#dtG'), { q: '原书图 3.5：s<sub>2</sub> 先向左绕一圈（s<sub>2</sub> → s<sub>1</sub> → s<sub>3</sub> → s<sub>4</sub>）再到目标，之后停在目标。γ = 0.9 时这条轨迹的折扣回报是多少？（直接向下是 10）', ans: 8.1, fmt: function (x) { return S.f(x, 2); }, why: '0 + γ·0 + γ²·1 + γ³·1 + … = γ²/(1 − γ) = 0.81/0.1 = 8.1 &lt; 10。绕路时没有任何负奖励，但正奖励推迟了两步，被多折扣了两次——折扣率本身就让最优策略不绕路。' });
+S.quiz($('#fcQ'), [
+  { q: '把每一步都加一个 −1 的奖励（包括到目标），最优策略会变“更急”吗？', o: ['会', '不会'], a: 1, why: '所有奖励加同一个常数是 β = −1 的仿射变换，最优策略不变；而且折扣本身已经在惩罚绕路。' },
+  { q: '把 γ 从 0.9 调到 0.5，智能体会？', o: ['更敢穿过禁区', '更倾向绕开禁区'], a: 1, why: 'γ 小 → 短视，眼前的 −1 显得更重，远处的 +1 被折扣得更狠，于是宁可绕远路。原书图 3.4(b)。' },
+  { q: '把所有奖励乘 2，最优状态值？', o: ['不变', '变成 2 倍', '加 2/(1 − γ)'], a: 1, why: 'v′ = αv* + β/(1 − γ)，α = 2、β = 0，所以整体翻倍，策略不变。' }
+]);
+S.notes($('#n-factors'), {
+  c: [
+    ['三个决定因素', '即时奖励 r、折扣率 γ、模型 p；后者是环境给定的。'],
+    ['γ 的影响', '大则远视、敢为长期收益冒险；小则短视、避险；0 则只看一步。'],
+    ['奖励大小', '加重禁区惩罚，最优策略就绕开禁区。'],
+    ['仿射不变', '所有奖励缩放 α &gt; 0 再平移 β，最优策略不变。'],
+    ['不绕路的原因', '折扣率：正奖励来得越晚，被折扣得越多。']
+  ],
+  p: [
+    ['定理 3.6', 'v′ = αv* + β/(1 − γ)·𝟙'],
+    ['图 3.5', '直接到达 1/(1 − γ) = 10；绕路 γ²/(1 − γ) = 8.1'],
+    ['误解', '“每步加 −1 才能走最短路”——不需要，也没用'],
+    ['值的空间分布', '离目标越近值越大，同样来自折扣']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 改进与最优', '选 argmax q<sub>π</sub> 得到不差的新策略；最优策略在每个状态上都不输给任何策略。'],
+    ['② 解 BOE', '先解 max（贪心），再解 v = f(v)；f 是 γ-收缩，解存在唯一、迭代可得，即最优值和最优策略。'],
+    ['③ 影响因素', 'γ 与奖励的相对大小决定最优策略；仿射变换不改变策略，折扣本身就惩罚绕路。']
+  ],
+  p: [
+    ['下一篇', '把“迭代解 BOE”变成具体算法：值迭代、策略迭代和截断策略迭代。'],
+    ['原书一句话', '强化学习的终极目标是得到最优策略，而贝尔曼最优方程可以用来得到最优策略。']
+  ],
+  ph: '一句话'
+});

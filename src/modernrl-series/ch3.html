@@ -1,0 +1,321 @@
+---
+title: 策略梯度与 Actor-Critic：直接学策略、基线降方差、Critic 每步给信号
+desc: 动手学现代强化学习笔记（三）：DQN 的 argmax 在连续动作和大词表上的困难；策略梯度定理与对数导数技巧；REINFORCE 的高方差和基线；优势函数 A = Q − V；Actor-Critic 一步更新的完整数值；高斯策略如何处理连续动作；A2C 与 PPO 在双足行走上的对比。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 03</span><span>对应原教程第 6–7 章（docs/chapter08_policy_gradient、chapter09_actor_critic）</span><span>约 40 分钟</span>
+h1: 不再给动作打分，<em>直接学怎么选</em>
+lead: DQN 是“美食评论家”：先给每道菜打分，再挑最高分。策略梯度是“厨师”：直接学在什么场合做什么菜。原教程用这个类比引出第二条路线——参数化策略 π_θ(a|s)，沿着期望回报的梯度往上走。它天然能处理连续动作、天然带探索，但代价是方差大、只能用新鲜数据。这一篇从 REINFORCE 走到 Actor-Critic：用基线减方差，再让 Critic 每一步给一个“比预期好多少”的信号。
+nav: why|为什么直接学策略;pg|策略梯度与基线;ac|Actor-Critic;cont|连续动作;back|回扣三问
+---
+<style>
+.part-head .meta { overflow-wrap: anywhere; }
+main sub, main sup { font-size: 15px; line-height: 0; }
+.fan svg { display: block; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>什么情况下 argmax Q 走不通？策略网络怎样同时处理离散和连续动作？</li>
+    <li>REINFORCE 的梯度长什么样？为什么减去一个基线不改变期望却能降方差？</li>
+    <li>Actor-Critic 的 TD 误差 δ 同时被谁用、怎么用？它比 REINFORCE 好在哪、又付出了什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>argmax 走不通的地方</h2><span class="meta">原文 docs/chapter08_policy_gradient/pg-necessity.md、reinforce.md</span></div>
+  <div class="sec-lede">
+    <p>DQN 的策略藏在 argmax 里：给每个动作算 Q，挑最大的。动作有限且不多时这没问题，2 个、4 个、1000 个都只是多比较几次。真正的分水岭是<strong>连续动作</strong>：机械臂 6 个关节、每个关节力矩是 [−10, 10] 里的任意实数，动作有无穷多个。原文算了一笔账：就算每个关节只离散成 100 档，也有 100⁶ = 10¹² 个动作，每次前向 1 微秒，<strong>选一个动作要 11.6 天</strong>；策略网络一次前向直接输出动作，约 1 毫秒。</p>
+    <p>大模型生成是另一种情形：5 万个 token 取 argmax 并不难，难在质量——贪心解码会反复输出同一个高频字，而从分布里采样恰好是流畅生成需要的随机性。策略网络天然输出分布：离散动作用 softmax，连续动作输出高斯分布的均值和标准差。</p>
+    <p>两条路线的差异原文列成了表：value-based 学 Q、argmax 选、确定性、仅离散、靠外加 ε-贪心探索、off-policy 可复用旧数据、方差低；policy-based 学 π、采样选、随机性、离散连续都行、探索内建、on-policy 只能用新数据、方差高。原文特别指出探索方式的差别：ε-贪心对所有状态“一视同仁”地随机；策略分布会在两个动作差不多好时自然多探索，在优劣分明时自然少探索。</p>
+    <p class="go">拖动两个动作的价值差，比较 ε-贪心和 softmax 策略给出的选择概率。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">同一个状态，两种选动作方式</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>Q(s,a₁) − Q(s,a₂) <output id="exD">0.2</output></span><input type="range" id="exDs" min="0" max="3" step="0.1" value="0.2"></label>
+        <label class="ctl"><span>ε <output id="exE">0.1</output></span><input type="range" id="exEs" min="0" max="0.5" step="0.05" value="0.1"></label>
+        <label class="ctl"><span>softmax 温度 T <output id="exT">1.0</output></span><input type="range" id="exTs" min="0.2" max="3" step="0.1" value="1"></label>
+      </div>
+      <div id="exB"></div>
+      <p class="cap" id="exW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">先估再算</p><div id="gsT"></div></div>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th></th><th>Value-based（DQN）</th><th>Policy-based（策略梯度）</th></tr></thead>
+    <tbody>
+      <tr><td>学什么</td><td>Q(s,a)：每个动作值多少分</td><td>π_θ(a|s)：每个动作该以多大概率做</td></tr>
+      <tr><td>怎么选动作</td><td>argmax（比较）</td><td>从分布中采样</td></tr>
+      <tr><td>动作空间</td><td>仅离散</td><td>离散（softmax）+ 连续（高斯）</td></tr>
+      <tr><td>探索</td><td>外加 ε-贪心，与状态无关</td><td>内建，概率分布自适应</td></tr>
+      <tr><td>数据利用</td><td>off-policy，回放池复用</td><td>on-policy，必须用当前策略的新数据</td></tr>
+      <tr><td>方差</td><td>低（TD 目标较稳）</td><td>高（蒙特卡洛回报波动大）</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 pg-necessity.md“两条路线的差异”表。</p>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="pg">
+  <div class="part-head"><h2>策略梯度定理、REINFORCE 与基线</h2><span class="meta">原文 reinforce.md（6.1）、pg-improvements.md（6.2）</span></div>
+  <div class="sec-lede">
+    <p>目标是最大化期望折扣回报 J(θ) = 𝔼<sub>π_θ</sub>[Σγ<sup>t</sup>r<sub>t</sub>]，沿梯度上升。期望里有无数条轨迹，没法直接求导；Williams（1992）给出的<strong>策略梯度定理</strong>把它变成可采样的形式：∇J = 𝔼[Σ<sub>t</sub> ∇log π_θ(a<sub>t</sub>|s<sub>t</sub>) · G<sub>t</sub>]。一句话：<strong>结果好（G 大）就提高这个动作的概率，结果差就降低</strong>。推导里最妙的一步是环境转移概率求导时被消掉——策略梯度不需要知道环境模型。（完整推导见<a href="../2026-10-19-rlmath-9/">《数学原理》09</a>。）</p>
+    <p>为什么是 log？∇log π = ∇π/π，“除以 π”把绝对变化换成相对变化。原文的数字：把 0.7 提到 0.71 和把 0.05 提到 0.06，概率梯度都是 0.01，但对数梯度分别是 0.014 和 0.2，相差 14 倍——低概率动作每次被选中时得到的更新更大。用蒙特卡洛估计这个期望（跑完整回合、算每步之后的回报 G<sub>t</sub>、loss = −log_prob × G）就是 <strong>REINFORCE</strong>。</p>
+    <p>它的通病是<strong>方差大</strong>：G<sub>t</sub> 包含了后面每一步的运气，同一个好动作可能因为后来运气差而被冷落。解法是减去一个只依赖状态的<strong>基线</strong> b(s)：因为 𝔼<sub>a~π</sub>[∇log π(a|s)] = ∇Σπ = ∇1 = 0，减去它不改变梯度期望，只改变方差。最自然的基线是 V(s)，于是更新信号从“这趟拿了多少分”变成“比平时好了多少”——这就是<strong>优势</strong> A = Q − V，在 REINFORCE 里估计为 G<sub>t</sub> − V(s<sub>t</sub>)。原文的 CartPole 例子：平时能撑 100 步，这次撑了 50 步，没有基线时 G = 50 仍是正的、照样被鼓励；减去基线后是 −50，被正确地惩罚。</p>
+    <p class="go">在原文的两臂老虎机上（A 赢率 30%，B 赢率 70%）跑 20 次 REINFORCE，看每一次 P(选 B) 的轨迹有多散。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">REINFORCE：20 次独立运行的 P(选 B)（奖励 1 或 0，示意）</p>
+    <div class="ctrls">
+      <div class="seg" id="rfB"><button data-v="0" aria-pressed="true">不减基线</button><button data-v="1">减去基线（回报的滑动平均）</button></div>
+    </div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>学习率 α <output id="rfL">0.10</output></span><input type="range" id="rfLs" min="0.02" max="0.5" step="0.02" value="0.1"></label>
+    </div>
+    <div class="fan" id="rfC"></div>
+    <div class="read"><div><div class="v" id="rfM">–</div><div class="k">300 步后 P(B) 的平均</div></div><div><div class="v" id="rfS">–</div><div class="k">20 次之间的标准差</div></div><div class="warn"><div class="v" id="rfW2">–</div><div class="k">锁死在 A 上的次数（P(B) &lt; 0.2）</div></div></div>
+    <p class="cap" id="rfW"></p>
+  </div>
+  <div class="card2 algo" data-algo="REINFORCE">
+    <h3>算法卡 · REINFORCE（带基线）</h3><p class="en">Williams, 1992</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>直接优化参数化策略，绕开 argmax，离散 / 连续动作通用，不需要环境模型。</dd>
+      <dt>核心做法</dt><dd>跑完整回合 → 算每步之后的回报 G<sub>t</sub> → 按 G<sub>t</sub> − b(s<sub>t</sub>) 加权提高 / 降低所选动作的对数概率。</dd>
+      <dt>关键公式</dt><dd>∇J ≈ Σ<sub>t</sub> ∇log π_θ(a<sub>t</sub>|s<sub>t</sub>)(G<sub>t</sub> − b(s<sub>t</sub>))；loss = −log_prob × (G − b)</dd>
+      <dt>何时用</dt><dd>回合短、奖励可在结尾算清的任务；作为理解 PPO / GRPO 的起点（GRPO 本质是“组内均值当基线”的 REINFORCE + 裁剪）。</dd>
+      <dt>代价与坑</dt><dd>方差大，必须等回合结束；on-policy，数据用一次就过期；学习率稍大就会被早期运气锁死。</dd>
+      <dt>相关</dt><dd>Actor-Critic（下一节）；GRPO（第 9 篇）；序列级 vs token 级梯度（第 7 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-pg"></div>
+</section>
+
+<section class="part" id="ac">
+  <div class="part-head"><h2>Actor-Critic：让 Critic 每一步都给信号</h2><span class="meta">原文 docs/chapter09_actor_critic/advantage-function.md、actor-critic.md、critic-training.md</span></div>
+  <div class="sec-lede">
+    <p>带基线的 REINFORCE 仍要等回合结束才知道 G<sub>t</sub>。如果用 TD 的思路，拿一步奖励加下一状态的估值来近似回报，就能每走一步更新一次：<strong>TD 误差</strong> δ = r + γV(s′) − V(s) 本身就是优势的一个估计。于是两个网络分工：<strong>Actor</strong> 是策略 π(a|s)，<strong>Critic</strong> 是价值 V(s)。同一个 δ 被两边用：Actor 按 ∇log π(a|s)·δ 更新（δ 当常数，要 detach），Critic 按 δ² 回归（这正是 TD 学习）。</p>
+    <p>原文的定位是“用偏差换方差”：Critic 自举，用自己不准的 V(s′) 去校准 V(s)，像用一把不准的尺子校另一把尺子，会引入偏差；但每步都有稳定信号，整体常比无偏但高方差的 REINFORCE 收敛得快——CartPole 上通常 200–300 回合就能稳定到满分。为什么不能只留 Critic？因为从 V 或 Q 推出策略还得 argmax，连续动作里又回到了原点。</p>
+    <p>Actor-Critic 是一副骨架，后面很多算法只是换了“评价信号怎么来”：PPO 给它加裁剪和 GAE（第 4 篇），DPO 用偏好数据隐式替代 Critic（第 8 篇），GRPO 用组内均值替代 V(s)、干脆不要 Critic（第 9 篇）。原文也给了 vanilla A2C 的短板：没有约束更新幅度，在双足行走这种复杂任务上曲线剧烈震荡。</p>
+    <p class="go">用原文的数字走一遍一步更新，然后改数字看 δ 的符号怎样决定更新方向。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Actor-Critic 一步更新计算器（默认值同原文 7.2 节）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>π(right|s) <output id="acP">0.30</output></span><input type="range" id="acPs" min="0.05" max="0.95" step="0.05" value="0.3"></label>
+      <label class="ctl"><span>Critic V(s) <output id="acV">1.50</output></span><input type="range" id="acVs" min="0" max="4" step="0.1" value="1.5"></label>
+      <label class="ctl"><span>奖励 r <output id="acR">1.0</output></span><input type="range" id="acRs" min="-1" max="2" step="0.5" value="1"></label>
+      <label class="ctl"><span>Critic V(s′) <output id="acV2">2.00</output></span><input type="range" id="acV2s" min="0" max="4" step="0.1" value="2"></label>
+    </div>
+    <div class="tblw"><table class="calc" id="acT"></table></div>
+    <p class="cap" id="acW"></p>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>指标（BipedalWalker-v3）</th><th>A2C</th><th>PPO</th></tr></thead>
+    <tbody>
+      <tr><td>训练步数</td><td>3M</td><td>2M</td></tr>
+      <tr><td>20 回合平均奖励</td><td>221.8</td><td>282.5</td></tr>
+      <tr><td>标准差</td><td>107.6</td><td>59.7</td></tr>
+      <tr><td>典型成功回合</td><td>271–276</td><td>293–299</td></tr>
+      <tr><td>摔倒率</td><td>约 15%</td><td>约 5%</td></tr>
+      <tr><td>训练曲线</td><td>剧烈震荡</td><td>相对平稳</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原书数据：docs/chapter09_actor_critic/bipedalwalker.md 7.6.5 节。两者架构相同（高斯 Actor + V Critic），差别只在 PPO 加了裁剪和多 epoch 复用——差距不在上限，而在一致性。</p>
+  <div class="card2 algo" data-algo="Actor-Critic / A2C">
+    <h3>算法卡 · Actor-Critic（A2C）</h3><p class="en">Advantage Actor-Critic</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>REINFORCE 方差大、要等回合结束。</dd>
+      <dt>核心做法</dt><dd>Critic 学 V(s)，用 TD 误差 δ 当优势；Actor 按 δ 调整动作概率；A2C 用多个并行环境（原文 16 个）稳定梯度。</dd>
+      <dt>关键公式</dt><dd>δ = r + γV(s′) − V(s)；L = −log π(a|s)·δ̄ + c·δ²（δ̄ 表示 detach）</dd>
+      <dt>何时用</dt><dd>需要每步更新、连续动作（Pendulum、BipedalWalker）；作为 PPO 的底座。</dd>
+      <dt>代价与坑</dt><dd>Critic 自举带来偏差；没有更新幅度约束，复杂任务上震荡；仍是 on-policy。</dd>
+      <dt>相关</dt><dd>PPO = AC + 裁剪 + GAE（第 4 篇）；SAC / TD3 是 off-policy 的 AC（第 5 篇）；AlphaStar 用 V-trace 做大规模 AC。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：基线、优势与 Critic</h4>
+    <p><b>REINFORCE + 价值基线 vs Actor-Critic</b>：两者都学一个 V(s)。前者仍用完整回合的 G<sub>t</sub>，V 只用来减方差，必须等回合结束；后者用 r + γV(s′) 自举估计回报，能每步更新。原文把前者称为“通往 Critic 的中间路线”。</p>
+    <p><b>Q、V、A</b>：Q(s,a) 是“做了这个动作之后的期望回报”，V(s) 是“按策略平均的期望回报”，A = Q − V 是“这个动作比平均好多少”。策略梯度真正需要的是 A 的符号和大小。</p>
+    <p><b>偏差 vs 方差</b>：MC 回报无偏、方差大；TD 自举方差小、有偏差（来自 Critic 的误差）。GAE 用 λ 在两者间连续调（第 4 篇）。</p>
+  </div>
+  <div class="notes" id="n-ac"></div>
+</section>
+
+<section class="part" id="cont">
+  <div class="part-head"><h2>连续动作：高斯策略的梯度长什么样</h2><span class="meta">原文 docs/chapter09_actor_critic/pendulum.md（7.4 节）</span></div>
+  <div class="sec-lede">
+    <p>Pendulum 的动作是 [−2, 2] 里的一个连续力矩，DQN 没法枚举。策略网络换个输出层就行：输出高斯分布的均值 μ(s) 和标准差 σ(s)，从 𝒩(μ, σ²) 采样动作。同一个策略梯度公式照用，只是 log π 换成高斯的对数密度：log π(a) = −(a − μ)²/(2σ²) − log σ − ½log 2π。</p>
+    <p>对它求导就能看出更新的几何意义：∂log π/∂μ = (a − μ)/σ²——优势为正时，均值朝采到的那个动作挪；∂log π/∂σ = ((a − μ)² − σ²)/σ³——采到的动作离均值比一个标准差还远、而且结果好，就把分布撑宽（多探索）；离得近又结果好，就收窄（更确定）。原文在 Pendulum 实验里观察到的正是“策略熵逐渐收窄”的过程：先摆到高处，再学会保持稳定。</p>
+    <p class="go">拖动采到的动作 a 和优势 A，看一次更新怎样移动和缩放这个高斯分布。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">高斯策略的一次梯度更新（学习率 0.3，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>采到的动作 a <output id="gpA">1.20</output></span><input type="range" id="gpAs" min="-2" max="2" step="0.05" value="1.2"></label>
+      <label class="ctl"><span>优势 A <output id="gpV">1.0</output></span><input type="range" id="gpVs" min="-2" max="2" step="0.1" value="1"></label>
+      <label class="ctl"><span>当前 σ <output id="gpS">0.50</output></span><input type="range" id="gpSs" min="0.2" max="1.2" step="0.05" value="0.5"></label>
+    </div>
+    <div id="gpC"></div>
+    <p class="cap" id="gpW"></p>
+  </div>
+  <div class="notes" id="n-cont"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">策略梯度定理：∇J(θ) = 𝔼_π[Σ_t ∇log π_θ(a_t|s_t) · G_t]</div>
+    <div class="fx">对数导数：∇log π = ∇π / π；𝔼_{a~π}[∇log π(a|s)] = 0（所以基线不改期望）</div>
+    <div class="fx">带基线：∇J ≈ Σ_t ∇log π(a_t|s_t)(G_t − b(s_t))；优势 A(s,a) = Q(s,a) − V(s)</div>
+    <div class="fx">Actor-Critic：δ = r + γV(s′) − V(s)；L_actor = −log π(a|s)·δ̄，L_critic = δ²</div>
+    <div class="fx">高斯策略：∂log π/∂μ = (a − μ)/σ²，∂log π/∂σ = ((a − μ)² − σ²)/σ³</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 什么时候 argmax Q 走不通？策略网络怎样同时处理离散和连续动作？</summary><p class="ans">动作连续（无穷多个）或高维离散化后组合爆炸（100⁶ 个动作每步要 11.6 天）时；对 LLM，问题还在于贪心解码质量差、需要采样。策略网络直接输出分布：离散用 softmax，连续输出高斯的 μ 和 σ 再采样，一次前向即可。</p></details>
+    <details><summary>2. REINFORCE 的梯度长什么样？为什么减基线不改期望却降方差？</summary><p class="ans">Σ ∇log π(a_t|s_t)·G_t，loss 写成 −log_prob × G。因为 𝔼_{a~π}[∇log π(a|s)] = ∇Σ_a π(a|s) = ∇1 = 0，乘一个与动作无关的 b(s) 后期望仍为 0；但把信号从“绝对回报”变成“比预期好多少”，正负分明，波动小得多。最常用的基线是 V(s)。</p></details>
+    <details><summary>3. Actor-Critic 的 δ 被谁用、怎么用？好在哪、代价是什么？</summary><p class="ans">δ = r + γV(s′) − V(s)。Actor 把它当优势（detach 后）乘 ∇log π 更新策略；Critic 最小化 δ² 让 V 更准。好处是每步更新、方差小；代价是 Critic 自举引入偏差，而且 vanilla A2C 不约束更新幅度，复杂任务上曲线震荡——这正是 PPO 要补的。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- ε-贪心 vs softmax ---------- */
+function ex() {
+  var d = +$('#exDs').value, e = +$('#exEs').value, T = +$('#exTs').value;
+  $('#exD').textContent = S.f(d, 1); $('#exE').textContent = S.f(e, 2); $('#exT').textContent = S.f(T, 1);
+  var eg = d > 0 ? 1 - e + e / 2 : 0.5, sm = S.softmax([d, 0], T)[0];
+  S.bars($('#exB'), [
+    { label: 'ε-贪心 选 a₁', value: eg, text: S.pct(eg, 1), cls: 'dim' },
+    { label: 'softmax 选 a₁', value: sm, text: S.pct(sm, 1), cls: 'alt' }
+  ]);
+  $('#exW').innerHTML = d < 0.15 ? '两个动作几乎一样好：softmax 给出接近 50 / 50 的概率，自然多探索；ε-贪心只要差一点点就把 ' + S.pct(1 - e / 2, 0) + ' 押在 a₁ 上。' :
+    d > 1.5 ? '优劣分明：softmax 几乎总选 a₁，自然少探索；ε-贪心仍然固定花 ' + S.pct(e / 2, 1) + ' 的概率去试明显更差的动作。' :
+    '原文的例子：Q = 3.1 vs 2.9 时 ε-贪心（ε = 0.1）给出 95% / 5%，和差距很大的状态一模一样；策略分布则会按差距大小自己调整探索比例。';
+}
+['exDs', 'exEs', 'exTs'].forEach(function (id) { $('#' + id).addEventListener('input', ex); }); ex();
+S.guess($('#gsT'), { q: '6 个关节、每个关节离散成 100 档力矩，每次前向 1 微秒。用 DQN 的 argmax 选一个动作需要多少天？', unit: '天', ans: 1e12 * 1e-6 / 86400, fmt: function (x) { return S.f(x, 1); }, why: '100⁶ = 10¹² 个动作 × 10⁻⁶ 秒 = 10⁶ 秒 ≈ 11.6 天（原文数字）。而且每多一个关节再乘 100。策略网络一次前向直接输出 μ(s)，约 1 毫秒。' });
+S.notes($('#n-why'), {
+  c: [
+    ['Value-based', '学 Q，argmax 选动作，策略是隐式的。'],
+    ['Policy-based', '直接参数化 π_θ(a|s)，采样选动作。'],
+    ['随机策略', '同一状态可能输出不同动作，探索是内建的。'],
+    ['softmax / 高斯头', '离散动作 / 连续动作的策略输出层。']
+  ],
+  p: [
+    ['离散化爆炸', '100⁶ = 10¹² 个动作 ≈ 11.6 天 / 次'],
+    ['LLM 的理由', '贪心解码质量差，采样本身就是生成过程'],
+    ['策略梯度的短板', 'on-policy、数据效率低、方差大'],
+    ['两条路会合', 'Actor-Critic：策略做决策，价值降方差']
+  ]
+});
+
+/* ---------- REINFORCE 扇形图 ---------- */
+var rfBase = 0;
+var rfChart = S.chart($('#rfC'), { h: 260, x: [0, 300], y: [0, 1], xt: [0, 100, 200, 300], yt: [0, 0.25, 0.5, 0.75, 1], xl: '更新次数（每次拉一下）', yl: 'P(选 B)' });
+function rf() {
+  var lr = +$('#rfLs').value; $('#rfL').textContent = S.f(lr, 2);
+  var curves = [], finals = [], lock = 0, gv = 0, gn = 0;
+  for (var k = 0; k < 20; k++) {
+    var r = S.rng(900 + k * 31), th = 0, b = 0, pts = [[0, 0.5]];
+    for (var t = 1; t <= 300; t++) {
+      var pB = S.sigmoid(th), a = r() < pB ? 1 : 0, rew = r() < (a ? 0.7 : 0.3) ? 1 : 0;
+      var adv = rew - (rfBase ? b : 0), g = adv * (a - pB);
+      th += lr * g; gv += g * g; gn++; b += 0.05 * (rew - b);
+      if (t % 3 === 0) pts.push([t, S.sigmoid(th)]);
+    }
+    var f = S.sigmoid(th); finals.push(f); if (f < 0.2) lock++;
+    curves.push({ pts: pts, c: rfBase ? 'c2' : 'c1', w: 1.2 });
+  }
+  var m = finals.reduce(function (a, b) { return a + b; }, 0) / 20, sd = Math.sqrt(finals.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / 20);
+  rfChart({ curves: curves, hl: [{ y: 0.5, c: 'dim' }] });
+  $('#rfM').textContent = S.f(m, 2); $('#rfS').textContent = S.f(sd, 2); $('#rfW2').textContent = lock + ' / 20';
+  $('#rfW').innerHTML = (rfBase ? '减去基线后，选中 A 且中奖（奖励 1，但低于平均 ~0.6）也会被<b>压低</b>，选中 B 没中奖会被压低、中奖会被抬高——信号正负分明。' : '不减基线时奖励只有 0 和 1：只要中奖，不管选的是 A 还是 B 都会被<b>鼓励</b>，没中奖则完全没有信号。学习只能靠“B 中奖次数更多”慢慢显现。') +
+    ' 本次梯度分量的均方约为 ' + S.f(gv / gn, 3) + '。把学习率调到 0.3 以上再切换两种模式：越激进，越容易出现某几次被早期运气锁死在 A 上的轨迹——这就是原文说的“学习率从 0.01 改成 0.1，策略会在 A 和 B 之间剧烈摇摆”。（策略只有一个参数 θ，P(B) = σ(θ)；示意模拟。）';
+}
+S.seg($('#rfB'), function (v) { rfBase = +v; rf(); });
+$('#rfLs').addEventListener('input', rf); rf();
+S.notes($('#n-pg'), {
+  c: [
+    ['J(θ)', '策略的“成绩单”：按 π_θ 行动的期望折扣回报。'],
+    ['策略梯度定理', '把 ∇J 写成 ∇log π × 回报的期望，可采样、无需环境模型。'],
+    ['对数导数技巧', '∇log π = ∇π/π，把绝对变化变成相对变化。'],
+    ['REINFORCE', '跑完整回合，用 G_t 加权对数概率梯度。'],
+    ['基线 b(s)', '只依赖状态的参照值，减掉它期望不变、方差下降。'],
+    ['优势 A', 'Q − V：比该状态的平均表现好多少。']
+  ],
+  p: [
+    ['loss 写法', 'loss = −log_prob × G（PyTorch 做最小化，所以加负号）'],
+    ['原文数字', '0.7→0.71 与 0.05→0.06：对数梯度 0.014 vs 0.2'],
+    ['3 步回合', 'r = 1,2,3，γ = 0.9 → G = 5.23, 4.7, 3'],
+    ['基线不改期望', 'Σ_a π∇log π = Σ_a ∇π = ∇1 = 0'],
+    ['最佳基线', '近似 V^π(s)（Greensmith 等的方差分析）']
+  ],
+  ph: '公式与数字'
+});
+
+/* ---------- AC 一步 ---------- */
+function ac() {
+  var p = +$('#acPs').value, V = +$('#acVs').value, R = +$('#acRs').value, V2 = +$('#acV2s').value, g = 0.99;
+  $('#acP').textContent = S.f(p, 2); $('#acV').textContent = S.f(V, 2); $('#acR').textContent = S.f(R, 1); $('#acV2').textContent = S.f(V2, 2);
+  var lp = Math.log(p), tgt = R + g * V2, d = tgt - V, La = -lp * d, Lc = d * d, gl = d * (1 - p);
+  var rows = [
+    ['采样动作', 'a = right，log π(right|s) = ln ' + S.f(p, 2), S.f(lp, 4)],
+    ['TD 目标', 'r + γV(s′) = ' + S.f(R, 1) + ' + 0.99 × ' + S.f(V2, 2), S.f(tgt, 3)],
+    ['TD 误差 δ', 'TD 目标 − V(s)', S.f(d, 3)],
+    ['Actor 损失', '−log π × δ（δ 已 detach）', S.f(La, 4)],
+    ['Critic 损失', 'δ²', S.f(Lc, 4)],
+    ['总损失', 'L_actor + L_critic', S.f(La + Lc, 4)],
+    ['right 的 logit 梯度方向', '−∂L/∂z_right = δ(1 − π)', (gl >= 0 ? '+' : '') + S.f(gl, 3)]
+  ];
+  $('#acT').innerHTML = rows.map(function (r, i) { return '<tr' + (i === 2 ? ' class="tot"' : '') + '><td>' + r[0] + '</td><td>' + r[1] + '</td><td class="n">' + r[2].replace('-', '−') + '</td></tr>'; }).join('');
+  $('#acW').innerHTML = (d > 0 ? 'δ > 0：结果好于 Critic 的预期，Actor 会<b>提高</b> right 的概率，Critic 把 V(s) 往 ' + S.f(tgt, 2) + ' 拉。' : d < 0 ? 'δ < 0：结果不如预期，Actor 会<b>降低</b> right 的概率，Critic 把 V(s) 往下调。' : 'δ = 0：和预期一样，Actor 不动。') +
+    ' 注意 π(right) 越小，同样的 δ 带来的 logit 梯度 δ(1 − π) 越大——低概率动作一旦被证明好，会被更快提起来。默认值算出 δ = 1.48、总损失 3.9723，与原文 7.2 节一致。';
+}
+['acPs', 'acVs', 'acRs', 'acV2s'].forEach(function (id) { $('#' + id).addEventListener('input', ac); }); ac();
+S.notes($('#n-ac'), {
+  c: [
+    ['Actor', '策略网络 π(a|s)，负责选动作。'],
+    ['Critic', '价值网络 V(s)，负责评估局面；本质是神经网络版的 TD 学习。'],
+    ['TD 误差 δ', '一步优势估计：r + γV(s′) − V(s)。'],
+    ['detach', 'Actor 损失里的 δ 当常数，不往 Critic 回传梯度。'],
+    ['A2C', '同步多环境并行采样的优势 Actor-Critic。']
+  ],
+  p: [
+    ['原文一步数值', 'π = [0.7, 0.3]，V = 1.5，r = 1，V′ = 2 → δ = 1.48'],
+    ['用偏差换方差', 'Critic 自举有偏，但每步有稳定信号'],
+    ['CartPole', 'AC 通常 200–300 回合稳定满分；REINFORCE 500+ 且锯齿多'],
+    ['A2C vs PPO（原书）', '双足行走 221.8 ± 107.6 vs 282.5 ± 59.7'],
+    ['骨架的变体', 'PPO 加裁剪，DPO 隐式 Critic，GRPO 去 Critic']
+  ]
+});
+
+/* ---------- 高斯策略 ---------- */
+var gpChart = S.chart($('#gpC'), { h: 240, x: [-2.5, 2.5], y: [0, 2.2], xt: [-2, -1, 0, 1, 2], yt: [0, 0.5, 1, 1.5, 2], xl: '动作（力矩）', yl: '概率密度' });
+function gp() {
+  var a = +$('#gpAs').value, A = +$('#gpVs').value, sg = +$('#gpSs').value, mu = 0, lr = 0.3;
+  $('#gpA').textContent = S.f(a, 2); $('#gpV').textContent = S.f(A, 1); $('#gpS').textContent = S.f(sg, 2);
+  var dmu = (a - mu) / (sg * sg), dsg = ((a - mu) * (a - mu) - sg * sg) / (sg * sg * sg);
+  // 用 log σ 参数化，避免 σ 变负
+  var mu2 = mu + lr * A * dmu * sg * sg, ls2 = Math.log(sg) + lr * A * dsg * sg * 0.5, sg2 = S.clamp(Math.exp(ls2), 0.15, 2);
+  mu2 = S.clamp(mu2, -2.2, 2.2);
+  function N(m, s) { return function (x) { return Math.exp(-(x - m) * (x - m) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI)); }; }
+  gpChart({ curves: [{ f: N(mu, sg), c: 'dim', dash: 1, label: '更新前 μ = 0, σ = ' + S.f(sg, 2) }, { f: N(mu2, sg2), c: A >= 0 ? 'ok' : 'c1', label: '更新后 μ = ' + S.f(mu2, 2) + ', σ = ' + S.f(sg2, 2) }], vl: [{ x: a, c: 'c2', label: '采到的 a' }] });
+  var far = Math.abs(a) > sg;
+  $('#gpW').innerHTML = '∂log π/∂μ = ' + S.f(dmu, 2) + '，∂log π/∂σ = ' + S.f(dsg, 2) + '。' + (A > 0 ? '优势为正：均值朝 a 移动；' + (far ? 'a 在一个标准差之外，所以 σ <b>变大</b>——“远处的好动作”说明还值得多探索。' : 'a 在一个标准差之内，所以 σ <b>变小</b>——策略变得更确定。') :
+    A < 0 ? '优势为负：均值<b>远离</b> a；' + (far ? 'a 在一个标准差之外，σ 变小，少往那边试。' : 'a 离均值很近却结果差，σ 变大，去更远处找。') : '优势为 0：不更新。') + '（为数值稳定，这里对 log σ 做更新、学习率取 0.3，示意。）';
+}
+['gpAs', 'gpVs', 'gpSs'].forEach(function (id) { $('#' + id).addEventListener('input', gp); }); gp();
+S.notes($('#n-cont'), {
+  c: [
+    ['高斯策略', '输出 μ(s) 与 σ(s)，从 𝒩(μ, σ²) 采样连续动作。'],
+    ['μ 的梯度', '把均值往“好动作”的方向推。'],
+    ['σ 的梯度', '好动作在远处 → 撑宽；在近处 → 收窄。'],
+    ['策略熵', '高斯熵 ∝ log σ；训练中逐渐收窄是正常现象。']
+  ],
+  p: [
+    ['对数密度', 'log π = −(a − μ)²/(2σ²) − log σ − ½log 2π'],
+    ['∂/∂μ', '(a − μ)/σ²'],
+    ['∂/∂σ', '((a − μ)² − σ²)/σ³'],
+    ['工程习惯', '网络输出 log σ 再取 exp，保证 σ > 0']
+  ],
+  ph: '公式'
+});

@@ -1,0 +1,302 @@
+---
+title: 推理模型、测试时计算与过程奖励：多想、多试，还要会挑
+desc: 动手学现代强化学习笔记（十）：普通语言模型串行生成的局限与 o1 的推理预算接口；训练计算与推理计算的分工；Best-of-N 的覆盖率与边际收益、多数投票与验证器；一条长链与多条短答、思考预算与 long2short；结果奖励与过程奖励（ORM / PRM）、步骤分数的 mean / min / product 聚合、判别式 / 生成式 / 形式化验证器与推理时搜索。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 10</span><span>对应原教程第 16–17 章（docs/chapter19_reasoning、chapter20_prm_search）</span><span>约 45 分钟</span>
+h1: 训练决定上限，<em>推理计算决定发挥</em>
+lead: 普通语言模型一个 token 接一个 token 往下写，一步算错就一路错下去，不会停下来检查。推理模型用 RL 学会组织长思考，并把“想多久”做成了可调的预算。原教程这两章回答三个问题：多出来的推理计算该怎么花（多采样、多修订、多搜索）？什么时候加计算不再划算？以及——候选里出现了正确答案，系统能不能把它挑出来？后者引出了过程奖励模型。
+nav: reason|推理模型;tts|测试时计算;budget|思考预算;prm|过程奖励;back|回扣三问
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.steps { list-style: none; margin: 8px 0; padding: 0; counter-reset: st; }
+.steps li { position: relative; padding: 6px 70px 6px 34px; border-top: 1px solid var(--hair); font-size: 15px; color: var(--ink-2); }
+.steps li::before { counter-increment: st; content: counter(st); position: absolute; left: 6px; top: 7px; font-family: var(--f-num); color: var(--ink-3); }
+.steps li b { position: absolute; right: 6px; top: 6px; font-family: var(--f-num); font-size: 15px; }
+.steps li.bad { background: var(--alert-soft); color: var(--ink); }
+.steps li .ok { color: var(--ok); } .steps li .no { color: var(--alert); }
+.sc { width: 4.2em; font: inherit; font-size: 15px; padding: 3px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>哪类失败可以靠推理时多算来补救，哪类只能靠训练？Best-of-N 的收益为什么一定递减？</li>
+    <li>覆盖率高不等于答对率高——中间差了什么？多数投票在什么情况下会失灵？</li>
+    <li>ORM 和 PRM 的区别是什么？步骤分数用 mean、min、product 聚合，各自在表达什么态度？</li>
+  </ol>
+</div>
+
+<section class="part" id="reason">
+  <div class="part-head"><h2>从语言模型到推理模型</h2><span class="meta">原文 docs/chapter19_reasoning/emergence-and-o1.md、r1-zero-pure-rl-reasoning.md</span></div>
+  <div class="sec-lede">
+    <p>原文的开场例子：解 x² − 5x + 6 = 0 时把判别式算成 −1，后面每一步都在复数域里“认真”延续这个错误。根源是自回归生成——前面的 token 一旦确定，后面只能在条件概率下继续，缺少软件开发里那种“编译—测试—定位—修改”的循环。<strong>推理模型</strong>用大规模 RL 训练模型组织更长的内部推理（检查、回退、换方法），并让推理时的思考长度可以随任务变化。</p>
+    <p>OpenAI 的 o1（2024.9）把这件事做成了产品，随后加入 <code>reasoning_effort</code> 档位，表达质量、延迟和费用之间的取舍；o3 / o4-mini（2025.4）把搜索、Python、文件读取等工具放进推理循环——猜递推关系 → 用 Python 验算前 20 项 → 发现第 17 项不对 → 修改猜想。原文特别提醒读榜时<strong>保留评测方式</strong>：o1 发布说明里 AIME 2024 上 GPT-4o 单次约 12%、64 次共识约 56%，o1 单次约 74%、64 次共识约 83%——采样次数本身就会改变分数。</p>
+    <p>开放模型这边，R1-Zero 说明了在有规则奖励时，只用正确性奖励和格式奖励做 GRPO，也能间接强化出自我检查（第 9 篇）：检查能提高正确率，正确率带来奖励，所以检查行为被保留下来。原文的解读是“涌现与激活”并存——推理的原材料来自预训练，RL 把它们组织成稳定的策略；它需要三个前提：基座能生成候选、题目有自动验证器、同一组采样里有对有错。</p>
+    <p class="go">先分清两类失败——这决定了后面的“多算”有没有用。</p>
+  </div>
+  <div class="lab"><p class="lab-t">分一分：这次失败能靠推理时多算补救吗？（原文 16.3 节的区分）</p><div id="flG"></div></div>
+  <div class="notes" id="n-reason"></div>
+</section>
+
+<section class="part" id="tts">
+  <div class="part-head"><h2>测试时计算：并行采样、顺序修订、树搜索</h2><span class="meta">原文 docs/chapter19_reasoning/test-time-scaling.md（16.3 节）</span></div>
+  <div class="sec-lede">
+    <p>Snell 等人（2024）用一组对照实验回答了“推理预算怎么花”：固定 Llama-3-8B-Instruct，比较“多采样 + 验证器挑选”与“换一个更大的模型”。原文总结了三条：<strong>恰当分配推理计算能让小模型超过分配不当的大模型</strong>；<strong>基座单次正确率 p 接近 0 时，多加预算收益很快消失</strong>；<strong>没有通用最优分配</strong>——题目难度不同、验证器可靠程度不同，最佳花法都不同。训练计算决定能力上限，推理计算决定接近上限的程度。</p>
+    <p>三种花法。<strong>并行采样（Best-of-N）</strong>：独立生成 N 个，至少一个正确的概率（覆盖率）是 1 − (1 − p)<sup>N</sup>；第 N + 1 个候选的边际收益是 p(1 − p)<sup>N</sup>，每多一个就乘一次 (1 − p)，几何级数衰减，而每个候选的成本是固定的——当它低于单个候选的成本时就该停。<strong>顺序修订</strong>：让模型检查、改错，延迟随轮数串行增加，没法靠加 GPU 缩短。<strong>树搜索</strong>：结合广度与深度，常用过程奖励给中间步骤打分来剪枝。</p>
+    <p>最关键的一句：<strong>覆盖率只保证正确答案出现在候选里，能不能挑出来取决于验证器</strong>。没有可靠验证器时，用<strong>多数投票</strong>（self-consistency）：把最终答案规范化后数票。它隐含的假设是不同推理路径独立犯错、错得各不相同；一旦模型在同一个地方系统性地犯同一个错，多数票选出的就是错误答案。</p>
+    <p class="go">调单次正确率、错误答案的“集中程度”和验证器准确率，比较三条曲线。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">覆盖率、验证器挑选与多数投票（每个 N 模拟 3000 次，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>单次正确率 p <output id="tsP">0.30</output></span><input type="range" id="tsPs" min="0.02" max="0.8" step="0.02" value="0.3"></label>
+      <label class="ctl"><span>错误答案集中在同一个值的比例 <output id="tsC">0.30</output></span><input type="range" id="tsCs" min="0" max="0.9" step="0.05" value="0.3"></label>
+      <label class="ctl"><span>验证器判对的准确率 <output id="tsV">0.90</output></span><input type="range" id="tsVs" min="0.5" max="1" step="0.02" value="0.9"></label>
+    </div>
+    <div id="tsCh"></div>
+    <p class="cap" id="tsW"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">边际收益 p(1 − p)ᴺ 与“何时停”</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>单个候选的成本（折算成正确率百分点） <output id="mgC">1.0</output></span><input type="range" id="mgCs" min="0.1" max="5" step="0.1" value="1"></label>
+      </div>
+      <div class="tblw"><table class="calc" id="mgT"></table></div>
+      <p class="cap" id="mgW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">先估再算</p><div id="tsG"></div></div>
+  </div>
+  <div class="card2 algo" data-algo="Best-of-N / 多数投票">
+    <h3>算法卡 · Best-of-N 与多数投票</h3><p class="en">并行采样型测试时计算（self-consistency：Wang et al., 2022）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>模型会做、但单次生成可能偶然出错（采样型失败）。</dd>
+      <dt>核心做法</dt><dd>独立生成 N 个候选；有验证器就选分最高的，没有就把最终答案规范化后多数投票。</dd>
+      <dt>关键公式</dt><dd>覆盖率 1 − (1 − p)<sup>N</sup>；第 N + 1 个的边际收益 p(1 − p)<sup>N</sup></dd>
+      <dt>何时用</dt><dd>有可靠验证器（代码可运行测试）时最有效；答案可规范化、一题多解时用投票。</dd>
+      <dt>代价与坑</dt><dd>成本线性增长、收益几何衰减；验证器误判则 N 越大越容易挑错；系统性错误会骗过多数投票。</dd>
+      <dt>相关</dt><dd>PRM 引导的搜索（下文）；RM 的 Best-of-N 同样会过度优化（第 7、12 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-tts"></div>
+</section>
+
+<section class="part" id="budget">
+  <div class="part-head"><h2>思考预算：一条长链，还是多条短答</h2><span class="meta">原文 hybrid-thinking.md（16.4）、adaptive-thinking.md（16.5）、cot-visibility-alignment.md（16.6）</span></div>
+  <div class="sec-lede">
+    <p>同一个模型可以有两种模式：深度思考与直接回答（DeepSeek V3.1、Qwen3 的双模式，再加上 thinking budget 控制思考长度）。原文引用 Ma 等人（2025）的对比：<strong>同样 4000 token</strong>，一条 4000 token 的长链，还是 8 条 500 token 的短回答再投票？在低预算区间，多条短答常常更划算——但结论不能外推：<strong>需要连续推导依赖</strong>的任务（证明、写复杂算法、多步规划）后面的步骤依赖前面的结论，没法拆成 8 个独立的短证明投票；短答要胜出，还要求单次成功率不太低、并且有可靠的验证或投票。</p>
+    <p>长思考训练的副作用是推理链变长：反复检查、重复表述、绕圈子。部署时硬截断很危险（截断点可能落在结论之前），所以要在训练阶段做 <strong>long2short</strong>：监督式压缩（用更短的正确推理做 SFT），或在 RL 奖励里同时放进“答对”和“少算”。原文 16.5 节进一步讨论<strong>自适应思考</strong>：由模型根据任务判断要想多久；并提醒“长不等于好”——无效推理、延迟与成本的波动、推理链注入攻击都要考虑。</p>
+    <p>关于推理链给不给用户看，原文分清了三个层次（内部推理、轨迹、面向用户的解释）：隐藏原始推理链能防蒸馏、留出安全处理空间；展示能支持开源生态与步骤检查。原文的立场是：<strong>过程对齐比可见性更重要</strong>——推理文本要和最终答案一致，PRM、CoT 监控、可解释性工具都是过程对齐的研究方向。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>问题</th><th>更适合一条长链</th><th>更适合多条短答 + 投票</th></tr></thead>
+    <tbody>
+      <tr><td>是否需要连续推导依赖？</td><td>是：证明、代码、多步规划</td><td>否：问答、选择题、简单计算</td></tr>
+      <tr><td>单次短回答成功率</td><td>低</td><td>中高</td></tr>
+      <tr><td>有没有可靠验证器</td><td>没有也能工作</td><td>最好有</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 hybrid-thinking.md“什么时候多条短答更好”。</p>
+  <div class="notes" id="n-budget"></div>
+</section>
+
+<section class="part" id="prm">
+  <div class="part-head"><h2>过程奖励：不只看答对，还看推对</h2><span class="meta">原文 docs/chapter20_prm_search/outcome-vs-process.md、discriminative-prm.md、generative-prm.md、formal-prm.md、inference-time-search.md</span></div>
+  <div class="sec-lede">
+    <p><strong>结果奖励</strong>（ORM）只问“整件事完成了吗”：便宜、稳定，答案可以代回、代码可以跑测试。<strong>过程奖励</strong>（PRM）问“走到这一步，还在正确方向上吗”。原文的例子是一份“证明 √2 是无理数”的九步证明：第 6 步把 4k² = 2q² 错写成 4k = q²，但最后结论碰巧是对的。只核对结论的 ORM 给整条回答 1 分——第 6 步的代数错误不但没被惩罚，反而和正确步骤一起被强化。这就是稀疏奖励的归因困难。</p>
+    <p>形式上，ORM(q, o) 给整条回答一个分；PRM(q, o, i) 给第 i 步一个分（+1 / 0 / −1 或“这一步正确”的概率），训练数据是“前缀 + 这一步是否正确”，标注量按步骤数放大——OpenAI 为此建了 PRM800K。原文给了三个判断“值不值得上 PRM”的条件：<strong>步骤能否稳定切分</strong>（证明的一次变换、代码的一次修改、Agent 的一次工具调用可以；写诗不行）、<strong>错误会不会向后传播</strong>、<strong>结果验证是否足够</strong>。R1-Zero 只用 ORM 也学出了自我检查，说明结果奖励在某些条件下够用。</p>
+    <p>PRM 有三种形态：<strong>判别式</strong>（分类器给每步打分）、<strong>生成式</strong>（像 ThinkPRM 那样先写自然语言评价再下结论，复用模型已有的推理能力，评价本身也能“多想一会儿”）、<strong>形式化验证器</strong>（Lean 4 等定理证明器给出确定的对 / 错，AlphaProof、DeepSeek-Prover 走这条路，但只适用于能形式化的领域）。用法上，PRM 可以给 Best-of-N 重排序、在 beam search / MCTS 里剪枝，也可以把步骤分数放进 RL 训练——这正是第 5 篇说的“网络引导搜索”在 LLM 上的翻版。</p>
+    <p class="go">先看 ORM 与 PRM 对原文那份证明分别给了什么信号，再改步骤分数比较三种聚合。</p>
+  </div>
+  <div>
+    <div class="lab">
+      <p class="lab-t">同一份证明，两种奖励给每一步的信号（原文 17.1 节）</p>
+      <div class="seg" id="pmM"><button data-v="orm" aria-pressed="true">ORM：只看结论</button><button data-v="prm">PRM：逐步打分</button></div>
+      <ol class="steps" id="pmS"></ol>
+      <p class="cap" id="pmW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">步骤分数怎么聚合（默认值同原文）</p>
+      <div class="tblw"><table class="calc" id="agT"></table></div>
+      <p class="cap" id="agW"></p>
+    </div>
+  </div>
+  <div class="card2 algo" data-algo="PRM">
+    <h3>算法卡 · 过程奖励模型（PRM）</h3><p class="en">Let's Verify Step by Step（Lightman et al., 2023）等</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>长推理只在末尾一个分数：对的结论里藏着错的步骤也会被强化，错了又不知道错在哪一步。</dd>
+      <dt>核心做法</dt><dd>把回答切成步骤，对每一步打“是否正确”的分；用于重排序、搜索剪枝，或作为 RL 的稠密奖励。</dd>
+      <dt>关键公式</dt><dd>ORM(q, o) ∈ ℝ；PRM(q, o, i) ∈ ℝ；聚合 mean = Σp<sub>i</sub>/T，min = min p<sub>i</sub>，product = Πp<sub>i</sub></dd>
+      <dt>何时用</dt><dd>步骤能稳定切分、错误会向后传播、结果验证不足或太稀疏时（数学证明、代码、Agent 工具调用）。</dd>
+      <dt>代价与坑</dt><dd>标注成本按步骤数放大；跨领域泛化差；标注噪声；步骤切分本身影响效果；PRM 也会被 hack。</dd>
+      <dt>相关</dt><dd>生成式 PRM、Lean 形式化验证；Agentic RL 的步骤级优势（第 11 篇）；AlphaZero 式搜索（第 5 篇）。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：ORM、PRM、验证器与奖励模型</h4>
+    <p><b>ORM vs PRM</b>：一条回答一个分 vs 每一步一个分。ORM 便宜稳定但归因困难；PRM 能定位错误但标注贵。</p>
+    <p><b>规则验证器 vs PRM</b>：验证器通常只能检查最终结果（答案、测试），是 ORM 的一种；Lean 这类形式化验证器能逐步检查，是确定性的 PRM。</p>
+    <p><b>覆盖率 vs 准确率</b>：覆盖率是“候选里有没有正确答案”，准确率还取决于“挑不挑得出来”。</p>
+    <p><b>训练计算 vs 推理计算</b>：前者改参数、提高上限，后者不动参数、让这一次更接近上限；知识型失败只能靠前者。</p>
+  </div>
+  <div class="notes" id="n-prm"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">覆盖率：P(至少一个正确) = 1 − (1 − p)^N；边际收益 P(N+1) − P(N) = p(1 − p)^N</div>
+    <div class="fx">o1 读榜（原文）：AIME 2024 GPT-4o 单次 ~12% / 64 次共识 ~56%；o1 单次 ~74% / 64 次共识 ~83%</div>
+    <div class="fx">ORM(q, o) ∈ ℝ；PRM(q, o, i) ∈ ℝ；r_t = PRM(q, o, step(t))</div>
+    <div class="fx">聚合：mean = (1/T)Σp_i，min = min_i p_i，product = Π_i p_i</div>
+    <div class="fx">预算恒等式：C_total = C_train + Q·C_test（Q 为预期请求量，第 12 篇）</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 哪类失败能靠推理时多算补救？Best-of-N 收益为什么递减？</summary><p class="ans">采样型失败（会方法但这次算错、选错路线）可以靠多采样、修订、搜索补救；知识型失败（根本不会）只能靠训练。第 N + 1 个候选只有在前 N 个都错时才有用，收益 p(1 − p)^N 每次乘 (1 − p) 几何衰减，而成本固定；p ≈ 0 时一开始就几乎没收益。</p></details>
+    <details><summary>2. 覆盖率高为什么不等于答对率高？多数投票何时失灵？</summary><p class="ans">覆盖率只说明正确答案出现在候选里，还要有验证器把它挑出来；验证器会误判，N 越大被它“骗”的机会也越多。多数投票假设各路径独立犯错且错得分散；当模型在同一处系统性地犯同一个错（错误答案集中）时，错误答案会赢得多数票。</p></details>
+    <details><summary>3. ORM 与 PRM 的区别？mean、min、product 各表达什么？</summary><p class="ans">ORM 一条回答一个分，只看结果；PRM 给每一步打分，能指出错误第一次出现在哪里，但标注贵、要能切分步骤。mean 容忍个别差步骤（可能稀释关键错误）；min 只要有一步差整条就不行（最保守）；product 在步骤独立时等于“全部正确”的概率，对低分步最敏感。原文的数学实验里 min 效果最好，但开放写作不能照搬。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.sortGame($('#flG'), {
+  bins: [{ k: 'samp', t: '采样型失败：多采样 / 修订 / 搜索能补救' }, { k: 'know', t: '知识型失败：只能靠训练' }],
+  items: [
+    { t: '解二次方程时这次把符号写反了', k: 'samp', why: '模型会解法，只是这次算错，再做一遍或检查一遍常能修正。' },
+    { t: '题目要用一个模型从没见过的定理', k: 'know', why: '没掌握的知识，采多少次也采不出来（p ≈ 0）。' },
+    { t: '写代码时一个边界条件漏了，测试能报出来', k: 'samp', why: '有可靠验证器 + 修订循环，正是测试时计算最擅长的场景。' },
+    { t: '冷门领域的专业术语根本不认识', k: 'know', why: '要靠继续预训练、检索增强或高质量 SFT。' },
+    { t: '证明的方向一开始就选错，后面越写越远', k: 'samp', why: '换几个起点（并行采样）或回退重来（搜索）可以补救——前提是模型会正确的方向。' }
+  ]
+});
+S.notes($('#n-reason'), {
+  c: [
+    ['串行生成的局限', '前面的 token 定了，错误一路延续，缺少检查—修正循环。'],
+    ['推理模型', '用 RL 学会组织长思考，推理计算变成可分配的预算。'],
+    ['reasoning_effort', '推理投入档位，表达质量 / 延迟 / 费用的取舍。'],
+    ['agentic reasoning', '推理中调用工具，结果反过来影响下一步推理。'],
+    ['采样型 vs 知识型失败', '前者可用推理计算补救，后者只能靠训练。']
+  ],
+  p: [
+    ['读榜要看评测方式', '单次、64 次共识、重排序用的计算不同'],
+    ['p = 0.12, N = 64', '覆盖率 99.97%，但“出现”≠“选中”'],
+    ['纯 RL 推理的前提', '基座能生成候选、自动验证器、组内有对有错'],
+    ['涌现与激活', '原材料来自预训练，RL 负责组织']
+  ]
+});
+
+/* ---------- 测试时计算模拟 ---------- */
+var tsChart = S.chart($('#tsCh'), { h: 270, x: [1, 64], y: [0, 1], xt: [1, 8, 16, 32, 64], yt: [0, 0.25, 0.5, 0.75, 1], xl: '候选数 N' });
+function ts() {
+  var p = +$('#tsPs').value, conc = +$('#tsCs').value, va = +$('#tsVs').value;
+  $('#tsP').textContent = S.f(p, 2); $('#tsC').textContent = S.f(conc, 2); $('#tsV').textContent = S.f(va, 2);
+  var Ns = [1, 2, 4, 8, 16, 32, 64], cov = [], ver = [], maj = [], r = S.rng(42);
+  Ns.forEach(function (N) {
+    var cv = 0, vv = 0, mv = 0, M = 3000;
+    for (var k = 0; k < M; k++) {
+      var ans = [], anyC = false;
+      for (var i = 0; i < N; i++) { var u = r(); var a = u < p ? 0 : (r() < conc ? 1 : 2 + Math.floor(r() * 50)); ans.push(a); if (a === 0) anyC = true; }
+      if (anyC) cv++;
+      // 验证器：对正确答案给“通过”概率 va，对错误答案误判通过的概率 1 − va；在“通过”的候选里随机选一个，无人通过则随机选
+      var pass = ans.filter(function (a) { return a === 0 ? r() < va : r() < 1 - va; });
+      var pick = pass.length ? pass[Math.floor(r() * pass.length)] : ans[Math.floor(r() * N)]; if (pick === 0) vv++;
+      var cnt = {}; ans.forEach(function (a) { cnt[a] = (cnt[a] || 0) + 1; }); var best = -1, bc = -1; Object.keys(cnt).forEach(function (a) { if (cnt[a] > bc || (cnt[a] === bc && r() < 0.5)) { bc = cnt[a]; best = +a; } }); if (best === 0) mv++;
+    }
+    cov.push([N, cv / M]); ver.push([N, vv / M]); maj.push([N, mv / M]);
+  });
+  tsChart({ curves: [{ pts: cov, c: 'dim', dash: 1, label: '覆盖率（至少一个正确）' }, { pts: ver, c: 'c1', label: '验证器挑选' }, { pts: maj, c: 'ok', label: '多数投票' }] });
+  var vEnd = ver[6][1], mEnd = maj[6][1], cEnd = cov[6][1];
+  $('#tsW').innerHTML = 'N = 64 时：覆盖率 ' + S.pct(cEnd, 0) + '，验证器挑选 ' + S.pct(vEnd, 0) + '，多数投票 ' + S.pct(mEnd, 0) + '。' +
+    (conc * (1 - p) > p ? '<b>错误答案比正确答案更集中</b>（同一个错值出现的概率 ' + S.f(conc * (1 - p), 2) + ' > 正确率 ' + S.f(p, 2) + '），多数投票随 N 增大反而稳定地选中那个错值——这就是“系统性错误骗过投票”。' : '错误答案分散时，多数投票随 N 增大逼近 100%：正确答案是唯一被反复命中的值。') +
+    ' 验证器挑选的上限由它的准确率决定：误判率 ' + S.f(1 - va, 2) + ' 时，候选越多，混进“通过”名单的错误答案也越多。覆盖率与这两条曲线之间的差距，就是“挑不出来”的损失。（简化模型：验证器独立判断每个候选；示意。）';
+}
+['tsPs', 'tsCs', 'tsVs'].forEach(function (id) { $('#' + id).addEventListener('input', ts); }); ts();
+function mg() {
+  var c = +$('#mgCs').value / 100, p = +$('#tsPs').value; $('#mgC').textContent = S.f(c * 100, 1);
+  var rows = '<tr><td>N</td><td class="n">覆盖率</td><td class="n">再加一个的收益</td></tr>', stop = null;
+  [1, 2, 4, 8, 16, 32].forEach(function (N) { var g = p * Math.pow(1 - p, N); if (stop === null && g < c) stop = N; rows += '<tr' + (g < c ? ' class="over"' : '') + '><td>' + N + '</td><td class="n">' + S.pct(1 - Math.pow(1 - p, N), 1) + '</td><td class="n">' + S.f(g * 100, 2) + ' 个百分点</td></tr>'; });
+  $('#mgT').innerHTML = rows;
+  var Nstar = p > 0 && c < p ? Math.ceil(Math.log(c / p) / Math.log(1 - p)) : 0;
+  $('#mgW').innerHTML = 'p 与上图联动（当前 ' + S.f(p, 2) + '）。边际收益低于单个候选成本时就该停：这里大约在 N ≈ <b>' + Nstar + '</b>。原文的数字：p = 0.2 时第 2 个候选 +16%，第 17 个只剩 +0.6%。';
+}
+$('#mgCs').addEventListener('input', mg); $('#tsPs').addEventListener('input', mg); mg();
+S.guess($('#tsG'), { q: '单次正确率 20%，采 8 个候选，至少有一个正确的概率是百分之多少？', unit: '%', ans: (1 - Math.pow(0.8, 8)) * 100, fmt: function (x) { return S.f(x, 1); }, why: '1 − 0.8⁸ = 83.2%（原文覆盖率表）。到 16 个是 97.2%，再往后每个候选只多零点几个百分点。' });
+S.notes($('#n-tts'), {
+  c: [
+    ['Best-of-N', '独立生成 N 个，验证器挑最好的。'],
+    ['覆盖率', '候选里至少一个正确的概率，是并行采样的理论上限。'],
+    ['多数投票', '无验证器时规范化答案后数票；假设错误分散。'],
+    ['顺序修订', '检查、改错；延迟随轮数串行增加。'],
+    ['树搜索', '广度 + 深度，常用 PRM 给中间步骤打分剪枝。']
+  ],
+  p: [
+    ['Snell 等人三结论', '分配得当小模型可胜大模型；p ≈ 0 加预算没用；无通用最优分配'],
+    ['边际收益', 'p(1 − p)^N，几何衰减'],
+    ['p = 0.2 覆盖率', 'N = 1/2/4/8/16：20 / 36 / 59 / 83.2 / 97.2%'],
+    ['部署时监控', '成功率、墙钟延迟、总 token、验证器调用次数、单次费用'],
+    ['并行 vs 串行', '并行可用更多 GPU 缩短等待；修订只能串行']
+  ]
+});
+S.notes($('#n-budget'), {
+  c: [
+    ['Hybrid thinking', '同一模型支持思考 / 不思考两种模式。'],
+    ['Thinking budget', '限制思考 token 数的预算接口。'],
+    ['long2short', '训练阶段学会删冗余步骤、保留必要步骤。'],
+    ['自适应思考', '模型自己判断这道题要想多久。'],
+    ['过程对齐', '推理文本与最终答案一致、过程本身可监督。']
+  ],
+  p: [
+    ['同预算对比（Ma 等）', '4000 token：1 × 4000 vs 8 × 500；结论集中在低预算区间'],
+    ['硬截断的风险', '截断点可能落在结论之前'],
+    ['长 ≠ 好', '无效推理、延迟与成本波动、推理链注入攻击'],
+    ['隐藏 vs 展示 CoT', '防蒸馏、留安全空间 vs 开源生态、可检查']
+  ]
+});
+
+/* ---------- ORM vs PRM ---------- */
+var PS = [
+  ['假设 √2 = p/q，p、q 互质', 1], ['两边平方：p² = 2q²', 1], ['所以 p² 是偶数', 1], ['所以 p 是偶数', 1], ['设 p = 2k', 1],
+  ['代入得 4k = q²（漏了平方，应为 4k² = 2q²）', -1], ['所以 q² 是偶数，q 也是偶数', 0], ['p、q 都是偶数，与互质矛盾', 0], ['所以 √2 是无理数（结论正确）', 0]
+];
+var pmMode = 'orm';
+function pm() {
+  $('#pmS').innerHTML = PS.map(function (s, i) {
+    var sig = pmMode === 'orm' ? '<b class="ok">+1</b>' : s[1] > 0 ? '<b class="ok">+1</b>' : s[1] < 0 ? '<b class="no">−1</b>' : '<b>0</b>';
+    return '<li class="' + (s[1] < 0 ? 'bad' : '') + '">' + s[0] + sig + '</li>';
+  }).join('');
+  $('#pmW').innerHTML = pmMode === 'orm' ? '结论“√2 是无理数”是对的，ORM 给整条回答 r = 1，九个步骤（包括第 6 步的错误变换和在错误前提下的第 7–8 步）一起被强化。模型不知道该抑制哪一步，下次可能还会漏平方。' :
+    'PRM 指出错误<b>第一次</b>出现在第 6 步：前 5 步保留（+1），第 6 步抑制（−1），在错误前提上继续的步骤不给正分。这就是过程奖励补上的信息。（打分方式为示意：PRM 可以输出 +1 / 0 / −1，也可以输出“这一步正确”的概率。）';
+}
+S.seg($('#pmM'), function (v) { pmMode = v; pm(); }); pm();
+var AG = { A: [0.9, 0.8, 0.2, 0.9], B: [0.6, 0.6, 0.6, 0.6] };
+function agBuild() {
+  $('#agT').innerHTML = '<tr><td>候选</td><td>四步分数</td><td class="n">mean</td><td class="n">min</td><td class="n">product</td></tr>' + ['A', 'B'].map(function (k) {
+    return '<tr><td>' + (k === 'A' ? '甲' : '乙') + '</td><td>' + AG[k].map(function (v, i) { return '<input class="sc" type="number" step="0.05" min="0" max="1" data-k="' + k + '" data-i="' + i + '" value="' + v + '" aria-label="第' + (i + 1) + '步分数">'; }).join(' ') + '</td><td class="n" id="ag' + k + '0"></td><td class="n" id="ag' + k + '1"></td><td class="n" id="ag' + k + '2"></td></tr>';
+  }).join('');
+  S.$$('#agT input').forEach(function (inp) { inp.addEventListener('input', function () { var v = parseFloat(inp.value); if (isFinite(v)) { AG[inp.getAttribute('data-k')][+inp.getAttribute('data-i')] = S.clamp(v, 0, 1); ag(); } }); });
+  ag();
+}
+function ag() {
+  var res = {};
+  ['A', 'B'].forEach(function (k) { var a = AG[k], m = a.reduce(function (s, x) { return s + x; }, 0) / a.length, mn = Math.min.apply(null, a), pr = a.reduce(function (s, x) { return s * x; }, 1); res[k] = [m, mn, pr]; $('#ag' + k + '0').textContent = S.f(m, 2); $('#ag' + k + '1').textContent = S.f(mn, 2); $('#ag' + k + '2').textContent = S.f(pr, 4); });
+  var names = ['mean', 'min', 'product'], pick = names.map(function (n, i) { var d = res.A[i] - res.B[i]; return n + ' 选' + (Math.abs(d) < 1e-4 ? '“打平”' : d > 0 ? '甲' : '乙'); });
+  $('#agW').innerHTML = pick.join('，') + '。甲的第 3 步只有 0.2：这是个笔误还是致命错误？选哪种聚合就是系统对这个问题的表态。原文数学实验里 min 效果最好（证明链条严格，一步错全盘错）；开放写作没有这么强的逻辑依赖，聚合规则要在目标任务的验证集上测。product 在“各步独立”的假设下等于全部正确的联合概率——这个假设在证明里并不成立，但解释了它为何对低分步极敏感。';
+}
+agBuild();
+S.notes($('#n-prm'), {
+  c: [
+    ['ORM', '结果奖励模型：一条回答一个分。'],
+    ['PRM', '过程奖励模型：每一步一个分，能定位第一个错误。'],
+    ['判别式 PRM', '分类器直接给步骤打分（PRM800K 训练）。'],
+    ['生成式 PRM', '先写自然语言评价再下结论，评价也能多想。'],
+    ['形式化验证器', 'Lean 4 等给出确定的对 / 错（AlphaProof、DeepSeek-Prover）。'],
+    ['归因困难', '结论碰巧对时，中间的错步骤也被强化。']
+  ],
+  p: [
+    ['值不值得上 PRM', '步骤可稳定切分？错误向后传播？结果验证够不够？'],
+    ['训练数据', 'ORM：(prompt, 完整回答, 对错)；PRM：(prompt, 前缀到第 i 步, 第 i 步对错)'],
+    ['原文聚合例子', '甲 [0.9,0.8,0.2,0.9] vs 乙 [0.6×4]：mean 选甲，min 选乙，product 打平'],
+    ['用法', '重排序、beam search / MCTS 剪枝、RL 稠密奖励'],
+    ['与搜索的联系', 'PRM + 搜索 ≈ AlphaZero 的价值网络 + MCTS']
+  ]
+});

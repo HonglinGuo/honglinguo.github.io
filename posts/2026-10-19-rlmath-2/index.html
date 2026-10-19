@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>状态值与贝尔曼方程：自举、矩阵形式、策略评估与动作值</title>
+<meta name="description" content="强化学习的数学原理学习笔记（二）：为什么用回报评价策略、自举的含义、状态值的定义、贝尔曼方程的推导与结构、矩阵形式 v = r + γPv、闭式解与迭代解（策略评估）、动作值及其与状态值的关系、常见误区“没被选的动作没有值”。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M9 3v18M15 3v18M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.5'/%3E%3Crect x='15' y='15' width='6' height='6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+</head>
+<body data-series="rlmath-series" data-part="2">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>强化学习的数学原理 · 02</span><span>对应原书第 2 章（第 15–34 页）</span><span>约 40 分钟</span></p>
+  <h1>一个状态值得多少，<em>看它通向哪里</em></h1>
+  <p class="lead">第 1 章用回报比较了两条轨迹。可一旦策略或环境是随机的，同一个起点会走出很多条轨迹，“回报”就不再是一个数。这一章给出两样东西：一个关键概念——状态值，即回报的期望；一个关键工具——贝尔曼方程，它把所有状态的值联系在一起。解这个方程，就叫策略评估，它是后面几乎每个算法的一半。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">强化学习的数学原理（Mathematical Foundations of Reinforcement Learning）</a>》（赵世钰（Shiyu Zhao）著，西湖大学；Springer Nature 与清华大学出版社 2025 年出版，作者在 GitHub 免费公开全书 PDF 与课件，本笔记依据仓库中 2025 年 7 月更新的英文 PDF（已含勘误））的学习笔记。原书仓库没有附带开源许可证，版权归作者与出版社所有；这里不转载原文和插图，而是按“先说清楚它解决什么问题、再动手算、最后记下来”的顺序用自己的话重讲，网格世界、算法与图都在浏览器里重新实现和手绘。公式、定义、例子与参数以原书为准，标注了对应的节号和页码；页面里的模拟结果标注“示意”，复现出原书图中数值的地方标注“原书数据”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-rlmath/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-19-rlmath-1/" data-part="1"><b>01</b>基本概念</a>
+  <a href="../2026-10-19-rlmath-2/" aria-current="page" data-part="2"><b>02</b>贝尔曼方程</a>
+  <a href="../2026-10-19-rlmath-3/" data-part="3"><b>03</b>贝尔曼最优方程</a>
+  <a href="../2026-10-19-rlmath-4/" data-part="4"><b>04</b>值迭代与策略迭代</a>
+  <a href="../2026-10-19-rlmath-5/" data-part="5"><b>05</b>蒙特卡罗</a>
+  <a href="../2026-10-19-rlmath-6/" data-part="6"><b>06</b>随机近似</a>
+  <a href="../2026-10-19-rlmath-7/" data-part="7"><b>07</b>时序差分</a>
+  <a href="../2026-10-19-rlmath-8/" data-part="8"><b>08</b>值函数近似</a>
+  <a href="../2026-10-19-rlmath-9/" data-part="9"><b>09</b>策略梯度</a>
+  <a href="../2026-10-19-rlmath-10/" data-part="10"><b>10</b>Actor-Critic</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">回报与自举</a><a href="#value">状态值</a><a href="#bellman">贝尔曼方程</a><a href="#matrix">矩阵与求解</a><a href="#action">动作值</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>状态值和回报是什么关系？“自举”为什么不是死循环？</li>
+  <li>贝尔曼方程长什么样、每一项是什么意思？怎么从它解出一个策略的全部状态值？</li>
+  <li>动作值和状态值怎么互相换算？策略不选的动作还有没有动作值？</li>
+</ol></div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>回报为什么重要，又该怎么算</h2><span class="meta">原书 2.1–2.2 节 · 第 16–19 页</span></div>
+  <div class="sec-lede">
+    <p>原书图 2.2 是一个 2×2 网格：s<sub>2</sub> 是禁区，s<sub>4</sub> 是目标。三个策略只在 s<sub>1</sub> 不同——向下绕开禁区、向右进禁区、各 0.5。从 s<sub>1</sub> 出发算折扣回报：γ/(1 − γ)、−1 + γ/(1 − γ)、−0.5 + γ/(1 − γ)。对任何 γ 都有“策略 1 &gt; 策略 3 &gt; 策略 2”，数学和直觉一致。注意第三个其实不是一条轨迹的回报，而是两条轨迹回报的平均——它已经是下一节要定义的“状态值”了。</p>
+    <p>回报怎么算有两种办法。一是<strong>按定义</strong>，沿轨迹把折扣奖励加起来。二是<strong>自举</strong>（bootstrapping）：看原书图 2.3 的四个状态绕圈，从 s<sub>i</sub> 出发的回报 v<sub>i</sub> 满足 v<sub>1</sub> = r<sub>1</sub> + γv<sub>2</sub>、v<sub>2</sub> = r<sub>2</sub> + γv<sub>3</sub>……每个值都依赖另一个值，最后 v<sub>4</sub> 又依赖 v<sub>1</sub>。乍看是死循环，写成矩阵就清楚了：</p>
+    <div class="eq">v = r + γPv　⇒　v = (I − γP)<sup>−1</sup> r<small>P 是“下一状态是谁”的 0/1 矩阵</small></div>
+    <p>这就是最简单的贝尔曼方程：<strong>从一个状态出发的回报，取决于从其他状态出发的回报</strong>。“自举”指用待求的量来表达它自己——不是循环论证，而是一组联立方程。</p>
+    <p class="go">左边拖 γ 比较三个策略；右边给四个状态设奖励，看“反复代入”怎么收敛到闭式解。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 2.2：三个策略在 s<sub>1</sub> 的回报</p>
+      <label class="ctl"><span>γ <output id="w3V">0.90</output></span><input type="range" id="w3S" min="0.05" max="0.95" step="0.01" value="0.9"></label>
+      <div id="w3C"></div>
+      <p class="cap" id="w3W"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">原书图 2.3：四状态绕圈的自举</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>r<sub>1</sub> <output id="b1V">0</output></span><input type="range" id="b1" min="-1" max="1" step="1" value="0"></label>
+        <label class="ctl"><span>r<sub>2</sub> <output id="b2V">1</output></span><input type="range" id="b2" min="-1" max="1" step="1" value="1"></label>
+        <label class="ctl"><span>r<sub>3</sub> <output id="b3V">0</output></span><input type="range" id="b3" min="-1" max="1" step="1" value="0"></label>
+        <label class="ctl"><span>r<sub>4</sub> <output id="b4V">-1</output></span><input type="range" id="b4" min="-1" max="1" step="1" value="-1"></label>
+      </div>
+      <div class="btnrow"><button class="btn pri" type="button" id="bsGo">代入一次 v ← r + γPv</button><button class="btn" type="button" id="bsRs">从 v = 0 重来</button></div>
+      <div class="tblw" id="bsT"></div>
+      <p class="cap" id="bsW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="value">
+  <div class="part-head"><h2>状态值：回报的期望</h2><span class="meta">原书 2.3 节 · 第 19–20 页</span></div>
+  <div class="sec-lede">
+    <p>先把记号定下来。时刻 t 智能体在状态 S<sub>t</sub>，按策略 π 采取动作 A<sub>t</sub>，转到 S<sub>t+1</sub> 并得到即时奖励 R<sub>t+1</sub>。它们都是<strong>随机变量</strong>。从 t 开始的折扣回报 G<sub>t</sub> = R<sub>t+1</sub> + γR<sub>t+2</sub> + γ<sup>2</sup>R<sub>t+3</sub> + … 也是随机变量。对它取条件期望，就是<strong>状态值</strong>（状态值函数）：</p>
+    <div class="eq">v<sub>π</sub>(s) ≐ 𝔼[G<sub>t</sub> | S<sub>t</sub> = s]</div>
+    <p>三点说明：它依赖 s（从哪儿出发）；依赖 π（换个策略，轨迹分布就变了）；<strong>不依赖 t</strong>（策略给定后它就是一个确定的数）。如果策略和模型都是确定性的，从一个状态出发只有一条轨迹，状态值就等于那条轨迹的回报；只要有随机性，状态值就是许多回报的平均。</p>
+    <p>状态值是全书的核心概念：<strong>状态值越大的策略越好</strong>。第 3 章会正式用它定义“最优策略”。接下来的问题是：怎么算？</p>
+    <p class="go">用一个随机策略看看“回报是随机的、状态值是它的均值”：从 s<sub>1</sub> 反复跑，观察回报的平均怎么逼近 v<sub>π</sub>(s<sub>1</sub>)。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 2.5 的随机策略（s<sub>1</sub> 右、下各 0.5，γ = 0.9），从 s<sub>1</sub> 采样回报</p>
+    <div class="lab-split">
+      <div>
+        <div class="btnrow"><button class="btn pri" type="button" id="mcGo">再采 20 条</button><button class="btn" type="button" id="mcRs">清空</button></div>
+        <div id="mcC"></div>
+      </div>
+      <div><div class="read" id="mcR"></div><p class="cap" id="mcW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-value"></div>
+</section>
+
+<section class="part" id="bellman">
+  <div class="part-head"><h2>贝尔曼方程</h2><span class="meta">原书 2.4–2.5 节 · 第 20–25 页</span></div>
+  <div class="sec-lede">
+    <p>推导只用两个事实：回报可以拆成“眼前一步 + 折扣后的下一个回报”，G<sub>t</sub> = R<sub>t+1</sub> + γG<sub>t+1</sub>；以及马尔可夫性。于是 v<sub>π</sub>(s) = 𝔼[R<sub>t+1</sub>|S<sub>t</sub> = s] + γ𝔼[G<sub>t+1</sub>|S<sub>t</sub> = s]，两项分别是<strong>即时奖励的均值</strong>和<strong>未来奖励的均值</strong>。第二项里，马尔可夫性让 𝔼[G<sub>t+1</sub>|S<sub>t</sub> = s, S<sub>t+1</sub> = s′] = 𝔼[G<sub>t+1</sub>|S<sub>t+1</sub> = s′] = v<sub>π</sub>(s′)。合起来就是<strong>贝尔曼方程</strong>：</p>
+    <div class="eq">v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s) [ Σ<sub>r</sub> p(r|s, a) r + γ Σ<sub>s′</sub> p(s′|s, a) v<sub>π</sub>(s′) ]，对所有 s ∈ 𝒮<small>原书式 (2.7)</small></div>
+    <p>读法：v<sub>π</sub>(s) 和 v<sub>π</sub>(s′) 是未知数；π(a|s) 是给定的策略；p(r|s, a)、p(s′|s, a) 是模型。关键在于它<strong>不是一个方程，而是每个状态各一个、联立的一组线性方程</strong>。从中解出状态值，就叫<strong>策略评估</strong>。文献里还有两种等价写法：Σ<sub>a</sub> π(a|s) Σ<sub>s′,r</sub> p(s′, r|s, a)[r + γv<sub>π</sub>(s′)]（Sutton 的写法），以及奖励只依赖 s′ 时的 Σ<sub>a</sub> π(a|s) Σ<sub>s′</sub> p(s′|s, a)[r(s′) + γv<sub>π</sub>(s′)]。</p>
+    <p>对具体例子，这个吓人的式子会变得很简单。原书图 2.4（s<sub>1</sub> 向下）的四个方程是 v(s<sub>1</sub>) = 0 + γv(s<sub>3</sub>)，v(s<sub>2</sub>) = 1 + γv(s<sub>4</sub>)，v(s<sub>3</sub>) = 1 + γv(s<sub>4</sub>)，v(s<sub>4</sub>) = 1 + γv(s<sub>4</sub>)。</p>
+    <p class="go">点“下一步”逐行展开推导；然后自己手算两个例子再对答案。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">推导贝尔曼方程，一步一步</p>
+    <ol class="derive" id="dvL">
+      <li>回报的递推：<div class="fx">G<sub>t</sub> = R<sub>t+1</sub> + γ(R<sub>t+2</sub> + γR<sub>t+3</sub> + …) = R<sub>t+1</sub> + γG<sub>t+1</sub></div></li>
+      <li>取条件期望、拆成两项：<div class="fx">v<sub>π</sub>(s) = 𝔼[R<sub>t+1</sub>|S<sub>t</sub> = s] + γ𝔼[G<sub>t+1</sub>|S<sub>t</sub> = s]</div></li>
+      <li>即时奖励的均值（全期望公式）：<div class="fx">𝔼[R<sub>t+1</sub>|S<sub>t</sub> = s] = Σ<sub>a</sub> π(a|s) Σ<sub>r</sub> p(r|s, a) r</div></li>
+      <li>未来奖励的均值，第二个等号用到马尔可夫性：<div class="fx">𝔼[G<sub>t+1</sub>|S<sub>t</sub> = s] = Σ<sub>s′</sub> 𝔼[G<sub>t+1</sub>|S<sub>t+1</sub> = s′] p(s′|s) = Σ<sub>s′</sub> v<sub>π</sub>(s′) Σ<sub>a</sub> p(s′|s, a) π(a|s)</div></li>
+      <li>合并，就是对每个状态成立的贝尔曼方程：<div class="fx">v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s)[Σ<sub>r</sub> p(r|s, a)r + γΣ<sub>s′</sub> p(s′|s, a) v<sub>π</sub>(s′)]</div></li>
+    </ol>
+    <div id="dvS"></div>
+  </div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">手算一：原书图 2.4（确定性策略，γ = 0.9）</p><div id="hc1"></div></div>
+    <div class="lab"><p class="lab-t">手算二：原书图 2.5（s<sub>1</sub> 右、下各 0.5，γ = 0.9）</p><div id="hc2"></div></div>
+  </div>
+  <div class="notes" id="n-bellman"></div>
+</section>
+
+<section class="part" id="matrix">
+  <div class="part-head"><h2>矩阵形式与两种解法</h2><span class="meta">原书 2.6–2.7 节 · 第 25–30 页</span></div>
+  <div class="sec-lede">
+    <p>把每个状态的方程叠起来。记 r<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s) Σ<sub>r</sub> p(r|s, a) r（按策略平均的即时奖励），p<sub>π</sub>(s′|s) = Σ<sub>a</sub> π(a|s) p(s′|s, a)（按策略平均的转移概率），就得到</p>
+    <div class="eq">v<sub>π</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>π</sub><small>原书式 (2.10)，[P<sub>π</sub>]<sub>ij</sub> = p<sub>π</sub>(s<sub>j</sub>|s<sub>i</sub>)</small></div>
+    <p>P<sub>π</sub> 是非负矩阵，每行和为 1（随机矩阵，P<sub>π</sub>𝟙 = 𝟙）。两种解法：<strong>闭式解</strong> v<sub>π</sub> = (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub>。I − γP<sub>π</sub> 一定可逆（Gershgorin 圆盘：每个圆盘的半径 γΣ<sub>j≠i</sub>p<sub>ij</sub> 小于圆心 1 − γp<sub>ii</sub>，圆盘不含原点），而且 (I − γP<sub>π</sub>)<sup>−1</sup> = I + γP<sub>π</sub> + γ<sup>2</sup>P<sub>π</sub><sup>2</sup> + … ≥ I，奖励越大值越大。闭式解适合理论分析，实际要求逆不划算。</p>
+    <p><strong>迭代解</strong>：v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>，从任意 v<sub>0</sub> 出发都收敛到 v<sub>π</sub>。证明只有一行：误差 δ<sub>k</sub> = v<sub>k</sub> − v<sub>π</sub> 满足 δ<sub>k+1</sub> = γP<sub>π</sub>δ<sub>k</sub>，于是 δ<sub>k</sub> = γ<sup>k</sup>P<sub>π</sub><sup>k</sup>δ<sub>0</sub>，而 P<sub>π</sub><sup>k</sup> 的元素都不超过 1、γ<sup>k</sup> → 0。这个迭代第 4 章会原封不动地用在策略迭代里。</p>
+    <p>原书图 2.7 在 5×5 网格（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = 1）里评估了两个“好”策略和两个“坏”策略。两个好策略只在第 4 列最上面两格不同，状态值却完全一样——<strong>不同的策略可以有相同的状态值</strong>。</p>
+    <p class="go">选一个策略（或点格子自己改），拖动迭代次数 k，看值怎么从 0 “长”出来并收敛到闭式解。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">5×5 网格上的策略评估（点格子切换该格动作）</p>
+    <div class="selrow"><span>策略</span><div class="seg" id="peP"><button data-v="good" aria-pressed="true">好策略（原书图 2.7a）</button><button data-v="good2">另一个好策略</button><button data-v="right">全部向右（原书图 2.7b 左）</button><button data-v="unif">均匀随机</button></div></div>
+    <div class="lab-split">
+      <div><div id="peG"></div><div id="peL"></div></div>
+      <div>
+        <label class="ctl"><span>迭代次数 k（v<sub>0</sub> = 0） <output id="peKv">0</output></span><input type="range" id="peK" min="0" max="80" step="1" value="0"></label>
+        <div class="read" id="peR"></div>
+        <div id="peC"></div>
+        <p class="cap" id="peW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-matrix"></div>
+</section>
+
+<section class="part" id="action">
+  <div class="part-head"><h2>从状态值到动作值</h2><span class="meta">原书 2.8 节 · 第 30–33 页</span></div>
+  <div class="sec-lede">
+    <p><strong>动作值</strong>是在状态 s 先采取动作 a、之后再按 π 走所得回报的期望：q<sub>π</sub>(s, a) ≐ 𝔼[G<sub>t</sub>|S<sub>t</sub> = s, A<sub>t</sub> = a]。它依赖的是“状态—动作对”，严格说该叫状态—动作值。它和状态值的关系是两条互逆的式子：</p>
+    <div class="eq">v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s) q<sub>π</sub>(s, a)<small>(2.13)：状态值是动作值按策略的平均</small></div>
+    <div class="eq">q<sub>π</sub>(s, a) = Σ<sub>r</sub> p(r|s, a) r + γ Σ<sub>s′</sub> p(s′|s, a) v<sub>π</sub>(s′)<small>(2.14)：动作值由下一状态的状态值决定</small></div>
+    <p>原书专门点名一个初学者常犯的错误：策略<strong>不选</strong>的动作，它的动作值不是 0，也不是“不用算”。在 s<sub>1</sub> 向上（策略从不这么做）的动作值是“撞墙得 −1，然后回到 s<sub>1</sub> 继续按 π 走”：q<sub>π</sub>(s<sub>1</sub>, a<sub>1</sub>) = −1 + γv<sub>π</sub>(s<sub>1</sub>)。为什么要关心？因为给定的策略可能不好，恰恰错过了最好的动作；要找最优策略，就得知道所有动作的值。</p>
+    <p>把 (2.13) 代入 (2.14)，得到用动作值表示的贝尔曼方程 q<sub>π</sub>(s, a) = Σ<sub>r</sub> p(r|s, a) r + γΣ<sub>s′</sub> p(s′|s, a) Σ<sub>a′</sub> π(a′|s′) q<sub>π</sub>(s′, a′)，矩阵形式 q<sub>π</sub> = r̃ + γPΠq<sub>π</sub>。其中 r̃、P 只由模型决定，策略全部装在分块对角阵 Π 里。第 5、7 章的无模型算法直接估计的就是动作值。</p>
+    <p class="go">在上面选好的策略下，点一个格子看它 5 个动作的动作值，以及“按策略加权平均 = 状态值”。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">动作值查看器（沿用上一节选中的策略，k → ∞ 的精确值）</p>
+    <div class="lab-split">
+      <div><div id="qvG"></div></div>
+      <div><div id="qvB"></div><p class="cap" id="qvW"></p></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：状态值 vs 动作值</h4>
+    <p><b>状态值 v<sub>π</sub>(s)</b>：从 s 出发、全程按 π 走的期望回报。<b>动作值 q<sub>π</sub>(s, a)</b>：在 s 先做 a（不管 π 选不选它），之后按 π 走的期望回报。</p>
+    <p><b>换算</b>：v 是 q 按 π 的加权平均；q 是“一步奖励 + γ × 下一状态的 v”。前者不需要模型，后者需要 p(s′|s, a)——所以无模型算法直接估计 q（第 5 章）。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：回报 vs 状态值；自举</h4>
+    <p><b>回报</b> G<sub>t</sub>：一条轨迹上的随机量。<b>状态值</b>：它的期望，是确定的数。确定性策略和模型下二者相等。</p>
+    <p><b>自举</b>：用待求的值（其他状态的值）来表示一个值。贝尔曼方程本身就是自举的；第 7 章的 TD 也是，而第 5 章的蒙特卡罗不是。</p>
+  </div>
+  <div class="notes" id="n-action"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">状态值 v<sub>π</sub>(s) = 𝔼[G<sub>t</sub>|S<sub>t</sub> = s]；动作值 q<sub>π</sub>(s, a) = 𝔼[G<sub>t</sub>|S<sub>t</sub> = s, A<sub>t</sub> = a]</div>
+    <div class="fx">贝尔曼方程 v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s)[Σ<sub>r</sub> p(r|s, a)r + γΣ<sub>s′</sub> p(s′|s, a)v<sub>π</sub>(s′)]</div>
+    <div class="fx">矩阵形式 v<sub>π</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>π</sub>；闭式解 v<sub>π</sub> = (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub></div>
+    <div class="fx">迭代解（策略评估）v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>，误差 δ<sub>k</sub> = γ<sup>k</sup>P<sub>π</sub><sup>k</sup>δ<sub>0</sub> → 0</div>
+    <div class="fx">v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s)q<sub>π</sub>(s, a)；q<sub>π</sub>(s, a) = Σ<sub>r</sub> p(r|s, a)r + γΣ<sub>s′</sub> p(s′|s, a)v<sub>π</sub>(s′)</div>
+    <div class="fx">动作值形式 q<sub>π</sub> = r̃ + γPΠq<sub>π</sub></div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>状态值和回报是什么关系？自举为什么不是死循环？
+      <details><summary>先自己答，再点开</summary><p class="ans">状态值是从该状态出发所得回报的期望；确定性时两者相等。自举的方程组是联立的线性方程 v = r + γPv，可以整体求解（闭式或迭代），不是一个未知数等于另一个未知数的死循环。</p></details></li>
+    <li>贝尔曼方程每一项是什么？怎么解？
+      <details><summary>先自己答，再点开</summary><p class="ans">v<sub>π</sub>(s) = 即时奖励均值 + γ × 下一状态值的均值；π 给定，p 是模型。叠成矩阵 v = r<sub>π</sub> + γP<sub>π</sub>v，闭式解 (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub>，或迭代 v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>，这就是策略评估。</p></details></li>
+    <li>动作值和状态值怎么换算？没被选的动作有值吗？
+      <details><summary>先自己答，再点开</summary><p class="ans">v = Σ<sub>a</sub> π q；q = r + γΣ p(s′|s, a) v(s′)。没被选的动作照样有动作值（做一次这个动作、之后再按 π 走），找更好的策略恰恰要靠它们。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-rlmath-1/"><small>上一篇</small><span>01 · 基本概念</span></a><a class="nx" href="../2026-10-19-rlmath-3/"><small>下一篇</small><span>03 · 最优状态值与贝尔曼最优方程</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 三个策略的回报 ---------- */
+var w3c = S.chart($('#w3C'), { h: 250, x: [0.05, 0.95], y: [-1, 20], xt: [0.1, 0.3, 0.5, 0.7, 0.9], yt: [0, 5, 10, 15, 20], xl: 'γ', yl: 's1 出发的折扣回报' });
+function w3() {
+  var g = +$('#w3S').value; $('#w3V').textContent = S.f(g, 2);
+  var f1 = function (x) { return x / (1 - x); }, f2 = function (x) { return -1 + x / (1 - x); }, f3 = function (x) { return -0.5 + x / (1 - x); };
+  w3c({ curves: [{ f: f1, c: 'c1', label: '向下（绕开禁区）' }, { f: f3, c: 'ok', label: '右下各 0.5' }, { f: f2, c: 'c2', label: '向右（进禁区）' }], vl: [{ x: g, c: 'dim' }] });
+  $('#w3W').innerHTML = 'γ = ' + S.f(g, 2) + '：' + S.f(f1(g), 2) + ' &gt; ' + S.f(f3(g), 2) + ' &gt; ' + S.f(f2(g), 2) + '。三条曲线是平行的，差值分别是 0.5 和 1，与 γ 无关——差别只来自 s1 那一步进不进禁区。';
+}
+$('#w3S').addEventListener('input', w3); w3();
+
+/* ---------- 四状态自举 ---------- */
+var bsV = [0, 0, 0, 0], bsK = 0, BG = 0.9;
+function bsR() { return [1, 2, 3, 4].map(function (i) { return +$('#b' + i).value; }); }
+function bsExact() { var r = bsR(); var A = [[1, -BG, 0, 0], [0, 1, -BG, 0], [0, 0, 1, -BG], [-BG, 0, 0, 1]]; return RL.solveLin(A, r); }
+function bs() {
+  var r = bsR(), ex = bsExact();
+  [1, 2, 3, 4].forEach(function (i) { $('#b' + i + 'V').textContent = r[i - 1]; });
+  S.grid($('#bsT'), [bsV, ex], { rl: ['v<sub>' + bsK + '</sub>（代入 ' + bsK + ' 次）', '闭式解 (I − γP)<sup>−1</sup>r'], cl: ['v<sub>1</sub>', 'v<sub>2</sub>', 'v<sub>3</sub>', 'v<sub>4</sub>'], fmt: function (v) { return S.f(v, 2); } });
+  $('#bsW').innerHTML = 'γ = 0.9。最大误差 ‖v<sub>k</sub> − v‖<sub>∞</sub> = <b>' + S.f(RL.maxAbs(bsV, ex), 3) + '</b>；每代入一次，误差至多乘以 γ = 0.9。点 20 次左右，误差缩到原来的 0.9<sup>20</sup> ≈ 12%。';
+}
+$('#bsGo').addEventListener('click', function () { var r = bsR(); bsV = [r[0] + BG * bsV[1], r[1] + BG * bsV[2], r[2] + BG * bsV[3], r[3] + BG * bsV[0]]; bsK++; bs(); });
+$('#bsRs').addEventListener('click', function () { bsV = [0, 0, 0, 0]; bsK = 0; bs(); });
+[1, 2, 3, 4].forEach(function (i) { $('#b' + i).addEventListener('input', bs); });
+bs();
+S.notes($('#n-why'), {
+  c: [
+    ['回报评价策略', '回报越大的策略越好；随机时要对回报取平均。'],
+    ['自举', '用待求的值表示它自己；本质是一组联立方程。'],
+    ['最简贝尔曼方程', 'v = r + γPv：一个状态的回报取决于其他状态的回报。']
+  ],
+  p: [
+    ['原书图 2.2', 'γ/(1−γ) &gt; −0.5 + γ/(1−γ) &gt; −1 + γ/(1−γ)'],
+    ['图 2.3 的方程', 'v<sub>1</sub> = r<sub>1</sub> + γv<sub>2</sub>，…，v<sub>4</sub> = r<sub>4</sub> + γv<sub>1</sub>'],
+    ['闭式解', 'v = (I − γP)<sup>−1</sup>r']
+  ]
+});
+
+/* ---------- 采样回报 ---------- */
+// 2×2：s1 s2 / s3 s4，s2 禁区，s4 目标
+var E22 = RL.env({ rows: 2, cols: 2, forbid: [[0, 1]], target: [[1, 1]] });
+var PI22 = [[0, 0.5, 0.5, 0, 0], [0, 0, 1, 0, 0], [0, 1, 0, 0, 0], [0, 0, 0, 0, 1]];
+var mcG = [], mcRng = S.rng(7);
+var mcChart = S.chart($('#mcC'), { h: 230, x: [0, 100], y: [7.5, 9.5], xt: [0, 25, 50, 75, 100], yt: [7.5, 8, 8.5, 9, 9.5], xl: '已采样的回报条数', yl: '回报的平均' });
+function mcRun(n) {
+  for (var i = 0; i < n; i++) {
+    var s = 0, g = 0, d = 1;
+    for (var t = 0; t < 200; t++) { var a = RL.sampleA(PI22[s], mcRng), m = E22.move(s, a); g += d * m[1]; d *= 0.9; s = m[0]; }
+    mcG.push(g);
+  }
+  mcDraw();
+}
+function mcDraw() {
+  var pts = [], acc = 0; mcG.forEach(function (g, i) { acc += g; pts.push([i + 1, acc / (i + 1)]); });
+  var n = mcG.length, nmax = Math.max(100, n);
+  mcChart({ x: [0, nmax], xt: [0, nmax / 4, nmax / 2, 3 * nmax / 4, nmax].map(Math.round), curves: pts.length ? [{ pts: pts, c: 'c1', label: '回报的平均' }] : [], hl: [{ y: 8.5, c: 'ok', label: 'v_π(s1) = 8.5' }] });
+  var c9 = mcG.filter(function (g) { return g > 8.9; }).length;
+  $('#mcR').innerHTML = '<div><div class="v">' + n + '</div><div class="k">条轨迹</div></div><div class="hl"><div class="v">' + (n ? S.f(pts[n - 1][1], 2) : '—') + '</div><div class="k">回报的平均</div></div><div><div class="v">' + c9 + ' / ' + (n - c9) + '</div><div class="k">回报 ≈ 9 / ≈ 8</div></div>';
+  $('#mcW').innerHTML = '每条轨迹的回报只有两种取值：先向下 ≈ 0 + 0.9 × 10 = 9，先向右 ≈ −1 + 0.9 × 10 = 8（截到 200 步，误差可忽略）。回报是随机的，状态值是它的期望 0.5 × 9 + 0.5 × 8 = <b>8.5</b>。这里用的“采样再平均”正是第 5 章蒙特卡罗方法的雏形。';
+}
+$('#mcGo').addEventListener('click', function () { mcRun(20); });
+$('#mcRs').addEventListener('click', function () { mcG = []; mcDraw(); });
+mcRun(20);
+S.notes($('#n-value'), {
+  c: [
+    ['状态值 v<sub>π</sub>(s)', '从 s 出发按 π 行动所得折扣回报的期望。'],
+    ['三个依赖', '依赖 s 和 π，不依赖时刻 t。'],
+    ['与回报的关系', '确定性时相等；有随机性时是多条轨迹回报的平均。'],
+    ['用途', '评价策略：状态值越大越好。']
+  ],
+  p: [
+    ['定义', 'v<sub>π</sub>(s) ≐ 𝔼[G<sub>t</sub>|S<sub>t</sub> = s]'],
+    ['回报', 'G<sub>t</sub> = R<sub>t+1</sub> + γR<sub>t+2</sub> + γ<sup>2</sup>R<sub>t+3</sub> + …'],
+    ['图 2.5 的 s<sub>1</sub>', '0.5 × 9 + 0.5 × 8 = 8.5']
+  ]
+});
+
+/* ---------- 推导 & 手算 ---------- */
+(function () {
+  var lis = $$('#dvL li');
+  S.stepper($('#dvS'), lis.length, function (i) { lis.forEach(function (li, k) { li.classList.toggle('hide', k > i); li.classList.toggle('on', k === i); }); }, ['回报递推', '拆成两项', '即时奖励均值', '未来奖励均值', '贝尔曼方程']);
+})();
+RL.check($('#hc1'), { q: '先解 v(s<sub>4</sub>) = 1 + γv(s<sub>4</sub>)，再一路往回代。v<sub>π</sub>(s<sub>1</sub>) = ？', ans: 9, d: 1, why: 'v(s<sub>4</sub>) = 1/(1 − γ) = 10；v(s<sub>3</sub>) = 1 + 0.9 × 10 = 10；v(s<sub>2</sub>) = 10；v(s<sub>1</sub>) = 0 + 0.9 × 10 = <b>9</b>。和第 1 章“轨迹 0, 1, 1, … 的折扣回报 γ/(1 − γ)”一致。' });
+RL.check($('#hc2'), { q: 'v(s<sub>1</sub>) = 0.5[0 + γv(s<sub>3</sub>)] + 0.5[−1 + γv(s<sub>2</sub>)]，其余同左。v<sub>π</sub>(s<sub>1</sub>) = ？', ans: 8.5, d: 1, why: '0.5 × (0 + 9) + 0.5 × (−1 + 9) = <b>8.5</b> = −0.5 + γ/(1 − γ)。所有状态上 v<sub>π1</sub> ≥ v<sub>π2</sub>，所以图 2.4 的策略更好。' });
+S.notes($('#n-bellman'), {
+  c: [
+    ['贝尔曼方程', '描述所有状态值之间关系的一组线性方程。'],
+    ['两项结构', '即时奖励的均值 + γ × 未来奖励的均值。'],
+    ['马尔可夫性的作用', '让 𝔼[G<sub>t+1</sub>|S<sub>t</sub> = s, S<sub>t+1</sub> = s′] = v<sub>π</sub>(s′)。'],
+    ['策略评估', '解贝尔曼方程求出给定策略的状态值。']
+  ],
+  p: [
+    ['逐元素形式', 'v(s) = Σ<sub>a</sub> π(a|s)[Σ<sub>r</sub> p(r|s,a)r + γΣ<sub>s′</sub> p(s′|s,a)v(s′)]'],
+    ['回报递推', 'G<sub>t</sub> = R<sub>t+1</sub> + γG<sub>t+1</sub>'],
+    ['Sutton 写法', 'Σ<sub>a</sub> π Σ<sub>s′,r</sub> p(s′,r|s,a)[r + γv(s′)]'],
+    ['未知 vs 已知', 'v 未知；π 给定；p(r|s,a)、p(s′|s,a) 是模型']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 5×5 策略评估 ---------- */
+var E5 = RL.book5({ gamma: 0.9 });
+var vS10 = RL.vStar(RL.book5({ rf: -10 })), q10 = RL.qFromV(RL.book5({ rf: -10 }), vS10);
+var GOOD = RL.greedy(q10).map(function (p) { return p.indexOf(1); });
+var GOOD2 = GOOD.slice(); GOOD2[3] = 2; GOOD2[8] = 2; // 第 4 列最上面两格：向右 → 向下（原书图 2.7a 两个策略的区别）
+var peActs = GOOD.slice(), peUnif = false, peK = 0;
+var peDraw = RL.grid($('#peG'), E5, { cell: 76, labels: true, onCell: function (s) { if (peUnif) { peUnif = false; peActs = GOOD.slice(); } peActs[s] = (peActs[s] + 1) % 5; S.$$('#peP button').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); }); pe(); } });
+RL.legend($('#peL'));
+var peChart = S.chart($('#peC'), { h: 200, x: [0, 80], y: [-3, 1], xt: [0, 20, 40, 60, 80], yt: [-3, -2, -1, 0, 1], xl: '迭代次数 k', yl: 'log₁₀ ‖v_k − v_π‖∞' });
+function pePi() { return peUnif ? RL.uniform(25) : RL.det(peActs); }
+function pe() {
+  var pi = pePi(), ex = RL.evalExact(E5, pi), k = +$('#peK').value; $('#peKv').textContent = k;
+  var vk = RL.evalIter(E5, pi, null, k);
+  peDraw({ v: vk, pi: pi });
+  var pts = [], v = new Array(25).fill(0), e0 = RL.maxAbs(v, ex);
+  for (var j = 0; j <= 80; j++) { pts.push([j, Math.log10(Math.max(1e-3, RL.maxAbs(v, ex)))]); v = RL.bellman(E5, pi, v); }
+  peChart({ curves: [{ pts: pts, c: 'c1', label: '实际误差' }, { f: function (x) { return Math.log10(e0) + x * Math.log10(0.9); }, c: 'dim', dash: 1, label: 'γ^k ‖v_0 − v_π‖ 上界' }], vl: [{ x: k, c: 'c2' }] });
+  $('#peR').innerHTML = '<div><div class="v">' + S.f(RL.maxAbs(vk, ex), 3) + '</div><div class="k">‖v<sub>k</sub> − v<sub>π</sub>‖<sub>∞</sub></div></div><div class="hl"><div class="v">' + S.f(RL.sum(ex) / 25, 2) + '</div><div class="k">v<sub>π</sub> 的平均</div></div>';
+  $('#peW').innerHTML = k === 0 ? '从 v<sub>0</sub> = 0 开始。往右拖 k：离目标近的格子先“亮”起来，值一层层往外传——第 k 次迭代相当于只看了前 k 步的奖励。' : '误差按 γ<sup>k</sup> 的速度缩小（虚线是上界）。' + (peUnif ? '均匀随机策略的值全是负数（−2.9 到 −4.5），与原书图 8.6 一致：乱走经常撞墙、进禁区。' : '');
+}
+S.seg($('#peP'), function (v) {
+  peUnif = v === 'unif';
+  peActs = v === 'good' ? GOOD.slice() : v === 'good2' ? GOOD2.slice() : v === 'right' ? new Array(25).fill(1) : GOOD.slice();
+  pe(); qv();
+});
+$('#peK').addEventListener('input', pe);
+pe();
+S.notes($('#n-matrix'), {
+  c: [
+    ['r<sub>π</sub>', '按策略平均的即时奖励向量。'],
+    ['P<sub>π</sub>', '策略下的状态转移矩阵；非负、每行和为 1。'],
+    ['闭式解', '(I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub>；必可逆，适合理论分析。'],
+    ['迭代解', 'v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>，任意初值都收敛。'],
+    ['值相同、策略不同', '原书图 2.7a：两个好策略状态值完全一样。']
+  ],
+  p: [
+    ['矩阵形式', 'v<sub>π</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>π</sub>'],
+    ['可逆性', 'Gershgorin：半径 γΣ<sub>j≠i</sub>p<sub>ij</sub> &lt; 圆心 1 − γp<sub>ii</sub>'],
+    ['级数展开', '(I − γP<sub>π</sub>)<sup>−1</sup> = I + γP<sub>π</sub> + γ<sup>2</sup>P<sub>π</sub><sup>2</sup> + … ≥ I'],
+    ['收敛证明', 'δ<sub>k+1</sub> = γP<sub>π</sub>δ<sub>k</sub> ⇒ δ<sub>k</sub> = γ<sup>k</sup>P<sub>π</sub><sup>k</sup>δ<sub>0</sub> → 0']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 动作值 ---------- */
+var qvS = 3;
+var qvDraw = RL.grid($('#qvG'), E5, { cell: 76, labels: true, onCell: function (s) { qvS = s; qv(); } });
+function qv() {
+  var pi = pePi(), v = RL.evalExact(E5, pi), q = RL.qFromV(E5, v)[qvS], hl = {}; hl[qvS] = 'on';
+  qvDraw({ v: v, pi: pi, hl: hl });
+  var mx = Math.max.apply(null, q.map(Math.abs)) || 1;
+  S.bars($('#qvB'), q.map(function (x, a) { return { label: 'a' + (a + 1) + ' ' + RL.AN[a] + (pi[qvS][a] > 0 ? '（π = ' + S.f(pi[qvS][a], 1) + '）' : '（不选）'), value: Math.abs(x) / mx, text: S.f(x, 2), cls: pi[qvS][a] > 0 ? '' : 'dim' }; }));
+  $('#qvB').classList.add('wide');
+  var best = RL.argmax(q);
+  $('#qvW').innerHTML = '格子 ' + E5.label(qvS) + '：Σ<sub>a</sub> π(a|s) q(s, a) = <b>' + S.f(RL.vFromQ([q], [pi[qvS]])[0], 2) + '</b> = v<sub>π</sub>(s)。' + (pi[qvS][best] > 0.99 || (pi[qvS][best] > 0 && q[best] - Math.max.apply(null, q.filter(function (_, a) { return pi[qvS][a] > 0; })) < 1e-9) ? '这里策略已经选了动作值最大的动作。' : '注意：动作值最大的是 a' + (best + 1) + ' ' + RL.AN[best] + '（' + S.f(q[best], 2) + '），策略却没选它——把这一格改成它，策略就会变好。这正是第 3 章“策略改进”的出发点。') + ' 灰色条是策略不选的动作，它们照样有值。';
+}
+qv();
+S.notes($('#n-action'), {
+  c: [
+    ['动作值 q<sub>π</sub>(s, a)', '在 s 先做 a、之后按 π 走的期望回报。'],
+    ['v 由 q 得', '状态值是动作值按策略的平均。'],
+    ['q 由 v 得', '一步奖励 + γ × 下一状态值的期望（需要模型）。'],
+    ['常见误区', '策略不选的动作也有动作值，不能设成 0。']
+  ],
+  p: [
+    ['(2.13)', 'v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s) q<sub>π</sub>(s, a)'],
+    ['(2.14)', 'q<sub>π</sub>(s, a) = Σ<sub>r</sub> p(r|s,a)r + γΣ<sub>s′</sub> p(s′|s,a)v<sub>π</sub>(s′)'],
+    ['撞墙动作的值', 'q<sub>π</sub>(s<sub>1</sub>, a<sub>1</sub>) = −1 + γv<sub>π</sub>(s<sub>1</sub>)'],
+    ['动作值贝尔曼方程', 'q<sub>π</sub> = r̃ + γPΠq<sub>π</sub>，r̃、P 只由模型决定']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 状态值', '回报的期望；自举的方程是联立线性方程组，可整体求解。'],
+    ['② 贝尔曼方程', '即时奖励均值 + γ × 未来均值；矩阵形式 v = r<sub>π</sub> + γP<sub>π</sub>v，闭式或迭代求解 = 策略评估。'],
+    ['③ 动作值', 'v = Σπq，q = r + γΣpv；不选的动作也有值，改进策略靠它。']
+  ],
+  p: [
+    ['下一篇', '有了评价，怎么找最好的策略？贝尔曼最优方程与收缩映射。'],
+    ['原书一句话', '贝尔曼方程描述了所有状态值之间的关系，它是分析状态值的工具。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

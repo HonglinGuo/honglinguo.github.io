@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>值迭代、策略迭代与截断策略迭代</title>
+<meta name="description" content="强化学习的数学原理学习笔记（四）：值迭代的两步（策略更新、值更新）与逐元素实现、中间值不是状态值；策略迭代的策略评估与策略改进、改进引理与收敛定理；截断策略迭代把前两者统一为两个极端；广义策略迭代；动态规划与有模型、无模型强化学习的区别。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M9 3v18M15 3v18M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.5'/%3E%3Crect x='15' y='15' width='6' height='6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+</head>
+<body data-series="rlmath-series" data-part="4">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>强化学习的数学原理 · 04</span><span>对应原书第 4 章（第 57–75 页）</span><span>约 40 分钟</span></p>
+  <h1>一步值，一步策略，<em>交替到最优</em></h1>
+  <p class="lead">从这一章起开始讲算法。三个算法——值迭代、策略迭代、截断策略迭代——长得几乎一样：每轮都是“更新一次值、更新一次策略”。区别只在于“更新值”时迭代多少次：一次、无穷次、还是有限次。把它们放在一张图上比较，就会发现前两者只是第三者的两个极端。它们都需要模型，属于动态规划；但第 5 章的无模型算法正是从这里改出来的。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">强化学习的数学原理（Mathematical Foundations of Reinforcement Learning）</a>》（赵世钰（Shiyu Zhao）著，西湖大学；Springer Nature 与清华大学出版社 2025 年出版，作者在 GitHub 免费公开全书 PDF 与课件，本笔记依据仓库中 2025 年 7 月更新的英文 PDF（已含勘误））的学习笔记。原书仓库没有附带开源许可证，版权归作者与出版社所有；这里不转载原文和插图，而是按“先说清楚它解决什么问题、再动手算、最后记下来”的顺序用自己的话重讲，网格世界、算法与图都在浏览器里重新实现和手绘。公式、定义、例子与参数以原书为准，标注了对应的节号和页码；页面里的模拟结果标注“示意”，复现出原书图中数值的地方标注“原书数据”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-rlmath/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-19-rlmath-1/" data-part="1"><b>01</b>基本概念</a>
+  <a href="../2026-10-19-rlmath-2/" data-part="2"><b>02</b>贝尔曼方程</a>
+  <a href="../2026-10-19-rlmath-3/" data-part="3"><b>03</b>贝尔曼最优方程</a>
+  <a href="../2026-10-19-rlmath-4/" aria-current="page" data-part="4"><b>04</b>值迭代与策略迭代</a>
+  <a href="../2026-10-19-rlmath-5/" data-part="5"><b>05</b>蒙特卡罗</a>
+  <a href="../2026-10-19-rlmath-6/" data-part="6"><b>06</b>随机近似</a>
+  <a href="../2026-10-19-rlmath-7/" data-part="7"><b>07</b>时序差分</a>
+  <a href="../2026-10-19-rlmath-8/" data-part="8"><b>08</b>值函数近似</a>
+  <a href="../2026-10-19-rlmath-9/" data-part="9"><b>09</b>策略梯度</a>
+  <a href="../2026-10-19-rlmath-10/" data-part="10"><b>10</b>Actor-Critic</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#vi">值迭代</a><a href="#pi">策略迭代</a><a href="#tpi">截断策略迭代</a><a href="#gpi">三者关系</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>值迭代每一轮做哪两步？它的中间值 v<sub>k</sub> 是某个策略的状态值吗？</li>
+  <li>策略迭代为什么每一轮都不会变差？为什么离目标近的状态先找到最优动作？</li>
+  <li>截断策略迭代怎样把前两者统一起来？策略评估要迭代几次才划算？</li>
+</ol></div>
+
+<section class="part" id="vi">
+  <div class="part-head"><h2>值迭代</h2><span class="meta">原书 4.1 节 · 第 58–62 页</span></div>
+  <div class="sec-lede">
+    <p>值迭代就是第 3 章收缩映射定理给出的那个算法：v<sub>k+1</sub> = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)。拆开看，每轮两步。<strong>策略更新</strong>：π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)。<strong>值更新</strong>：v<sub>k+1</sub> = r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>k</sub>。</p>
+    <p>逐元素实现时，对每个状态先算 q<sub>k</sub>(s, a) = Σ<sub>r</sub> p(r|s, a) r + γΣ<sub>s′</sub> p(s′|s, a) v<sub>k</sub>(s′)，策略选 argmax（并列时任选一个，不影响收敛），值取 max。一句话流程：<strong>v<sub>k</sub>(s) → q<sub>k</sub>(s, a) → 贪心策略 π<sub>k+1</sub>(s) → v<sub>k+1</sub>(s) = max<sub>a</sub> q<sub>k</sub>(s, a)</strong>。</p>
+    <p>一个容易混淆的点：<strong>v<sub>k</sub> 不是状态值</strong>。它只是算法的中间量，一般既不满足 π<sub>k+1</sub> 的贝尔曼方程，也不满足 π<sub>k</sub> 的；相应地 q<sub>k</sub> 也不是动作值。它只在极限处收敛到 v*。</p>
+    <p class="go">先跟着原书例子（2×2 网格，s<sub>2</sub> 禁区，s<sub>4</sub> 目标，γ = 0.9）逐步算 q 表；再在 5×5 网格上一轮一轮地跑。</p>
+  </div>
+  <div class="algo"><h4>算法 4.1　值迭代<small>需要模型 p(r|s, a)、p(s′|s, a)</small></h4><ol>
+    <li>任取初值 v<sub>0</sub>。当 ‖v<sub>k</sub> − v<sub>k−1</sub>‖ 大于阈值时，对每个状态 s：
+      <ol><li>对每个动作 a：<code>q_k(s,a) = Σ_r p(r|s,a) r + γ Σ_s′ p(s′|s,a) v_k(s′)</code></li>
+      <li>策略更新：<code>π_{k+1}(a|s) = 1</code> 当 <code>a = argmax_a q_k(s,a)</code></li>
+      <li>值更新：<code>v_{k+1}(s) = max_a q_k(s,a)</code></li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书 4.1.2 的例子：一步一步算 q 表</p>
+    <div class="lab-split">
+      <div><div id="v2G"></div><div id="v2S"></div></div>
+      <div><div class="tblw" id="v2T"></div><p class="cap" id="v2W"></p></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">5×5 网格上的值迭代（原书基准设置，v<sub>0</sub> = 0）</p>
+    <div class="lab-split">
+      <div><div id="v5G"></div></div>
+      <div>
+        <label class="ctl"><span>第 k 轮（显示 v<sub>k</sub> 和由它得到的 π<sub>k+1</sub>） <output id="v5Kv">1</output></span><input type="range" id="v5K" min="0" max="60" step="1" value="1"></label>
+        <table class="kvt" id="v5T"></table>
+        <p class="cap" id="v5W"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-vi"></div>
+</section>
+
+<section class="part" id="pi">
+  <div class="part-head"><h2>策略迭代</h2><span class="meta">原书 4.2 节 · 第 62–70 页</span></div>
+  <div class="sec-lede">
+    <p>策略迭代不直接解 BOE，但思想更重要，后面大部分算法都是它的变形。从任意 π<sub>0</sub> 出发，每轮两步。<strong>策略评估</strong>（PE）：解贝尔曼方程 v<sub>π<sub>k</sub></sub> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sub>π<sub>k</sub></sub>，得到当前策略真正的状态值。<strong>策略改进</strong>（PI）：π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>π<sub>k</sub></sub>)，逐元素就是对 q<sub>π<sub>k</sub></sub>(s, a) 取贪心。注意它是“迭代里套迭代”：策略评估本身用第 2 章的 v<sup>(j+1)</sup> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sup>(j)</sup>，理论上要 j → ∞。</p>
+    <p>为什么不会变差？<strong>引理 4.1</strong>：若 π<sub>k+1</sub> 是对 v<sub>π<sub>k</sub></sub> 的贪心策略，则 v<sub>π<sub>k+1</sub></sub> ≥ v<sub>π<sub>k</sub></sub>。证明：两者都满足各自的贝尔曼方程，而贪心性给出 r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>π<sub>k</sub></sub> ≥ v<sub>π<sub>k</sub></sub>；相减得 v<sub>π<sub>k</sub></sub> − v<sub>π<sub>k+1</sub></sub> ≤ γP<sub>π<sub>k+1</sub></sub>(v<sub>π<sub>k</sub></sub> − v<sub>π<sub>k+1</sub></sub>)，反复代入趋于 0。于是 v<sub>π<sub>0</sub></sub> ≤ v<sub>π<sub>1</sub></sub> ≤ … ≤ v*，单调有界必收敛。<strong>定理 4.1</strong> 进一步证明极限就是 v*：把它和从同样起点出发的值迭代序列比较，可以归纳证明 v<sub>k</sub> ≤ v<sub>π<sub>k</sub></sub> ≤ v*——策略迭代每轮都不比值迭代慢。</p>
+    <p>原书图 4.4（5×5，r<sub>forbidden</sub> = −10，从随机策略出发）观察到两个现象：<strong>离目标近的状态先找到最优动作</strong>——只有近处先找到通往目标的路，远处才能“借道”；以及值的空间分布也是近大远小。</p>
+    <p class="go">先手算原书图 4.3 的两状态例子；再在 5×5 网格上从随机策略开始逐轮迭代，绿框标出已经取到最优动作的格子。</p>
+  </div>
+  <div class="algo"><h4>算法 4.2　策略迭代<small>需要模型</small></h4><ol>
+    <li>任取初始策略 π<sub>0</sub>。当 v<sub>π<sub>k</sub></sub> 未收敛时：
+      <ol><li>策略评估：任取初值，反复 <code>v^(j+1)(s) = Σ_a π_k(a|s)[Σ_r p(r|s,a) r + γ Σ_s′ p(s′|s,a) v^(j)(s′)]</code> 直到收敛，得 v<sub>π<sub>k</sub></sub></li>
+      <li>策略改进：对每个 s、a 算 <code>q_πk(s,a)</code>，令 <code>π_{k+1}(a|s) = 1</code> 当 <code>a = argmax_a q_πk(s,a)</code></li></ol></li>
+  </ol></div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">原书图 4.3：一行两个格子，s<sub>2</sub> 是目标；π<sub>0</sub> 在 s<sub>1</sub> 向左、在 s<sub>2</sub> 向左</p><div id="p2C"></div><div class="tblw" id="p2T"></div></div>
+    <div class="lab">
+      <p class="lab-t">5×5 策略迭代（r<sub>forbidden</sub> = −10，原书图 4.4 的设置）</p>
+      <div class="btnrow"><button class="btn" type="button" id="p5N">换一个随机初始策略</button></div>
+      <div id="p5G"></div>
+      <div id="p5S"></div>
+      <p class="cap" id="p5W"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-pi"></div>
+</section>
+
+<section class="part" id="tpi">
+  <div class="part-head"><h2>截断策略迭代</h2><span class="meta">原书 4.3 节 · 第 70–74 页</span></div>
+  <div class="sec-lede">
+    <p>把两个算法并排写：策略迭代 π<sub>0</sub> → v<sub>π<sub>0</sub></sub> → π<sub>1</sub> → v<sub>π<sub>1</sub></sub> → …；值迭代 v<sub>0</sub> → π<sub>1</sub>′ → v<sub>1</sub> → π<sub>2</sub>′ → …。让它们从同一个点出发（v<sub>0</sub> = v<sub>π<sub>0</sub></sub>），前三步完全相同，第四步才分叉：值迭代算 v<sub>1</sub> = r<sub>π<sub>1</sub></sub> + γP<sub>π<sub>1</sub></sub>v<sub>0</sub>，只代入<strong>一次</strong>；策略迭代要解 v<sub>π<sub>1</sub></sub> = r<sub>π<sub>1</sub></sub> + γP<sub>π<sub>1</sub></sub>v<sub>π<sub>1</sub></sub>，相当于代入<strong>无穷次</strong>。</p>
+    <div class="eq">v<sup>(0)</sup> = v<sub>0</sub> → v<sup>(1)</sup> = 值迭代的 v<sub>1</sub> → … → v<sup>(j)</sup> = 截断策略迭代的 v̄<sub>1</sub> → … → v<sup>(∞)</sup> = 策略迭代的 v<sub>π<sub>1</sub></sub></div>
+    <p>只代入有限的 j<sub>truncate</sub> 次，就是<strong>截断策略迭代</strong>。值迭代是 j<sub>truncate</sub> = 1 的极端，策略迭代是 j<sub>truncate</sub> = ∞ 的极端。截断后的 v<sub>k</sub> 不再是真正的状态值，还能找到最优策略吗？能。<strong>命题 4.1</strong>：若策略评估的初值取上一轮的值 v<sub>π<sub>k−1</sub></sub>，内层迭代单调不减 v<sup>(j+1)</sup> ≥ v<sup>(j)</sup>——多迭代几次只会更接近，不会走错方向。直观上，它的收敛速度介于两者之间（原书图 4.5）。</p>
+    <p>实践建议（原书 Q&amp;A）：内层<strong>迭代几次，但不要太多</strong>。几次就能明显加速，再多收益递减——毕竟马上就要改策略，把一个“临时”策略评估得极准是浪费。</p>
+    <p class="go">拖动 j<sub>truncate</sub>，比较三个算法收敛到 v* 的过程，以及总计算量（内层代入的总次数）。</p>
+  </div>
+  <div class="algo"><h4>算法 4.3　截断策略迭代<small>需要模型</small></h4><ol>
+    <li>任取 π<sub>0</sub>。当 v<sub>k</sub> 未收敛时：
+      <ol><li>策略评估：以 v<sub>k−1</sub> 为初值，只代入 j<sub>truncate</sub> 次 <code>v^(j+1) = r_πk + γ P_πk v^(j)</code>，令 v<sub>k</sub> = v<sup>(j_truncate)</sup></li>
+      <li>策略改进：对 v<sub>k</sub> 算 q，取贪心得 π<sub>k+1</sub></li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书图 4.5 的实测版（5×5 基准设置，三者都从 π<sub>0</sub> = “全部向右”（原书图 2.7b 的坏策略）、v<sub>0</sub> = v<sub>π<sub>0</sub></sub> 出发）</p>
+    <label class="ctl"><span>截断策略迭代的 j<sub>truncate</sub> <output id="tjV">5</output></span><input type="range" id="tj" min="2" max="40" step="1" value="5"></label>
+    <div class="lab-split">
+      <div id="tpC"></div>
+      <div><table class="kvt" id="tpT"></table><p class="cap" id="tpW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-tpi"></div>
+</section>
+
+<section class="part" id="gpi">
+  <div class="part-head"><h2>三者的关系与广义策略迭代</h2><span class="meta">原书 4.4–4.5 节 · 第 74–75 页</span></div>
+  <div class="sec-lede">
+    <p>三个算法的共同结构：<strong>每轮一步更新值、一步更新策略</strong>，两者相互作用直到收敛。这种“值与策略交替更新”的思想叫<strong>广义策略迭代</strong>（GPI）。它不是一个具体算法，而是一种框架——本书后面几乎所有算法都在它的范围内：蒙特卡罗用采样回报做“不精确的评估”，Sarsa 甚至只评估一步就改策略。</p>
+    <p>本章算法都需要系统模型，所以通常叫<strong>动态规划</strong>算法，而不是强化学习算法。还有一个名字要分清：强化学习分<strong>有模型</strong>（model-based）和<strong>无模型</strong>（model-free）两类。这里的“有模型”不是指“需要事先给定模型”，而是指<strong>用数据估计出模型</strong>，再在学习中使用这个模型；无模型方法学习过程中完全不估计模型。从第 5 章开始全是无模型算法，它们都由本章算法“去掉模型”改造而来。</p>
+    <p class="go">用几道题检验三个算法的区别。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>算法</th><th>值那一步做什么</th><th>中间值是状态值吗</th><th>每轮代价 / 轮数</th></tr></thead>
+    <tbody>
+      <tr><td>值迭代</td><td>只代入一次：v<sub>k+1</sub> = r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>k</sub></td><td>不是</td><td>每轮便宜，轮数多</td></tr>
+      <tr><td>策略迭代</td><td>解到底：v<sub>π<sub>k</sub></sub> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sub>π<sub>k</sub></sub></td><td>是</td><td>每轮昂贵（内层要迭代到收敛），轮数少</td></tr>
+      <tr><td>截断策略迭代</td><td>代入 j<sub>truncate</sub> 次</td><td>不是（近似值）</td><td>介于两者之间，通常总代价最小</td></tr>
+    </tbody>
+  </table></div>
+  <div class="lab"><p class="lab-t">判断</p><div id="gpQ"></div></div>
+  <div class="confuse"><h4>易混辨析：值迭代 vs 策略迭代</h4>
+    <p><b>值迭代</b>：直接解 BOE，v → π → v 交替，每次值只代入一步，v<sub>k</sub> 不是任何策略的状态值。<b>策略迭代</b>：π → v<sub>π</sub> → π 交替，每次把当前策略评估到底，v<sub>π<sub>k</sub></sub> 是真正的状态值，且单调不减。</p>
+    <p><b>同一个起点下</b>：策略迭代每轮都不比值迭代慢（定理 4.1 的证明就是这个比较）。二者都是截断策略迭代的极端。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：有模型 vs 无模型；动态规划</h4>
+    <p><b>动态规划</b>：已知模型、直接计算（本章）。<b>有模型强化学习</b>：用数据<b>估计</b>模型，并在学习中使用它。<b>无模型强化学习</b>：学习中不估计模型，直接从经验估值或学策略（第 5–10 章）。</p>
+  </div>
+  <div class="notes" id="n-gpi"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">值迭代：π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)，v<sub>k+1</sub> = r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>k</sub>；逐元素 v<sub>k+1</sub>(s) = max<sub>a</sub> q<sub>k</sub>(s, a)</div>
+    <div class="fx">策略迭代：v<sub>π<sub>k</sub></sub> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sub>π<sub>k</sub></sub>；π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>π<sub>k</sub></sub>)</div>
+    <div class="fx">策略改进引理：v<sub>π<sub>k+1</sub></sub> ≥ v<sub>π<sub>k</sub></sub>；收敛：v<sub>k</sub>（值迭代）≤ v<sub>π<sub>k</sub></sub> ≤ v*</div>
+    <div class="fx">截断策略迭代：内层 v<sup>(j+1)</sup> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sup>(j)</sup> 只做 j<sub>truncate</sub> 次；j = 1 为值迭代，j = ∞ 为策略迭代</div>
+    <div class="fx">命题 4.1：初值取 v<sub>π<sub>k−1</sub></sub> 时 v<sup>(j+1)</sup> ≥ v<sup>(j)</sup></div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>值迭代每轮做哪两步？v<sub>k</sub> 是状态值吗？
+      <details><summary>先自己答，再点开</summary><p class="ans">策略更新（对 q<sub>k</sub> 取贪心）和值更新（v<sub>k+1</sub>(s) = max<sub>a</sub> q<sub>k</sub>(s, a)）。v<sub>k</sub> 不是任何策略的状态值，只是收敛到 v* 的中间量。</p></details></li>
+    <li>策略迭代为什么不变差？为什么近处先收敛？
+      <details><summary>先自己答，再点开</summary><p class="ans">贪心改进满足 r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>π<sub>k</sub></sub> ≥ v<sub>π<sub>k</sub></sub>，展开得 v<sub>π<sub>k+1</sub></sub> ≥ v<sub>π<sub>k</sub></sub>。远处的状态要“借道”近处的状态才能拿到目标奖励，所以近处先找到通往目标的动作。</p></details></li>
+    <li>截断策略迭代怎么统一前两者？迭代几次划算？
+      <details><summary>先自己答，再点开</summary><p class="ans">策略评估只代入 j<sub>truncate</sub> 次：j = 1 是值迭代，j = ∞ 是策略迭代。几次就能明显加速，太多收益递减，因为策略马上就要变。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-rlmath-3/"><small>上一篇</small><span>03 · 最优状态值与贝尔曼最优方程</span></a><a class="nx" href="../2026-10-19-rlmath-5/"><small>下一篇</small><span>05 · 蒙特卡罗方法</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 2×2 值迭代 ---------- */
+var E22 = RL.env({ rows: 2, cols: 2, forbid: [[0, 1]], target: [[1, 1]] });
+var VI22 = RL.valueIter(E22, 6);
+var v2Draw = RL.grid($('#v2G'), E22, { cell: 92, dec: 2 });
+var V2L = ['k = 0：算 q<sub>0</sub>、得 π<sub>1</sub>、v<sub>1</sub>', 'k = 1：算 q<sub>1</sub>、得 π<sub>2</sub>、v<sub>2</sub>', 'k = 2', 'k = 3', 'k = 4'];
+S.stepper($('#v2S'), 5, function (k) {
+  var vk = VI22[k].v, nx = VI22[k + 1], q = nx.q;
+  v2Draw({ v: vk, pi: nx.pi });
+  var best = q.map(function (row) { return RL.argmax(row); });
+  S.grid($('#v2T'), q, { rl: ['s1', 's2', 's3', 's4'], cl: ['a1 ↑', 'a2 →', 'a3 ↓', 'a4 ←', 'a5 ○'], fmt: function (v) { return S.f(v, 2); }, hi: best.map(function (a, s) { return [s, a]; }) });
+  $('#v2W').innerHTML = '用 v<sub>' + k + '</sub> = [' + vk.map(function (x) { return S.f(x, 2); }).join(', ') + '] 算出上面的 q<sub>' + k + '</sub> 表；每行框出的最大值给出 π<sub>' + (k + 1) + '</sub>（左图箭头），最大值本身就是 v<sub>' + (k + 1) + '</sub> = [' + nx.v.map(function (x) { return S.f(x, 2); }).join(', ') + ']。' +
+    (k === 0 ? '注意 s1 的 a3 和 a5 都是 0，并列；原书选了 a5（原地），这里选了先出现的 a3——任选都不影响收敛。' : k === 1 ? '到 π<sub>2</sub> 策略已经最优（原书的结论：这个例子两轮就够了）；之后值还在继续收敛到 v* = [9, 10, 10, 10]。' : '');
+}, V2L);
+
+/* ---------- 5×5 值迭代 ---------- */
+var E5 = RL.book5({ gamma: 0.9 }), vS = RL.vStar(E5), qS = RL.qFromV(E5, vS);
+var VI5 = RL.valueIter(E5, 61);
+var v5Draw = RL.grid($('#v5G'), E5, { cell: 76, labels: true });
+function optCells(pi) { var hl = {}; pi.forEach(function (p, s) { var a = p.indexOf(Math.max.apply(null, p)); if (qS[s][a] > Math.max.apply(null, qS[s]) - 1e-6) hl[s] = 'ok'; }); return hl; }
+function v5() {
+  var k = +$('#v5K').value; $('#v5Kv').textContent = k;
+  var vk = VI5[k].v, pi = VI5[k + 1].pi, hl = optCells(pi), nOpt = Object.keys(hl).length;
+  v5Draw({ v: vk, pi: pi, hl: hl });
+  var vpi = RL.evalExact(E5, pi), res = RL.maxAbs(vk, RL.bellman(E5, pi, vk));
+  $('#v5T').innerHTML = '<tr><th>量</th><th>值</th></tr><tr><td>‖v<sub>k</sub> − v*‖<sub>∞</sub></td><td>' + S.f(RL.maxAbs(vk, vS), 4) + '</td></tr><tr><td>π<sub>k+1</sub> 取到最优动作的格子</td><td>' + nOpt + ' / 25</td></tr><tr><td>v<sub>k</sub> 是 π<sub>k+1</sub> 的状态值吗？‖v<sub>k</sub> − (r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)‖<sub>∞</sub></td><td>' + S.f(res, 4) + '</td></tr><tr><td>π<sub>k+1</sub> 真正的状态值与 v* 的差</td><td>' + S.f(RL.maxAbs(vpi, vS), 4) + '</td></tr>';
+  $('#v5W').innerHTML = '绿框 = 该格的箭头已是最优动作。' + (res > 1e-3 ? '第三行不为 0：v<sub>k</sub> 不满足 π<sub>k+1</sub> 的贝尔曼方程，所以<b>不是状态值</b>。' : '') + (nOpt === 25 && RL.maxAbs(vk, vS) > 0.01 ? '策略已经全部最优，但值还没收敛——值迭代的停止条件看的是值，常常“策略早就对了，值还在慢慢逼近”。' : '');
+}
+$('#v5K').addEventListener('input', v5); v5();
+S.notes($('#n-vi'), {
+  c: [
+    ['值迭代', '收缩映射定理给出的 BOE 迭代解法。'],
+    ['策略更新', '对 q<sub>k</sub>(s, a) 取贪心得 π<sub>k+1</sub>。'],
+    ['值更新', 'v<sub>k+1</sub>(s) = max<sub>a</sub> q<sub>k</sub>(s, a)。'],
+    ['中间值', 'v<sub>k</sub> 不是状态值，q<sub>k</sub> 也不是动作值。'],
+    ['并列', 'argmax 有多个时任选一个，不影响收敛。']
+  ],
+  p: [
+    ['矩阵形式', 'v<sub>k+1</sub> = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)'],
+    ['流程', 'v<sub>k</sub> → q<sub>k</sub> → π<sub>k+1</sub> → v<sub>k+1</sub> = max q<sub>k</sub>'],
+    ['停止条件', '‖v<sub>k</sub> − v<sub>k−1</sub>‖ 小于阈值'],
+    ['2×2 例子', '两轮得到最优策略，v* = [9, 10, 10, 10]']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 两状态策略迭代 ---------- */
+RL.check($('#p2C'), { q: '原书图 4.3：动作只有左、原地、右；r<sub>boundary</sub> = −1，r<sub>target</sub> = 1，γ = 0.9。π<sub>0</sub> 下 v<sub>π<sub>0</sub></sub>(s<sub>1</sub>) = −1 + γv(s<sub>1</sub>)，v<sub>π<sub>0</sub></sub>(s<sub>2</sub>) = 0 + γv(s<sub>1</sub>)。v<sub>π<sub>0</sub></sub>(s<sub>2</sub>) = ？', ans: -9, d: 1, why: 'v(s<sub>1</sub>) = −1/(1 − 0.9) = −10，v(s<sub>2</sub>) = 0.9 × (−10) = <b>−9</b>。下表是原书表 4.5：用它取贪心，s<sub>1</sub> 选右（−7.1），s<sub>2</sub> 选原地（−7.1），一轮就得到最优策略。' });
+(function () {
+  var v1 = -10, v2 = -9, g = 0.9;
+  var Q = [[-1 + g * v1, 0 + g * v1, 1 + g * v2], [0 + g * v1, 1 + g * v2, -1 + g * v2]];
+  S.grid($('#p2T'), Q, { rl: ['s1', 's2'], cl: ['左 a<sub>ℓ</sub>', '原地 a<sub>0</sub>', '右 a<sub>r</sub>'], fmt: function (v) { return S.f(v, 1); }, hi: [[0, 2], [1, 1]] });
+})();
+
+/* ---------- 5×5 策略迭代 ---------- */
+var E10 = RL.book5({ rf: -10 }), vS10 = RL.vStar(E10), qS10 = RL.qFromV(E10, vS10);
+var p5Seed = 4, p5Hist = [];
+var p5Draw = RL.grid($('#p5G'), E10, { cell: 70 });
+var p5Go = null;
+function p5Build() {
+  var r = S.rng(p5Seed * 7919 + 1), acts = []; for (var s = 0; s < 25; s++) acts.push(Math.floor(r() * 5));
+  var pi = RL.det(acts); p5Hist = [];
+  for (var k = 0; k < 30; k++) {
+    var v = RL.evalExact(E10, pi), q = RL.qFromV(E10, v), npi = RL.greedy(q);
+    p5Hist.push({ pi: pi, v: v });
+    var same = npi.every(function (p, s) { return p.indexOf(1) === pi[s].indexOf(1); });
+    if (same) break;
+    pi = npi;
+  }
+  $('#p5S').innerHTML = '';
+  p5Go = S.stepper($('#p5S'), p5Hist.length, p5Show, p5Hist.map(function (_, k) { return 'π' + k + ' 与 v_π' + k; }));
+}
+function p5Show(k) {
+  var st = p5Hist[k], hl = {}, n = 0;
+  st.pi.forEach(function (p, s) { var a = p.indexOf(1); if (qS10[s][a] > Math.max.apply(null, qS10[s]) - 1e-6) { hl[s] = 'ok'; n++; } });
+  p5Draw({ v: st.v, pi: st.pi, hl: hl });
+  var mono = k > 0 ? Math.min.apply(null, st.v.map(function (x, s) { return x - p5Hist[k - 1].v[s]; })) : 0;
+  $('#p5W').innerHTML = '第 ' + k + ' 轮：' + n + ' / 25 个格子已取最优动作（绿框）。' + (k > 0 ? '与上一轮相比，每个格子的值最少变化了 ' + S.f(mono, 2) + '（≥ 0，即引理 4.1：不会变差）。' : '随机初始策略，很多格子的值是 −100：在禁区里原地不动，每步都 −10。') + (k === p5Hist.length - 1 ? ' 再改进一次策略不再变化，收敛。共 ' + (p5Hist.length - 1) + ' 轮。' : ' 继续点“下一步”，留意绿框是从目标附近向外扩散的。');
+}
+$('#p5N').addEventListener('click', function () { p5Seed++; p5Build(); });
+p5Build();
+S.notes($('#n-pi'), {
+  c: [
+    ['策略评估', '解当前策略的贝尔曼方程，得到真正的状态值。'],
+    ['策略改进', '对 q<sub>π<sub>k</sub></sub> 取贪心得到新策略。'],
+    ['迭代套迭代', '策略评估本身也是一个迭代算法，理论上要无穷步。'],
+    ['引理 4.1', '贪心改进后的策略状态值处处不小于原策略。'],
+    ['近处先收敛', '远处要借道近处才能拿到目标奖励。']
+  ],
+  p: [
+    ['PE', 'v<sub>π<sub>k</sub></sub> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sub>π<sub>k</sub></sub>'],
+    ['PI', 'π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>π<sub>k</sub></sub>)'],
+    ['单调有界', 'v<sub>π<sub>0</sub></sub> ≤ v<sub>π<sub>1</sub></sub> ≤ … ≤ v*'],
+    ['定理 4.1 的证明', '与值迭代比较：v<sub>k</sub> ≤ v<sub>π<sub>k</sub></sub> ≤ v*'],
+    ['图 4.3 表 4.5', 'q 表 [−10, −9, −7.1; −9, −7.1, −9.1]，一轮即最优']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 截断策略迭代比较 ---------- */
+var tpChart = S.chart($('#tpC'), { h: 280, x: [0, 30], y: [-4, 1.5], xt: [0, 10, 20, 30], yt: [-4, -3, -2, -1, 0, 1], xl: '外层迭代次数 k', yl: 'log₁₀ ‖v_k − v*‖∞' });
+function runT(j, K) {
+  var pi = RL.det(new Array(25).fill(1)), v = RL.evalExact(E5, pi), errs = [Math.log10(RL.maxAbs(v, vS))], sweeps = 0, hitK = null, hitS = null;
+  for (var k = 1; k <= K; k++) {
+    var q = RL.qFromV(E5, v); pi = RL.greedy(q);
+    if (j === Infinity) { v = RL.evalExact(E5, pi); var jj = 0, vv = v.slice(); sweeps += Math.ceil(Math.log(1e-6) / Math.log(0.9)); }
+    else { for (var t = 0; t < j; t++) v = RL.bellman(E5, pi, v); sweeps += j; }
+    var e = RL.maxAbs(v, vS); errs.push(Math.log10(Math.max(1e-5, e)));
+    if (hitK === null && e < 1e-3) { hitK = k; hitS = sweeps; }
+  }
+  return { errs: errs, hitK: hitK, hitS: hitS };
+}
+function tp() {
+  var j = +$('#tj').value; $('#tjV').textContent = j;
+  var a = runT(1, 30), b = runT(j, 30), c = runT(Infinity, 30);
+  var pts = function (r) { return r.errs.map(function (y, k) { return [k, y]; }); };
+  tpChart({ curves: [{ pts: pts(a), c: 'c2', label: '值迭代（j = 1）' }, { pts: pts(b), c: 'c1', label: '截断（j = ' + j + '）' }, { pts: pts(c), c: 'ok', label: '策略迭代（j = ∞）' }], hl: [{ y: -3, c: 'dim', label: '阈值 10⁻³' }] });
+  var a2 = runT(1, 200);
+  var row = function (n, r) { return '<tr><td>' + n + '</td><td>' + (r.hitK || '&gt;200') + '</td><td>' + (r.hitS || '—') + '</td><td>' + (r.hitK ? r.hitS + r.hitK : '—') + '</td></tr>'; };
+  $('#tpT').innerHTML = '<tr><th>算法</th><th>外层轮数</th><th>内层代入</th><th>总扫描次数</th></tr>' + row('值迭代', a2) + row('截断 j = ' + j, runT(j, 200)) + row('策略迭代', c);
+  $('#tpW').innerHTML = '误差降到 10⁻³ 所需的外层轮数：策略迭代最少、值迭代最多，截断居中——和原书图 4.5 的示意一致（本页实测，示意）。“总扫描次数”= 内层代入次数 + 策略改进次数，两者都要把 25 个状态的 q 扫一遍，按 1 次计；策略迭代的内层按 γ<sup>j</sup> &lt; 10⁻⁶ 估为每轮 ' + Math.ceil(Math.log(1e-6) / Math.log(0.9)) + ' 次。按总工作量算：值迭代 188 次，j = 5 只要 114 次，j 在 8 到 20 之间大致持平（105–112），j 再大反而变贵（j = 40 要 205 次，策略迭代 665 次）。省下的大头来自最初几次额外代入。';
+}
+$('#tj').addEventListener('input', tp); tp();
+S.notes($('#n-tpi'), {
+  c: [
+    ['截断策略迭代', '策略评估只代入有限的 j<sub>truncate</sub> 次。'],
+    ['两个极端', 'j = 1 是值迭代；j = ∞ 是策略迭代。'],
+    ['命题 4.1', '以上一轮值为初值时，内层迭代单调不减。'],
+    ['收敛速度', '介于值迭代和策略迭代之间。'],
+    ['实践建议', '内层迭代几次，但不要太多。']
+  ],
+  p: [
+    ['分叉点', '值迭代 v<sub>1</sub> = r<sub>π<sub>1</sub></sub> + γP<sub>π<sub>1</sub></sub>v<sub>0</sub>；策略迭代解到 v<sub>π<sub>1</sub></sub>'],
+    ['统一视角', 'v<sup>(1)</sup> → … → v<sup>(j)</sup> → … → v<sup>(∞)</sup>'],
+    ['比较的前提', '两者从同一点出发：v<sub>0</sub> = v<sub>π<sub>0</sub></sub>']
+  ]
+});
+
+/* ---------- 判断 ---------- */
+S.quiz($('#gpQ'), [
+  { q: '策略迭代的中间值 v<sub>π<sub>k</sub></sub> 是状态值吗？', o: ['是', '不是'], a: 0, why: '它是当前策略贝尔曼方程的解。值迭代、截断策略迭代的中间值则不是。' },
+  { q: '值迭代保证能找到最优策略吗？', o: ['能', '不一定'], a: 0, why: '它就是收缩映射定理给出的算法，收敛由定理 3.3 保证。' },
+  { q: '“广义策略迭代”是一个具体算法吗？', o: ['是', '不是'], a: 1, why: '它指值更新与策略更新相互作用的一般思想，本书大部分算法都在它的范围内。' },
+  { q: '“有模型强化学习”的“有模型”指的是？', o: ['事先给定 p(s′|s, a)', '用数据估计模型并在学习中使用'], a: 1, why: '事先给定模型的叫动态规划（本章）；有模型强化学习是从数据里估计模型。' }
+]);
+S.notes($('#n-gpi'), {
+  c: [
+    ['广义策略迭代', '值更新与策略更新交替相互作用的一般框架。'],
+    ['动态规划', '已知模型、直接计算的算法，本章三者都是。'],
+    ['有模型 RL', '用数据估计模型，再在学习中使用。'],
+    ['无模型 RL', '学习中不估计模型，第 5–10 章的全部算法。']
+  ],
+  p: [
+    ['共同结构', '每轮：一步更新值 + 一步更新策略'],
+    ['GPI 的宽松之处', '值不必评估准就可以改策略'],
+    ['下一章', '把策略迭代里依赖模型的策略评估换成采样平均']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 值迭代', '对 q<sub>k</sub> 取贪心、取 max 作为新值；v<sub>k</sub> 不是状态值。'],
+    ['② 策略迭代', '评估到底再贪心改进，单调不减；近处的状态先找到通往目标的动作。'],
+    ['③ 截断', '内层只代入 j 次；j = 1、∞ 分别是值迭代、策略迭代；几次就够。']
+  ],
+  p: [
+    ['下一篇', '没有模型怎么办？用经验数据的平均来估计动作值：蒙特卡罗方法。'],
+    ['原书一句话', '值更新与策略更新相互作用的思想广泛存在于强化学习算法中，称为广义策略迭代。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

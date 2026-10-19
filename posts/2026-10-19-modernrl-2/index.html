@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DQN：把 Q 表换成网络——经验回放、目标网络与 DQN 家族</title>
+<meta name="description" content="动手学现代强化学习笔记（二）：表格 Q-learning 为什么装不下连续状态和像素；DQN 的三个组件（Q 网络、经验回放、目标网络）各解决什么问题；在浏览器里真实训练 CartPole 的 DQN 并做消融；Double DQN 的过估计、Dueling 分解、优先经验回放的采样与重要性权重、多步回报、分布式价值、Noisy Net 与 Rainbow。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='15' width='18' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 15L16 4' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='4' r='2.2' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.part-head .meta { overflow-wrap: anywhere; }
+main sub, main sup { font-size: 15px; line-height: 0; }
+.cpw canvas { display: block; width: 100%; max-width: 560px; height: auto; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); }
+.prog { height: 6px; background: var(--dim-soft); border-radius: 3px; overflow: hidden; margin: 6px 0; max-width: 420px; }
+.prog i { display: block; height: 100%; width: 0; background: var(--s1); transition: width .2s; }
+.vgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+@media (max-width: 640px) { .vgrid { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-series="modernrl-series" data-part="2">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>动手学现代强化学习 · 02</span><span>对应原教程第 5 章（docs/chapter07_dqn）</span><span>约 45 分钟</span></p>
+  <h1>把 Q 表<em>换成一张网络</em></h1>
+  <p class="lead">Q-learning 真正有价值的不是那张表，而是“用当前经验修正长期价值预测”的思想。DQN 做了两件事：先用神经网络解决“Q 表装不下”，再用经验回放和目标网络解决“网络训练不稳”。这一篇在浏览器里真的训练一个 CartPole DQN，把两个稳定化组件分别拆掉看后果，再过一遍 Double、Dueling、PER 到 Rainbow 的家族谱系。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">Hands-On Modern RL（动手学现代强化学习）</a>》（WalkingLabs 社区编写的开源课程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 1 日的仓库版本（docs/ 讲义与 code/ 实验代码））的学习笔记。原教程沿“CartPole → DQN → 策略梯度 → PPO → RLHF / DPO / GRPO → Agentic RL”一条线展开，这里按它的章节重新组织成十二篇，用自己的话重讲，并把关键实验搬进浏览器：CartPole 的 DQN 与 PPO 是用 JavaScript 真实训练的缩小版，其余公式演示的数值都在页面里实时计算。原教程数据（如训练日志 CSV、实验表格）标“原书数据”，为演示设的数值标“示意”，每节标出对应的原文路径。原教程自述“由 AI 协助生成、尚未全面审稿”，本笔记只采信能与原始论文对上的内容，存疑处单独注明。改编内容同样按 CC BY-NC-SA 4.0 分享、仅限非商业用途；数学推导部分可与同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>对照着读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-modernrl/"><b>总览</b>算法地图</a>
+  <a href="../2026-10-19-modernrl-1/" data-part="1"><b>01</b>训练闭环</a>
+  <a href="../2026-10-19-modernrl-2/" aria-current="page" data-part="2"><b>02</b>DQN 家族</a>
+  <a href="../2026-10-19-modernrl-3/" data-part="3"><b>03</b>策略梯度</a>
+  <a href="../2026-10-19-modernrl-4/" data-part="4"><b>04</b>PPO 与 GAE</a>
+  <a href="../2026-10-19-modernrl-5/" data-part="5"><b>05</b>连续控制</a>
+  <a href="../2026-10-19-modernrl-6/" data-part="6"><b>06</b>离线与模仿</a>
+  <a href="../2026-10-19-modernrl-7/" data-part="7"><b>07</b>RLHF</a>
+  <a href="../2026-10-19-modernrl-8/" data-part="8"><b>08</b>DPO 家族</a>
+  <a href="../2026-10-19-modernrl-9/" data-part="9"><b>09</b>GRPO 与 RLVR</a>
+  <a href="../2026-10-19-modernrl-10/" data-part="10"><b>10</b>推理与搜索</a>
+  <a href="../2026-10-19-modernrl-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-19-modernrl-12/" data-part="12"><b>12</b>奖励黑客与评测</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么需要网络</a><a href="#three">三个组件</a><a href="#lab">动手训练</a><a href="#family">DQN 家族</a><a href="#back">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>把 Q 表直接换成神经网络，会冒出哪两个不稳定来源？经验回放和目标网络分别对付哪一个？</li>
+    <li>为什么 max 运算会让 Q 值系统性偏高？Double DQN 只改了哪一行？</li>
+    <li>优先经验回放为什么还要乘一个重要性权重？Rainbow 合了哪六样东西？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>表格的边界：TD 思想没失效，存储方式失效了</h2><span class="meta">原文 docs/chapter07_dqn/from-q-to-dqn.md（5.1 节）</span></div>
+  <div class="sec-lede">
+    <p>Q-learning 的更新是“用一次新经验修正表里的一个旧数字”：Q(s,a) ← Q(s,a) + α[r + γ max<sub>a′</sub>Q(s′,a′) − Q(s,a)]。它成立的隐含前提是<strong>状态能被枚举</strong>。原文举了一串数量级：井字棋约 2 万个局面还能建表，国际象棋约 10<sup>47</sup>，围棋约 10<sup>170</sup>；LunarLander 的 8 维状态里 6 维是连续实数，强行每维切 50 格就是 50<sup>6</sup> ≈ 1.56 × 10<sup>10</sup> 个状态；Atari 是 4 帧 84×84 灰度图，256<sup>28224</sup> 种可能。原文的判断是：失效的不是 TD 更新，而是“按状态逐行存储 Q”这种表示方式。（Q-learning 与 TD 的推导见<a href="../2026-10-19-rlmath-7/">《数学原理》07</a>。）</p>
+    <p><strong>函数逼近</strong>把“查表取一行”换成“函数现算一行”：网络输入状态，一次输出所有动作的 Q 值 Q(s,·;θ)，取 argmax 就是贪心动作。参数共享带来泛化——在某个状态附近学到的价值结构会迁移到相似状态。这个想法 1990 年代就有人试过，但直到 2013 年 DeepMind 的 DQN 才在 Atari 上成功，原文给的原因是：算力、训练稳定化技术、以及能大量快速交互的统一基准环境。</p>
+    <p>直接替换会撞上两个问题。<strong>样本相关</strong>：相邻帧几乎一样，按时间顺序组 batch，梯度被最近几步主导，网络围着当前局面打转。<strong>目标移动</strong>：表格里改 Q(s₁,a₂) 不会动 Q(s₂,a₂)，网络里所有输出共享 θ——一次更新在追目标的同时也挪动了目标本身。原文的数字例子：TD 目标本来是 1 + 0.99 × 8.0 = 8.92，更新一步后 Q(s₂,a₂) 从 8.0 变成 6.3，目标就跟着变了。函数逼近 + 自举 + off-policy 三者同时出现，就是 Sutton 和 Barto 说的<strong>致命三要素</strong>。</p>
+    <p class="go">先估一下离散化的代价，再一步步看“目标移动”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">先估再算</p><div id="gsA"></div><div id="gsB"></div></div>
+    <div class="lab">
+      <p class="lab-t">目标移动：同一组参数既出答案又出标准答案（数值同原文）</p>
+      <div class="tape" id="mvT"></div>
+      <div id="mvS"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="three">
+  <div class="part-head"><h2>三个组件：Q 网络、经验回放、目标网络</h2><span class="meta">原文 docs/chapter07_dqn/dqn-components.md；代码 code/chapter04_dqn/dqn_cartpole.py</span></div>
+  <div class="sec-lede">
+    <p><strong>Q 网络</strong>是“学生”：输入状态，输出每个动作的 Q 值，用 <code>gather</code> 挑出实际执行动作那一列。损失由四块积木拼成：TD 目标 y = r + γ(1 − d)max<sub>a′</sub>Q(s′,a′;θ⁻)（标准答案，终止时 d = 1 把未来清零）、TD 误差 δ = y − Q(s,a;θ)、平方（惩罚大错，正负不抵消）、对 batch 取平均（外层期望用随机采样近似）。原文还解释了很多“为什么是这个值”：输出层不加激活（Q 可以是任意实数）、ReLU（Q 值无上界，sigmoid/tanh 会截断）、一次输出全部动作（选动作只需一次前向）——代价是只能用于离散动作。</p>
+    <p><strong>经验回放</strong>把每步的 (s, a, r, s′, d) 存进一个先进先出的池子（CartPole 用 10⁴，Atari 用 10⁵–10⁶），训练时随机抽一批。好处有三：打破时间相关、每条经验可被多次使用、新旧经验混合使训练平滑。原文引用 DQN 论文的观察：不用回放时，打砖块的智能体会连续几百帧只学“球在左边”，等球回到右边，右边的打法已经忘了。池子太小不够多样，太大则保留太多当年网络很差时的过时经验。</p>
+    <p><strong>目标网络</strong>是“阅卷老师”：Q 网络的冻结副本 θ⁻，只用来算 TD 目标，每隔 C 步把 θ 硬拷贝过去，两次拷贝之间靶子不动。更新太频繁等于没有目标网络，太稀疏则答案过时（原文常用 100–1000 步）。后来 DDPG 等算法改成每步缓慢的软更新 θ⁻ ← τθ + (1 − τ)θ⁻。训练用 ε-贪心探索、评估用纯贪心——同一个网络，两种用法。</p>
+    <p class="go">逐行读原教程从零实现的 update()。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次参数更新的数据流（摘自原文 5.3 节“从零实现 DQN”）</p>
+    <div class="tape" id="upT"></div>
+    <div id="upS"></div>
+    <p class="cap" id="upW"></p>
+  </div>
+  <div class="card2 algo" data-algo="DQN">
+    <h3>算法卡 · DQN</h3><p class="en">Deep Q-Network（Mnih et al., 2013 / Nature 2015）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>状态无法枚举（连续、像素）时，表格 Q-learning 装不下；直接换成网络又训练不稳。</dd>
+      <dt>核心做法</dt><dd>Q 网络近似 Q(s,·)；<strong>经验回放</strong>随机抽样打破相关；<strong>目标网络</strong>冻结 θ⁻ 稳住 TD 目标；ε-贪心探索。</dd>
+      <dt>关键公式</dt><dd>L(θ) = 𝔼[(r + γ(1 − d) max<sub>a′</sub> Q(s′,a′;θ⁻) − Q(s,a;θ))²]，每 C 步 θ⁻ ← θ</dd>
+      <dt>何时用</dt><dd>离散动作、可以反复交互的环境（Atari、LunarLander、CartPole）；需要复用旧数据（off-policy）时。</dd>
+      <dt>代价与坑</dt><dd>只能离散动作；max 带来过估计；对 lr、C、ε 衰减敏感；评估曲线即使收敛后仍会波动。</dd>
+      <dt>相关</dt><dd>Double / Dueling / PER / Rainbow（本篇下文）；连续动作版 DDPG（第 5 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-three"></div>
+</section>
+
+<section class="part" id="lab">
+  <div class="part-head"><h2>动手：在浏览器里训练 CartPole DQN</h2><span class="meta">参照原文 dqn-components.md 的超参，规模缩小</span></div>
+  <div class="sec-lede">
+    <p>下面是一个真的在跑的 DQN：CartPole 的物理方程和第 1 篇相同，Q 网络 4 → 64 → 2（ReLU），Adam 学习率 10⁻³，γ = 0.99，batch 32，回放池 10⁴，ε 在前 1 万步从 1 线性降到 0.05，共训练 4 万个环境步。为了在浏览器里几秒跑完，单回合上限改成 200 步（原环境 500），隐藏层也比原文的 128 小。</p>
+    <p>“去掉经验回放”的版本每步只用<strong>最近 32 条连续转移</strong>做一批——样本高度相关；“去掉目标网络”的版本直接用正在训练的网络算 TD 目标。这和原文讲的两个不稳定来源一一对应。DQN 对随机种子很敏感，单次运行说明不了什么，所以对比按钮会每种组合跑两个种子，看的是<strong>整段训练的平均回合长度</strong>（曲线下的面积），而不只是最后一个点。</p>
+    <p>也可以改目标网络同步间隔 C。我在 node 里用同一份代码跑了 4 个种子做核对：C = 500 时完整 DQN 的平均回合长度约 110–123 步，去掉目标网络约 70–100，去掉回放约 54–68；C 拉到 2000 时完整 DQN 掉到 52–65——靶子太久不动，答案过时了。C = 100 在这个任务上和 500 差不多。</p>
+    <p class="go">先点“对比四种组合”（约十秒），再看训练好的网络跑一回合。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">DQN 消融实验（示意规模，结果随种子波动）</p>
+    <div class="ctrls">
+      <span class="note" style="margin:0">目标网络同步间隔 C</span>
+      <div class="seg" id="dqC"><button data-v="100">100 步</button><button data-v="500" aria-pressed="true">500 步</button><button data-v="2000">2000 步</button></div>
+    </div>
+    <div class="btnrow"><button class="btn pri" type="button" id="dqAll">对比四种组合（各 2 个种子）</button><button class="btn" type="button" id="dqOne">只跑完整 DQN</button><span class="stepinfo" id="dqP" style="margin:0"></span></div>
+    <div class="prog"><i id="dqBar"></i></div>
+    <div id="dqChart"></div>
+    <div id="dqBars"></div>
+    <p class="cap" id="dqW">还没开始训练。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">看训练好的 Q 网络（完整 DQN、种子 1）贪心地跑一回合</p>
+    <div class="cpw"><canvas id="dqCv" width="560" height="200"></canvas></div>
+    <div class="btnrow"><button class="btn" type="button" id="dqPlay" disabled>先训练再看</button><span class="stepinfo" id="dqPI" style="margin:0"></span></div>
+  </div>
+  <div class="notes" id="n-lab"></div>
+</section>
+
+<section class="part" id="family">
+  <div class="part-head"><h2>DQN 家族：每个改进只修一个问题</h2><span class="meta">原文 docs/chapter07_dqn/dqn-family.md</span></div>
+  <div class="sec-lede">
+    <p>原始 DQN 留下几个结构性问题，后续改进各修一处，不改变“学动作价值”这个目标。<strong>Double DQN</strong> 修过估计：TD 目标里的 max 既负责“选哪个动作”又负责“给它打分”，各动作的估计只要带噪声，max 就倾向于挑中被噪声推高的那个——因为 max 是凸函数，𝔼[max Q̂] ≥ max 𝔼[Q̂]。Double DQN 让当前网络选 a* = argmax Q(s′,·;θ)，目标网络只负责评估 Q(s′,a*;θ⁻)，代码只改两三行，许多实现默认就用它。</p>
+    <p><strong>Dueling DQN</strong> 改网络结构：Q = V(s) + A(s,a) − mean<sub>a′</sub>A(s,a′)。减去平均优势是为了让分解唯一（否则 V 加个常数、A 减同一个常数，Q 不变）。好处是在“动作差别不大、但状态好坏已定”的局面——比如飞船离地还远时——网络能先学会状态价值。<strong>优先经验回放（PER）</strong>改采样：按 p<sub>i</sub> = |δ<sub>i</sub>| + ε 给“意外”的经验更高概率 P(i) = p<sub>i</sub><sup>α</sup>/Σp<sup>α</sup>；非均匀采样改变了数据分布，所以要乘重要性权重 w<sub>i</sub> = (1/(N·P(i)))<sup>β</sup> 修正偏差（常除以 batch 内最大值）。</p>
+    <p>另外三样：<strong>多步回报</strong>把后面 n 步的真实奖励直接放进目标，稀疏奖励传播更快、方差更大；<strong>分布式价值</strong>（C51）学回报的整个分布 Z(s,a) 而非期望；<strong>Noisy Net</strong> 把可学习的噪声放进参数，比 ε-贪心的“与状态无关的随机”更有结构。<strong>Rainbow</strong> 把这六样合在一起——原文的提醒是：组合更强但超参更多，调试时仍要先理解每个组件在修什么。还有一类改进针对“根本没去过关键状态”的探索问题：ICM、RND 等内在奖励（第 6 篇）。</p>
+    <p class="go">用蒙特卡洛模拟看过估计有多大，再调 PER 的 α 和 β。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">max 的过估计：真实 Q 全为 0，估计带噪声（2000 次模拟）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>动作数 <output id="ovN">4</output></span><input type="range" id="ovNs" min="2" max="18" value="4"></label>
+        <label class="ctl"><span>估计噪声 σ <output id="ovS">1.0</output></span><input type="range" id="ovSs" min="0.1" max="2" step="0.1" value="1"></label>
+      </div>
+      <div class="read"><div class="warn"><div class="v" id="ovA">–</div><div class="k">原始 DQN：𝔼[max Q̂]</div></div><div class="good"><div class="v" id="ovB">–</div><div class="k">Double：一组选、另一组评</div></div></div>
+      <div id="ovC"></div>
+      <p class="cap" id="ovW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">优先经验回放：采样概率与重要性权重</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>α（优先程度） <output id="peA">0.6</output></span><input type="range" id="peAs" min="0" max="1" step="0.1" value="0.6"></label>
+        <label class="ctl"><span>β（修正强度） <output id="peB">0.4</output></span><input type="range" id="peBs" min="0" max="1" step="0.1" value="0.4"></label>
+      </div>
+      <div class="tblw"><table class="calc" id="peT"></table></div>
+      <p class="cap" id="peW"></p>
+    </div>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>改进</th><th>改了哪里</th><th>修的问题</th><th>代价</th></tr></thead>
+    <tbody>
+      <tr><td>Double DQN</td><td>TD 目标：θ 选动作、θ⁻ 评估</td><td>max 带来的过估计</td><td>几乎为零</td></tr>
+      <tr><td>Dueling</td><td>网络结构：V 头 + A 头，减均值合成</td><td>状态好坏与动作差异混在一起</td><td>结构稍复杂</td></tr>
+      <tr><td>PER</td><td>回放采样：按 |δ| 加权，再乘 IS 权重</td><td>更新预算平均分给普通样本</td><td>需要优先级数据结构，引入偏差要修正</td></tr>
+      <tr><td>n-step</td><td>目标：前 n 步真实奖励 + γⁿ max Q</td><td>奖励传播慢</td><td>方差增大</td></tr>
+      <tr><td>分布式（C51）</td><td>学 Z(s,a) 的分布</td><td>只学期望丢掉了风险信息</td><td>投影与支撑点设计</td></tr>
+      <tr><td>Noisy Net</td><td>线性层 W = μ + σ ⊙ ε</td><td>ε-贪心的探索与状态无关</td><td>多一组可学参数</td></tr>
+      <tr><td>Rainbow</td><td>以上六项合一</td><td>各误差来源同时存在（Atari）</td><td>超参多、调试难</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">表格按原文 dqn-family.md 各小节整理。</p>
+  <div class="card2 algo" data-algo="Double DQN">
+    <h3>算法卡 · Double DQN</h3><p class="en">van Hasselt et al., 2016</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>max 同时“选”和“评”，噪声被挑中，Q 值系统性偏高。</dd>
+      <dt>核心做法</dt><dd>当前网络选动作，目标网络评估这个动作。</dd>
+      <dt>关键公式</dt><dd>a* = argmax<sub>a′</sub> Q(s′,a′;θ)，y = r + γ(1 − d) Q(s′,a*;θ⁻)</dd>
+      <dt>何时用</dt><dd>几乎总是——它是很多实现里 DQN 的默认版本。</dd>
+      <dt>代价与坑</dt><dd>只是缓解，θ 与 θ⁻ 相关时仍有残余偏差；连续动作里同样的思路演化成 TD3 的双 Q 取 min。</dd>
+      <dt>相关</dt><dd>TD3 的 Twin Q（第 5 篇）；离线 RL 的外推高估（第 6 篇）。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：目标网络、Double DQN 与 PER</h4>
+    <p><b>目标网络 vs 经验回放</b>：前者稳住“标准答案”（目标移动），后者打散“样本”（时间相关）。拆掉哪个，坏掉的是不同的东西。</p>
+    <p><b>目标网络 vs Double DQN</b>：目标网络让靶子慢下来，但 max 仍在同一组估计里选和评，过估计还在；Double DQN 把“选”交给 θ、“评”交给 θ⁻。</p>
+    <p><b>PER 的 α 与 β</b>：α 决定“多偏心”（0 退化为均匀采样），β 决定“偏心之后修正多少”（0 等于不修正、1 完全修正）。</p>
+    <p><b>DQN vs Q-learning</b>：TD 思想完全一样，变的只是 Q 的存储方式（表 → 网络）以及为此加的两个稳定化组件。</p>
+  </div>
+  <div class="notes" id="n-family"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">DQN：y = r + γ(1 − d) max_{a′} Q(s′,a′;θ⁻)；L = 𝔼[(y − Q(s,a;θ))²]；每 C 步 θ⁻ ← θ</div>
+    <div class="fx">软更新：θ⁻ ← τθ + (1 − τ)θ⁻（τ ≈ 0.005）</div>
+    <div class="fx">过估计：𝔼[max_a Q̂(s,a)] ≥ max_a 𝔼[Q̂(s,a)]</div>
+    <div class="fx">Double DQN：a* = argmax_{a′} Q(s′,a′;θ)，y = r + γ(1 − d) Q(s′,a*;θ⁻)</div>
+    <div class="fx">Dueling：Q(s,a) = V(s) + A(s,a) − (1/|𝒜|) Σ_{a′} A(s,a′)</div>
+    <div class="fx">PER：P(i) = p_i^α / Σ_k p_k^α，p_i = |δ_i| + ε；w_i = (1/(N·P(i)))^β</div>
+    <div class="fx">n 步目标：y = Σ_{k&lt;n} γ^k r_{t+k} + γ^n max_a Q(s_{t+n},a;θ⁻)</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 直接把 Q 表换成网络会冒出哪两个不稳定来源？各由谁对付？</summary><p class="ans">样本相关（连续帧几乎相同，梯度被最近经历主导）→ 经验回放随机抽样；目标移动（参数共享，更新 Q(s,a) 也改了 Q(s′,·)，TD 目标随之漂移）→ 目标网络冻结一段时间再同步。三者叠加的根源是“函数逼近 + 自举 + off-policy”这一致命三要素。</p></details>
+    <details><summary>2. 为什么 max 让 Q 值偏高？Double DQN 改了哪一行？</summary><p class="ans">各动作估计带噪声时，max 更容易挑中被噪声推高的那个，max 是凸函数所以 𝔼[max] ≥ max 𝔼。Double DQN 只改 TD 目标：用当前网络 argmax 选 a*，用目标网络给 a* 打分。</p></details>
+    <details><summary>3. PER 为什么还要乘重要性权重？Rainbow 合了哪六样？</summary><p class="ans">按 |δ| 偏心采样改变了训练数据的分布，期望不再等于均匀采样下的损失，用 w = (1/(N·P))^β 修正这个偏差。Rainbow = Double DQN + Dueling + PER + 多步回报 + 分布式价值 + Noisy Net。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-modernrl-1/"><small>上一篇</small><span>01 · 从 CartPole 看懂训练闭环</span></a><a class="nx" href="../2026-10-19-modernrl-3/"><small>下一篇</small><span>03 · 策略梯度与 Actor-Critic</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">walkinglabs/hands-on-modern-rl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 先估 ---------- */
+S.guess($('#gsA'), { q: 'LunarLander 有 6 个连续维度，每维切成 50 格，再乘 4 个动作，Q 表一共多少格？', unit: '格', ans: Math.pow(50, 6) * 4, fmt: function (x) { return S.sci(x, 2); }, why: '50⁶ ≈ 1.56 × 10¹⁰ 个状态，乘 4 个动作约 6.25 × 10¹⁰ 格——这还只是一个低维控制任务，而且绝大多数格子一辈子都不会被访问到。' });
+S.guess($('#gsB'), { q: '一个 4 → 128 → 128 → 2 的 Q 网络有多少个参数（含偏置）？', unit: '个', ans: 4 * 128 + 128 + 128 * 128 + 128 + 128 * 2 + 2, fmt: function (x) { return S.f(x, 0); }, why: '512 + 128 + 16384 + 128 + 256 + 2 = 17,410，和原文“约 17000 个”一致。一万多个共享参数就能覆盖无穷多的连续状态，代价是改一处会动全身。' });
+var MV = [
+  { t: '当前网络输出：\nQ(s₁,a₁)=2.0  Q(s₁,a₂)=5.0\nQ(s₂,a₁)=3.0  Q(s₂,a₂)=8.0\n\n来了一条经验 (s₁, a₂, r = +1, s₂)', w: '' },
+  { t: 'TD 目标 = r + γ·max Q(s₂,·) = 1 + 0.99 × 8.0 = <span class="fresh">8.92</span>\nTD 误差 = 8.92 − 5.0 = 3.92 → 把 Q(s₁,a₂) 往上拉', w: '' },
+  { t: '一次梯度更新后（参数共享，所有输出一起动）：\nQ(s₁,a₁)=2.3  Q(s₁,a₂)=6.5\nQ(s₂,a₁)=2.7  Q(s₂,a₂)=<span class="fresh">6.3</span>  ← 本来是 8.0', w: '' },
+  { t: '再算同一条经验的 TD 目标：\n1 + 0.99 × 6.3 = <span class="fresh">7.24</span>\n学生刚追向 8.92，标准答案自己跑了。', w: '' },
+  { t: '有目标网络时：TD 目标用冻结的 θ⁻ 算，\nθ⁻ 里 Q(s₂,a₂) 仍是 8.0 → 目标仍是 8.92，\n直到每 C 步同步一次才挪到新位置。', w: '' }
+];
+S.stepper($('#mvS'), MV.length, function (i) { $('#mvT').innerHTML = MV[i].t; }, ['一条经验', 'TD 目标', '更新之后', '目标漂移', '冻结目标']);
+S.notes($('#n-why'), {
+  c: [
+    ['维度灾难', '状态数随维度指数增长，连续 / 像素状态无法逐格建表。'],
+    ['函数逼近', '用带参数的函数 Q(s,a;θ) 现算价值，而不是逐格存储。'],
+    ['泛化', '参数共享，相似状态共享经验——也让一次更新牵动全部输出。'],
+    ['样本相关', '相邻转移几乎相同，顺序训练时梯度被最近经历主导。'],
+    ['目标移动', 'TD 目标依赖正在更新的参数，学生追、答案也在跑。'],
+    ['致命三要素', '函数逼近 + 自举 + off-policy 同时出现时训练极不稳定。']
+  ],
+  p: [
+    ['Q-learning 更新', 'Q ← Q + α[r + γ max Q(s′,·) − Q]'],
+    ['原文数量级', '井字棋 ~2×10⁴，国际象棋 ~10⁴⁷，围棋 ~10¹⁷⁰'],
+    ['DQN 的两步', '网络解决“装不下”，回放 + 目标网络解决“训不稳”'],
+    ['为何 2013 年才成功', '算力、稳定化技术、Atari 这类统一基准']
+  ]
+});
+
+/* ---------- update 逐行 ---------- */
+var UP = [
+  ['states, actions, rewards, next_states, dones = self.buffer.sample(64)', '从回放池随机抽一批：一批里同时有开局、中期、失败、成功的经验。'],
+  ['q_values = self.q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)', 'Q 网络输出 (B, 动作数)，gather 按实际动作挑出那一列——“学生的回答”。'],
+  ['with torch.no_grad():', '目标网络不建计算图：梯度只经过 q_values，targets 是常数。'],
+  ['    next_q_max = self.target_net(next_states).max(dim=1)[0]', 'max_{a′} Q(s′,a′;θ⁻)；[0] 取值、[1] 取下标。'],
+  ['    targets = rewards + self.gamma * next_q_max * (1 - dones)', 'TD 目标；终止时 dones = 1，把未来价值清零。'],
+  ['loss = nn.MSELoss()(q_values, targets)', '均方误差：误差 2 罚 4，比 L1 更重罚大错。'],
+  ['self.optimizer.zero_grad(); loss.backward()', 'PyTorch 固定四步的前两步。'],
+  ['clip_grad_norm_(self.q_net.parameters(), max_norm=10)', '梯度裁剪：同一 batch 里 TD 误差 0.1 和 50 混在一起，后者可能把参数推得很远。'],
+  ['self.optimizer.step()', '只更新 q_net；target_net 每隔 C 步 load_state_dict 硬拷贝一次。']
+];
+S.stepper($('#upS'), UP.length, function (i) {
+  $('#upT').innerHTML = UP.map(function (c, k) { var t = c[0].replace(/</g, '&lt;'); return k === i ? '<span class="fresh">' + t + '</span>' : '<span class="r-sys">' + t + '</span>'; }).join('\n');
+  $('#upW').innerHTML = UP[i][1];
+});
+S.notes($('#n-three'), {
+  c: [
+    ['Q 网络', '“学生”：输入状态，一次输出所有动作的 Q 值。'],
+    ['TD 目标', '“标准答案”：r + γ(1 − d) 乘目标网络给出的下一步最高分。'],
+    ['经验回放', '存 (s,a,r,s′,d)，随机抽批：打破相关、复用数据、平滑训练。'],
+    ['目标网络', '“阅卷老师”：冻结副本，每 C 步同步，靶子暂时不动。'],
+    ['ε-贪心', '以概率 ε 随机动作探索，训练时 ε 逐步衰减。'],
+    ['训练 vs 推理', '训练：ε-贪心 + 回放 + 更新；推理：纯贪心、不更新。']
+  ],
+  p: [
+    ['原文常用值', '回放 10⁴–10⁶；C = 100–1000 步；lr 1e-3；γ 0.99；batch 64'],
+    ['ε 衰减 0.995/局', '100 局后 0.61，200 局后 0.37，400 局后 0.14'],
+    ['gather', '从 (B, |A|) 里按动作编号取列'],
+    ['no_grad', '目标网络的输出当常数'],
+    ['只能离散动作', '连续动作的 argmax 算不出来 → DDPG / SAC']
+  ]
+});
+
+/* ---------- 浏览器里的 DQN ---------- */
+function cpStep(s, a) {
+  var x = s[0], xd = s[1], th = s[2], thd = s[3], f = a ? 10 : -10, c = Math.cos(th), sn = Math.sin(th);
+  var tmp = (f + 0.05 * thd * thd * sn) / 1.1, tha = (9.8 * sn - c * tmp) / (0.5 * (4 / 3 - 0.1 * c * c / 1.1)), xa = tmp - 0.05 * tha * c / 1.1;
+  return [x + 0.02 * xd, xd + 0.02 * xa, th + 0.02 * thd, thd + 0.02 * tha];
+}
+function cpFail(s) { return Math.abs(s[0]) > 2.4 || Math.abs(s[2]) > 0.2095; }
+function QNet(H, r) {
+  this.H = H; var n = 7 * H + 2; this.p = new Float64Array(n); var k = 0, i;
+  for (i = 0; i < 4 * H; i++) this.p[k++] = S.randn(r) * Math.sqrt(0.5);
+  k += H; for (i = 0; i < 2 * H; i++) this.p[k++] = S.randn(r) * Math.sqrt(1 / H);
+  this.m = new Float64Array(n); this.v = new Float64Array(n); this.g = new Float64Array(n); this.t = 0; this.h = new Float64Array(H);
+}
+QNet.prototype.fwd = function (s, out, h) {
+  var H = this.H, p = this.p, W2 = 5 * H, b2 = 7 * H, j; h = h || this.h;
+  for (j = 0; j < H; j++) { var z = p[4 * H + j] + p[j * 4] * s[0] + p[j * 4 + 1] * s[1] + p[j * 4 + 2] * s[2] + p[j * 4 + 3] * s[3]; h[j] = z > 0 ? z : 0; }
+  for (var a = 0; a < 2; a++) { var o = p[b2 + a]; for (j = 0; j < H; j++) o += p[W2 + a * H + j] * h[j]; out[a] = o; }
+  return out;
+};
+QNet.prototype.back = function (s, a, dq) {
+  var H = this.H, p = this.p, g = this.g, h = this.h, W2 = 5 * H; g[7 * H + a] += dq;
+  for (var j = 0; j < H; j++) { g[W2 + a * H + j] += dq * h[j]; if (h[j] > 0) { var d = dq * p[W2 + a * H + j]; g[4 * H + j] += d; g[j * 4] += d * s[0]; g[j * 4 + 1] += d * s[1]; g[j * 4 + 2] += d * s[2]; g[j * 4 + 3] += d * s[3]; } }
+};
+QNet.prototype.adam = function (lr, bs) {
+  this.t++; var c1 = 1 - Math.pow(0.9, this.t), c2 = 1 - Math.pow(0.999, this.t);
+  for (var i = 0; i < this.p.length; i++) { var gg = this.g[i] / bs; this.m[i] = 0.9 * this.m[i] + 0.1 * gg; this.v[i] = 0.999 * this.v[i] + 0.001 * gg * gg; this.p[i] -= lr * (this.m[i] / c1) / (Math.sqrt(this.v[i] / c2) + 1e-8); this.g[i] = 0; }
+};
+// 一个可分段执行的训练任务
+function DQNJob(opt, seed) {
+  this.o = opt; this.r = S.rng(seed); this.q = new QNet(64, this.r); this.tg = new QNet(64, this.r); this.tg.p.set(this.q.p);
+  this.buf = []; this.step = 0; this.eps = []; this.G = 0; this.s = this.reset(); this.out = [0, 0]; this.out2 = [0, 0]; this.hh = new Float64Array(64);
+}
+DQNJob.prototype.reset = function () { var r = this.r; this.t = 0; return [0, 0, 0, 0].map(function () { return (r() - 0.5) * 0.1; }); };
+DQNJob.prototype.run = function (n) {
+  var o = this.o, r = this.r, q = this.q, tg = this.tg, buf = this.buf;
+  for (var k = 0; k < n && this.step < o.total; k++) {
+    var eps = Math.max(0.05, 1 - this.step / 10000), a;
+    if (r() < eps) a = r() < 0.5 ? 0 : 1; else { q.fwd(this.s, this.out); a = this.out[1] > this.out[0] ? 1 : 0; }
+    var s2 = cpStep(this.s, a); this.t++; this.G++; var term = cpFail(s2), trunc = !term && this.t >= 200;
+    buf.push([this.s, a, s2, term ? 1 : 0]); if (buf.length > 10000) buf.shift(); this.step++;
+    if (buf.length >= 32) {
+      for (var b = 0; b < 32; b++) {
+        var tr = o.replay ? buf[Math.floor(r() * buf.length)] : buf[buf.length - 1 - b];
+        (o.target ? tg : q).fwd(tr[2], this.out2, this.hh);
+        var y = 1 + (tr[3] ? 0 : 0.99 * Math.max(this.out2[0], this.out2[1]));
+        q.fwd(tr[0], this.out); q.back(tr[0], tr[1], this.out[tr[1]] - y);
+      }
+      q.adam(1e-3, 32);
+    }
+    if (o.target && this.step % o.C === 0) tg.p.set(q.p);
+    if (term || trunc) { this.eps.push([this.step, this.G]); this.G = 0; this.s = this.reset(); } else this.s = s2;
+  }
+  return this.step >= o.total;
+};
+var VARS = [
+  { k: 'full', name: '完整 DQN', replay: 1, target: 1, c: 'ok' },
+  { k: 'nor', name: '去掉经验回放', replay: 0, target: 1, c: 'c2' },
+  { k: 'not', name: '去掉目标网络', replay: 1, target: 0, c: 'c3' },
+  { k: 'none', name: '两个都去掉', replay: 0, target: 0, c: 'dim' }
+];
+var dqC = 500, dqBusy = false, dqNet = null;
+S.seg($('#dqC'), function (v) { dqC = +v; });
+var dqChart = S.chart($('#dqChart'), { h: 260, x: [0, 40000], y: [0, 205], xt: [0, 10000, 20000, 30000, 40000], yt: [0, 50, 100, 150, 200], xl: '环境步数', yl: '回合长度（最近 10 回合平均）' });
+function smooth(eps) { var out = []; for (var i = 0; i < eps.length; i++) { var s = 0, n = 0; for (var j = Math.max(0, i - 9); j <= i; j++) { s += eps[j][1]; n++; } out.push([eps[i][0], s / n]); } return out; }
+function dqRun(list) {
+  if (dqBusy) return; dqBusy = true;
+  var jobs = [], idx = 0, results = {};
+  list.forEach(function (v) { [1, 2].forEach(function (sd) { jobs.push({ v: v, sd: sd, job: new DQNJob({ replay: v.replay, target: v.target, C: dqC, total: 40000 }, sd * 104729 + 3) }); }); });
+  $('#dqW').textContent = '训练中……';
+  function tick() {
+    var J = jobs[idx], t0 = performance.now();
+    while (performance.now() - t0 < 40) { if (J.job.run(800)) break; }
+    var done = J.job.step >= 40000, frac = (idx + J.job.step / 40000) / jobs.length;
+    $('#dqBar').style.width = (frac * 100).toFixed(1) + '%';
+    $('#dqP').textContent = J.v.name + ' · 种子 ' + J.sd + ' · ' + J.job.step + ' 步';
+    var curves = [];
+    jobs.forEach(function (x, i) { if (i <= idx && x.job.eps.length) curves.push({ pts: smooth(x.job.eps), c: x.v.c, w: 1.8, dash: x.sd === 2, label: x.sd === 1 ? x.v.name : null }); });
+    dqChart({ curves: curves });
+    if (done) {
+      var L = J.job.eps.reduce(function (s, e) { return s + e[1]; }, 0) / J.job.eps.length;
+      (results[J.v.k] = results[J.v.k] || []).push(L);
+      if (J.v.k === 'full' && J.sd === 1) { dqNet = J.job.q; $('#dqPlay').disabled = false; $('#dqPlay').textContent = '跑一回合'; }
+      idx++;
+    }
+    if (idx < jobs.length) setTimeout(tick, 0); else finish(results);
+  }
+  function finish(res) {
+    dqBusy = false; $('#dqP').textContent = '完成';
+    var rows = list.map(function (v) { var m = res[v.k].reduce(function (a, b) { return a + b; }, 0) / res[v.k].length; return { label: v.name, value: m / 200, text: S.f(m, 0) + ' 步', cls: v.k === 'full' ? 'ok' : v.k === 'none' ? 'dim' : 'alt', m: m, a: res[v.k] }; });
+    S.bars($('#dqBars'), rows);
+    var best = rows.slice().sort(function (a, b) { return b.m - a.m; })[0];
+    $('#dqW').innerHTML = '条形是两个种子在整段训练（4 万步）里的平均回合长度，越长说明越早学会、学得越稳；实线是种子 1，虚线是种子 2。这一次表现最好的是 <b>' + best.label + '</b>。' +
+      (list.length > 1 ? (dqC >= 2000 ? '当前 C = 2000：完整 DQN 的目标网络太久才同步一次，答案过时，常常反而不如直接去掉目标网络——C 是要调的超参。' : '') + 'C = 500 时多种子核对的结果是：完整 DQN 最好；去掉经验回放（用连续样本训练）最差，曲线反复塌回几十步；去掉目标网络介于两者之间，而且更容易在中途突然掉下去。单个种子之间的差异不小——这本身就是原文要求“多种子报告”的原因。' : '') +
+      ' C = ' + dqC + '。（示意：浏览器里的缩小版实验，单回合上限 200 步。）';
+  }
+  tick();
+}
+$('#dqAll').addEventListener('click', function () { dqRun(VARS); });
+$('#dqOne').addEventListener('click', function () { dqRun([VARS[0]]); });
+function drawCart(cv, s, act) {
+  var ctx = cv.getContext('2d'), W = cv.width, H = cv.height, sc = W / 5.6, cx = W / 2 + s[0] * sc, gy = H - 44;
+  ctx.fillStyle = S.css('--bg'); ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = S.css('--rule'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, gy + 18); ctx.lineTo(W - 10, gy + 18); ctx.stroke();
+  ctx.fillStyle = S.css('--alert'); [-2.4, 2.4].forEach(function (b) { ctx.fillRect(W / 2 + b * sc - 1, gy + 4, 3, 26); });
+  ctx.fillStyle = S.css('--ink'); ctx.fillRect(cx - 30, gy - 4, 60, 20);
+  var L = sc * 0.9; ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(cx, gy - 4); ctx.lineTo(cx + Math.sin(s[2]) * L, gy - 4 - Math.cos(s[2]) * L); ctx.stroke();
+  if (act != null) { ctx.fillStyle = S.css('--s1'); ctx.font = '600 16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(act ? '推 →' : '← 推', cx, gy + 40); }
+}
+var dqCv = $('#dqCv'); drawCart(dqCv, [0, 0, 0.03, 0], null);
+S.onTheme(function () { drawCart(dqCv, [0, 0, 0.03, 0], null); });
+$('#dqPlay').addEventListener('click', function () {
+  if (!dqNet) return; var r = S.rng(Date.now() % 9999), s = [0, 0, 0, 0].map(function () { return (r() - 0.5) * 0.1; }), t = 0, out = [0, 0], btn = this; btn.disabled = true;
+  function fr() {
+    for (var k = 0; k < 2; k++) { dqNet.fwd(s, out); var a = out[1] > out[0] ? 1 : 0; s = cpStep(s, a); t++; if (cpFail(s) || t >= 500) break; }
+    drawCart(dqCv, s, out[1] > out[0] ? 1 : 0);
+    $('#dqPI').innerHTML = '第 ' + t + ' 步 · Q(左) = ' + S.f(out[0], 1) + '，Q(右) = ' + S.f(out[1], 1);
+    if (!cpFail(s) && t < 500) requestAnimationFrame(fr); else { btn.disabled = false; $('#dqPI').innerHTML += cpFail(s) ? ' · 第 ' + t + ' 步倒下' : ' · 撑满 500 步（训练时上限只有 200）'; }
+  }
+  fr();
+});
+S.notes($('#n-lab'), {
+  c: [
+    ['消融实验', '每次只拆掉一个组件，其他条件不变，看性能怎样变化。'],
+    ['去掉回放', '每步用最近 32 条连续转移训练：样本高度相关。'],
+    ['去掉目标网络', '用正在训练的网络自己算 TD 目标：自己追自己。'],
+    ['同步间隔 C', '太小 ≈ 没有目标网络，太大 → 答案过时。'],
+    ['多种子', 'DQN 对种子敏感，单次运行不能代表算法。']
+  ],
+  p: [
+    ['本页规模', '4→64→2，Adam 1e-3，batch 32，回放 10⁴，4 万步'],
+    ['ε 调度', '前 1 万步从 1 线性降到 0.05'],
+    ['看什么', '整段训练的平均回合长度（曲线下面积），不只看终点'],
+    ['Q 值的量级', 'CartPole 每步 +1、γ = 0.99，学好后 Q 接近几十到上百']
+  ]
+});
+
+/* ---------- 过估计 ---------- */
+var ovChart = S.chart($('#ovC'), { h: 200, x: [2, 18], y: [0, 3.6], xt: [2, 6, 10, 14, 18], yt: [0, 1, 2, 3], xl: '动作数', yl: '估计出的“最大 Q”（真值 0）' });
+function ov() {
+  var N = +$('#ovNs').value, sg = +$('#ovSs').value; $('#ovN').textContent = N; $('#ovS').textContent = S.f(sg, 1);
+  function sim(n, double) {
+    var r = S.rng(17 + n), tot = 0, M = 2000;
+    for (var k = 0; k < M; k++) {
+      var best = -1e9, bi = 0, i, A = [], B = [];
+      for (i = 0; i < n; i++) { A.push(sg * S.randn(r)); B.push(sg * S.randn(r)); if (A[i] > best) { best = A[i]; bi = i; } }
+      tot += double ? B[bi] : best;
+    }
+    return tot / M;
+  }
+  var a = sim(N, false), b = sim(N, true);
+  $('#ovA').textContent = '+' + S.f(a, 2); $('#ovB').textContent = (b >= 0 ? '+' : '') + S.f(b, 2);
+  var pa = [], pb = []; for (var n = 2; n <= 18; n += 2) { pa.push([n, sim(n, false)]); pb.push([n, sim(n, true)]); }
+  ovChart({ curves: [{ pts: pa, c: 'c1', label: 'max（原始 DQN）' }, { pts: pb, c: 'ok', label: '选评分离（Double）' }], vl: [{ x: N, c: 'dim' }] });
+  $('#ovW').innerHTML = '每个动作的真实价值都是 0，估计只加了均值为 0 的噪声——单看每个估计都是<b>无偏</b>的，但取 max 之后平均高出 ' + S.f(a, 2) + '。动作越多、噪声越大，偏差越大，而且这个偏差会经 TD 目标一步步传回前面的状态。用另一组独立估计给选中的动作打分，平均就回到 0 附近。原文练习 1 的情形（误差 0.1、−0.2、0.4、−0.1）中，max 选中第 3 个动作，目标凭空多了 0.4。';
+}
+['ovNs', 'ovSs'].forEach(function (id) { $('#' + id).addEventListener('input', ov); }); ov();
+
+/* ---------- PER ---------- */
+var TD = [0.05, 0.2, 0.5, 1.0, 2.5, 6.0];
+function pe() {
+  var al = +$('#peAs').value, be = +$('#peBs').value; $('#peA').textContent = S.f(al, 1); $('#peB').textContent = S.f(be, 1);
+  var p = TD.map(function (d) { return Math.pow(Math.abs(d) + 0.01, al); }), Z = p.reduce(function (a, b) { return a + b; }, 0), N = TD.length;
+  var P = p.map(function (x) { return x / Z; }), w = P.map(function (x) { return Math.pow(1 / (N * x), be); }), wm = Math.max.apply(null, w);
+  $('#peT').innerHTML = '<tr><td>经验</td><td class="n">|δ|</td><td class="n">采样概率 P(i)</td><td class="n">IS 权重 w/max w</td><td class="n">P × w（有效权重）</td></tr>' +
+    TD.map(function (d, i) { return '<tr><td>#' + (i + 1) + '</td><td class="n">' + S.f(d, 2) + '</td><td class="n">' + S.pct(P[i], 1) + '</td><td class="n">' + S.f(w[i] / wm, 2) + '</td><td class="n">' + S.f(N * P[i] * w[i] / wm, 2) + '</td></tr>'; }).join('');
+  $('#peW').innerHTML = (al === 0 ? 'α = 0：每条 1/6，退化为均匀采样。' : 'α = ' + S.f(al, 1) + '：TD 误差最大的 #6 被抽中的概率是 #1 的 ' + S.f(P[5] / P[0], 1) + ' 倍，更新预算偏向“出乎意料”的经验。') +
+    ' β 控制修正：β = 0 时不修正，高频样本对损失的影响被放大；β = 1 时最后一列（相对于均匀采样的有效权重）全部相等，偏差完全抵消，但也就不再“偏心”地加速学习了。实践中 β 常从 0.4 左右逐步升到 1。（|δ| 为示意数值。）';
+}
+['peAs', 'peBs'].forEach(function (id) { $('#' + id).addEventListener('input', pe); }); pe();
+S.notes($('#n-family'), {
+  c: [
+    ['过估计', '对带噪声的估计取 max，结果系统性偏高。'],
+    ['Double DQN', '当前网络选动作、目标网络评估。'],
+    ['Dueling', 'Q 拆成状态价值 V 与优势 A，减均值保证唯一。'],
+    ['PER', '按 TD 误差优先采样，再用重要性权重修正。'],
+    ['n 步回报', '目标里直接放后面 n 步的真实奖励。'],
+    ['Rainbow', 'Double + Dueling + PER + n-step + C51 + Noisy 六合一。']
+  ],
+  p: [
+    ['凸性', '𝔼[max Q̂] ≥ max 𝔼[Q̂]'],
+    ['PER 两个旋钮', 'α：多偏心（0 = 均匀）；β：修正多少（1 = 完全修正）'],
+    ['n-step 权衡', '传播快、方差大'],
+    ['Noisy Net', 'W = μ + σ ⊙ ε，探索与状态相关、更有结构'],
+    ['内在奖励', 'ICM：预测误差；RND：拟合随机网络的误差（第 6 篇）']
+  ]
+});
+})();
+</script>
+</body>
+</html>

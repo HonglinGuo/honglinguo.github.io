@@ -1,0 +1,453 @@
+---
+title: 时序差分方法：TD、Sarsa、n 步 Sarsa、Q-learning 与统一视角
+desc: 强化学习的数学原理学习笔记（七）：TD 是求解贝尔曼方程的随机近似算法；TD 目标与 TD 误差；TD 与 MC 的对比（增量、自举、方差）；Sarsa 与 Expected Sarsa；n 步 Sarsa 连接 Sarsa 与 MC；Q-learning 求解贝尔曼最优方程，因而是 off-policy；行为策略与目标策略、on-policy 与 off-policy、online 与 offline；统一的 TD 目标表。
+kicker: <span>技术学习</span><span>强化学习的数学原理 · 07</span><span>对应原书第 7 章（第 125–150 页）</span><span>约 50 分钟</span>
+h1: 不等回合结束，<em>走一步就修正一步</em>
+lead: 有了第 6 章的准备，TD 算法就不突兀了：它就是用 Robbins-Monro 的思路，拿一个经验样本 (s, r, s′) 去求解贝尔曼方程。和蒙特卡罗一样它不需要模型，但它是增量的——每走一步就能更新一次，可以在线学习，也能处理没有终点的持续任务。这一章从最基本的状态值 TD 出发，经过 Sarsa、n 步 Sarsa，到经典的 Q-learning，最后用一张表把它们和 MC 统一起来。on-policy 与 off-policy 这对重要概念也在这里登场。
+nav: td|TD 学习;sarsa|Sarsa;nstep|n 步 Sarsa;qlearn|Q-learning;unified|统一视角;back|三个问题
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>TD 算法在数学上解的是什么方程？TD 目标和 TD 误差分别是什么意思？它比 MC 好在哪、差在哪？</li>
+  <li>Sarsa、n 步 Sarsa、Q-learning 的区别是什么？为什么 Q-learning 是 off-policy，其他都是 on-policy？</li>
+  <li>on-policy / off-policy 与 online / offline 有什么区别？</li>
+</ol></div>
+
+<section class="part" id="td">
+  <div class="part-head"><h2>状态值的 TD 学习</h2><span class="meta">原书 7.1 节 · 第 126–133 页</span></div>
+  <div class="sec-lede">
+    <p>给定策略 π，手里有按 π 产生的经验 (s<sub>0</sub>, r<sub>1</sub>, s<sub>1</sub>, …, s<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, …)。TD 算法这样估计状态值：</p>
+    <div class="eq">v<sub>t+1</sub>(s<sub>t</sub>) = v<sub>t</sub>(s<sub>t</sub>) − α<sub>t</sub>(s<sub>t</sub>) [ v<sub>t</sub>(s<sub>t</sub>) − (r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>)) ]，其余状态不变<small>原书式 (7.1)(7.2)</small></div>
+    <p>为什么这样设计？把状态值的定义改写成 v<sub>π</sub>(s) = 𝔼[R<sub>t+1</sub> + γv<sub>π</sub>(S<sub>t+1</sub>)|S<sub>t</sub> = s]——这是贝尔曼方程的另一种写法，也叫<strong>贝尔曼期望方程</strong>。对它用 RM 算法：令 g(v(s<sub>t</sub>)) = v(s<sub>t</sub>) − 𝔼[R + γv<sub>π</sub>(S′)|s<sub>t</sub>]，观测样本 (r<sub>t+1</sub>, s<sub>t+1</sub>) 得到带噪声的 g̃，就推出了上式（原书框 7.1）。唯一的差别是 RM 推导里用的是真值 v<sub>π</sub>(s<sub>t+1</sub>)，实际只能换成估计 v<sub>t</sub>(s<sub>t+1</sub>)；<strong>定理 7.1</strong> 证明换了以后仍然收敛（用第 6 章的定理 6.3），条件是每个状态的步长满足 Σα = ∞、Σα² &lt; ∞——这要求每个状态都被访问无穷多次。</p>
+    <p>两个名词。<strong>TD 目标</strong> v̄<sub>t</sub> = r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>)：算法把 v(s<sub>t</sub>) 往它推，因为 |v<sub>t+1</sub>(s<sub>t</sub>) − v̄<sub>t</sub>| = |1 − α||v<sub>t</sub>(s<sub>t</sub>) − v̄<sub>t</sub>| &lt; |v<sub>t</sub>(s<sub>t</sub>) − v̄<sub>t</sub>|。<strong>TD 误差</strong>（原书定义）δ<sub>t</sub> = v<sub>t</sub>(s<sub>t</sub>) − (r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>))：一方面是两个时刻之间的差异（所以叫“时序差分”）；更重要的是，估计准确时它的期望为 0，所以它反映的是估计与真值的差距——可以理解为新样本带来的<strong>新息</strong>（innovation），和卡尔曼滤波里的概念相通。</p>
+    <p>TD 与 MC 的对比（原书表 7.1）见下表。核心差别：TD <strong>增量</strong>、能处理持续任务、<strong>自举</strong>（依赖初始猜测）、估计<strong>方差小</strong>（只涉及 R<sub>t+1</sub>, S<sub>t+1</sub>, A<sub>t+1</sub> 几个随机变量）；MC 非增量、只能处理回合任务、不自举、方差大（回报里有一长串随机变量，长度 L 的回合在软策略下有 |𝒜|<sup>L</sup> 种可能）。</p>
+    <p class="go">在 5×5 网格上评估均匀随机策略（真值是原书图 8.6 那组 −2.9 到 −4.5 的数）。先一步一步看 TD 更新的每个数，再让 TD 和 MC 用同样的数据比一比。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">TD 单步解剖（均匀随机策略，γ = 0.9，α = 0.1，v<sub>0</sub> = 0）</p>
+    <div class="lab-split">
+      <div><div id="t1G"></div><div class="btnrow"><button class="btn pri" type="button" id="t1S">走一步并更新</button><button class="btn" type="button" id="t1F">快进 1000 步</button><button class="btn" type="button" id="t1R">重来</button></div></div>
+      <div><table class="kvt" id="t1T"></table><p class="cap" id="t1W"></p></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">TD vs MC：同样的经验，谁估得更准（每个回合 100 步、随机起点，常数步长，20 次运行平均，示意）</p>
+    <label class="ctl"><span>步长 α <output id="tmAv">0.05</output></span><input type="range" id="tmA" min="0.01" max="0.2" step="0.01" value="0.05"></label>
+    <div id="tmC"></div>
+    <p class="cap" id="tmW"></p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>对比项</th><th>TD 学习</th><th>MC 学习</th></tr></thead>
+    <tbody>
+      <tr><td>更新时机</td><td>增量：每收到一个样本立即更新</td><td>非增量：要等整个回合收集完，才能算回报</td></tr>
+      <tr><td>任务类型</td><td>回合式和持续式都可以</td><td>只能回合式（回合必须结束）</td></tr>
+      <tr><td>自举</td><td>是：更新依赖当前估计，需要初始猜测</td><td>否：直接用回报估计，不需要初始猜测</td></tr>
+      <tr><td>估计方差</td><td>小：Sarsa 只涉及 R<sub>t+1</sub>, S<sub>t+1</sub>, A<sub>t+1</sub></td><td>大：回报里有 R<sub>t+1</sub> + γR<sub>t+2</sub> + … 一长串随机变量</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 7.1。</p>
+  <div class="notes" id="n-td"></div>
+</section>
+
+<section class="part" id="sarsa">
+  <div class="part-head"><h2>Sarsa：估计动作值，再改进策略</h2><span class="meta">原书 7.2 节 · 第 133–138 页</span></div>
+  <div class="sec-lede">
+    <p>状态值 TD 只能评估策略；要找最优策略，得估计动作值再做策略改进。把 TD 里的状态值换成动作值就是 <strong>Sarsa</strong>：</p>
+    <div class="eq">q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α<sub>t</sub> [ q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γq<sub>t</sub>(s<sub>t+1</sub>, a<sub>t+1</sub>)) ]<small>原书式 (7.12)</small></div>
+    <p>每次更新要用 (s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, a<sub>t+1</sub>) 五个量，名字就是 state-action-reward-state-action 的缩写。它在解动作值形式的贝尔曼方程 q<sub>π</sub>(s, a) = 𝔼[R + γq<sub>π</sub>(S′, A′)|s, a]，<strong>定理 7.2</strong> 保证它收敛到 q<sub>π</sub>。</p>
+    <p>与策略改进结合（算法 7.1）：每走一步，先更新被访问的那一个 q(s<sub>t</sub>, a<sub>t</sub>)，然后<strong>立刻</strong>把 s<sub>t</sub> 的策略改成对 q 的 ε-贪心。策略根本没评估准就改了——这正是广义策略迭代。策略必须是 ε-贪心，因为它还要用来产生下一个样本，得有探索性。<strong>Expected Sarsa</strong>（框 7.4）把目标里的 q(s<sub>t+1</sub>, a<sub>t+1</sub>) 换成按策略的期望 Σ<sub>a</sub>π(a|s<sub>t+1</sub>)q(s<sub>t+1</sub>, a) = v(s<sub>t+1</sub>)：计算稍多，但少了 A<sub>t+1</sub> 这个随机变量，方差更小。</p>
+    <p>原书图 7.2 的任务和前几章不同：只求<strong>从左上角到目标的一条最优路径</strong>，不求所有状态的最优策略（就像只关心从家到单位的路）。回合从左上角开始、到目标结束；r<sub>target</sub> = 0，r<sub>forbidden</sub> = r<sub>boundary</sub> = −10，r<sub>other</sub> = −1，α = 0.1，ε = 0.1，q<sub>0</sub> = 0。随着训练，每回合的总奖励上升、长度下降，偶尔会突然变差——那是 ε-贪心在走随机动作，可以用逐渐衰减的 ε 解决。因为不必探索所有状态，路径外的状态策略未必最优，路径本身也可能只是局部最优。</p>
+    <p class="go">训练 500 个回合，看学到的路径和两条学习曲线；也可以换成 Expected Sarsa 或下面要讲的 Q-learning 比较。</p>
+  </div>
+  <div class="algo"><h4>算法 7.1　用 Sarsa 学最优策略<small>on-policy</small></h4><ol>
+    <li>初始化 α &gt; 0、ε ∈ (0, 1)、q<sub>0</sub>(s, a)，以及由 q<sub>0</sub> 导出的 ε-贪心策略 π<sub>0</sub>。对每个回合：在 s<sub>0</sub> 按 π<sub>0</sub> 选 a<sub>0</sub>；当 s<sub>t</sub> 不是目标：
+      <ol><li>与环境交互得 r<sub>t+1</sub>、s<sub>t+1</sub>；按 π<sub>t</sub>(s<sub>t+1</sub>) 选 a<sub>t+1</sub></li>
+      <li>更新 q(s<sub>t</sub>, a<sub>t</sub>)：<code>q ← q − α[q − (r + γ q(s′, a′))]</code></li>
+      <li>更新 s<sub>t</sub> 的策略为对 q(s<sub>t</sub>, ·) 的 ε-贪心；s ← s′，a ← a′</li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书图 7.2 / 7.3 的复现：从左上角找到目标的路径（γ 原书未注明，此处取 0.9）</p>
+    <div class="selrow"><span>算法</span><div class="seg" id="saM"><button data-v="sarsa" aria-pressed="true">Sarsa</button><button data-v="esarsa">Expected Sarsa</button><button data-v="q">Q-learning（on-policy 版）</button></div><button class="btn pri" type="button" id="saGo">训练 500 个回合</button></div>
+    <div class="lab-split">
+      <div><div id="saG"></div></div>
+      <div><div id="saC1"></div><div id="saC2"></div></div>
+    </div>
+    <p class="cap" id="saW"></p>
+  </div>
+  <div class="notes" id="n-sarsa"></div>
+</section>
+
+<section class="part" id="nstep">
+  <div class="part-head"><h2>n 步 Sarsa：Sarsa 与 MC 之间</h2><span class="meta">原书 7.3 节 · 第 138–140 页</span></div>
+  <div class="sec-lede">
+    <p>回报 G<sub>t</sub> 可以有多种分解：G<sub>t</sub> = R<sub>t+1</sub> + γq<sub>π</sub>(S<sub>t+1</sub>, A<sub>t+1</sub>)（一步）、= R<sub>t+1</sub> + γR<sub>t+2</sub> + γ<sup>2</sup>q<sub>π</sub>(S<sub>t+2</sub>, A<sub>t+2</sub>)（两步）……、= R<sub>t+1</sub> + γR<sub>t+2</sub> + γ<sup>2</sup>R<sub>t+3</sub> + …（展开到底）。它们是同一个随机变量，只是写法不同。代入 q<sub>π</sub>(s, a) = 𝔼[G<sub>t</sub>|s, a]，用随机近似求解，就得到不同算法：n = 1 是 Sarsa，n = ∞（并取 α = 1）是 MC，一般的 n 就是 <strong>n 步 Sarsa</strong>：</p>
+    <div class="eq">q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α[ q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γr<sub>t+2</sub> + … + γ<sup>n</sup>q<sub>t</sub>(s<sub>t+n</sub>, a<sub>t+n</sub>)) ]<small>原书式 (7.17)</small></div>
+    <p>实现上要等到 t + n 时刻才凑齐所需的样本，所以 q(s<sub>t</sub>, a<sub>t</sub>) 的更新推迟到 t + n。性能也介于两者之间：<strong>n 大</strong>接近 MC，方差大、偏差小；<strong>n 小</strong>接近 Sarsa，偏差大（依赖不准的初始估计）、方差小。它同样只是策略评估，要配合策略改进才能学最优策略。</p>
+    <p class="go">拖动 n 看目标的组成；下面的小实验用 n 步 TD 评估均匀策略（与 n 步 Sarsa 同理），比较不同 n 和 α 下的误差（示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">n 步目标由什么组成</p>
+    <label class="ctl"><span>n <output id="nsNv">3</output></span><input type="range" id="nsN" min="1" max="8" step="1" value="3"></label>
+    <div class="eq" id="nsF"></div>
+    <div id="nsB"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">偏差与方差的折中：训练 20 个回合（每回合 50 步）后的状态值均方根误差，30 次运行平均（示意）</p>
+    <div id="nsC"></div>
+    <p class="cap" id="nsW"></p>
+  </div>
+  <div class="notes" id="n-nstep"></div>
+</section>
+
+<section class="part" id="qlearn">
+  <div class="part-head"><h2>Q-learning：直接学最优动作值</h2><span class="meta">原书 7.4 节 · 第 140–145 页</span></div>
+  <div class="sec-lede">
+    <p>Sarsa 只能估计给定策略的动作值，必须配合策略改进；<strong>Q-learning</strong> 直接估计最优动作值：</p>
+    <div class="eq">q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α<sub>t</sub> [ q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γ max<sub>a</sub> q<sub>t</sub>(s<sub>t+1</sub>, a)) ]<small>原书式 (7.18)</small></div>
+    <p>与 Sarsa 只差 TD 目标：max<sub>a</sub>q(s<sub>t+1</sub>, a) 代替 q(s<sub>t+1</sub>, a<sub>t+1</sub>)，于是每次只需要 (r<sub>t+1</sub>, s<sub>t+1</sub>)，不需要 a<sub>t+1</sub>。数学上它在解<strong>动作值形式的贝尔曼最优方程</strong> q(s, a) = 𝔼[R<sub>t+1</sub> + γ max<sub>a</sub>q(S<sub>t+1</sub>, a)|s, a]（两边取 max 就回到第 3 章的 BOE）。</p>
+    <p>这引出一对重要概念。任何强化学习任务里都有两个策略：<strong>行为策略</strong>（产生经验样本）和<strong>目标策略</strong>（不断更新、最终收敛到最优）。两者相同叫 <strong>on-policy</strong>，不同叫 <strong>off-policy</strong>。off-policy 的好处是能用别的策略（甚至人类操作）产生的数据学习，尤其可以用探索性很强的行为策略。判断方法：看算法解的是什么方程、需要什么样本。<strong>Sarsa 是 on-policy</strong>：它评估 π 需要 π 产生的 a<sub>t+1</sub>，被评估、被改进的就是产生样本的那个策略。<strong>Q-learning 是 off-policy</strong>：根本原因是它解的是贝尔曼最优方程；样本 (s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>) 里只有 a<sub>t</sub> 来自行为策略，r 和 s′ 由环境决定，所以 a<sub>t</sub> 可以由任何策略产生。<strong>MC 是 on-policy</strong>，理由同 Sarsa。</p>
+    <p>原书图 7.4、7.5：用均匀随机的行为策略产生<strong>一条</strong> 10 万步的回合，用 Q-learning（off-policy 版，目标策略取贪心、不必探索）学所有状态的最优策略，状态值误差收敛到 0；学到的策略可能和基准答案不同，但同样最优。初值离真值越远收敛越慢；行为策略探索性越弱（ε 从 1 降到 0.5、0.1），学得越慢。</p>
+    <p class="go">选行为策略的 ε 和初值 q<sub>0</sub>，用一条 10 万步的回合离线训练，看学到的目标策略和误差曲线。</p>
+  </div>
+  <div class="algo"><h4>算法 7.3　Q-learning（off-policy 版）<small>行为策略 π<sub>b</sub> 可以是任何策略</small></h4><ol>
+    <li>初值 q<sub>0</sub>(s, a)，行为策略 π<sub>b</sub>，步长 α。对 π<sub>b</sub> 产生的每个回合的每一步 t：
+      <ol><li>更新 q(s<sub>t</sub>, a<sub>t</sub>)：<code>q ← q − α[q − (r + γ max_a q(s′, a))]</code></li>
+      <li>目标策略 π<sub>T</sub>(·|s<sub>t</sub>) 设为对 q(s<sub>t</sub>, ·) 的贪心（不需要探索）</li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书图 7.4 / 7.5 的复现：一条 10 万步回合离线学最优策略（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = 1，α = 0.1）</p>
+    <div class="selrow"><span>行为策略 ε（围绕最优策略的 ε-贪心；ε = 1 即均匀随机）</span><div class="seg" id="qlE"><button data-v="1" aria-pressed="true">1</button><button data-v="0.5">0.5</button><button data-v="0.1">0.1</button></div></div>
+    <div class="selrow"><span>初值 q<sub>0</sub></span><div class="seg" id="qlQ"><button data-v="0" aria-pressed="true">0</button><button data-v="10">10</button><button data-v="100">100</button></div></div>
+    <div class="lab-split">
+      <div><div id="qlG"></div></div>
+      <div><div id="qlC"></div><p class="cap" id="qlW"></p></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：on-policy vs off-policy</h4>
+    <p><b>on-policy</b>：行为策略 = 目标策略。Sarsa、n 步 Sarsa、MC：它们在评估“产生样本的那个策略”。<b>off-policy</b>：两者可以不同。Q-learning：它解的是贝尔曼最优方程，估计 q*(s<sub>t</sub>, a<sub>t</sub>) 用到的 r、s′ 只由环境决定，a<sub>t</sub> 由谁产生都行。</p>
+    <p><b>Q-learning 的两种实现</b>：on-policy 版用同一个 ε-贪心策略既采样又改进；off-policy 版用独立的行为策略采样，目标策略取贪心（不用来采样，不需要探索）。第 10 章用重要性采样把 on-policy 算法也变成 off-policy。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：on/off-policy vs online/offline</h4>
+    <p><b>online</b>：边与环境交互边更新；<b>offline</b>：用事先收集好的数据更新，不再交互。on-policy 算法可以 online，但不能用别的策略事先收集的数据；off-policy 算法 online、offline 都可以。上面的实验就是 off-policy + offline。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：Sarsa vs Q-learning</h4>
+    <p><b>目标</b>：r + γq(s′, a′)（a′ 由当前策略实际选出）vs r + γ max<sub>a</sub>q(s′, a)。<b>解的方程</b>：贝尔曼方程（评估当前策略）vs 贝尔曼最优方程。<b>所需样本</b>：(s, a, r, s′, a′) vs (s, a, r, s′)。</p>
+  </div>
+  <div class="notes" id="n-qlearn"></div>
+</section>
+
+<section class="part" id="unified">
+  <div class="part-head"><h2>统一视角</h2><span class="meta">原书 7.5–7.7 节 · 第 145–150 页</span></div>
+  <div class="sec-lede">
+    <p>本章所有动作值 TD 算法都能写成同一个式子：q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α<sub>t</sub>[q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − q̄<sub>t</sub>]，差别只在 TD 目标 q̄<sub>t</sub>。MC 也是特例：取 α = 1，就是 q<sub>t+1</sub> = q̄<sub>t</sub>。从随机近似的角度，它们都在求解 q(s, a) = 𝔼[q̄<sub>t</sub>|s, a]——除 Q-learning 解贝尔曼最优方程外，其余都解某个策略的贝尔曼方程。</p>
+    <p>原书 Q&amp;A 里还有两个实用问题。一是<strong>为什么实践中步长常取小常数</strong>，而不是满足 Σα² &lt; ∞ 的衰减序列：学最优策略时被评估的策略一直在变（非平稳），衰减的步长会变得太小，来不及跟上；常数步长的代价是估计最终会小幅波动，步长足够小时可以忽略。二是<strong>要不要为所有状态学最优策略</strong>：只要一条路径（如图 7.2）对数据要求低，但因为没探索全部状态，得到的路径未必全局最优。</p>
+    <p class="go">把下面的算法分到它求解的方程里；然后对照表格复习。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>算法</th><th>TD 目标 q̄<sub>t</sub></th><th>求解的方程</th><th>on / off</th></tr></thead>
+    <tbody>
+      <tr><td>Sarsa</td><td>r<sub>t+1</sub> + γq<sub>t</sub>(s<sub>t+1</sub>, a<sub>t+1</sub>)</td><td>BE：q<sub>π</sub>(s, a) = 𝔼[R<sub>t+1</sub> + γq<sub>π</sub>(S<sub>t+1</sub>, A<sub>t+1</sub>)|s, a]</td><td>on</td></tr>
+      <tr><td>n 步 Sarsa</td><td>r<sub>t+1</sub> + … + γ<sup>n</sup>q<sub>t</sub>(s<sub>t+n</sub>, a<sub>t+n</sub>)</td><td>BE：q<sub>π</sub>(s, a) = 𝔼[R<sub>t+1</sub> + … + γ<sup>n</sup>q<sub>π</sub>(S<sub>t+n</sub>, A<sub>t+n</sub>)|s, a]</td><td>on</td></tr>
+      <tr><td>Expected Sarsa</td><td>r<sub>t+1</sub> + γΣ<sub>a</sub>π(a|s<sub>t+1</sub>)q<sub>t</sub>(s<sub>t+1</sub>, a)</td><td>BE：q<sub>π</sub>(s, a) = 𝔼[R<sub>t+1</sub> + γv<sub>π</sub>(S<sub>t+1</sub>)|s, a]</td><td>on</td></tr>
+      <tr><td>Q-learning</td><td>r<sub>t+1</sub> + γ max<sub>a</sub>q<sub>t</sub>(s<sub>t+1</sub>, a)</td><td>BOE：q(s, a) = 𝔼[R<sub>t+1</sub> + γ max<sub>a</sub>q(S<sub>t+1</sub>, a)|s, a]</td><td>off</td></tr>
+      <tr><td>MC</td><td>r<sub>t+1</sub> + γr<sub>t+2</sub> + γ<sup>2</sup>r<sub>t+3</sub> + …（α = 1）</td><td>BE：q<sub>π</sub>(s, a) = 𝔼[R<sub>t+1</sub> + γR<sub>t+2</sub> + …|s, a]</td><td>on</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 7.2（Expected Sarsa 一行取自框 7.4）。BE = 贝尔曼方程，BOE = 贝尔曼最优方程。</p>
+  <div class="lab"><p class="lab-t">分一分</p><div id="unG"></div></div>
+  <div class="confuse"><h4>易混辨析：TD 误差的符号</h4>
+    <p><b>原书第 7 章</b>把 TD 误差定义为 δ<sub>t</sub> = v(s<sub>t</sub>) − (r<sub>t+1</sub> + γv(s<sub>t+1</sub>))（估计减目标），更新写成 v ← v − αδ。<b>第 8、10 章和多数文献</b>写成 δ<sub>t</sub> = r<sub>t+1</sub> + γv(s<sub>t+1</sub>) − v(s<sub>t</sub>)（目标减估计），更新写成 v ← v + αδ。两种写法是同一个更新，只是符号约定不同，读公式时要先看清定义。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：MC vs TD；自举</h4>
+    <p><b>MC</b>：用完整回报，不自举，无偏、方差大、要等回合结束。<b>TD</b>：用一步奖励 + 下一状态的当前估计，自举，依赖初值（有偏）、方差小、每步都能更新。n 步 TD 在两者之间连续过渡。</p>
+  </div>
+  <div class="notes" id="n-unified"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">TD：v<sub>t+1</sub>(s<sub>t</sub>) = v<sub>t</sub>(s<sub>t</sub>) − α[v<sub>t</sub>(s<sub>t</sub>) − (r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>))]；求解 v<sub>π</sub>(s) = 𝔼[R + γv<sub>π</sub>(S′)|s]</div>
+    <div class="fx">TD 目标 v̄<sub>t</sub> = r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>)；TD 误差（原书第 7 章）δ<sub>t</sub> = v<sub>t</sub>(s<sub>t</sub>) − v̄<sub>t</sub>，估计准确时 𝔼[δ<sub>t</sub>] = 0</div>
+    <div class="fx">Sarsa：q ← q − α[q(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γq(s<sub>t+1</sub>, a<sub>t+1</sub>))]</div>
+    <div class="fx">Expected Sarsa 目标：r<sub>t+1</sub> + γΣ<sub>a</sub>π(a|s<sub>t+1</sub>)q(s<sub>t+1</sub>, a)</div>
+    <div class="fx">n 步 Sarsa 目标：r<sub>t+1</sub> + γr<sub>t+2</sub> + … + γ<sup>n</sup>q(s<sub>t+n</sub>, a<sub>t+n</sub>)</div>
+    <div class="fx">Q-learning：q ← q − α[q(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γ max<sub>a</sub>q(s<sub>t+1</sub>, a))]；求解 BOE q(s, a) = 𝔼[R + γ max<sub>a</sub>q(S′, a)|s, a]</div>
+    <div class="fx">统一形式：q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α[q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − q̄<sub>t</sub>]，MC 为 α = 1</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>TD 解什么方程？TD 目标和误差是什么？比 MC 好在哪？
+      <details><summary>先自己答，再点开</summary><p class="ans">TD 是用 RM 算法求解贝尔曼期望方程 v<sub>π</sub>(s) = 𝔼[R + γv<sub>π</sub>(S′)|s] 的随机近似算法。TD 目标 r + γv(s′) 是 v(s) 被推向的值；TD 误差是估计与目标之差，估计准确时期望为 0，代表新样本带来的新息。TD 增量、能处理持续任务、方差小，但自举、依赖初值。</p></details></li>
+    <li>Sarsa、n 步 Sarsa、Q-learning 区别？为何 Q-learning 是 off-policy？
+      <details><summary>先自己答，再点开</summary><p class="ans">只差 TD 目标：一步实际动作、n 步、对下一状态取 max。Q-learning 解的是贝尔曼最优方程，估计 q*(s, a) 只依赖环境给出的 r、s′，与产生 a 的行为策略无关，所以行为策略可以任意；其余算法评估的就是产生样本的策略，是 on-policy。</p></details></li>
+    <li>on/off-policy 与 online/offline 的区别？
+      <details><summary>先自己答，再点开</summary><p class="ans">前者看行为策略与目标策略是否相同；后者看是否边交互边学习。on-policy 只能 online（不能用别的策略事先收集的数据）；off-policy 可以 online 也可以 offline。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 公用 ---------- */
+var E5 = RL.book5({ gamma: 0.9 }), UNI = RL.uniform(25), vU = RL.evalExact(E5, UNI);
+function argmaxR(row, rnd) { var m = Math.max.apply(null, row), c = []; for (var a = 0; a < row.length; a++) if (row[a] >= m - 1e-12) c.push(a); return c.length === 1 ? c[0] : c[Math.floor(rnd() * c.length)]; }
+
+/* ---------- TD 单步解剖 ---------- */
+var t1v, t1s, t1n, t1rng, t1last;
+var t1Draw = RL.grid($('#t1G'), E5, { cell: 72 });
+function t1Reset() { t1v = new Array(25).fill(0); t1s = 12; t1n = 0; t1rng = S.rng(42); t1last = null; t1Show(); }
+function t1Step(show) {
+  var a = Math.floor(t1rng() * 5), m = E5.move(t1s, a), old = t1v[t1s], target = m[1] + 0.9 * t1v[m[0]], delta = old - target;
+  t1v[t1s] = old - 0.1 * delta;
+  t1last = { s: t1s, a: a, r: m[1], s2: m[0], old: old, vs2: t1v[m[0]], target: target, delta: delta, nw: t1v[t1s] };
+  if (t1last.s2 === t1last.s) t1last.vs2 = old;
+  t1s = m[0]; t1n++;
+  if (show) t1Show();
+}
+function t1Show() {
+  var L = t1last, hl = {};
+  if (L) { hl[L.s] = 'on'; hl[L.s2] = hl[L.s2] || 'dim'; }
+  t1Draw({ v: t1v, hl: hl, agent: t1s, path: L ? [L.s, L.s2] : null });
+  if (!L) { $('#t1T').innerHTML = ''; $('#t1W').innerHTML = '机器人在中心格 (3,3)。点“走一步并更新”：按均匀策略随机走一步，只更新刚离开的那一格。'; return; }
+  $('#t1T').innerHTML = '<tr><th>第 ' + t1n + ' 步</th><th>值</th></tr>' +
+    '<tr><td>s<sub>t</sub> → a<sub>t</sub> → s<sub>t+1</sub></td><td>' + E5.label(L.s) + ' ' + RL.AN[L.a] + ' ' + E5.label(L.s2) + '</td></tr>' +
+    '<tr><td>r<sub>t+1</sub></td><td>' + S.f(L.r, 0) + '</td></tr>' +
+    '<tr><td>v<sub>t</sub>(s<sub>t</sub>)（旧估计）</td><td>' + S.f(L.old, 3) + '</td></tr>' +
+    '<tr><td>TD 目标 r + γv<sub>t</sub>(s<sub>t+1</sub>)</td><td>' + S.f(L.target, 3) + '</td></tr>' +
+    '<tr class="on"><td>TD 误差 δ = v − 目标（原书定义）</td><td>' + S.f(L.delta, 3) + '</td></tr>' +
+    '<tr><td>新估计 v − 0.1δ</td><td>' + S.f(L.nw, 3) + '</td></tr>' +
+    '<tr><td>真值 v<sub>π</sub>(s<sub>t</sub>)</td><td>' + S.f(vU[L.s], 3) + '</td></tr>';
+  $('#t1W').innerHTML = '新估计向 TD 目标挪了 10%。全部 25 格估计的均方根误差 = <b>' + S.f(RL.rmse(t1v, vU), 3) + '</b>（从 v = 0 开始时是 ' + S.f(RL.rmse(new Array(25).fill(0), vU), 3) + '）。' + (t1n < 30 ? '前几步的 TD 目标用的是 v(s′) = 0 这种很不准的估计——这就是“自举”。' : '常数步长下误差降到一定程度后会小幅波动。');
+}
+$('#t1S').addEventListener('click', function () { t1Step(true); });
+$('#t1F').addEventListener('click', function () { for (var i = 0; i < 999; i++) t1Step(false); t1Step(true); });
+$('#t1R').addEventListener('click', t1Reset);
+t1Reset();
+
+/* ---------- TD vs MC ---------- */
+var tmChart = S.chart($('#tmC'), { h: 260, x: [0, 100], y: [0, 4], xt: [0, 25, 50, 75, 100], yt: [0, 1, 2, 3, 4], xl: '回合数', yl: '状态值 RMSE' });
+function tm() {
+  var al = +$('#tmA').value; $('#tmAv').textContent = S.f(al, 2);
+  var EP = 100, L = 100, R = 20, td = new Array(EP + 1).fill(0), mc = new Array(EP + 1).fill(0);
+  for (var run = 0; run < R; run++) {
+    var rnd = S.rng(500 + run), v1 = new Array(25).fill(0), v2 = new Array(25).fill(0);
+    td[0] += RL.rmse(v1, vU) / R; mc[0] += RL.rmse(v2, vU) / R;
+    for (var e = 1; e <= EP; e++) {
+      var s = Math.floor(rnd() * 25), ss = [], rr = [];
+      for (var t = 0; t < L; t++) { var a = Math.floor(rnd() * 5), m = E5.move(s, a); ss.push(s); rr.push(m[1]); v1[s] -= al * (v1[s] - (m[1] + 0.9 * v1[m[0]])); s = m[0]; }
+      var g = 0; for (var t2 = L - 1; t2 >= 0; t2--) { g = rr[t2] + 0.9 * g; if (t2 < L - 40) v2[ss[t2]] -= al * (v2[ss[t2]] - g); }
+      td[e] += RL.rmse(v1, vU) / R; mc[e] += RL.rmse(v2, vU) / R;
+    }
+  }
+  tmChart({ curves: [{ pts: mc.map(function (y, i) { return [i, y]; }), c: 'c2', label: 'MC（每次访问，常数步长）' }, { pts: td.map(function (y, i) { return [i, y]; }), c: 'c1', label: 'TD' }] });
+  $('#tmW').innerHTML = '100 个回合后：TD 的 RMSE = <b>' + S.f(td[EP], 3) + '</b>，MC = <b>' + S.f(mc[EP], 3) + '</b>。MC 用的回报要往后看几十步才算得准（这里只用每回合前 60 步、后面至少还有 40 步可看的回报，截断误差 0.9<sup>40</sup> ≈ 1.5%），并且含有一长串随机奖励，方差大；TD 每步都更新、只引入一步的随机性。α 大时两者都更快但最终波动更大，MC 的波动尤其明显。（示意）';
+}
+$('#tmA').addEventListener('input', tm); tm();
+S.notes($('#n-td'), {
+  c: [
+    ['TD 学习', '用经验样本按 RM 思路求解贝尔曼期望方程。'],
+    ['贝尔曼期望方程', 'v<sub>π</sub>(s) = 𝔼[R<sub>t+1</sub> + γv<sub>π</sub>(S<sub>t+1</sub>)|S<sub>t</sub> = s]。'],
+    ['TD 目标', 'r + γv(s′)：v(s) 每次都被推得更接近它。'],
+    ['TD 误差', '估计与目标之差；估计准确时期望为 0，代表“新息”。'],
+    ['收敛条件', '每个状态的步长 Σα = ∞、Σα² &lt; ∞，即每个状态都要被访问无穷多次。']
+  ],
+  p: [
+    ['TD 更新', 'v(s<sub>t</sub>) ← v(s<sub>t</sub>) − α[v(s<sub>t</sub>) − (r<sub>t+1</sub> + γv(s<sub>t+1</sub>))]'],
+    ['未访问的状态', 'v<sub>t+1</sub>(s) = v<sub>t</sub>(s)，s ≠ s<sub>t</sub>（常被省略但不可缺）'],
+    ['推向目标', '|v<sub>t+1</sub> − v̄<sub>t</sub>| = |1 − α||v<sub>t</sub> − v̄<sub>t</sub>|'],
+    ['TD vs MC', '增量 / 非增量；自举 / 不自举；方差小 / 大']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 路径学习 ---------- */
+var EP = RL.book5({ gamma: 0.9, rb: -10, rf: -10, rt: 0, ro: -1, terminal: true });
+var saMode = 'sarsa', saRes = null;
+var saDraw = RL.grid($('#saG'), EP, { cell: 76 });
+var saC1 = S.chart($('#saC1'), { h: 180, x: [0, 500], y: [-200, 0], xt: [0, 100, 200, 300, 400, 500], yt: [-200, -100, 0], yl: '每回合总奖励' });
+var saC2 = S.chart($('#saC2'), { h: 180, x: [0, 500], y: [0, 100], xt: [0, 100, 200, 300, 400, 500], yt: [0, 50, 100], xl: '回合', yl: '回合长度' });
+function saTrain(mode, seed) {
+  var rnd = S.rng(seed), q = []; for (var s = 0; s < 25; s++) q.push([0, 0, 0, 0, 0]);
+  var eps = 0.1, al = 0.1, g = 0.9, R = [], Lg = [];
+  function pick(s) { return rnd() < eps ? Math.floor(rnd() * 5) : argmaxR(q[s], rnd); }
+  for (var e = 0; e < 500; e++) {
+    var s = 0, a = pick(s), tot = 0, n = 0;
+    while (!EP.isT(s) && n < 2000) {
+      var m = EP.move(s, a), s2 = m[0], r = m[1], a2 = pick(s2), tgt;
+      if (EP.isT(s2)) tgt = r;
+      else if (mode === 'sarsa') tgt = r + g * q[s2][a2];
+      else if (mode === 'q') tgt = r + g * Math.max.apply(null, q[s2]);
+      else { var b = argmaxR(q[s2], rnd), ev = 0; for (var k = 0; k < 5; k++) ev += (k === b ? 1 - eps * 0.8 : eps / 5) * q[s2][k]; tgt = r + g * ev; }
+      q[s][a] -= al * (q[s][a] - tgt);
+      tot += r; n++; s = s2; a = (mode === 'q') ? pick(s2) : a2;
+    }
+    R.push(tot); Lg.push(n);
+  }
+  return { q: q, R: R, L: Lg };
+}
+function saShow() {
+  var res = saRes, pi = RL.greedy(res.q), s = 0, path = [0], seen = {};
+  for (var t = 0; t < 30 && !EP.isT(s); t++) { seen[s] = 1; s = EP.move(s, pi[s].indexOf(1))[0]; path.push(s); if (seen[s]) break; }
+  var v = res.q.map(function (r) { return Math.max.apply(null, r); });
+  saDraw({ v: v, pi: pi, path: path, agent: 0 });
+  saC1({ curves: [{ pts: res.R.map(function (y, i) { return [i, Math.max(-200, y)]; }), c: 'c1', w: 1.5 }] });
+  saC2({ curves: [{ pts: res.L.map(function (y, i) { return [i, Math.min(100, y)]; }), c: 'c2', w: 1.5 }] });
+  var last = res.L.slice(-50), avgL = last.reduce(function (a, b) { return a + b; }, 0) / 50;
+  var reached = EP.isT(path[path.length - 1]);
+  $('#saW').innerHTML = (reached ? '贪心路径从左上角用 <b>' + (path.length - 1) + '</b> 步到达目标（不进禁区的最短路径是 11 步）。' : '这一次的贪心路径没有走到目标（在原地打转）。偶尔会这样：Sarsa 学的是“带 10% 随机动作”的策略的值，起点附近又离禁区和边界近，500 个回合后估计还不稳定；再训练一次通常就能找到。') + ' 最后 50 回合平均长度 ' + S.f(avgL, 1) + ' 步——高于贪心路径，因为训练时 10% 的动作是随机的。曲线上偶尔的尖刺就是 ε-贪心走错了路。格内数字是 max<sub>a</sub>q(s, a)，路径以外的格子探索不足，箭头未必最优。（本页模拟，示意）';
+}
+S.seg($('#saM'), function (v) { saMode = v; saRes = saTrain(saMode, 2); saShow(); });
+$('#saGo').addEventListener('click', function () { saRes = saTrain(saMode, Math.floor(Math.random() * 1e6)); saShow(); });
+saRes = saTrain('sarsa', 2); saShow();
+S.notes($('#n-sarsa'), {
+  c: [
+    ['Sarsa', '动作值版本的 TD，求解动作值形式的贝尔曼方程。'],
+    ['五元组', '(s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, a<sub>t+1</sub>)，名字由此而来。'],
+    ['与策略改进结合', '每步更新一个 q，立刻把该状态的策略改成 ε-贪心（广义策略迭代）。'],
+    ['为何 ε-贪心', '策略还要用来产生样本，必须有探索性。'],
+    ['Expected Sarsa', '目标用 Σπ(a|s′)q(s′, a)，少一个随机变量，方差更小。'],
+    ['只求一条路径', '对数据要求低，但路径可能只是局部最优。']
+  ],
+  p: [
+    ['Sarsa 更新', 'q ← q − α[q(s, a) − (r + γq(s′, a′))]'],
+    ['求解的方程', 'q<sub>π</sub>(s, a) = 𝔼[R + γq<sub>π</sub>(S′, A′)|s, a]'],
+    ['图 7.2 设置', 'r<sub>target</sub> = 0，r<sub>forbidden</sub> = r<sub>boundary</sub> = −10，r<sub>other</sub> = −1，α = ε = 0.1'],
+    ['尖刺的来源', 'ε-贪心的随机动作；可用逐渐衰减的 ε 缓解']
+  ]
+});
+
+/* ---------- n 步 ---------- */
+function ns() {
+  var n = +$('#nsN').value; $('#nsNv').textContent = n;
+  var parts = []; for (var k = 0; k < n; k++) parts.push((k ? 'γ' + (k > 1 ? '<sup>' + k + '</sup>' : '') : '') + 'r<sub>t+' + (k + 1) + '</sub>');
+  $('#nsF').innerHTML = 'q̄<sub>t</sub> = ' + parts.join(' + ') + ' + γ<sup>' + n + '</sup>q(s<sub>t+' + n + '</sub>, a<sub>t+' + n + '</sub>)<small>' + (n === 1 ? 'n = 1：就是 Sarsa' : '要等到 t + ' + n + ' 才能更新 q(s<sub>t</sub>, a<sub>t</sub>)') + '</small>';
+  var rows = []; for (var j = 0; j < n; j++) rows.push({ label: '真实奖励 r<sub>t+' + (j + 1) + '</sub>', value: Math.pow(0.9, j), text: S.f(Math.pow(0.9, j), 3), cls: 'alt' });
+  rows.push({ label: '自举项 q(s<sub>t+' + n + '</sub>, ·)', value: Math.pow(0.9, n) * 1, text: S.f(Math.pow(0.9, n), 3), cls: '' });
+  S.bars($('#nsB'), rows); S.$$('#nsB .lb').forEach(function (e) { e.innerHTML = e.textContent; }); $('#nsB').classList.add('wide');
+}
+$('#nsN').addEventListener('input', ns); ns();
+(function () {
+  var NS = [1, 2, 4, 8, 16, 64], AL = [0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5], out = {}, PW = [];
+  for (var pk = 0; pk <= 64; pk++) PW.push(Math.pow(0.9, pk));
+  NS.forEach(function (n) {
+    out[n] = AL.map(function (al) {
+      var acc = 0;
+      for (var run = 0; run < 30; run++) {
+        var rnd = S.rng(9000 + run), v = new Array(25).fill(0);
+        for (var e = 0; e < 20; e++) {
+          var s = Math.floor(rnd() * 25), ss = [], rr = [];
+          for (var t = 0; t < 50 + n; t++) { var m = E5.move(s, Math.floor(rnd() * 5)); ss.push(s); rr.push(m[1]); s = m[0]; }
+          ss.push(s);
+          for (var t2 = 0; t2 < 50; t2++) { var G = 0; for (var k = 0; k < n; k++) G += PW[k] * rr[t2 + k]; G += PW[n] * v[ss[t2 + n]]; v[ss[t2]] -= al * (v[ss[t2]] - G); }
+        }
+        acc += RL.rmse(v, vU);
+      }
+      return acc / 30;
+    });
+  });
+  var ch = S.chart($('#nsC'), { h: 270, x: [0, 0.5], y: [0, 3.5], xt: [0, 0.1, 0.2, 0.3, 0.4, 0.5], yt: [0, 1, 2, 3], xl: '步长 α', yl: '20 回合后的 RMSE' });
+  var cs = ['dim', 'c1', 'ok', 'c3', 'c2', 'ink'];
+  ch({ curves: NS.map(function (n, i) { return { pts: AL.map(function (a, j) { return [a, Math.min(3.5, out[n][j])]; }), c: cs[i], label: 'n = ' + n }; }) });
+  var best = null; NS.forEach(function (n) { var m = Math.min.apply(null, out[n]); if (!best || m < best[1]) best = [n, m]; });
+  $('#nsW').innerHTML = '每条曲线是一个 n。n = 1（Sarsa 式）在小步长下太慢——每步只把一步的信息传回去，还要依赖起始为 0 的估计；n 很大（接近 MC）时方差大，步长稍大误差就上去。本次实验中最低误差出现在 <b>n = ' + best[0] + '</b>（RMSE ' + S.f(best[1], 3) + '）。中间的 n 往往最好，具体取决于任务和步长。（示意）';
+})();
+S.notes($('#n-nstep'), {
+  c: [
+    ['n 步 Sarsa', '用 n 步真实奖励 + 第 n 步的自举估计作目标。'],
+    ['两个极端', 'n = 1 为 Sarsa；n = ∞（α = 1）为 MC。'],
+    ['延迟更新', '要等到 t + n 才凑齐样本，更新 q(s<sub>t</sub>, a<sub>t</sub>)。'],
+    ['偏差—方差', 'n 大：方差大、偏差小；n 小：偏差大、方差小。']
+  ],
+  p: [
+    ['目标', 'r<sub>t+1</sub> + γr<sub>t+2</sub> + … + γ<sup>n</sup>q(s<sub>t+n</sub>, a<sub>t+n</sub>)'],
+    ['求解的方程', 'q<sub>π</sub>(s, a) = 𝔼[R<sub>t+1</sub> + … + γ<sup>n</sup>q<sub>π</sub>(S<sub>t+n</sub>, A<sub>t+n</sub>)|s, a]'],
+    ['回报的多种分解', '同一个 G<sub>t</sub>，展开到不同深度'],
+    ['推广', 'TD(λ) 是更一般的统一框架（原书未展开）']
+  ]
+});
+
+/* ---------- Q-learning off-policy ---------- */
+var vS = RL.vStar(E5), qS = RL.qFromV(E5, vS), PIopt = RL.greedy(qS), qlE = 1, qlQ0 = 0;
+var qlDraw = RL.grid($('#qlG'), E5, { cell: 72 });
+var qlChart = S.chart($('#qlC'), { h: 260, x: [0, 100000], y: [0, 6], xt: [0, 25000, 50000, 75000, 100000], yt: [0, 2, 4, 6], xl: '回合中的步数', yl: '状态值 RMSE' });
+function ql() {
+  var rnd = S.rng(77), beh = RL.greedy(qS, qlE), q = [], pts = [];
+  for (var s0 = 0; s0 < 25; s0++) q.push([qlQ0, qlQ0, qlQ0, qlQ0, qlQ0]);
+  var s = Math.floor(rnd() * 25), visits = new Array(125).fill(0);
+  var errAt = function () { return RL.rmse(q.map(function (r) { return Math.max.apply(null, r); }), vS); };
+  pts.push([0, Math.min(6, errAt())]);
+  for (var t = 1; t <= 100000; t++) {
+    var a = RL.sampleA(beh[s], rnd), m = E5.move(s, a);
+    visits[s * 5 + a]++;
+    q[s][a] -= 0.1 * (q[s][a] - (m[1] + 0.9 * Math.max.apply(null, q[m[0]])));
+    s = m[0];
+    if (t % 1000 === 0) pts.push([t, Math.min(6, errAt())]);
+  }
+  var piT = RL.greedy(q), hl = {}, nOpt = 0;
+  piT.forEach(function (p, s1) { var a1 = p.indexOf(1); if (qS[s1][a1] > Math.max.apply(null, qS[s1]) - 1e-6) { hl[s1] = 'ok'; nOpt++; } });
+  qlDraw({ v: q.map(function (r) { return Math.max.apply(null, r); }), pi: piT, hl: hl });
+  qlChart({ curves: [{ pts: pts, c: 'c1', label: '学到的 max_a q 与 v* 的 RMSE' }] });
+  var unv = visits.filter(function (x) { return x === 0; }).length, fin = pts[pts.length - 1][1];
+  $('#qlW').innerHTML = '10 万步后 RMSE = <b>' + S.f(fin, 3) + '</b>，' + nOpt + ' / 25 个格子的目标策略已最优（绿框）。' + (unv ? '有 <b>' + unv + '</b> 个 (s, a) 一次都没被访问过——行为策略探索太弱，这些动作值没法学。' : '所有 125 个 (s, a) 都被访问到了。') + (qlQ0 === 100 ? ' 初值 100 离真值很远，误差要很久才降下来（原书图 7.4h）。' : '') + '学到的策略可能和基准答案在并列动作上不同，但同样最优。（本页模拟）';
+}
+S.seg($('#qlE'), function (v) { qlE = +v; ql(); });
+S.seg($('#qlQ'), function (v) { qlQ0 = +v; ql(); });
+ql();
+S.notes($('#n-qlearn'), {
+  c: [
+    ['Q-learning', '求解动作值形式的贝尔曼最优方程，直接估计最优动作值。'],
+    ['行为策略', '用来产生经验样本的策略。'],
+    ['目标策略', '不断更新、最终收敛到最优的策略。'],
+    ['on-policy', '行为策略 = 目标策略：Sarsa、MC。'],
+    ['off-policy', '两者可不同：Q-learning；可以用他人数据、强探索的行为策略。'],
+    ['探索仍然重要', '行为策略探索越弱，Q-learning 学得越慢。']
+  ],
+  p: [
+    ['更新', 'q ← q − α[q(s, a) − (r + γ max<sub>a′</sub>q(s′, a′))]'],
+    ['所需样本', '(s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>)，不需要 a<sub>t+1</sub>'],
+    ['off-policy 的根源', '解 BOE；r、s′ 只由环境决定'],
+    ['off-policy 版的目标策略', '贪心即可，不需要探索'],
+    ['图 7.4', '均匀行为策略、一条 10 万步回合即可学到最优策略']
+  ]
+});
+
+/* ---------- 统一视角 ---------- */
+S.sortGame($('#unG'), {
+  bins: [{ k: 'be', t: '求解贝尔曼方程（on-policy）' }, { k: 'boe', t: '求解贝尔曼最优方程（off-policy）' }],
+  items: [
+    { t: 'Sarsa', k: 'be', why: '目标 r + γq(s′, a′)，评估产生样本的策略。' },
+    { t: 'n 步 Sarsa', k: 'be', why: '仍是某个策略的贝尔曼方程。' },
+    { t: 'Expected Sarsa', k: 'be', why: '目标 r + γv(s′)，仍是贝尔曼方程。' },
+    { t: 'MC 学习', k: 'be', why: '直接用回报，估计的是行为策略的值。' },
+    { t: 'Q-learning', k: 'boe', why: '目标里的 max 来自贝尔曼最优方程。' },
+    { t: '状态值 TD（7.1 节）', k: 'be', why: '贝尔曼期望方程，只能评估给定策略。' }
+  ]
+});
+S.notes($('#n-unified'), {
+  c: [
+    ['统一形式', '所有 TD 算法只差 TD 目标 q̄<sub>t</sub>；MC 是 α = 1 的特例。'],
+    ['统一的方程', '都在求解 q(s, a) = 𝔼[q̄<sub>t</sub>|s, a]。'],
+    ['常数步长', '被评估的策略一直在变（非平稳），衰减步长会跟不上。'],
+    ['只学一条路', '数据需求小，但可能错过更好的路径。']
+  ],
+  p: [
+    ['统一更新', 'q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α[q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − q̄<sub>t</sub>]'],
+    ['唯一解 BOE 的', 'Q-learning'],
+    ['TD 误差符号', '第 7 章：估计 − 目标；第 8、10 章：目标 − 估计']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① TD', '用 RM 求解贝尔曼期望方程；目标 r + γv(s′)，误差是新息；增量、低方差、自举。'],
+    ['② 一族算法', 'Sarsa / n 步 Sarsa / Expected Sarsa / Q-learning 只差目标；Q-learning 解 BOE，所以 off-policy。'],
+    ['③ 两对概念', 'on/off-policy 看行为与目标策略是否相同；online/offline 看是否边交互边学。']
+  ],
+  p: [
+    ['下一篇', '表格装不下大状态空间：用函数近似值，TD 变成优化问题，引出 DQN。'],
+    ['原书一句话', '所有这些算法都可以看作求解贝尔曼方程或贝尔曼最优方程的随机近似算法。']
+  ],
+  ph: '一句话'
+});

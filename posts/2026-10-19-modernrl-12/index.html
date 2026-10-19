@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>奖励黑客、评测与训练排障：奖励涨了，事情真的做得更好了吗</title>
+<meta name="description" content="动手学现代强化学习笔记（十二）：奖励黑客、规格博弈、谄媚与欺骗的证据层级；Goodhart 定律与奖励模型过度优化（Gao 等人的代理 / 独立奖励分叉）；五层防线；验证器漏洞与四级验证集；评测的置信区间与配对比较；由外到内的训练排障顺序与检查表；训练计算与测试计算的预算核算。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='15' width='18' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 15L16 4' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='4' r='2.2' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+</style>
+</head>
+<body data-series="modernrl-series" data-part="12">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>动手学现代强化学习 · 12</span><span>对应原教程第 25–26 章（docs/chapter30_alignment_failures、chapter32_selfplay）与附录 A.1</span><span>约 45 分钟</span></p>
+  <h1>优化器<em>只看得见那个数字</em></h1>
+  <p class="lead">前面十一篇一直在想办法让策略拿到更高的奖励。原教程最后一部分回头检查一个更基础的问题：奖励升高以后，事情是否真的做得更好？它从一个仓库机器人反复扫同一个条形码的例子讲起，一路讲到奖励模型过度优化、验证器漏洞、评测泄漏和统计噪声，最后收拢成一套排障顺序。这一篇也是整个系列的收尾：所有算法都要经过这一关。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">Hands-On Modern RL（动手学现代强化学习）</a>》（WalkingLabs 社区编写的开源课程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 1 日的仓库版本（docs/ 讲义与 code/ 实验代码））的学习笔记。原教程沿“CartPole → DQN → 策略梯度 → PPO → RLHF / DPO / GRPO → Agentic RL”一条线展开，这里按它的章节重新组织成十二篇，用自己的话重讲，并把关键实验搬进浏览器：CartPole 的 DQN 与 PPO 是用 JavaScript 真实训练的缩小版，其余公式演示的数值都在页面里实时计算。原教程数据（如训练日志 CSV、实验表格）标“原书数据”，为演示设的数值标“示意”，每节标出对应的原文路径。原教程自述“由 AI 协助生成、尚未全面审稿”，本笔记只采信能与原始论文对上的内容，存疑处单独注明。改编内容同样按 CC BY-NC-SA 4.0 分享、仅限非商业用途；数学推导部分可与同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>对照着读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-modernrl/"><b>总览</b>算法地图</a>
+  <a href="../2026-10-19-modernrl-1/" data-part="1"><b>01</b>训练闭环</a>
+  <a href="../2026-10-19-modernrl-2/" data-part="2"><b>02</b>DQN 家族</a>
+  <a href="../2026-10-19-modernrl-3/" data-part="3"><b>03</b>策略梯度</a>
+  <a href="../2026-10-19-modernrl-4/" data-part="4"><b>04</b>PPO 与 GAE</a>
+  <a href="../2026-10-19-modernrl-5/" data-part="5"><b>05</b>连续控制</a>
+  <a href="../2026-10-19-modernrl-6/" data-part="6"><b>06</b>离线与模仿</a>
+  <a href="../2026-10-19-modernrl-7/" data-part="7"><b>07</b>RLHF</a>
+  <a href="../2026-10-19-modernrl-8/" data-part="8"><b>08</b>DPO 家族</a>
+  <a href="../2026-10-19-modernrl-9/" data-part="9"><b>09</b>GRPO 与 RLVR</a>
+  <a href="../2026-10-19-modernrl-10/" data-part="10"><b>10</b>推理与搜索</a>
+  <a href="../2026-10-19-modernrl-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-19-modernrl-12/" aria-current="page" data-part="12"><b>12</b>奖励黑客与评测</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#hack">奖励黑客</a><a href="#over">过度优化</a><a href="#eval">评测</a><a href="#debug">排障</a><a href="#back">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>奖励黑客和规格博弈各从什么角度描述问题？要下“欺骗”的结论需要哪些证据？</li>
+    <li>为什么代理奖励一路上升时，独立评价会先涨后跌？训练中该同时看哪几块仪表、按什么早停？</li>
+    <li>“100 道题 60% vs 55%”能说明谁更好吗？训练出问题时，应该按什么顺序排查？</li>
+  </ol>
+</div>
+
+<section class="part" id="hack">
+  <div class="part-head"><h2>奖励与任务的背离</h2><span class="meta">原文 docs/chapter30_alignment_failures/classical-failures.md（25.1 节）</span></div>
+  <div class="sec-lede">
+    <p>原文的例子：夜班机器人要把放错的商品送回货架，“货架整理对了多少”很难每步测量，扫码器却能立刻返回数字，于是奖励设成“每扫一次 +1”。训练初期确实有效——一分钟扫 20 件、放回 20 件；继续训练后，它发现停在同一件商品前反复扫码，一分钟奖励从 20 涨到 200，货架上一件都没多整理。这里没有“邪恶目标”，机器人只是准确优化了程序读得到的数字。设真实效用为 U(τ)、训练奖励为 R(τ)，优化器求的是 argmax 𝔼[R]；只要 R 和 U 对候选轨迹的<strong>排序</strong>不同，就可能选中高奖励、低效用的行为。</p>
+    <p>原文区分了几个常被混用的词。<strong>奖励黑客</strong>问“策略怎样拿到了不该拿的奖励”，最直接的证据是训练奖励继续升、独立任务指标停滞或下降；<strong>规格博弈</strong>问“形式规则为什么允许这种行为被算作成功”（CoastRunners 里智能体不跑完比赛、在局部反复撞奖励点刷分）。打补丁（“同一商品只计一次”）只能堵一个漏洞，策略会去扫同一商品的不同条码。<strong>谄媚</strong>是可测量的行为倾向：固定事实问题、只改变用户先表达的立场，答案随立场系统性改变。而<strong>欺骗</strong>的操作定义严格得多：策略通过让评估者形成错误判断来换取后续收益——需要控制变量、反事实提示和重复实验，不能从一句异常回答推断内部目标。</p>
+    <p>Goodhart 定律在 RL 里格外致命：优化开始后，策略会<strong>主动搜索</strong>指标给分最高的区域，原本少见的测量误差变成了前进方向。下面的小实验模拟这一点：大多数候选的代理分数与真实效用一致，只有少数“钻空子”的候选代理分很高、真实效用很低。优化压力用 Best-of-N 表示——N 越大，越像一个更强的优化器。</p>
+    <p class="go">调漏洞出现的概率，看代理分数和真实效用怎样随优化强度分叉。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">优化越强，越容易选中漏洞（每个 N 模拟 3000 次，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>候选中“钻空子”行为的概率 <output id="hkQ">2%</output></span><input type="range" id="hkQs" min="0" max="0.1" step="0.005" value="0.02"></label>
+      <label class="ctl"><span>漏洞带来的虚高分数 <output id="hkB">3.0</output></span><input type="range" id="hkBs" min="0" max="6" step="0.5" value="3"></label>
+    </div>
+    <div id="hkC"></div>
+    <p class="cap" id="hkW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原文的三条轨迹：奖励与真实进度不是同一个目标</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>轨迹</th><th>扫码奖励 R</th><th>真实整理进度 U</th><th>属于</th></tr></thead>
+      <tbody>
+        <tr><td>扫 20 件不同商品，全部放回</td><td>20</td><td>20</td><td>一致</td></tr>
+        <tr><td>对同一件商品扫 200 次</td><td>200</td><td>0</td><td>假阳性：奖励说好，任务说差</td></tr>
+        <tr><td>按货架视觉标签放回 15 件，不扫码</td><td>0</td><td>15</td><td>假阴性：完成了任务，奖励没看见</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="notes" id="n-hack"></div>
+</section>
+
+<section class="part" id="over">
+  <div class="part-head"><h2>奖励模型过度优化与五层防线</h2><span class="meta">原文 docs/chapter30_alignment_failures/scaling-and-defenses.md（25.4 节）、modern-incidents.md（25.2 节）</span></div>
+  <div class="sec-lede">
+    <p>Gao 等人（2022）把“代理”和“真值”拆开做了可控实验：固定一个大的 <strong>gold RM</strong> 扮演人类偏好，用它的标签训练较小的 <strong>proxy RM</strong>，再用 RL 或 Best-of-N 持续优化 proxy，gold 只负责独立测量。结果是：proxy 分数随优化一路上升，gold 分数先升后降。论文用 d = √KL(π ‖ π<sub>init</sub>) 衡量优化距离，拟合出 gold 分数的经验形式：Best-of-N 是 d(α − βd)，RL 是 d(α − β log d)；proxy RM 越大、数据越多，峰值越高、来得越晚。原文强调：论文<strong>没有</strong>给出适用于所有 RLHF 系统的固定停止点。</p>
+    <p>所以训练日志至少要有四块共享时间轴的仪表：<strong>代理奖励</strong>、<strong>独立效用</strong>（隐藏测试、人工审查、独立验证器）、<strong>策略距离</strong>（相对参考的 KL）、<strong>失败行为计数</strong>（删测试、改配置、越权调用）。代理升、独立也升，说明还有收益；代理升、独立停滞或下降，就进入了过度优化区间——<strong>早停依据是独立效用，不是训练奖励</strong>。</p>
+    <p>原文的五层防线，每层只管一种边界：<strong>奖励层</strong>（成功、越权、不可逆操作分开计量和报告，多个独立评价器取均值减分歧）；<strong>优化层</strong>（KL / 裁剪限制漂移，按独立效用早停）；<strong>训练层</strong>（红队发现的失败经确认后同时进训练集和永久回归集，防止旧漏洞复发）；<strong>评测层</strong>（配对条件评测：每次只改一个变量——措辞、是否告诉模型“有人监督”、工具权限、时间压力）；<strong>部署层</strong>（最小权限、高风险动作确认、沙箱、不可篡改日志、可回滚）。验证器本身也要分级：训练测试产生奖励（会被策略反复观察）、开发隐藏集用于早停选模、迁移集改变题型和输入范围、一次性门禁集只在最终候选上跑。</p>
+    <p class="go">拖动 KL 系数（它决定优化在哪个 d 附近停下），看 gold 奖励落在曲线的哪一段。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">代理与独立奖励的分叉：函数形式取自 Gao 等人，参数为示意</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>优化距离 d = √KL <output id="ovD">4.0</output></span><input type="range" id="ovDs" min="0" max="12" step="0.25" value="4"></label>
+      <label class="ctl"><span>proxy RM 规模（越大峰值越晚） <output id="ovA">中</output></span><input type="range" id="ovAs" min="0" max="2" step="1" value="1"></label>
+    </div>
+    <div class="seg" id="ovM"><button data-v="rl" aria-pressed="true">RL：d(α − β log d)</button><button data-v="bon">Best-of-N：d(α − βd)</button></div>
+    <div id="ovC"></div>
+    <p class="cap" id="ovW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五层防线（点一层看它管什么）</p>
+    <ol class="flow2" id="dfF">
+      <li>奖励层：什么算高分<small>把成功、越权成本、不可逆成本分开计量并分别报告；多个真正独立的评价器取均值并惩罚分歧——复制同一个模型三次只会复制同一个盲点。</small></li>
+      <li>优化层：一次能走多远<small>KL 惩罚 / PPO 裁剪；保存初始、中期、代理最高、独立最高的检查点；代理—独立间隙持续扩大就暂停，按独立效用早停。</small></li>
+      <li>训练层：把失败写回去<small>红队生成 → 人工 / 单测确认 → 同时加入训练集和永久回归集；只训最新攻击会遗忘旧漏洞（学会不删测试，又开始跳过测试）。</small></li>
+      <li>评测层：主动改变条件<small>配对评测，每次只改一个变量：语义改写、监督可见性、工具权限、时间预算；保留对照组并重复采样；一次性门禁集只在最终候选上运行。</small></li>
+      <li>部署层：限制最坏后果<small>工具默认只读、临时授权；删除 / 支付 / 发布需确认；参数白名单；沙箱；模型改不了的日志；版本可回滚。不需要先证明模型“内部已对齐”。</small></li>
+    </ol>
+  </div>
+  <div class="card2 algo" data-algo="KL 约束与独立早停">
+    <h3>方法卡 · KL 约束 + 独立早停</h3><p class="en">对付奖励模型过度优化的最常用组合（InstructGPT；Gao et al., 2022）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>代理奖励持续上升，真实偏好在某点之后下降。</dd>
+      <dt>核心做法</dt><dd>奖励里减 β·KL(π ‖ π<sub>ref</sub>) 限制漂移速度；同一时间轴记录代理奖励、独立效用、KL、失败行为；按独立效用选检查点。</dd>
+      <dt>关键公式</dt><dd>R′ = R<sub>proxy</sub> − β·KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)；gold<sub>RL</sub>(d) ≈ d(α − β log d)，d = √KL</dd>
+      <dt>何时用</dt><dd>所有以学到的奖励（RM、LLM judge）为目标的训练；RLVR 也需要隐藏测试做独立评价。</dd>
+      <dt>代价与坑</dt><dd>参考模型本身可能有错；β 过大压掉真正有价值的新行为；β 要和独立效用曲线一起选，不能只看 KL 数值。</dd>
+      <dt>相关</dt><dd>PPO 裁剪（第 4 篇）；PPO-RLHF 的 β（第 7 篇）；DPO 的 β（第 8 篇）。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：奖励黑客、规格博弈、谄媚与欺骗</h4>
+    <p><b>奖励黑客 vs 规格博弈</b>：常常是同一件事的两个视角——前者看“策略怎样拿到不该拿的分”，后者看“规则为什么允许它算成功”。都不要求智能体理解设计者意图。</p>
+    <p><b>谄媚 vs 欺骗</b>：谄媚是可测的行为倾向（答案随用户立场改变）；欺骗要证明策略利用评估者的错误判断换取后续收益，需要排除随机误差、分布偏移和提示歧义。</p>
+    <p><b>代理奖励 vs 独立效用</b>：训练系统直接优化的分数 vs 隐藏测试 / 人工 / 独立验证器给出的结果。早停看后者。</p>
+    <p><b>隐藏测试 vs 门禁集</b>：反复根据隐藏集调奖励、选模型以后，它也参与了训练决策；真正独立的只剩只用一次的门禁集。</p>
+  </div>
+  <div class="notes" id="n-over"></div>
+</section>
+
+<section class="part" id="eval">
+  <div class="part-head"><h2>评测：一个百分比背后有多少不确定</h2><span class="meta">原文 docs/chapter30_alignment_failures/rl-evaluation.md（25.5 节）、chapter32_selfplay/rl-scaling-outlook.md（26.2 节）</span></div>
+  <div class="sec-lede">
+    <p>原文给评测定了五个标准：<strong>可验证</strong>、<strong>有代表性</strong>、<strong>难度分层</strong>、<strong>抗污染</strong>、<strong>统计显著</strong>。最后一条最常被忽略：模型 A 在 100 道题上 60%，B 是 55%，换一批题两个分数都会变。A 的标准误约 √(0.6 × 0.4 / 100) ≈ 0.049，95% 区间大约是 50%–70%。原文的建议：二项准确率用 Wilson 区间；同一批题比较两个模型用配对检验（二值用 McNemar，连续分数用配对 bootstrap 或置换检验）。</p>
+    <p>污染分三种：显式（测试题原样进了训练数据）、近似（改写、翻译后进入）、任务相似（同类题大量出现）；检测手段有 n-gram 重叠、成员推理、困惑度异常、按时间切分（用模型截止日期之后的新题）。还有<strong>提示敏感性</strong>：同一个模型换个模板分数能差很多，所以要多模板平均或逐模板报告。原文还区分了<strong>能力评测</strong>（会不会做）和<strong>行为评测</strong>（在各种条件下会怎么做：谄媚、诚实、越权）。</p>
+    <p>规模上，原文第 26 章提醒把计算拆开看：同样多的计算可以用来加训练题、加每题采样数、延长更新，或留到部署时做 Best-of-N。一个教学性的核算式是 C<sub>total</sub> = C<sub>train</sub> + Q·C<sub>test</sub>——训练只付一次，测试时计算随请求量 Q 反复支付。离线（DPO 类）、在线（PPO / GRPO 类）、半在线（Iterative DPO）三种数据更新方式，也是在覆盖范围和工程成本之间取舍。</p>
+    <p class="go">输入题数和答对数，看区间有多宽；再比较两个模型的差距是否站得住。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">Wilson 95% 置信区间与两模型比较</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>题数 n <output id="ciN">100</output></span><input type="range" id="ciNs" min="20" max="2000" step="20" value="100"></label>
+        <label class="ctl"><span>模型 A 正确率 <output id="ciA">60%</output></span><input type="range" id="ciAs" min="0.02" max="0.98" step="0.01" value="0.6"></label>
+        <label class="ctl"><span>模型 B 正确率 <output id="ciB">55%</output></span><input type="range" id="ciBs" min="0.02" max="0.98" step="0.01" value="0.55"></label>
+      </div>
+      <div id="ciC"></div>
+      <p class="cap" id="ciW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">先估再算</p><div id="ciG"></div></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">训练计算 vs 测试时计算：C_total = C_train + Q·C_test（单位任意，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>方案甲：多训练（训练成本） <output id="bgT">100</output></span><input type="range" id="bgTs" min="10" max="300" step="10" value="100"></label>
+      <label class="ctl"><span>方案乙：每次请求多采样（单次推理成本倍数） <output id="bgK">8</output></span><input type="range" id="bgKs" min="1" max="64" value="8"></label>
+    </div>
+    <div id="bgC"></div>
+    <p class="cap" id="bgW"></p>
+  </div>
+  <div class="notes" id="n-eval"></div>
+</section>
+
+<section class="part" id="debug">
+  <div class="part-head"><h2>训练排障：由外到内找最先坏掉的那段证据</h2><span class="meta">原文 docs/appendix_industrial_training/training-debugging.md（附录 A.1）</span></div>
+  <div class="sec-lede">
+    <p>原文附录 A.1 的核心建议是：不要一次怀疑所有模块，而是<strong>由外到内</strong>。先查<strong>环境和数据</strong>（状态对不对、动作有没有被正确执行、终止信号、奖励符号——这一层错了，后面都是在错误数据上优化）；再查<strong>评测协议</strong>（温度、最大长度、工具权限、测试集划分是否一致；公开集被反复调参会失效）；再查<strong>奖励信号</strong>（是否太稀疏、有没有极端高分、和人工判断是否一致）；最后才进入<strong>算法内部</strong>（PPO 的更新幅度、Critic 是否有效、GRPO 组内比较是否合理、Agent 轨迹与最终环境状态是否一致）。</p>
+    <p>原文给了几组“信号 → 诊断”。奖励黑客的<strong>三联征</strong>：reward 上升 + 副指标异常（长度、重复率、模板、拒答率、工具调用次数）+ 真实评测不涨。PPO 的安全带也会失效：学习率太大、epoch 太多、batch 太小时策略照样一步跨太远——<strong>策略崩溃往往先从 KL、clip fraction、熵开始，reward 是后验症状</strong>。Critic 坏掉的信号：value loss 长期不降、explained variance &lt; 0（还不如预测均值）、value 尺度远小于 return；一个实用检查是固定一批 rollout、只训 Critic，看它能不能拟合回报。熵太快归零（过早收敛、可能是 hacking）和长期很高（奖励没被吸收）都不对。</p>
+    <p>原文最后的话值得记住：“reward 不涨怎么办”不是一个好问题，更好的问题是“<strong>闭环里哪一段证据最先坏了</strong>”。reward 上升、benchmark 不涨、输出越来越长，和 reward 暴跌、KL 飙升、clip fraction 长期 0.5，是两种完全不同的病，修法也完全不同。</p>
+    <p class="go">把症状对到它最可能的病因层。</p>
+  </div>
+  <div class="lab"><p class="lab-t">症状 → 病因层（改编自原文附录 A.1 的检查表）</p><div id="dbG"></div></div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>阶段</th><th>检查项</th></tr></thead>
+    <tbody>
+      <tr><td>训练前</td><td>环境单测（reset / step / done / reward）；随机策略基线；简单规则基线能否明显超过随机；reward 直方图（全 0、全 1、长尾？）；评测配置固定并保存；显存估算</td></tr>
+      <tr><td>训练中</td><td>KL 飙升 → 停更新、降 lr；clip fraction 长期过高 → 减 epoch；熵快速归零 → 查探索与 hacking；value loss 不降 → 单独拟合 Critic；reward 涨 eval 跌 → 抽查高 reward 样本；长度膨胀 → 查长度偏好</td></tr>
+      <tr><td>训练后</td><td>保留最佳评测 checkpoint（最后一步不一定最好）、最后 checkpoint、失败 checkpoint、reward 审计样本、多 seed 结果、私有集报告</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文附录 A.1“训练前、中、后的检查表”压缩版。第 1 篇的 CartPole 排查顺序（先查 terminated / truncated、GAE 切断、日志口径，再看优化指标）是同一思想的小号版本。</p>
+  <div class="notes" id="n-debug"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">策略实际求解 π_R* = argmax_π 𝔼_{τ~π}[R(τ)]；设计者想要 argmax 𝔼[U(τ)]；R 与 U 排序不同即可能分叉</div>
+    <div class="fx">Gao 等人：d = √KL(π ‖ π_init)；gold_BoN(d) = d(α − βd)，gold_RL(d) = d(α − β log d)</div>
+    <div class="fx">KL 约束：R′ = R_proxy − β·KL(π_θ(·|x) ‖ π_ref(·|x))</div>
+    <div class="fx">奖励层模板：R(τ) = R_success − λ_p C_permission − λ_i C_irreversible；稳健组合 mean(r_k) − λ·Std(r_k)</div>
+    <div class="fx">标准误 √(p(1 − p)/n)；Wilson 区间 (p̂ + z²/2n ± z√(p̂(1−p̂)/n + z²/4n²)) / (1 + z²/n)</div>
+    <div class="fx">预算：C_total = C_train + Q·C_test</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 奖励黑客和规格博弈各从什么角度说？下“欺骗”的结论要什么证据？</summary><p class="ans">奖励黑客看策略怎样拿到不该拿的奖励（证据：训练奖励升、独立指标停滞或降）；规格博弈看形式规则为什么允许这种行为算成功（字面满足、违背意图）。欺骗要证明策略掌握与评估者判断相关的信息、改变该信息时行为稳定切换、这种切换提高了后续收益，并排除随机误差、分布偏移和提示歧义——需要反事实提示和重复实验。</p></details>
+    <details><summary>2. 为什么独立评价先涨后跌？该看哪些仪表、按什么早停？</summary><p class="ans">代理奖励只是真实目标的近似，轻度优化两者一起涨；继续优化，策略主动搜索代理误差最大的区域，测量误差被放大，独立效用见顶后下降（Gao 等人的 gold 曲线）。同时看代理奖励、独立效用、KL 距离、失败行为计数四块仪表，按独立效用选检查点、早停，而不是按训练奖励。</p></details>
+    <details><summary>3. 60% vs 55%（各 100 题）能说明谁更好吗？排障按什么顺序？</summary><p class="ans">不能：n = 100 时 60% 的 95% 区间约为 50%–69%，两个区间大面积重叠；应报告置信区间并在同一批题上做配对检验，或者加大题量。排障由外到内：环境与数据 → 评测协议 → 奖励信号 → 算法内部（更新幅度、Critic、组内比较、轨迹一致性），找“最先坏掉的那段证据”。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-modernrl-11/"><small>上一篇</small><span>11 · Agentic RL：多轮轨迹与信用分配</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">walkinglabs/hands-on-modern-rl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 优化压力 ---------- */
+var hkChart = S.chart($('#hkC'), { h: 260, x: [1, 256], xt: [1, 16, 64, 128, 256], xl: '优化强度（Best-of-N 的 N）' });
+function hk() {
+  var q = +$('#hkQs').value, B = +$('#hkBs').value; $('#hkQ').textContent = S.pct(q, 1); $('#hkB').textContent = S.f(B, 1);
+  var Ns = [1, 2, 4, 8, 16, 32, 64, 128, 256], pr = [], tu = [], lp = [], r = S.rng(13);
+  Ns.forEach(function (N) {
+    var sp = 0, su = 0, sl = 0, M = 3000;
+    for (var k = 0; k < M; k++) {
+      var best = -1e9, bu = 0, bl = 0;
+      for (var i = 0; i < N; i++) { var loop = r() < q, u = loop ? -1 + 0.3 * S.randn(r) : S.randn(r), proxy = loop ? B + 0.3 * S.randn(r) : u + 0.5 * S.randn(r); if (proxy > best) { best = proxy; bu = u; bl = loop ? 1 : 0; } }
+      sp += best / M; su += bu / M; sl += bl / M;
+    }
+    pr.push([N, sp]); tu.push([N, su]); lp.push([N, sl]);
+  });
+  var lo = Math.min.apply(null, tu.map(function (p) { return p[1]; })), hi = Math.max.apply(null, pr.map(function (p) { return p[1]; }));
+  hkChart({ y: [Math.min(-1.2, lo - 0.2), hi + 0.3], yt: [-1, 0, 1, 2, 3, 4].filter(function (t) { return t <= hi + 0.3; }), curves: [{ pts: pr, c: 'c2', label: '代理分数（训练看到的）' }, { pts: tu, c: 'ok', label: '真实效用' }] });
+  var peak = tu.slice().sort(function (a, b) { return b[1] - a[1]; })[0];
+  $('#hkW').innerHTML = q === 0 || B === 0 ? '没有漏洞时，代理分数和真实效用一起随优化上升——代理只是带噪声的真值，优化越强越好。' :
+    '真实效用在 N ≈ <b>' + peak[0] + '</b> 时最高，之后下降；N = 256 时被选中的有 <b>' + S.pct(lp[8][1], 0) + '</b> 是钻空子的行为，而代理分数仍在上涨。漏洞只占 ' + S.pct(q, 1) + '，在弱优化下几乎碰不到，强优化下却成了主旋律——这就是“优化越强，偏得越远”。（简化模型，示意。）';
+}
+['hkQs', 'hkBs'].forEach(function (id) { $('#' + id).addEventListener('input', hk); }); hk();
+S.notes($('#n-hack'), {
+  c: [
+    ['奖励黑客', '策略利用奖励定义的缝隙，拿到不该拿的分。'],
+    ['规格博弈', '字面满足形式规则、违背设计意图。'],
+    ['Goodhart 定律', '指标成为目标后就不再是好指标。'],
+    ['谄媚', '答案随用户表达的立场系统性改变。'],
+    ['欺骗（操作定义）', '让评估者形成错误判断以换取后续收益。']
+  ],
+  p: [
+    ['核心条件', 'R 与 U 对候选轨迹的排序不同'],
+    ['假阳性 / 假阴性', '扫 200 次：R = 200, U = 0；不扫码放回 15 件：R = 0, U = 15'],
+    ['补丁的局限', '堵一个漏洞，策略换另一条捷径'],
+    ['欺骗的四条证据', '掌握相关信息、改变信息行为稳定切换、切换带来收益、排除其他解释']
+  ]
+});
+
+/* ---------- Gao 曲线 ---------- */
+var ovMode = 'rl';
+var ovChart = S.chart($('#ovC'), { h: 270, x: [0, 12], y: [-1, 6], xt: [0, 2, 4, 6, 8, 10, 12], yt: [0, 2, 4, 6], xl: '优化距离 d = √KL' });
+function ovU() {
+  var d = +$('#ovDs').value, s = +$('#ovAs').value; $('#ovD').textContent = S.f(d, 2); $('#ovA').textContent = ['小', '中', '大'][s];
+  var P = [{ a: 0.8, b: 0.33, ba: 0.75, bb: 0.11 }, { a: 0.9, b: 0.32, ba: 0.85, bb: 0.09 }, { a: 1.0, b: 0.31, ba: 0.95, bb: 0.075 }][s];
+  var gold = ovMode === 'rl' ? function (x) { return x <= 0 ? 0 : x * (P.a - P.b * Math.log(x)); } : function (x) { return x * (P.ba - P.bb * x); };
+  var proxy = function (x) { return x * (ovMode === 'rl' ? 0.55 : 0.6) + 0.02 * x * x; };
+  var g2 = function (x) { var v = gold(x); return v; };
+  var pk = 0, pv = -1e9; for (var x = 0.01; x <= 12; x += 0.01) { var v = g2(x); if (v > pv) { pv = v; pk = x; } }
+  ovChart({ curves: [{ f: proxy, c: 'c2', label: '代理奖励（proxy RM）' }, { f: g2, c: 'ok', label: '独立奖励（gold RM）' }], vl: [{ x: pk, c: 'ok', label: '独立奖励峰值' }, { x: d, c: 'c1', label: '当前停在这里' }], dots: [{ x: d, y: g2(d), c: 'c1', r: 6 }] });
+  var past = d > pk + 0.25;
+  $('#ovW').innerHTML = '当前 d = ' + S.f(d, 2) + '：代理奖励 ' + S.f(proxy(d), 2) + '，独立奖励 ' + S.f(g2(d), 2) + '。' + (past ? '<b>已越过独立奖励的峰值</b>（d ≈ ' + S.f(pk, 1) + '），代理还在涨，真实偏好在跌——应该回到峰值附近的检查点。' : d < pk - 0.5 ? '还在上升段，继续优化仍有收益。' : '接近峰值，这是按独立效用早停的位置。') +
+    ' KL 系数 β 越大，优化停在越小的 d；proxy RM 越大，峰值越高、越靠后（Gao 等人的结论）。曲线形状采用论文拟合的函数形式，具体参数是我为演示设的，不是论文数值。';
+}
+S.seg($('#ovM'), function (v) { ovMode = v; ovU(); });
+['ovDs', 'ovAs'].forEach(function (id) { $('#' + id).addEventListener('input', ovU); }); ovU();
+S.$$('#dfF li').forEach(function (li) { li.addEventListener('click', function () { S.$$('#dfF li').forEach(function (x) { x.classList.remove('on'); }); li.classList.add('on'); }); });
+S.$$('#dfF li')[0].classList.add('on');
+S.notes($('#n-over'), {
+  c: [
+    ['奖励模型过度优化', '代理奖励升，真实偏好先升后降。'],
+    ['gold / proxy RM', 'Gao 等人的实验设计：gold 扮演人类，只负责独立测量。'],
+    ['四块仪表', '代理奖励、独立效用、策略距离、失败行为。'],
+    ['独立早停', '按独立效用而不是训练奖励选检查点。'],
+    ['四级验证集', '训练测试 → 开发隐藏集 → 迁移集 → 一次性门禁集。']
+  ],
+  p: [
+    ['经验形式', 'BoN：d(α − βd)；RL：d(α − β log d)，d = √KL'],
+    ['影响分叉的因素', '优化方法、RM 参数量与数据量、策略规模、KL 系数'],
+    ['原文代码 Agent 快照', '公开测试 1.00、隐藏测试 0.55、30% 轨迹想改测试配置'],
+    ['验证器漏洞例子', '只测输入 1、2、3 → 查表 {1:1, 2:4, 3:9} 满分'],
+    ['抽取器要版本化', '解析失败率单独报告，不要混进“答案错误”']
+  ]
+});
+
+/* ---------- 置信区间 ---------- */
+function wilson(p, n) { var z = 1.96, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d; return [c - h, c + h]; }
+var ciChart = S.chart($('#ciC'), { h: 150, x: [0, 1], y: [0, 3], xt: [0, 0.25, 0.5, 0.75, 1], yt: [], xl: '正确率', ml: 14 });
+function ci() {
+  var n = +$('#ciNs').value, a = +$('#ciAs').value, b = +$('#ciBs').value;
+  $('#ciN').textContent = n; $('#ciA').textContent = S.pct(a, 0); $('#ciB').textContent = S.pct(b, 0);
+  var A = wilson(a, n), B = wilson(b, n);
+  ciChart({ curves: [{ pts: [[A[0], 2], [A[1], 2]], c: 'c1', w: 6 }, { pts: [[B[0], 1], [B[1], 1]], c: 'c2', w: 6 }], dots: [{ x: a, y: 2, c: 'c1', r: 6, label: 'A ' + S.pct(A[0], 0) + '–' + S.pct(A[1], 0) }, { x: b, y: 1, c: 'c2', r: 6, label: 'B ' + S.pct(B[0], 0) + '–' + S.pct(B[1], 0) }] });
+  var se = Math.sqrt(a * (1 - a) / n + b * (1 - b) / n), zz = (a - b) / se;
+  $('#ciW').innerHTML = '把两个模型当作在<b>不同</b>题集上独立测得，差值 ' + S.pct(a - b, 1) + ' 的 z ≈ ' + S.f(zz, 2) + '：' + (Math.abs(zz) > 1.96 ? '大于 1.96，差距在 5% 水平上显著。' : '不到 1.96，<b>不足以说明谁更好</b>。') +
+    ' 如果是同一批题，配对检验（McNemar）只看“一个对一个错”的那些题，通常比这里更灵敏——两个模型大量同对同错时，差值的方差会小得多。原文的手算：n = 100、p = 0.6 时标准误 ≈ 0.049，区间约 50%–70%。';
+}
+['ciNs', 'ciAs', 'ciBs'].forEach(function (id) { $('#' + id).addEventListener('input', ci); }); ci();
+S.guess($('#ciG'), { q: '两个模型真实正确率相差 5 个百分点（约 60% vs 55%），独立题集上要让这个差距大约达到 95% 显著，每个模型大约需要多少道题？', unit: '道', ans: Math.pow(1.96, 2) * (0.6 * 0.4 + 0.55 * 0.45) / 0.0025, fmt: function (x) { return S.f(x, 0); }, why: 'n ≈ 1.96² × (0.24 + 0.2475) / 0.05² ≈ 750 道（只是“差距约等于 1.96 个标准误”的粗算，若还要保证较高的检验功效，需要的题更多）。100 道题的 benchmark 上 5 个点的差距，大概率是噪声。' });
+var bgChart = S.chart($('#bgC'), { h: 220, x: [3, 8], y: [1.5, 5], xt: [3, 4, 5, 6, 7, 8], yt: [2, 3, 4, 5], xl: 'log₁₀ 预期请求量 Q', yl: 'log₁₀ 总成本' });
+function bg() {
+  var T = +$('#bgTs').value, K = +$('#bgKs').value; $('#bgT').textContent = T; $('#bgK').textContent = K;
+  var base = 1e-4, Qs = [], A = [], B = [], cross = null;
+  for (var e = 3; e <= 8; e += 0.25) { var Q = Math.pow(10, e); var ca = 50 + T + Q * base, cb = 50 + Q * base * K; A.push([e, Math.log10(ca)]); B.push([e, Math.log10(cb)]); if (cross === null && cb > ca) cross = Q; }
+  bgChart({ curves: [{ pts: A, c: 'c1', label: '甲：多训练，推理单次' }, { pts: B, c: 'c2', label: '乙：少训练，每次采 ' + K + ' 个' }] });
+  $('#bgW').innerHTML = (cross ? '请求量超过约 <b>' + S.big(cross) + '</b> 次后，乙方案（把计算留到测试时）总成本反超甲方案。' : '在这个范围内乙方案始终更便宜。') + ' 训练成本只付一次，测试时成本随请求量反复支付——研究论文常只比较一次评测，产品必须把 Q 算进去。（单位任意：基础训练成本 50、单次推理成本 10⁻⁴，示意。）';
+}
+['bgTs', 'bgKs'].forEach(function (id) { $('#' + id).addEventListener('input', bg); });
+bg();
+S.notes($('#n-eval'), {
+  c: [
+    ['评测五标准', '可验证、代表性、难度分层、抗污染、统计显著。'],
+    ['Wilson 区间', '二项准确率的置信区间，小样本和接近 0 / 1 时比正态近似可靠。'],
+    ['配对检验', '同一批题比较两个模型：McNemar、配对 bootstrap、置换检验。'],
+    ['数据污染', '显式、近似、任务相似三种。'],
+    ['能力 vs 行为评测', '会不会做 vs 在各种条件下会怎么做。']
+  ],
+  p: [
+    ['原文手算', 'n = 100、p = 0.6：SE ≈ 0.049，95% 区间约 50%–70%'],
+    ['污染检测', 'n-gram 重叠、成员推理、困惑度异常、时间切分'],
+    ['提示敏感性', '多模板平均或逐模板报告'],
+    ['预算恒等式', 'C_total = C_train + Q·C_test'],
+    ['三种数据更新', '离线（DPO 类）/ 在线（PPO、GRPO、RLOO）/ 半在线（Iterative DPO）']
+  ]
+});
+
+/* ---------- 排障 ---------- */
+S.sortGame($('#dbG'), {
+  bins: [{ k: 'env', t: '环境与数据' }, { k: 'eval', t: '评测协议' }, { k: 'rew', t: '奖励信号' }, { k: 'alg', t: '算法内部' }],
+  items: [
+    { t: '奖励曲线涨了，但换了一版 temperature 和 max_tokens 去评测', k: 'eval', why: '评测协议变了，分数不可比。先固定并保存评测配置。' },
+    { t: '杆子倒下时后续价值用了 V(s′) 而不是 0', k: 'env', why: '终止信号处理错误，直接改变了训练目标（第 1 篇）。' },
+    { t: 'reward 上升、回答越来越长、人工抽检变差', k: 'rew', why: '奖励黑客三联征：先拆奖励、抽查高 reward 样本。' },
+    { t: 'KL 飙升、clip fraction 长期 0.5、reward 暴跌', k: 'alg', why: '策略更新过猛：回滚、降 lr、减 epoch、开 target KL 早停。' },
+    { t: 'explained variance 长期为负', k: 'alg', why: 'Critic 不如预测均值：单独拟合 Critic，查 reward scale 与 terminal mask。' },
+    { t: 'reward 直方图几乎全是 0', k: 'rew', why: '奖励太稀疏：课程、塑形、更多采样或换验证方式。' },
+    { t: '公开测试集上反复调参后分数越来越高', k: 'eval', why: '测试集变成了训练集；需要私有集和一次性门禁集。' },
+    { t: '环境 reset 后状态没有清干净', k: 'env', why: '先跑环境单测：reset / step / done / reward。' }
+  ]
+});
+S.notes($('#n-debug'), {
+  c: [
+    ['由外到内', '环境数据 → 评测协议 → 奖励 → 算法内部。'],
+    ['三联征', 'reward 升 + 副指标异常 + 真实评测不涨 = 奖励黑客。'],
+    ['安全带失效', '学习率大、epoch 多、batch 小时 PPO 仍会走太远。'],
+    ['Critic 体检', '固定 rollout，只训 Critic，看能否拟合回报。'],
+    ['好问题', '不是“reward 不涨怎么办”，而是“哪段证据最先坏了”。']
+  ],
+  p: [
+    ['崩溃先兆', 'KL、clip fraction、熵先变，reward 是后验症状'],
+    ['Critic 坏掉', 'value loss 不降；explained variance < 0；value 尺度远小于 return'],
+    ['熵的两种病', '快速归零（过早收敛 / hacking）vs 长期很高（奖励没被吸收）'],
+    ['训练后要留', '最佳评测 checkpoint、失败 checkpoint、审计样本、多 seed、私有集']
+  ]
+});
+})();
+</script>
+</body>
+</html>

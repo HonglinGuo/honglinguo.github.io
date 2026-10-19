@@ -1,0 +1,329 @@
+---
+title: 连续控制与基于模型的 RL：DDPG、TD3、SAC、Dyna 到 MBPO 与世界模型
+desc: 动手学现代强化学习笔记（五）：确定性策略梯度与 DDPG；TD3 的双 Q 取 min、延迟更新、目标策略平滑；SAC 的最大熵目标、软价值与自动调温；基于模型的 RL 为什么省样本、模型误差怎样随推演步数累积、Dyna / PETS / MBPO 的区别；AlphaZero、MuZero、Dreamer 与 LLM 推理时搜索的联系。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 05</span><span>对应原教程第 9 章（docs/chapter11_continuous_control）</span><span>约 45 分钟</span>
+h1: 省样本的两条路：<em>复用旧数据</em>，或者<em>想象新数据</em>
+lead: PPO 稳定，但它是 on-policy：每次更新完旧数据就作废。仿真器里无所谓，真机器人上每一步交互都有磨损、电量和安全成本。原教程第 9 章沿“提升样本效率”这条线往前推三层：先把 DQN 的回放池带进连续动作（DDPG → TD3 → SAC），再学一个环境模型用想象出来的数据训练（Dyna → PETS → MBPO），最后把模型直接用来搜索（AlphaZero → MuZero → Dreamer）。
+nav: ddpg|DDPG;td3|TD3;sac|SAC;mb|基于模型;back|回扣三问
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>DDPG 怎样在连续动作上做 off-policy？它的三个缺陷分别被 TD3 的哪个补丁修复？</li>
+    <li>SAC 的最大熵目标比“只最大化奖励”多了什么？温度 α 起什么作用、怎样自动调？</li>
+    <li>基于模型的 RL 为什么能省 10–100 倍样本？为什么 MBPO 只推演 5 步左右？</li>
+  </ol>
+</div>
+
+<section class="part" id="ddpg">
+  <div class="part-head"><h2>DDPG：确定性策略 + DQN 的稳定化组件</h2><span class="meta">原文 docs/chapter11_continuous_control/ddpg.md（9.1 节）</span></div>
+  <div class="sec-lede">
+    <p>DQN 能复用旧数据，但它的 argmax 在连续动作上算不出来；PPO 能处理连续动作，但只能用新鲜数据。Silver 等人（2014）的<strong>确定性策略梯度</strong>（DPG）把两者接起来：策略直接输出一个动作 a = μ<sub>θ</sub>(s)，梯度只是链式法则——∇J = 𝔼<sub>s</sub>[∇<sub>θ</sub>μ<sub>θ</sub>(s) · ∇<sub>a</sub>Q(s,a)|<sub>a=μ(s)</sub>]：Critic 告诉你“动作往哪边挪 Q 会变大”，再传回 Actor 的参数。不用对动作求期望，方差更低；动作是确定的，任何行为策略采的数据都能用，于是天然 off-policy。</p>
+    <p><strong>DDPG</strong>（Lillicrap 2015）把 DPG 和 DQN 的工程组件拼在一起：Actor μ<sub>θ</sub>(s)；Critic Q<sub>φ</sub>(s,a) 同时输入状态和动作、输出一个标量；两者都有目标网络，用<strong>软更新</strong> θ′ ← τθ + (1 − τ)θ′（τ = 0.005，每步只靠近 0.5%）；回放池 10⁶。确定性策略不会探索，所以训练时给动作加高斯噪声——行为策略带噪、目标策略确定，正是 off-policy 的好处。（原论文用 OU 噪声，后来的研究发现普通高斯噪声一样好。）Actor 的损失就一行：−Q(s, μ(s))。</p>
+    <p>原文列了 DDPG 的三个毛病：<strong>Q 值过估计</strong>（比 DQN 更严重：Actor 直接朝 Critic 高估的方向冲，Critic 又被新 Actor 带得更高，形成正反馈）、<strong>超参敏感</strong>、<strong>训练易崩</strong>（Critic 学坏一点 → Actor 被带偏 → 数据变差 → Critic 更坏，一旦崩溃很难救回）。下面这个小实验看其中一个机制：Critic 的 Q 曲线上如果有一个窄窄的虚假尖峰，Actor 的梯度上升会被它吸过去。</p>
+    <p class="go">拖动尖峰高度和平滑噪声，看 Actor 从起点 a₀ 出发、沿 ∂Q/∂a 爬坡最终停在哪。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Actor 沿 ∇ₐQ 爬坡：真实峰在 a = −0.6，Critic 在 a = 0.45 处多学了一个窄尖峰（示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>虚假尖峰高度 <output id="spH">1.2</output></span><input type="range" id="spHs" min="0" max="2" step="0.1" value="1.2"></label>
+      <label class="ctl"><span>目标策略平滑噪声 σ（TD3 补丁三） <output id="spS">0.00</output></span><input type="range" id="spSs" min="0" max="0.3" step="0.02" value="0"></label>
+      <label class="ctl"><span>Actor 起点 a₀ <output id="spA">0.40</output></span><input type="range" id="spAs" min="-1" max="1" step="0.05" value="0.4"></label>
+    </div>
+    <div id="spC"></div>
+    <p class="cap" id="spW"></p>
+  </div>
+  <div class="card2 algo" data-algo="DDPG">
+    <h3>算法卡 · DDPG</h3><p class="en">Deep Deterministic Policy Gradient（Lillicrap et al., 2015）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>连续动作上的 off-policy 学习：DQN 的 argmax 算不出来，PPO 又不能复用旧数据。</dd>
+      <dt>核心做法</dt><dd>确定性 Actor μ(s) + Critic Q(s,a)；回放池；Actor / Critic 各有目标网络并软更新；训练时动作加高斯噪声探索。</dd>
+      <dt>关键公式</dt><dd>y = r + γQ<sub>φ′</sub>(s′, μ<sub>θ′</sub>(s′))；L<sub>actor</sub> = −Q<sub>φ</sub>(s, μ<sub>θ</sub>(s))；θ′ ← τθ + (1 − τ)θ′</dd>
+      <dt>何时用</dt><dd>现在主要是教学价值；原文的实战建议是“DDPG 已不推荐”。</dd>
+      <dt>代价与坑</dt><dd>过估计正反馈、超参敏感、容易崩且救不回来。</dd>
+      <dt>相关</dt><dd>TD3（打补丁）、SAC（换目标函数）；离线版本 TD3+BC（第 6 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-ddpg"></div>
+</section>
+
+<section class="part" id="td3">
+  <div class="part-head"><h2>TD3：三个补丁，各修一个毛病</h2><span class="meta">原文 docs/chapter11_continuous_control/td3-sac.md（9.2 节前半）</span></div>
+  <div class="sec-lede">
+    <p>TD3（Fujimoto 2018）就是三个技巧。<strong>补丁一：双 Q 取 min</strong>（Twin）。训练两个独立初始化的 Critic，算目标时取较小者：y = r + γ min(Q₁′, Q₂′)(s′, a′)。一个网络偶然高估某个动作，另一个独立网络不太可能在同一处也高估；min 系统性地压低高估。原文的取舍很清楚：<strong>低估是保守的</strong>，最多学得慢；高估会形成正反馈导致发散。</p>
+    <p><strong>补丁二：延迟策略更新</strong>（Delayed）。Critic 要拟合 Q(s,a) 这个二元函数，比 Actor 难学得多；Critic 还不准时给 Actor 的梯度就是噪声。所以 Critic 每步更新，Actor 和目标网络每 d = 2 步才更新一次，“让 Critic 先学好”。<strong>补丁三：目标策略平滑</strong>（Smoothing）。算目标时给目标动作加一点截断噪声 a′ = clip(μ′(s′) + clip(𝒩(0, 0.2), −0.5, 0.5))，等于在动作附近取平均，把 Q 函数里只是逼近噪声的窄尖峰抹平——上一节的实验里把 σ 调大就能看到这个效果。更新 Actor 时只用 Q₁ 就够了。</p>
+    <p class="go">用蒙特卡洛模拟比较“单个 Critic 取 max”与“双 Critic 先取 min 再取 max”的偏差。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">过估计：所有动作的真实 Q = 10，Critic 估计带噪声（2000 次模拟）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>候选动作数 <output id="twN">8</output></span><input type="range" id="twNs" min="1" max="20" value="8"></label>
+      <label class="ctl"><span>Critic 噪声 σ <output id="twS">1.0</output></span><input type="range" id="twSs" min="0.2" max="3" step="0.1" value="1"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="twA">–</div><div class="k">单 Critic：max 后的偏差</div></div><div class="good"><div class="v" id="twB">–</div><div class="k">双 Critic 取 min：偏差</div></div></div>
+    <p class="cap" id="twW"></p>
+  </div>
+  <div class="card2 algo" data-algo="TD3">
+    <h3>算法卡 · TD3</h3><p class="en">Twin Delayed DDPG（Fujimoto et al., 2018）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>DDPG 的过估计、Critic 不准时带偏 Actor、追逐 Q 函数的虚假尖峰。</dd>
+      <dt>核心做法</dt><dd>双 Q 取 min；Critic 每步更新、Actor 每 2 步更新；目标动作加截断噪声做局部平滑。</dd>
+      <dt>关键公式</dt><dd>a′ = clip(μ′(s′) + clip(𝒩(0, σ), −c, c))，y = r + γ min<sub>i</sub> Q<sub>φᵢ′</sub>(s′, a′)；σ = 0.2，c = 0.5，d = 2</dd>
+      <dt>何时用</dt><dd>连续控制、明确需要确定性策略（部署时不希望有随机性）。</dd>
+      <dt>代价与坑</dt><dd>仍靠外加噪声探索、要调噪声大小；min 带来轻微低估。</dd>
+      <dt>相关</dt><dd>Double DQN 的同一思想（第 2 篇）；SAC 也用双 Q；TD3+BC 是离线 RL 强基线（第 6 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-td3"></div>
+</section>
+
+<section class="part" id="sac">
+  <div class="part-head"><h2>SAC：把“保持随机”写进目标函数</h2><span class="meta">原文 td3-sac.md（9.2 节后半）、ac-frontier.md</span></div>
+  <div class="sec-lede">
+    <p>TD3 是在 DDPG 框架上打补丁，SAC（Haarnoja 2018）则改了目标本身：J(π) = 𝔼[Σγ<sup>t</sup>(r<sub>t</sub> + α𝓗(π(·|s<sub>t</sub>)))]——不只要奖励高，还要每个状态的策略熵大。原文列了三个好处：<strong>探索内建</strong>（策略本身随机，熵奖励阻止它过早塌成一个点，不用手调噪声）；<strong>鲁棒</strong>（多个动作差不多好时都保留概率，环境一变能快速切换）；<strong>Q 更平滑</strong>（与 TD3 的目标平滑异曲同工，但来自目标函数本身）。</p>
+    <p>目标变了，Bellman 方程也换成“软”版本：V(s) = 𝔼<sub>a~π</sub>[Q(s,a)] + α𝓗，Q(s,a) = 𝔼[r + γV(s′)]；离散情形下最优策略正好是 π ∝ exp(Q/α)，V = α log Σ exp(Q/α)——一个“软 max”。实现上有三个关键件：随机高斯策略配<strong>重参数化</strong> a = μ(s) + σ(s)⊙ε（用 rsample 让梯度穿过采样）；Actor 损失 𝔼[α log π(a|s) − min(Q₁, Q₂)(s,a)]；<strong>自动调温</strong>——把 α 当可学参数，让策略熵维持在目标值附近（常取 −动作维度），熵太低就加大 α，太高就减小，用 log α 保证为正。</p>
+    <p>原文的结论很干脆：DDPG 已不推荐，TD3 是需要确定性策略时的备选，<strong>连续控制首选 SAC</strong>（off-policy 省样本、双 Q + 最大熵稳定、自动调温开箱即用）。原文也提到 SAC 在真实机器人上的成功案例，以及 NVIDIA Isaac Lab 这类工业级训练平台。</p>
+    <p class="go">原文的例子：三个动作 Q = 10、9.9、1。拖动温度 α，看最大熵策略怎样分配概率。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">π(a) ∝ exp(Q(a)/α)：Q = [10, 9.9, 1]</p>
+      <label class="ctl"><span>温度 α <output id="saA">0.50</output></span><input type="range" id="saAs" min="0.02" max="5" step="0.02" value="0.5"></label>
+      <div id="saB"></div>
+      <div class="read"><div><div class="v" id="saH">–</div><div class="k">熵 𝓗（nats）</div></div><div><div class="v" id="saQ">–</div><div class="k">期望 Q</div></div><div class="hl"><div class="v" id="saV">–</div><div class="k">软价值 α log Σ e^{Q/α}</div></div></div>
+      <p class="cap" id="saW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">自动调温：熵低于目标 → α 变大</p>
+      <p class="lab-s">α 的损失 −log α · (log π + 𝓗₀)：若当前熵 𝓗 = −𝔼[log π] 小于目标 𝓗₀，(log π + 𝓗₀) 的平均为正，梯度下降会把 log α 往上推，反之往下推。</p>
+      <div id="saQz"></div>
+    </div>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th></th><th>DDPG</th><th>TD3</th><th>SAC</th></tr></thead>
+    <tbody>
+      <tr><td>策略类型</td><td>确定性</td><td>确定性</td><td>随机（高斯）</td></tr>
+      <tr><td>Q 网络</td><td>1 个</td><td>2 个，取 min</td><td>2 个，取 min</td></tr>
+      <tr><td>探索</td><td>外加噪声</td><td>外加噪声</td><td>熵奖励，内置</td></tr>
+      <tr><td>稳定性</td><td>差</td><td>中</td><td>强</td></tr>
+      <tr><td>超参敏感</td><td>高</td><td>中</td><td>低（自动调温）</td></tr>
+      <tr><td>原文建议</td><td>不推荐</td><td>需要确定性策略时</td><td>首选</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 td3-sac.md“三者对比”表。原文另有一张 HalfCheetah 训练曲线的字符画，只是定性示意，这里不引用具体分数。</p>
+  <div class="card2 algo" data-algo="SAC">
+    <h3>算法卡 · SAC</h3><p class="en">Soft Actor-Critic（Haarnoja et al., 2018）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>DDPG / TD3 靠外加噪声探索、对超参敏感；想要 off-policy 的样本效率 + 稳定性。</dd>
+      <dt>核心做法</dt><dd>最大熵目标；随机高斯策略 + 重参数化；双 Q 取 min；α 自动调节到目标熵。</dd>
+      <dt>关键公式</dt><dd>y = r + γ(min Q′(s′,ã′) − α log π(ã′|s′))；L<sub>actor</sub> = 𝔼[α log π(a|s) − min Q(s,a)]；𝓗₀ = −|𝒜|</dd>
+      <dt>何时用</dt><dd>连续控制的首选，尤其是真实机器人这类样本昂贵的场景。</dd>
+      <dt>代价与坑</dt><dd>要用 rsample 而非 sample；log π 的 tanh 修正等实现细节多；离散动作需改写。</dd>
+      <dt>相关</dt><dd>MBPO 的底层优化器（下节）；CQL 建在 SAC 之上（第 6 篇）；最大熵思想与 RLHF 的 KL 正则同源。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-sac"></div>
+</section>
+
+<section class="part" id="mb">
+  <div class="part-head"><h2>基于模型：学一个环境模型来“想象”数据</h2><span class="meta">原文 model-based.md（9.3 节）、search-world-models.md（9.4 节）</span></div>
+  <div class="sec-lede">
+    <p>前面的方法都是 model-free：只看奖励调策略，不关心世界怎么运转。<strong>基于模型的 RL</strong> 先学动力学模型 P̂(s′|s,a) 和奖励模型 R̂(s,a)，然后在模型里“想象”轨迹。原文给的量级：SAC 在 MuJoCo 上通常要约 100 万步，MBPO 用 1–10 万步达到同等水平，<strong>样本效率高 10–100 倍</strong>；如果每步真实交互要 1 秒，就是 11.5 天和 1 天的差别。核心矛盾是<strong>模型偏差</strong>：在错的模型上学出的策略到真实环境里也会错，而且策略会主动钻模型的漏洞。</p>
+    <p>原文用一个递推说明误差为什么随推演长度累积：单步预测误差 ≤ ε，真实动力学的 Lipschitz 常数为 L，则 e<sub>t+1</sub> ≤ Le<sub>t</sub> + ε，T 步后 e<sub>T</sub> ≤ εΣL<sup>i</sup>。L = 0.9 时误差收敛到 10ε；L = 1 时线性增长；L = 1.1 时 50 步约 1174ε——单步误差 0.01，50 步后已经超过 11。三代算法是三种应对：<strong>Dyna</strong>（Sutton 1990）每次真实交互后用模型生成 N 条假数据多做 N 次更新，简单但长推演会失真；<strong>PETS</strong> 用概率集成显式建模不确定性，再用 CEM 做模型预测控制（每步规划，部署贵）；<strong>MBPO</strong> 只从真实状态出发推演 1–5 步就重置，误差来不及累积，最后用 SAC 训练策略，部署和 model-free 一样快。</p>
+    <p>另一条旗舰路线把模型直接用于决策时的<strong>搜索</strong>：AlphaZero 用 MCTS + 策略 / 价值网络，自我对弈不靠人类棋谱；MuZero 在隐空间里学模型，连规则都不需要知道；Dreamer V3 用循环状态空间模型，在“想象”里训练 Actor-Critic，用一套超参覆盖 150 多个任务。原文把它和 LLM 连起来：RLHF / GRPO 是 model-free；<strong>过程奖励模型 + 推理时搜索</strong>就是 AlphaZero“网络引导搜索、搜索结果强于网络”的翻版（第 10 篇）；代码世界模型则是在 LLM 里重建 MuZero / Dreamer 的思路。</p>
+    <p class="go">拖动单步误差、Lipschitz 常数，看误差上界随推演步数怎样增长，以及 MBPO 的 5 步在哪里。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">模型误差累积上界 e_T ≤ ε Σ_{i&lt;T} L^i</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>单步误差 ε <output id="meE">0.01</output></span><input type="range" id="meEs" min="0.005" max="0.05" step="0.005" value="0.01"></label>
+      <label class="ctl"><span>Lipschitz 常数 L <output id="meL">1.05</output></span><input type="range" id="meLs" min="0.8" max="1.15" step="0.01" value="1.05"></label>
+    </div>
+    <div id="meC"></div>
+    <p class="cap" id="meW"></p>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>算法</th><th>模型</th><th>怎么用模型</th><th>样本效率（原文）</th><th>计算成本</th><th>适合</th></tr></thead>
+    <tbody>
+      <tr><td>Dyna</td><td>确定性</td><td>1 步假数据做额外更新</td><td>~10×</td><td>低</td><td>快速实验、离散小环境</td></tr>
+      <tr><td>PETS</td><td>概率集成</td><td>CEM 模型预测控制</td><td>~50×</td><td>高（每步规划）</td><td>高精度、安全关键控制</td></tr>
+      <tr><td>MBPO</td><td>集成，短推演</td><td>真实状态出发推演 ≤ 5 步，SAC 训练</td><td>~100×</td><td>中</td><td>通用连续控制强基线</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 model-based.md“三大算法对比”表。倍数是原文给出的量级，取决于任务。</p>
+  <div class="card2 algo" data-algo="MBPO">
+    <h3>算法卡 · MBPO</h3><p class="en">Model-Based Policy Optimization（Janner et al., 2019）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>真实交互昂贵；但长推演的模型误差会累积到完全失真。</dd>
+      <dt>核心做法</dt><dd>用真实数据训练模型集成 → 从回放池里的真实状态出发推演 k（1–5）步 → 真假数据混合，用 SAC 更新；k 随模型变准逐步加大。</dd>
+      <dt>关键公式</dt><dd>误差界 e<sub>k</sub> ≤ εΣ<sub>i&lt;k</sub>L<sup>i</sup>；性能差距 ~ O(ε<sub>m</sub>/(1 − γ)²)，短推演相当于缩短有效视野</dd>
+      <dt>何时用</dt><dd>机器人、工业控制等每一步都贵的场景；部署时不想每步规划。</dd>
+      <dt>代价与坑</dt><dd>模型质量决定一切，超参（模型容量、训练频率、k）更敏感；渐进性能可能被模型误差卡住天花板。</dd>
+      <dt>相关</dt><dd>Dyna、PETS；Dreamer（想象中训练）；第 6 篇的离线 RL 同样在对付“没见过的区域”。</dd>
+    </dl>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分一分：这个场景先考虑哪一类</p>
+    <div id="mfG"></div>
+  </div>
+  <div class="confuse"><h4>易混辨析：model-based 与 model-free</h4>
+    <p><b>“模型”指什么</b>：环境的转移与奖励 P̂(s′|s,a)、R̂(s,a)，不是“神经网络模型”。DQN 有网络，但它是 model-free。</p>
+    <p><b>样本效率 vs 渐进性能</b>：model-based 省真实样本；样本无限时 model-free 通常最终更强，因为没有模型偏差。</p>
+    <p><b>数据增强路线 vs 搜索路线</b>：Dyna / MBPO 用模型“造数据”，最后仍以 model-free 方式训练策略；AlphaZero / MuZero / PETS 在决策时用模型搜索或规划。</p>
+    <p><b>确定性策略 vs 随机策略的 off-policy</b>：DDPG / TD3 靠确定性 μ(s) + 外加噪声；SAC 是随机策略，靠重参数化和熵项，同样 off-policy。</p>
+  </div>
+  <div class="notes" id="n-mb"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">DPG：∇_θ J = 𝔼_s[∇_θ μ_θ(s) · ∇_a Q(s,a)|_{a=μ_θ(s)}]；DDPG Actor 损失 −Q(s, μ(s))</div>
+    <div class="fx">软更新：θ′ ← τθ + (1 − τ)θ′，τ = 0.005</div>
+    <div class="fx">TD3：a′ = clip(μ′(s′) + clip(𝒩(0, 0.2), −0.5, 0.5))；y = r + γ min(Q₁′, Q₂′)(s′, a′)；Actor 每 2 步更新</div>
+    <div class="fx">SAC：J = 𝔼[Σ γ^t (r_t + α𝓗(π(·|s_t)))]；π* ∝ exp(Q/α)；V = α log Σ_a exp(Q/α)</div>
+    <div class="fx">重参数化：a = μ(s) + σ(s) ⊙ ε，ε ~ 𝒩(0, I)；L_actor = 𝔼[α log π(a|s) − min Q(s,a)]</div>
+    <div class="fx">模型误差：e_{t+1} ≤ L e_t + ε ⇒ e_T ≤ ε Σ_{i&lt;T} L^i</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. DDPG 怎样在连续动作上做 off-policy？三个缺陷各被 TD3 哪个补丁修复？</summary><p class="ans">确定性 Actor 直接输出动作，梯度是 ∇μ·∇ₐQ 的链式法则；配回放池、软更新目标网络、训练时加噪声探索。过估计 → 双 Q 取 min；Critic 不准带偏 Actor → 延迟策略更新（d = 2）；追逐 Q 的虚假尖峰 → 目标策略平滑（目标动作加截断噪声）。</p></details>
+    <details><summary>2. 最大熵目标多了什么？α 起什么作用、怎样自动调？</summary><p class="ans">每一步额外奖励 α·策略熵：探索内建、多个好动作都保留概率、Q 更平滑。α 是温度：大则更随机，小则退化为普通 RL；π ∝ exp(Q/α)。自动调温把 log α 当参数，让熵贴近目标值 −|𝒜|：熵低于目标时增大 α，高于目标时减小。</p></details>
+    <details><summary>3. 基于模型为什么省样本？MBPO 为什么只推演约 5 步？</summary><p class="ans">模型学好后在模型里“想象”采样几乎零成本，原文给的样本效率提升是 10–100 倍。但模型误差按 e_T ≤ εΣL^i 累积，L ≥ 1 时长推演会失真。MBPO 从真实状态出发只推演 1–5 步就重置，吃掉“误差还很小的那一段”，再用 SAC 训练。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 尖峰与平滑 ---------- */
+var spChart = S.chart($('#spC'), { h: 250, x: [-1, 1], y: [-1, 2.6], xt: [-1, -0.5, 0, 0.5, 1], yt: [-1, 0, 1, 2], xl: '动作 a', yl: 'Critic 的 Q(s, a)' });
+function sp() {
+  var hgt = +$('#spHs').value, sg = +$('#spSs').value, a0 = +$('#spAs').value;
+  $('#spH').textContent = S.f(hgt, 1); $('#spS').textContent = S.f(sg, 2); $('#spA').textContent = S.f(a0, 2);
+  function Q(a) { return 1.2 - 0.8 * (a + 0.6) * (a + 0.6) + hgt * Math.exp(-(a - 0.45) * (a - 0.45) / 0.003); }
+  function Qs(a) { if (sg < 1e-3) return Q(a); var s = 0, w = 0; for (var k = -30; k <= 30; k++) { var e = k / 10 * sg, wt = Math.exp(-e * e / (2 * sg * sg)); s += wt * Q(S.clamp(a + e, -1, 1)); w += wt; } return s / w; }
+  var a = a0, path = [[a, Qs(a)]];
+  for (var i = 0; i < 400; i++) { var g = (Qs(a + 0.002) - Qs(a - 0.002)) / 0.004; a = S.clamp(a + 0.01 * S.clamp(g, -3, 3), -1, 1); if (i % 8 === 0) path.push([a, Qs(a)]); }
+  spChart({ curves: [{ f: Q, c: 'dim', dash: sg > 0 ? 1 : 0, label: 'Critic 学到的 Q' }].concat(sg > 0 ? [{ f: Qs, c: 'c2', label: '平滑后（目标里实际用的）' }] : []).concat([{ pts: path, c: 'c1', w: 2 }]),
+    dots: [{ x: a0, y: Qs(a0), c: 'dim', r: 5 }, { x: a, y: Qs(a), c: Math.abs(a - 0.45) < 0.1 ? 'c2' : 'ok', r: 7, label: 'Actor 停在 a = ' + S.f(a, 2) }], vl: [{ x: -0.6, c: 'ok', label: '真实最优' }] });
+  var trap = Math.abs(a - 0.45) < 0.1;
+  $('#spW').innerHTML = trap ? 'Actor 被<b>虚假尖峰</b>吸走了：它只看 ∂Q/∂a 往上爬，分辨不出尖峰是真实的高价值还是 Critic 的逼近噪声。DDPG 里这会形成正反馈——Actor 的新动作让 Critic 在这里更新得更多，尖峰可能更高。把平滑噪声 σ 调到 0.14 以上再看。' :
+    (sg > 0 ? '目标策略平滑相当于在动作附近对 Q 取平均：宽度只有 0.05 左右的尖峰被抹成一个又矮又宽的小包，挡不住真实的坡度，梯度不再把 Actor 往那边拽，它回到了真实的峰附近。这就是 TD3 补丁三“防止追逐 Q 函数尖峰”的直观含义。' : 'Actor 从这里出发没有经过尖峰，顺着真实的坡爬到了 a ≈ −0.6。换一个靠近 0.45 的起点试试。') + '（这里把平滑直接作用在 Actor 看到的曲线上，以便看清效果；TD3 中平滑只用于计算 TD 目标，作用是让 Critic 自己学不出这种尖峰。示意。）';
+}
+['spHs', 'spSs', 'spAs'].forEach(function (id) { $('#' + id).addEventListener('input', sp); }); sp();
+S.notes($('#n-ddpg'), {
+  c: [
+    ['确定性策略', 'μ_θ(s) 直接输出一个动作，不采样。'],
+    ['DPG 定理', '策略梯度 = ∇_θμ · ∇_aQ，只对状态求期望。'],
+    ['Critic Q(s,a)', '同时输入状态和动作，输出一个标量（DQN 是只输入状态）。'],
+    ['软更新', '目标网络每步向主网络靠近 τ（0.5%）。'],
+    ['探索噪声', '行为策略 = μ(s) + 高斯噪声，目标策略确定。']
+  ],
+  p: [
+    ['Actor 损失', '−Q(s, μ(s))，梯度经 Critic 流回 Actor'],
+    ['三大缺陷', '过估计（正反馈）、超参敏感、易崩'],
+    ['OU 噪声', '原论文用；后来发现高斯噪声一样好'],
+    ['回放池', '常用 10⁶，τ = 0.005，batch 256']
+  ]
+});
+
+/* ---------- 双 Q ---------- */
+function tw() {
+  var N = +$('#twNs').value, sg = +$('#twSs').value; $('#twN').textContent = N; $('#twS').textContent = S.f(sg, 1);
+  var r = S.rng(3 + N), M = 2000, a = 0, b = 0;
+  for (var k = 0; k < M; k++) { var m1 = -1e9, m2 = -1e9; for (var i = 0; i < N; i++) { var q1 = 10 + sg * S.randn(r), q2 = 10 + sg * S.randn(r); m1 = Math.max(m1, q1); m2 = Math.max(m2, Math.min(q1, q2)); } a += (m1 - 10) / M; b += (m2 - 10) / M; }
+  $('#twA').textContent = (a >= 0 ? '+' : '') + S.f(a, 2); $('#twB').textContent = (b >= 0 ? '+' : '') + S.f(b, 2);
+  $('#twW').innerHTML = N === 1 ? '只有一个动作时 max 无从作恶，单 Critic 无偏；而 min(Q₁, Q₂) 是两个噪声的较小者，期望为 −0.56σ——这就是原文说的“轻微低估”。' :
+    '单 Critic 在 ' + N + ' 个候选上取 max，平均高估 ' + S.f(a, 2) + '；先对两个独立 Critic 取 min 再取 max，偏差变成 ' + S.f(b, 2) + '。' + (b < 0 ? '已经转为低估——原文的立场是：低估最多学得慢，高估会被 Actor 放大成正反馈。' : '仍有残余高估，但小得多。') + '（DDPG 的 Actor 其实是在连续动作上找 argmax，候选越多、越像这里的大 N。示意。）';
+}
+['twNs', 'twSs'].forEach(function (id) { $('#' + id).addEventListener('input', tw); }); tw();
+S.notes($('#n-td3'), {
+  c: [
+    ['Twin Q', '两个独立 Critic，目标取较小者，压低过估计。'],
+    ['延迟更新', 'Critic 每步更新，Actor 与目标网络每 d = 2 步。'],
+    ['目标策略平滑', '目标动作加截断噪声，等于在动作邻域里平均 Q。'],
+    ['保守估计', '宁可低估（学得慢）也不要高估（正反馈发散）。']
+  ],
+  p: [
+    ['目标', 'y = r + γ min(Q₁′, Q₂′)(s′, ã′)'],
+    ['平滑噪声', 'σ = 0.2，截断 c = 0.5'],
+    ['Actor 用哪个 Q', '只用 Q₁ 就够了'],
+    ['TD3 的局限', '仍是确定性策略 + 外加噪声，要调噪声大小']
+  ]
+});
+
+/* ---------- SAC ---------- */
+var QS = [10, 9.9, 1];
+function sa() {
+  var al = +$('#saAs').value; $('#saA').textContent = S.f(al, 2);
+  var p = S.softmax(QS, al), H = -p.reduce(function (s, x) { return s + (x > 0 ? x * Math.log(x) : 0); }, 0), EQ = p.reduce(function (s, x, i) { return s + x * QS[i]; }, 0);
+  var m = Math.max.apply(null, QS), V = m + al * Math.log(QS.reduce(function (s, q) { return s + Math.exp((q - m) / al); }, 0));
+  S.bars($('#saB'), QS.map(function (q, i) { return { label: '动作 ' + 'ABC'[i] + '（Q = ' + q + '）', value: p[i], text: S.pct(p[i], 1), cls: i === 2 ? 'dim' : i === 1 ? 'alt' : '' }; }));
+  $('#saH').textContent = S.f(H, 3); $('#saQ').textContent = S.f(EQ, 2); $('#saV').textContent = S.f(V, 2);
+  $('#saW').innerHTML = al < 0.05 ? 'α 很小：几乎全押在 A 上，熵接近 0，退化为普通 RL（DDPG / TD3 会收敛到这里）。' : al < 1.5 ? 'α 适中：A 和 B 几乎平分概率，C 几乎为 0——熵变大，期望 Q 只损失了一点点。原文说的“如果以后发现 A 有问题，它已经在尝试 B 了”。' : 'α 很大：连 Q = 1 的坏动作也分到不少概率，期望 Q 明显下降，光探索不收敛。所以 α 需要自动调节。';
+}
+$('#saAs').addEventListener('input', sa); sa();
+S.quiz($('#saQz'), [
+  { q: '动作是 6 维连续值，SAC 常用的目标熵 𝓗₀ 是多少？', o: ['6', '−6', '0', 'log 6'], a: 1, why: '经验启发式：目标熵取 −动作维度。连续分布的微分熵可以为负，−6 对应一个不太宽也不太窄的高斯。' },
+  { q: '训练中策略熵持续低于目标值，自动调温会让 α 怎样变化？', o: ['变小', '变大', '不变'], a: 1, why: '熵太低说明策略过早变确定，需要更强的熵奖励，所以 α 增大。' },
+  { q: '为什么 SAC 采样动作要用 rsample() 而不是 sample()？', o: ['rsample 更快', 'rsample 保留了从 μ、σ 到动作的梯度路径（重参数化）', 'sample 会报错'], a: 1, why: 'a = μ + σ·ε，随机性只在 ε 里，梯度可以经 μ、σ 流回策略网络；直接采样不可微。' }
+]);
+S.notes($('#n-sac'), {
+  c: [
+    ['最大熵 RL', '目标 = 奖励 + α·策略熵。'],
+    ['温度 α', '熵奖励的权重；α → 0 退化为普通 RL。'],
+    ['软 Bellman', 'V = 𝔼[Q] + α𝓗；软 max 代替 max。'],
+    ['重参数化', 'a = μ + σ⊙ε，让梯度穿过采样。'],
+    ['自动调温', '把 log α 当参数，让熵贴近目标值。']
+  ],
+  p: [
+    ['离散最优策略', 'π ∝ exp(Q/α)'],
+    ['目标熵', '𝓗₀ = −|𝒜|（动作维度取负）'],
+    ['Critic 目标', 'r + γ(min Q′ − α log π)'],
+    ['原文建议', '连续控制首选 SAC；需要确定性部署时选 TD3']
+  ]
+});
+
+/* ---------- 模型误差 ---------- */
+var meChart = S.chart($('#meC'), { h: 250, x: [1, 60], y: [0, 3], xt: [1, 5, 20, 40, 60], yt: [0, 1, 2, 3], xl: '推演步数 T', yl: '误差上界 e_T' });
+function me() {
+  var e = +$('#meEs').value, L = +$('#meLs').value; $('#meE').textContent = S.f(e, 3); $('#meL').textContent = S.f(L, 2);
+  function ub(T) { return Math.abs(L - 1) < 1e-9 ? e * T : e * (Math.pow(L, T) - 1) / (L - 1); }
+  var pts = []; for (var T = 1; T <= 60; T++) pts.push([T, ub(T)]);
+  var ymax = Math.max(0.2, Math.min(ub(60) * 1.1, 50));
+  meChart({ y: [0, ymax], yt: [0, ymax / 2, ymax].map(function (x) { return +x.toFixed(2); }), curves: [{ pts: pts, c: L > 1 ? 'c2' : 'ok', w: 3 }], vl: [{ x: 5, c: 'ok', label: 'MBPO k = 5' }], dots: [{ x: 5, y: ub(5), c: 'ok', label: S.f(ub(5), 3) }, { x: 50, y: Math.min(ub(50), ymax), c: 'c2', label: '50 步：' + S.f(ub(50), 2) }] });
+  $('#meW').innerHTML = (L < 1 ? 'L &lt; 1：误差会自我收缩，上界收敛到 ε/(1 − L) = ' + S.f(e / (1 - L), 3) + '，长推演也安全（但真实物理环境很少这么“宽容”）。' : L === 1 ? 'L = 1：线性增长，50 步就是 50ε。' :
+    'L &gt; 1：前几步增长很慢，之后指数爆炸。5 步时上界只有 ' + S.f(ub(5), 3) + '，50 步时是 ' + S.f(ub(50), 2) + '（' + S.f(ub(50) / e, 0) + 'ε）。') + ' 原文的三组数：L = 0.9 → 最终 10ε；L = 1 → Tε；L = 1.1、50 步 → 约 1174ε。MBPO 的做法是只吃前面“误差还小”的几步，每段都从真实状态重新出发。';
+}
+['meEs', 'meLs'].forEach(function (id) { $('#' + id).addEventListener('input', me); }); me();
+S.sortGame($('#mfG'), {
+  bins: [{ k: 'mf', t: '先考虑 model-free（SAC / PPO）' }, { k: 'mb', t: '先考虑 model-based（MBPO / PETS / Dreamer）' }],
+  items: [
+    { t: 'Atari / MuJoCo 仿真，一秒几千步', k: 'mf', why: '样本几乎免费，不需要省；model-free 渐进性能通常更高。' },
+    { t: '真实机械臂，每次试验 1 分钟', k: 'mb', why: '真实交互昂贵，10–100 倍样本效率是能用和不能用的区别。' },
+    { t: '部署在边缘设备，算力很紧', k: 'mf', why: '策略网络一次前向出动作；PETS 这类要每步规划。' },
+    { t: '同一机器人要快速换好几个任务', k: 'mb', why: '学好的动力学模型可以迁移，换奖励函数后直接在模型里重新训练。' },
+    { t: '只关心最终性能，训练时间不限', k: 'mf', why: '没有模型偏差的天花板。' },
+    { t: '安全关键，需要预测“它接下来会做什么”', k: 'mb', why: '模型提供可分析的内部表示，可以在部署前推演验证。' }
+  ]
+});
+S.notes($('#n-mb'), {
+  c: [
+    ['动力学模型', 'P̂(s′|s,a)：预测执行动作后的下一状态。'],
+    ['模型偏差', '模型与真实环境的差距；策略会主动利用它。'],
+    ['Dyna', '每次真实交互后用模型多做 N 次假更新。'],
+    ['PETS', '概率集成表达不确定性 + CEM 模型预测控制。'],
+    ['MBPO', '短推演（≤ 5 步）+ SAC。'],
+    ['世界模型', 'Dreamer：在隐空间里想象轨迹并训练 Actor-Critic。']
+  ],
+  p: [
+    ['样本效率（原文）', 'SAC ~10⁶ 步；MBPO 10⁴–10⁵ 步'],
+    ['误差累积', 'e_T ≤ εΣL^i；L = 1.1、50 步 ≈ 1174ε'],
+    ['理论界', '|J(π̂) − J(π*)| ≤ O(ε_m/(1 − γ)²)'],
+    ['搜索路线', 'AlphaZero（MCTS）→ MuZero（隐空间模型）→ Dreamer V3'],
+    ['与 LLM 的联系', 'PRM + 推理时搜索 ≈ AlphaZero 的“网络引导搜索”']
+  ]
+});

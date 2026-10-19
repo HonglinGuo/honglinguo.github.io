@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>随机近似：增量均值、Robbins-Monro、Dvoretzky 定理与 SGD</title>
+<meta name="description" content="强化学习的数学原理学习笔记（六）：从非增量到增量的均值估计；Robbins-Monro 算法只用带噪声的输入输出求根，及其三个收敛条件（步长 Σa=∞、Σa²<∞）；Dvoretzky 收敛定理与多变量推广；随机梯度下降是特殊的 RM 算法，远离最优解时像梯度下降、靠近时才显出随机性；BGD、SGD 与小批量梯度下降。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M9 3v18M15 3v18M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.5'/%3E%3Crect x='15' y='15' width='6' height='6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+</head>
+<body data-series="rlmath-series" data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>强化学习的数学原理 · 06</span><span>对应原书第 6 章（第 101–124 页）</span><span>约 40 分钟</span></p>
+  <h1>每来一个样本，<em>就往前挪一小步</em></h1>
+  <p class="lead">第 5 章的蒙特卡罗要等整个回合结束、把回报收集齐才能更新，是非增量的；第 7 章的时序差分则每来一个样本就更新一次，是增量的。两者之间有一道知识鸿沟，原书专门用这一章来填：随机近似理论。这一章一个强化学习算法都没有，但读完它，再看 TD 和 Q-learning 就不会觉得突兀——它们本质上都是在用带噪声的样本求解贝尔曼方程的根。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">强化学习的数学原理（Mathematical Foundations of Reinforcement Learning）</a>》（赵世钰（Shiyu Zhao）著，西湖大学；Springer Nature 与清华大学出版社 2025 年出版，作者在 GitHub 免费公开全书 PDF 与课件，本笔记依据仓库中 2025 年 7 月更新的英文 PDF（已含勘误））的学习笔记。原书仓库没有附带开源许可证，版权归作者与出版社所有；这里不转载原文和插图，而是按“先说清楚它解决什么问题、再动手算、最后记下来”的顺序用自己的话重讲，网格世界、算法与图都在浏览器里重新实现和手绘。公式、定义、例子与参数以原书为准，标注了对应的节号和页码；页面里的模拟结果标注“示意”，复现出原书图中数值的地方标注“原书数据”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-rlmath/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-19-rlmath-1/" data-part="1"><b>01</b>基本概念</a>
+  <a href="../2026-10-19-rlmath-2/" data-part="2"><b>02</b>贝尔曼方程</a>
+  <a href="../2026-10-19-rlmath-3/" data-part="3"><b>03</b>贝尔曼最优方程</a>
+  <a href="../2026-10-19-rlmath-4/" data-part="4"><b>04</b>值迭代与策略迭代</a>
+  <a href="../2026-10-19-rlmath-5/" data-part="5"><b>05</b>蒙特卡罗</a>
+  <a href="../2026-10-19-rlmath-6/" aria-current="page" data-part="6"><b>06</b>随机近似</a>
+  <a href="../2026-10-19-rlmath-7/" data-part="7"><b>07</b>时序差分</a>
+  <a href="../2026-10-19-rlmath-8/" data-part="8"><b>08</b>值函数近似</a>
+  <a href="../2026-10-19-rlmath-9/" data-part="9"><b>09</b>策略梯度</a>
+  <a href="../2026-10-19-rlmath-10/" data-part="10"><b>10</b>Actor-Critic</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#incr">增量均值</a><a href="#rm">RM 算法</a><a href="#dv">Dvoretzky 定理</a><a href="#sgd">随机梯度下降</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>怎样把“收集完再平均”改成“来一个更新一次”？步长从 1/k 换成别的 α<sub>k</sub> 还收敛吗？</li>
+  <li>Robbins-Monro 算法只知道带噪声的函数值，凭什么能找到根？步长的两个条件各自防止了什么？</li>
+  <li>SGD 和 RM、均值估计是什么关系？为什么 SGD 离最优解远时收敛快、靠近后才“抖”？</li>
+</ol></div>
+
+<section class="part" id="incr">
+  <div class="part-head"><h2>动机：增量式的均值估计</h2><span class="meta">原书 6.1 节 · 第 102–103 页</span></div>
+  <div class="sec-lede">
+    <p>估计 𝔼[X] 有两种算平均的方式。<strong>非增量</strong>：把样本全收集完再求平均——样本多时要等很久。<strong>增量</strong>：记 w<sub>k+1</sub> = (1/k)Σ<sub>i≤k</sub>x<sub>i</sub>，简单推导可得</p>
+    <div class="eq">w<sub>k+1</sub> = w<sub>k</sub> − (1/k)(w<sub>k</sub> − x<sub>k</sub>)<small>原书式 (6.2)</small></div>
+    <p>每来一个样本就能立刻得到当前平均。开始时样本少、不准，但“聊胜于无”，随着样本增多由大数定律逐渐变准。再把系数 1/k 换成一般的 α<sub>k</sub> &gt; 0：</p>
+    <div class="eq">w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)<small>原书式 (6.4)：本章与第 7 章最常见的形式</small></div>
+    <p>这时 w<sub>k</sub> 不再有显式表达式，它还收敛到 𝔼[X] 吗？下一节的 RM 定理会告诉我们：只要 α<sub>k</sub> 满足一些温和的条件就收敛。第 7 章的 TD 算法正是这个形式，只是更复杂。</p>
+    <p class="go">从一个均值为 5 的分布（示意：均匀分布于 [0, 10]）里逐个取样，比较几种步长。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">增量均值估计 w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)，w<sub>1</sub> = 0</p>
+    <div class="btnrow"><button class="btn" type="button" id="inN">换一组样本</button></div>
+    <div id="inC"></div>
+    <p class="cap" id="inW"></p>
+  </div>
+  <div class="notes" id="n-incr"></div>
+</section>
+
+<section class="part" id="rm">
+  <div class="part-head"><h2>Robbins-Monro 算法</h2><span class="meta">原书 6.2 节 · 第 103–109 页</span></div>
+  <div class="sec-lede">
+    <p><strong>随机近似</strong>泛指求根或优化问题的一大类随机迭代算法。它的长处是不需要目标函数或导数的表达式。Robbins-Monro（RM）算法是开山之作，著名的 SGD 是它的特例。问题是求 g(w) = 0 的根（优化问题可写成 ∇J(w) = 0，g(w) = c 可写成 g(w) − c = 0），但 g 是个<strong>黑箱</strong>：比如一个结构参数都不知道的神经网络，只能输入 w、观测带噪声的输出 g̃(w, η) = g(w) + η。RM 算法是</p>
+    <div class="eq">w<sub>k+1</sub> = w<sub>k</sub> − a<sub>k</sub> g̃(w<sub>k</sub>, η<sub>k</sub>)<small>原书式 (6.5)</small></div>
+    <p>直观解释（原书图 6.4，g(w) = tanh(w − 1)）：w<sub>k</sub> 在根的右边时 g &gt; 0，w 往左走；在左边时 g &lt; 0，往右走；步子足够小就一步步靠近根。<strong>定理 6.1</strong>（RM 定理）给出几乎必然收敛的三个条件：(a) 0 &lt; c<sub>1</sub> ≤ ∇g(w) ≤ c<sub>2</sub>（g 单调递增，保证根存在唯一；优化时就是 J 凸；导数有上界）；(b) Σa<sub>k</sub> = ∞ 且 Σa<sub>k</sub><sup>2</sup> &lt; ∞；(c) 噪声条件均值为 0、方差有限（不必是高斯）。</p>
+    <p>步长条件最耐人寻味。<strong>Σa<sub>k</sub><sup>2</sup> &lt; ∞</strong> 要求 a<sub>k</sub> → 0：否则即使在根附近，噪声乘上不衰减的步长也会让 w 一直抖。<strong>Σa<sub>k</sub> = ∞</strong> 要求 a<sub>k</sub> 别衰减得太快：把每步位移加起来，w<sub>1</sub> − w<sub>∞</sub> = Σa<sub>k</sub>g̃<sub>k</sub>；如果 Σa<sub>k</sub> 有限，总位移就有上界 b，初值离根比 b 远就永远到不了。a<sub>k</sub> = 1/k 两条都满足：调和级数发散，Σ1/k<sup>2</sup> = π<sup>2</sup>/6（巴塞尔问题）。实践中 a<sub>k</sub> 常取小常数，这时第二个条件不成立，但算法在某种意义下仍收敛。</p>
+    <p>应用到均值估计：令 g(w) = w − 𝔼[X]，观测 g̃ = w − x = g(w) + (𝔼[X] − x)，RM 算法正是式 (6.4)。所以 α<sub>k</sub> 满足条件时它收敛到 𝔼[X]，而且<strong>不需要对 X 的分布做任何假设</strong>。</p>
+    <p class="go">选函数和步长，看 w<sub>k</sub> 的轨迹。特别试试 a<sub>k</sub> = 1/k<sup>2</sup> 配上远处的初值：总位移不够，到不了根。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">RM 算法实验台（每条细线是一次运行，粗线是 20 次运行的平均，示意）</p>
+    <div class="selrow"><span>g(w)</span><div class="seg" id="rmF"><button data-v="t" aria-pressed="true">tanh(w − 1)（图 6.4，根 1）</button><button data-v="c">w³ − 5（图 6.3，根 5<sup>1/3</sup> ≈ 1.71）</button></div></div>
+    <div class="selrow"><span>步长 a<sub>k</sub></span><div class="seg" id="rmA"><button data-v="1k" aria-pressed="true">1/k</button><button data-v="c01">常数 0.1</button><button data-v="1k2">1/k²</button><button data-v="sq">1/√k</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>初值 w<sub>1</sub> <output id="rmWv">3.0</output></span><input type="range" id="rmW" min="-2" max="8" step="0.5" value="3"></label>
+      <label class="ctl"><span>观测噪声标准差 <output id="rmSv">1.0</output></span><input type="range" id="rmS" min="0" max="2" step="0.1" value="1"></label>
+    </div>
+    <div id="rmC"></div>
+    <p class="cap" id="rmX"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">先估再算</p><div id="rmG"></div></div>
+    <div class="lab"><p class="lab-t">分一分：这些步长满足 RM 条件 (b) 吗？</p><div id="rmS2"></div></div>
+  </div>
+  <div class="notes" id="n-rm"></div>
+</section>
+
+<section class="part" id="dv">
+  <div class="part-head"><h2>Dvoretzky 收敛定理</h2><span class="meta">原书 6.3 节 · 第 109–114 页</span></div>
+  <div class="sec-lede">
+    <p>RM 定理的证明要借助一个更一般的经典结果。<strong>定理 6.2</strong>（Dvoretzky）：对随机过程 Δ<sub>k+1</sub> = (1 − α<sub>k</sub>)Δ<sub>k</sub> + β<sub>k</sub>η<sub>k</sub>（α<sub>k</sub>, β<sub>k</sub> ≥ 0），若 (a) Σα<sub>k</sub> = ∞、Σα<sub>k</sub><sup>2</sup> &lt; ∞、Σβ<sub>k</sub><sup>2</sup> &lt; ∞（一致几乎必然），(b) 𝔼[η<sub>k</sub>|ℋ<sub>k</sub>] = 0 且 𝔼[η<sub>k</sub><sup>2</sup>|ℋ<sub>k</sub>] ≤ C，则 Δ<sub>k</sub> 几乎必然收敛到 0。它比 RM 更有用的地方在于：α<sub>k</sub>、β<sub>k</sub> 可以是依赖历史的随机变量。</p>
+    <p>证明思路（基于拟鞅）：令 h<sub>k</sub> = Δ<sub>k</sub><sup>2</sup>，算出 𝔼[h<sub>k+1</sub> − h<sub>k</sub>|ℋ<sub>k</sub>] = −α<sub>k</sub>(2 − α<sub>k</sub>)Δ<sub>k</sub><sup>2</sup> + β<sub>k</sub><sup>2</sup>𝔼[η<sub>k</sub><sup>2</sup>|ℋ<sub>k</sub>] ≤ β<sub>k</sub><sup>2</sup>C，可求和，所以 h<sub>k</sub> 收敛；再由 Σα<sub>k</sub>Δ<sub>k</sub><sup>2</sup> 有界而 Σα<sub>k</sub> = ∞，推出 Δ<sub>k</sub> → 0。有了它，均值估计和 RM 定理的收敛都是几行的事：均值估计中令 Δ = w − 𝔼[X]，正好是 (1 − α<sub>k</sub>)Δ<sub>k</sub> + α<sub>k</sub>(x<sub>k</sub> − 𝔼[X])；RM 中用中值定理把 g(w<sub>k</sub>) − g(w*) 写成 ∇g(w′)(w<sub>k</sub> − w*)，α<sub>k</sub> 变成 a<sub>k</sub>∇g(w′)，是随机的，Dvoretzky 照样适用。</p>
+    <p><strong>定理 6.3</strong> 把它推广到多个变量（下标 s 可以是状态或状态—动作对）：Δ<sub>k+1</sub>(s) = (1 − α<sub>k</sub>(s))Δ<sub>k</sub>(s) + β<sub>k</sub>(s)η<sub>k</sub>(s)，条件放宽为 ‖𝔼[η<sub>k</sub>(s)|ℋ<sub>k</sub>]‖<sub>∞</sub> ≤ γ‖Δ<sub>k</sub>‖<sub>∞</sub>（噪声均值不必为 0，只要被误差按 γ &lt; 1 压住）和方差 ≤ C(1 + ‖Δ<sub>k</sub>‖<sub>∞</sub>)<sup>2</sup>。第 7 章证明 TD 和 Q-learning 收敛用的就是它——而“噪声均值被 γ 压住”正是贝尔曼方程的收缩性。</p>
+    <p class="go">直接模拟 Dvoretzky 的过程（η<sub>k</sub> 为标准正态，β<sub>k</sub> = α<sub>k</sub>），看哪种 α<sub>k</sub> 让 Δ<sub>k</sub> 收敛到 0。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Δ<sub>k+1</sub> = (1 − α<sub>k</sub>)Δ<sub>k</sub> + α<sub>k</sub>η<sub>k</sub>，Δ<sub>1</sub> = 5（示意）</p>
+    <div id="dvC"></div>
+    <p class="cap" id="dvW"></p>
+  </div>
+  <div class="notes" id="n-dv"></div>
+</section>
+
+<section class="part" id="sgd">
+  <div class="part-head"><h2>随机梯度下降</h2><span class="meta">原书 6.4 节 · 第 114–123 页</span></div>
+  <div class="sec-lede">
+    <p>考虑 min<sub>w</sub> J(w) = 𝔼[f(w, X)]。梯度下降 w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>𝔼[∇f(w<sub>k</sub>, X)] 需要期望，而分布未知；用全部样本的平均近似它是批量梯度下降（BGD），每次要用全部样本。<strong>随机梯度下降</strong>（SGD）只用当前一个样本：</p>
+    <div class="eq">w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>∇<sub>w</sub>f(w<sub>k</sub>, x<sub>k</sub>)<small>原书式 (6.13)</small></div>
+    <p>随机梯度 = 真梯度 + 零均值扰动 η<sub>k</sub>，所以直觉上不会破坏收敛。严格地说，<strong>SGD 是 RM 算法</strong>：它在求 g(w) = 𝔼[∇f(w, X)] = 0 的根，观测是 ∇f(w, x)。<strong>定理 6.4</strong>：若 0 &lt; c<sub>1</sub> ≤ ∇<sup>2</sup>f ≤ c<sub>2</sub>（强凸且曲率有界）、步长满足 RM 条件、样本 i.i.d.，SGD 几乎必然收敛。再往下一层：取 f(w, X) = ‖w − X‖<sup>2</sup>/2，∇f = w − X，SGD 就是式 (6.4)——<strong>均值估计算法是 SGD 的特例</strong>。三者的包含关系：均值估计 ⊂ SGD ⊂ RM。</p>
+    <p>随机梯度这么“随机”，收敛会不会很慢？原书分析了一个有趣的规律：随机梯度相对真梯度的误差 δ<sub>k</sub> ≤ |∇f(w<sub>k</sub>, x<sub>k</sub>) − 𝔼[∇f(w<sub>k</sub>, X)]| / (c|w<sub>k</sub> − w*|)，<strong>与到最优解的距离成反比</strong>。离 w* 远时相对误差小，SGD 表现得和梯度下降差不多，快速逼近；靠近 w* 后相对误差变大，才显出随机性。均值估计里 δ<sub>k</sub> = |𝔼[X] − x<sub>k</sub>| / |w<sub>k</sub> − 𝔼[X]|，看得更清楚。</p>
+    <p>还有一种常见的确定性写法：min (1/n)Σf(w, x<sub>i</sub>)，每次取一个数更新。它也是 SGD——只要把 X 定义为在 {x<sub>i</sub>} 上均匀分布的随机变量，目标就严格等于 𝔼[f(w, X)]，并且应当<strong>独立、均匀地随机抽</strong>样本（可以重复）。<strong>小批量</strong>（MBGD）每次用 m 个样本平均，介于 SGD（m = 1）和 BGD 之间；注意 m = n 时 MBGD 不等于 BGD，因为随机抽的 n 个可能有重复。α<sub>k</sub> = 1/k 时三者分别给出：BGD 每步都是 x̄，MBGD 是各批均值的平均，SGD 是前 k 个样本的平均——批越大越快。</p>
+    <p class="go">复现原书图 6.5：X 在以原点为中心、边长 20 的正方形里均匀分布（均值 0），100 个样本，α<sub>k</sub> = 1/k，从远处出发比较 SGD 与两种小批量。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 6.5：用 SGD / MBGD 估计二维均值</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>初始估计离原点的距离 <output id="sgDv">40</output></span><input type="range" id="sgD" min="5" max="60" step="5" value="40"></label>
+    </div>
+    <div class="btnrow"><button class="btn" type="button" id="sgN">换一组 100 个样本</button></div>
+    <div class="lab-split">
+      <div id="sgP"></div>
+      <div id="sgC"></div>
+    </div>
+    <p class="cap" id="sgW"></p>
+  </div>
+  <div class="confuse"><h4>易混辨析：BGD、SGD、MBGD</h4>
+    <p><b>BGD</b>：每步用全部 n 个样本的平均梯度，最接近真梯度、最贵。<b>SGD</b>：每步随机抽 1 个样本，最便宜、最“抖”。<b>MBGD</b>：每步随机抽 m 个，介于两者之间；m = 1 即 SGD，m = n 也不等于 BGD（随机抽样可能重复）。</p>
+    <p><b>均值估计、SGD、RM 的包含关系</b>：均值估计是 f = ‖w − X‖²/2 的 SGD；SGD 是求 𝔼[∇f] = 0 的 RM 算法。</p>
+  </div>
+  <div class="notes" id="n-sgd"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">增量均值：w<sub>k+1</sub> = w<sub>k</sub> − (1/k)(w<sub>k</sub> − x<sub>k</sub>)；一般形式 w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)</div>
+    <div class="fx">RM 算法：w<sub>k+1</sub> = w<sub>k</sub> − a<sub>k</sub>g̃(w<sub>k</sub>, η<sub>k</sub>)，g̃ = g(w) + η</div>
+    <div class="fx">RM 条件：0 &lt; c<sub>1</sub> ≤ ∇g ≤ c<sub>2</sub>；Σa<sub>k</sub> = ∞，Σa<sub>k</sub><sup>2</sup> &lt; ∞；𝔼[η<sub>k</sub>|ℋ<sub>k</sub>] = 0，𝔼[η<sub>k</sub><sup>2</sup>|ℋ<sub>k</sub>] &lt; ∞</div>
+    <div class="fx">Dvoretzky：Δ<sub>k+1</sub> = (1 − α<sub>k</sub>)Δ<sub>k</sub> + β<sub>k</sub>η<sub>k</sub>；Σα = ∞，Σα² &lt; ∞，Σβ² &lt; ∞，噪声零均值有界方差 ⇒ Δ<sub>k</sub> → 0</div>
+    <div class="fx">多变量推广：‖𝔼[η<sub>k</sub>(s)|ℋ<sub>k</sub>]‖<sub>∞</sub> ≤ γ‖Δ<sub>k</sub>‖<sub>∞</sub>，var ≤ C(1 + ‖Δ<sub>k</sub>‖<sub>∞</sub>)<sup>2</sup></div>
+    <div class="fx">SGD：w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>∇f(w<sub>k</sub>, x<sub>k</sub>)；相对误差 δ<sub>k</sub> ≤ |∇f(w<sub>k</sub>, x<sub>k</sub>) − 𝔼∇f| / (c|w<sub>k</sub> − w*|)</div>
+    <div class="fx">MBGD：w<sub>k+1</sub> = w<sub>k</sub> − (α<sub>k</sub>/m)Σ<sub>j∈ℐ<sub>k</sub></sub>∇f(w<sub>k</sub>, x<sub>j</sub>)</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>怎样把平均改成增量的？换成一般 α<sub>k</sub> 还收敛吗？
+      <details><summary>先自己答，再点开</summary><p class="ans">w<sub>k+1</sub> = w<sub>k</sub> − (1/k)(w<sub>k</sub> − x<sub>k</sub>)，每来一个样本更新一次。换成 α<sub>k</sub> 后它是 RM 算法（g(w) = w − 𝔼[X]），只要 Σα<sub>k</sub> = ∞、Σα<sub>k</sub><sup>2</sup> &lt; ∞ 且样本 i.i.d. 就几乎必然收敛，对 X 的分布没有要求。</p></details></li>
+    <li>RM 凭什么能找到根？两个步长条件防止什么？
+      <details><summary>先自己答，再点开</summary><p class="ans">g 单调递增时，w 在根右边就往左、在左边就往右，步子够小就靠近；噪声零均值，平均下来不影响方向。Σa<sub>k</sub><sup>2</sup> &lt; ∞ 让步长趋于 0，防止在根附近一直抖；Σa<sub>k</sub> = ∞ 保证总位移无界，防止初值太远到不了根。</p></details></li>
+    <li>SGD、RM、均值估计什么关系？为什么远处快、近处抖？
+      <details><summary>先自己答，再点开</summary><p class="ans">均值估计是 f = ‖w − X‖²/2 的 SGD，SGD 是求 𝔼[∇f] = 0 的 RM 算法。随机梯度的相对误差与 |w<sub>k</sub> − w*| 成反比：远时真梯度大、噪声相对小，像梯度下降；近时真梯度小、噪声相对大，才显出随机性。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-rlmath-5/"><small>上一篇</small><span>05 · 蒙特卡罗方法</span></a><a class="nx" href="../2026-10-19-rlmath-7/"><small>下一篇</small><span>07 · 时序差分方法</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 增量均值 ---------- */
+var inSeed = 1;
+var inChart = S.chart($('#inC'), { h: 270, x: [1, 200], y: [0, 10], xt: [1, 50, 100, 150, 200], yt: [0, 2.5, 5, 7.5, 10], xl: '样本序号 k', yl: 'w_k' });
+function inc() {
+  var r = S.rng(inSeed * 17 + 3), xs = []; for (var i = 0; i < 200; i++) xs.push(10 * r());
+  function run(af) { var w = 0, pts = [[1, 0]]; for (var k = 1; k <= 200; k++) { w = w - af(k) * (w - xs[k - 1]); pts.push([k + 1, w]); } return pts; }
+  var A = run(function (k) { return 1 / k; }), B = run(function () { return 0.1; }), C = run(function () { return 0.5; }), D = run(function (k) { return 1 / (k * k); });
+  var mean = xs.reduce(function (a, b) { return a + b; }, 0) / 200;
+  inChart({ curves: [{ pts: C, c: 'dim', label: 'α = 0.5' }, { pts: B, c: 'c2', label: 'α = 0.1' }, { pts: D, c: 'c3', label: 'α = 1/k²' }, { pts: A, c: 'c1', w: 3, label: 'α = 1/k（= 样本平均）' }], hl: [{ y: 5, c: 'ok', label: '𝔼[X] = 5' }] });
+  $('#inW').innerHTML = 'α = 1/k 的曲线就是“前 k 个样本的平均”（第 200 步 = ' + S.f(A[200][1], 3) + '，全部样本平均 = ' + S.f(mean, 3) + '），越来越稳。常数步长对最近的样本更敏感：0.5 时几乎在追着每个样本跳，0.1 时在 5 附近小幅抖动，永远停不下来。α = 1/k² 衰减太快，第一步之后几乎就不动了，停在离 5 很远的地方。后两种现象正是 RM 两个步长条件要排除的情况。';
+}
+$('#inN').addEventListener('click', function () { inSeed++; inc(); });
+inc();
+S.notes($('#n-incr'), {
+  c: [
+    ['非增量', '收集完全部样本再平均，要等。'],
+    ['增量', '每来一个样本就更新一次估计。'],
+    ['一般步长', '把 1/k 换成 α<sub>k</sub>，w<sub>k</sub> 不再有显式表达式。'],
+    ['为何重要', 'TD 算法就是这种形式。']
+  ],
+  p: [
+    ['增量均值', 'w<sub>k+1</sub> = w<sub>k</sub> − (1/k)(w<sub>k</sub> − x<sub>k</sub>)'],
+    ['一般形式', 'w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)'],
+    ['等价写法', 'w<sub>k+1</sub> = w<sub>k</sub> − (1/(k+1))(w<sub>k</sub> − x<sub>k+1</sub>)，差别不大']
+  ],
+  ph: '公式'
+});
+
+/* ---------- RM ---------- */
+var rmF = 't', rmA = '1k';
+var RMG = { t: { g: function (w) { return Math.tanh(w - 1); }, root: 1 }, c: { g: function (w) { return w * w * w - 5; }, root: Math.cbrt(5) } };
+var RMA = { '1k': function (k) { return 1 / k; }, c01: function () { return 0.1; }, '1k2': function (k) { return 1 / (k * k); }, sq: function (k) { return 1 / Math.sqrt(k); } };
+var rmChart = S.chart($('#rmC'), { h: 290, x: [1, 300], y: [-2, 8], xt: [1, 100, 200, 300], yt: [-2, 0, 2, 4, 6, 8], xl: '迭代次数 k', yl: 'w_k' });
+function rm() {
+  var w1 = +$('#rmW').value, sd = +$('#rmS').value; $('#rmWv').textContent = S.f(w1, 1); $('#rmSv').textContent = S.f(sd, 1);
+  var G = RMG[rmF], A = RMA[rmA], runs = [], avg = new Array(301).fill(0), blow = 0;
+  for (var r = 0; r < 20; r++) {
+    var rnd = S.rng(1000 + r), w = w1, pts = [[1, w]], bad = false;
+    for (var k = 1; k <= 300; k++) {
+      var gt = G.g(w) + sd * S.randn(rnd);
+      w = w - A(k) * gt;
+      if (!isFinite(w) || Math.abs(w) > 1e6) { bad = true; break; }
+      pts.push([k + 1, w]);
+    }
+    if (bad) { blow++; continue; }
+    runs.push(pts); pts.forEach(function (p, i) { avg[i] += p[1]; });
+  }
+  var n = runs.length, curves = runs.slice(0, 6).map(function (p) { return { pts: p, c: 'dim', w: 1 }; });
+  if (n) curves.push({ pts: avg.slice(0, runs[0].length).map(function (s, i) { return [i + 1, s / n]; }), c: 'c1', w: 3, label: '20 次运行的平均' });
+  rmChart({ curves: curves, hl: [{ y: G.root, c: 'ok', label: '根 w* = ' + S.f(G.root, 2) }] });
+  var finals = runs.map(function (p) { return p[p.length - 1][1]; }), mf = finals.length ? finals.reduce(function (a, b) { return a + b; }, 0) / finals.length : NaN;
+  var sdF = finals.length ? Math.sqrt(finals.reduce(function (a, b) { return a + (b - mf) * (b - mf); }, 0) / finals.length) : NaN;
+  var txt = '300 步后各次运行的终点：平均 ' + S.f(mf, 3) + '，标准差 ' + S.f(sdF, 3) + '。';
+  if (blow) txt += '<b>' + blow + ' 次运行发散</b>：w³ − 5 的导数没有上界（违反条件 (a)），初值远或步长大时一步就飞出去。原书也说这个例子必须“恰当地”选初值。';
+  else if (rmA === '1k2') txt += 'Σ1/k² = π²/6 ≈ 1.645 有限：tanh 的输出不超过 1，没有噪声时总位移最多约 1.645。初值离根更远就永远到不了——这就是 Σa<sub>k</sub> = ∞ 的作用。';
+  else if (rmA === 'c01') txt += '常数步长不满足 Σa<sub>k</sub><sup>2</sup> &lt; ∞：均值能到根附近，但终点的标准差降不下来，一直在抖。实践中常这样用，换取对变化的跟踪能力。';
+  else if (rmA === 'sq') txt += '1/√k 满足 Σa = ∞，但 Σa² = Σ1/k 发散：衰减不够快，终点仍有较大波动（虽然比常数步长小）。';
+  else txt += '1/k 两个条件都满足：各次运行都收敛到根附近，而且越来越稳。';
+  $('#rmX').innerHTML = txt;
+}
+S.seg($('#rmF'), function (v) { rmF = v; if (v === 'c') { $('#rmW').value = 0; } rm(); });
+S.seg($('#rmA'), function (v) { rmA = v; rm(); });
+['rmW', 'rmS'].forEach(function (id) { $('#' + id).addEventListener('input', rm); });
+rm();
+S.guess($('#rmG'), { q: 'a<sub>k</sub> = 1/k<sup>2</sup> 时，前一万步的步长加起来 Σ<sub>k=1</sub><sup>10000</sup> 1/k<sup>2</sup> 大约是多少？', ans: Math.PI * Math.PI / 6 - 1 / 10000, fmt: function (x) { return S.f(x, 3); }, why: '极限是 π²/6 ≈ 1.645（巴塞尔问题），一万步时已经是 1.6448。对比 Σ1/k：一万步约 ln(10000) + 0.577 ≈ 9.79，而且会继续无限增长。' });
+S.sortGame($('#rmS2'), {
+  bins: [{ k: 'ok', t: '两个条件都满足' }, { k: 'fast', t: 'Σa<sub>k</sub> &lt; ∞（衰减太快）' }, { k: 'slow', t: 'Σa<sub>k</sub><sup>2</sup> = ∞（衰减太慢）' }],
+  items: [
+    { t: '1/k', k: 'ok', why: '调和级数发散；Σ1/k² = π²/6。' },
+    { t: '1/(k + 1)', k: 'ok', why: '原书：轻微修改仍满足条件。' },
+    { t: 'c_k/k（c_k 有界且有正下界）', k: 'ok', why: '原书提到的形式，仍满足。' },
+    { t: '1/k^0.7', k: 'ok', why: 'Σ1/k^0.7 发散；Σ1/k^1.4 收敛。' },
+    { t: '常数 0.1', k: 'slow', why: 'a_k 不趋于 0，Σa² = ∞；实践常用，“某种意义下”收敛。' },
+    { t: '1/√k', k: 'slow', why: 'Σ1/k 发散。' },
+    { t: '1/k²', k: 'fast', why: 'Σ = π²/6 有限，总位移有上界。' },
+    { t: '0.5^k', k: 'fast', why: '几何级数，总和为 1。' }
+  ]
+});
+S.notes($('#n-rm'), {
+  c: [
+    ['随机近似', '求根或优化的随机迭代算法，不需要函数或导数表达式。'],
+    ['RM 算法', '只用输入 w 和带噪声的输出 g̃，求 g(w) = 0 的根。'],
+    ['条件 (a)', 'g 单调递增且导数有界：根存在唯一；优化时即 J 凸。'],
+    ['Σa<sub>k</sub><sup>2</sup> &lt; ∞', 'a<sub>k</sub> → 0，否则在根附近一直抖。'],
+    ['Σa<sub>k</sub> = ∞', '总位移无界，否则初值远了到不了根。'],
+    ['均值估计是 RM', 'g(w) = w − 𝔼[X]，对 X 的分布无要求。']
+  ],
+  p: [
+    ['RM', 'w<sub>k+1</sub> = w<sub>k</sub> − a<sub>k</sub>g̃(w<sub>k</sub>, η<sub>k</sub>)'],
+    ['总位移', 'w<sub>1</sub> − w<sub>∞</sub> = Σa<sub>k</sub>g̃(w<sub>k</sub>, η<sub>k</sub>)'],
+    ['典型步长', 'a<sub>k</sub> = 1/k：Σ1/k = ∞，Σ1/k² = π²/6'],
+    ['常数步长', '不满足 Σa² &lt; ∞，但实践常用，某种意义下收敛']
+  ],
+  ph: '公式'
+});
+
+/* ---------- Dvoretzky ---------- */
+(function () {
+  var ch = S.chart($('#dvC'), { h: 260, x: [1, 2000], y: [-3, 6], xt: [1, 500, 1000, 1500, 2000], yt: [-3, 0, 3, 6], xl: 'k', yl: 'Δ_k' });
+  function run(af, seed) { var r = S.rng(seed), d = 5, pts = [[1, d]]; for (var k = 1; k <= 2000; k++) { var a = af(k); d = (1 - a) * d + a * S.randn(r); if (k % 4 === 0) pts.push([k + 1, d]); } return { pts: pts, end: d }; }
+  var A = run(function (k) { return 1 / k; }, 7), B = run(function () { return 0.1; }, 7), C = run(function (k) { return 1 / (k * k); }, 7);
+  ch({ curves: [{ pts: B.pts, c: 'c2', w: 1.5, label: 'α = 0.1（Σα² = ∞）' }, { pts: C.pts, c: 'c3', label: 'α = 1/k²（Σα &lt; ∞）'.replace('&lt;', '<') }, { pts: A.pts, c: 'c1', w: 3, label: 'α = 1/k（满足条件）' }], hl: [{ y: 0, c: 'ok' }] });
+  $('#dvW').innerHTML = '2000 步后：α = 1/k 时 Δ = <b>' + S.f(A.end, 3) + '</b>（趋于 0）；α = 0.1 时 Δ = ' + S.f(B.end, 3) + '，一直在 ±0.4 左右抖动（方差约 α/(2 − α)·var(η)）；α = 1/k² 时 Δ = ' + S.f(C.end, 3) + '，几乎不动——第一步 α<sub>1</sub> = 1 把 Δ 直接换成了一个噪声样本，之后的步长总和太小，再也修正不了。（示意）';
+})();
+S.notes($('#n-dv'), {
+  c: [
+    ['Dvoretzky 定理', 'Δ<sub>k+1</sub> = (1 − α<sub>k</sub>)Δ<sub>k</sub> + β<sub>k</sub>η<sub>k</sub> 在步长与噪声条件下几乎必然收敛到 0。'],
+    ['比 RM 强在哪', 'α<sub>k</sub>、β<sub>k</sub> 可以是依赖历史的随机变量。'],
+    ['证明工具', '对 h<sub>k</sub> = Δ<sub>k</sub><sup>2</sup> 用拟鞅收敛定理。'],
+    ['多变量推广', '噪声均值只要被 γ‖Δ‖<sub>∞</sub> 压住即可，用于 TD 与 Q-learning 的收敛证明。']
+  ],
+  p: [
+    ['条件 (a)', 'Σα<sub>k</sub> = ∞，Σα<sub>k</sub><sup>2</sup> &lt; ∞，Σβ<sub>k</sub><sup>2</sup> &lt; ∞'],
+    ['条件 (b)', '𝔼[η<sub>k</sub>|ℋ<sub>k</sub>] = 0，𝔼[η<sub>k</sub><sup>2</sup>|ℋ<sub>k</sub>] ≤ C'],
+    ['用于均值估计', 'Δ = w − 𝔼[X]，η = x<sub>k</sub> − 𝔼[X]，β = α'],
+    ['用于 RM', 'α<sub>k</sub> = a<sub>k</sub>∇g(w′<sub>k</sub>)（中值定理），是随机的']
+  ],
+  ph: '公式'
+});
+
+/* ---------- SGD ---------- */
+var sgSeed = 1;
+var sgPlot = S.chart($('#sgP'), { h: 330, x: [-15, 60], y: [-15, 60], xt: [-10, 0, 20, 40, 60], yt: [-10, 0, 20, 40, 60], ml: 40 });
+var sgDist = S.chart($('#sgC'), { h: 330, x: [1, 100], y: [-1, 2], xt: [1, 25, 50, 75, 100], yt: [-1, 0, 1, 2], xl: '迭代步', yl: 'log₁₀ 到均值的距离' });
+function sg() {
+  var D = +$('#sgD').value; $('#sgDv').textContent = D;
+  var r = S.rng(sgSeed * 91 + 5), X = []; for (var i = 0; i < 100; i++) X.push([20 * r() - 10, 20 * r() - 10]);
+  var mean = [0, 0]; X.forEach(function (x) { mean[0] += x[0] / 100; mean[1] += x[1] / 100; });
+  var w0 = [D / Math.SQRT2, D / Math.SQRT2];
+  function run(m, seed) {
+    var rr = S.rng(seed), w = w0.slice(), path = [w.slice()], dist = [[1, Math.log10(Math.hypot(w[0], w[1]))]];
+    for (var k = 1; k <= 100; k++) {
+      var g = [0, 0]; for (var j = 0; j < m; j++) { var x = X[Math.floor(rr() * 100)]; g[0] += (w[0] - x[0]) / m; g[1] += (w[1] - x[1]) / m; }
+      w[0] -= g[0] / k; w[1] -= g[1] / k; path.push(w.slice()); dist.push([k + 1, Math.log10(Math.max(0.1, Math.hypot(w[0], w[1])))]);
+    }
+    return { path: path, dist: dist, end: Math.hypot(w[0], w[1]) };
+  }
+  var a = run(1, 11), b = run(5, 12), c = run(50, 13);
+  sgPlot({ curves: [{ pts: a.path, c: 'c2', w: 1.5, label: 'SGD（m = 1）' }, { pts: b.path, c: 'c3', w: 1.5, label: 'MBGD（m = 5）' }, { pts: c.path, c: 'c1', w: 2.5, label: 'MBGD（m = 50）' }], dots: X.map(function (x) { return { x: x[0], y: x[1], r: 2.5, c: 'dim' }; }).concat([{ x: w0[0], y: w0[1], c: 'ink', r: 5, label: '起点' }]) });
+  sgDist({ curves: [{ pts: a.dist, c: 'c2', label: 'SGD' }, { pts: b.dist, c: 'c3', label: 'm = 5' }, { pts: c.dist, c: 'c1', label: 'm = 50' }] });
+  $('#sgW').innerHTML = '灰点是 100 个样本（样本均值 ' + S.f(mean[0], 2) + ', ' + S.f(mean[1], 2) + '）。三者第一步都几乎直接跳到样本附近：α<sub>1</sub> = 1，离得远时随机梯度方向几乎就是真梯度方向（相对误差 ∝ 1/距离）。之后进入随机性主导的阶段，批越大越稳：100 步后到原点的距离 SGD ' + S.f(a.end, 2) + '、m = 5 为 ' + S.f(b.end, 2) + '、m = 50 为 ' + S.f(c.end, 2) + '。（本页模拟，示意）';
+}
+$('#sgD').addEventListener('input', sg);
+$('#sgN').addEventListener('click', function () { sgSeed++; sg(); });
+sg();
+S.notes($('#n-sgd'), {
+  c: [
+    ['SGD', '用单个样本的随机梯度代替期望梯度。'],
+    ['SGD 是 RM', '求 𝔼[∇f(w, X)] = 0 的根，观测是 ∇f(w, x)。'],
+    ['均值估计是 SGD', 'f = ‖w − X‖²/2 时 ∇f = w − X。'],
+    ['收敛模式', '远离最优时像梯度下降，靠近后随机性才显现。'],
+    ['确定性写法', '在有限集合上均匀独立抽样，就严格等价于 SGD。'],
+    ['MBGD', '每步用 m 个样本，m = 1 为 SGD；m = n 也不等于 BGD。']
+  ],
+  p: [
+    ['SGD', 'w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>∇f(w<sub>k</sub>, x<sub>k</sub>)'],
+    ['定理 6.4 条件', '0 &lt; c<sub>1</sub> ≤ ∇²f ≤ c<sub>2</sub>；RM 步长条件；样本 i.i.d.'],
+    ['相对误差', 'δ<sub>k</sub> ≤ |随机梯度 − 真梯度| / (c|w<sub>k</sub> − w*|)'],
+    ['α = 1/k 时', 'BGD 每步为 x̄；MBGD 为批均值的平均；SGD 为前 k 个样本的平均']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 增量化', 'w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)；它是 RM 算法，步长满足条件就收敛。'],
+    ['② RM', '黑箱 + 噪声也能求根；Σa² &lt; ∞ 防抖，Σa = ∞ 防“走不到”。Dvoretzky 定理是收敛证明的通用工具。'],
+    ['③ SGD', '均值估计 ⊂ SGD ⊂ RM；随机梯度相对误差与距离成反比，所以远快近抖。']
+  ],
+  p: [
+    ['下一篇', 'TD 算法 = 用 RM 思路求解贝尔曼方程；每来一个经验样本就更新一次。'],
+    ['原书一句话', '与许多求根算法相比，RM 算法的强大之处在于它不需要目标函数或其导数的表达式。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

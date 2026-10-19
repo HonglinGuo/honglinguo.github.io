@@ -1,0 +1,348 @@
+---
+title: 动手学现代强化学习：学习笔记总览
+desc: 开源教程 Hands-On Modern RL 的十二篇互动学习笔记总览：从 CartPole、DQN、策略梯度、PPO 到 RLHF、DPO、GRPO、推理模型与 Agentic RL；算法演化地图、按问题反查的选型器、算法卡索引、概念速记卡、易混辨析索引与公式速查。
+kicker: <span>技术学习</span><span>系列 · 共 12 篇</span><span>浏览器里真实训练 DQN 与 PPO</span><span>CC BY-NC-SA 4.0</span>
+h1: 从一根杆子，<em>到会用工具的模型</em>
+lead: 这是开源课程 Hands-On Modern RL（WalkingLabs）的学习笔记。原教程从 CartPole 的一次试错讲起，经过 DQN、策略梯度、PPO 和连续控制，一路走到 RLHF、DPO、GRPO、推理模型和 Agentic RL——它的主张是：RLHF、DPO、GRPO 不是一组孤立的新名词，而是同一套序贯决策思想在语言模型上的延伸。十二篇笔记沿这条线重新组织，每篇都有能拖、能算、能训练的实验。这一页是复习工具：演化地图、选型器、算法卡、速记卡、易混辨析和公式都汇总在这里。
+nav: why|这套教程;map|演化地图;pick|按问题选算法;algo|算法卡;cards|速记卡;cf|易混辨析;fx|公式速查;back|记下来
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.evo svg { display: block; }
+.evo .nd rect { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.evo .nd text { font-size: 15px; fill: var(--ink); }
+.evo .nd.on rect { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2.5; }
+.evo .nd.llm rect { stroke: var(--s3); }
+.evo .nd { cursor: pointer; }
+.evo .nd:focus-visible rect { stroke: var(--s1); stroke-width: 3; }
+.evo .eg { fill: none; stroke: var(--rule); stroke-width: 1.5; }
+.evo .lane { font-size: 15px; fill: var(--ink-3); }
+.evo .band { fill: var(--dim-soft); opacity: .5; }
+.info { margin-top: 12px; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 4em; }
+.info b { color: var(--ink); }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; margin-top: 10px; }
+.qgrid button { font: inherit; font-size: 15px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink-2); line-height: 1.55; }
+.qgrid button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.alist { margin-top: 12px; }
+.alist details { border-top: 1px solid var(--hair); }
+.alist details:last-child { border-bottom: 1px solid var(--hair); }
+.alist summary { cursor: pointer; padding: 10px 0; font-size: 16px; color: var(--ink); }
+.alist summary small { color: var(--ink-3); font-size: 15px; margin-left: 8px; }
+.alist dl { display: grid; grid-template-columns: 7em minmax(0, 1fr); margin: 0 0 12px; }
+.alist dt { font-size: 15px; color: var(--s1); font-weight: 650; padding: 6px 0; border-top: 1px solid var(--hair); }
+.alist dd { margin: 0; font-size: 15px; color: var(--ink-2); padding: 6px 0; border-top: 1px solid var(--hair); line-height: 1.65; }
+@media (max-width: 560px) { .alist dl { grid-template-columns: minmax(0, 1fr); } .alist dd { border-top: 0; padding-top: 0; } }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4, .fxl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a, .fxl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.fxl .fx { margin: 6px 0 0; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>这一页要回答的 3 个问题</h3>
+  <ol>
+    <li>这套教程想讲清什么？它和《强化学习的数学原理》系列怎样分工？</li>
+    <li>从 Q-learning 到 GRPO，算法之间是怎样一步步演化来的？</li>
+    <li>遇到一个具体问题时，该先考虑哪个算法、回看哪一篇？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这套教程</h2><span class="meta">原文 README.zh.md、docs/preface/</span></div>
+  <div class="sec-lede">
+    <p>原教程的问题主线很朴素：一个系统采取行动、观察结果，再根据结果改进下一次行动。当奖励会延迟出现、环境信息不完整、一次更新还会改变后续采样分布时，监督学习的“输入—标签”框架就不够用了。全书七部分二十六章，贯穿三个问题：<strong>如何表示决策过程，如何把结果归因给此前的动作，如何确认策略真的变得更好</strong>。前三部分建立统一语言与算法基础（CartPole、MDP、DQN、策略梯度、Actor-Critic、PPO、连续控制、离线 / 模仿 / 探索），第四部分把它们带入大模型后训练（RLHF、DPO、GRPO 与 RLVR、推理模型、过程奖励），第五、六部分扩展到工具、代码、浏览器与多模态智能体，第七部分讨论奖励黑客、评测与研究前沿。</p>
+    <p>它的特色是“问题—方法—实验—反思”：先用具体任务暴露困难，再引入公式，随后落到可运行代码、训练曲线与评测指标，最后检查假设、失败模式和适用边界——奖励黑客、KL 漂移、熵坍缩、分布偏移、评测泄漏贯穿全书。这个系列沿用这个精神：CartPole 的 DQN 和 PPO 在浏览器里用 JavaScript 真实训练，其余公式都做成能拖动、实时计算的小实验；原教程的训练日志等数据标“原书数据”。</p>
+    <p>两点说明。<strong>许可</strong>：原教程按 CC BY-NC-SA 4.0 发布，本系列是改编的学习笔记，同样按 CC BY-NC-SA 4.0、仅限非商业用途，出处和改动都在页内标明。<strong>可靠性</strong>：原教程自述“由 AI 协助生成、尚未全面审稿，可能有事实性或代码错误”，所以我只采信能与原始论文对上的内容，个别存疑的工程细节（如第 9 篇 GRPO 变体里某些模型的内部做法与分数）没有照搬。<strong>分工</strong>：本系列偏“现代 RL 与动手”，贝尔曼方程、值 / 策略迭代、蒙特卡罗、TD、函数近似、策略梯度定理等数学推导，见同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>。</p>
+  </div>
+  <p class="parthd">经典与深度强化学习 · 原教程第 1–12 章</p>
+  <div class="chap" id="chapA"></div>
+  <p class="parthd">大模型后训练 · 原教程第 13–18 章</p>
+  <div class="chap" id="chapB"></div>
+  <p class="parthd">智能体、多模态与评测 · 原教程第 19–26 章与附录</p>
+  <div class="chap" id="chapC"></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>算法演化地图</h2><span class="meta">每个箭头是一次“修补”</span></div>
+  <div class="sec-lede">
+    <p>把十二篇里出现的主要算法摆在一张图上，会发现几乎每一步都是在修补前一步的某个具体问题：Q 表装不下 → DQN；argmax 处理不了连续动作 → 策略梯度；方差大 → 基线与 Actor-Critic；一步走太远 → TRPO 与 PPO；四个模型太重 → DPO（去掉 RM 与 Critic）和 GRPO（去掉 Critic）；单轮变多轮 → Agentic RL。紫色边框是大模型时代的算法。</p>
+    <p class="go">点一个节点，看它修补了什么、在哪一篇。</p>
+  </div>
+  <div class="box evo" id="evo"></div>
+  <div class="info" id="evoI">点击图中的算法节点。</div>
+</section>
+
+<section class="part" id="pick">
+  <div class="part-head"><h2>按问题选算法</h2><span class="meta">选型器</span></div>
+  <div class="sec-lede">
+    <p>按“你手里有什么、缺什么”来选，而不是按算法名字选。下面的建议来自各篇里原教程的选型表和实战建议，是起点而不是定论——真正的选择还要看数据、算力和评测。</p>
+    <p class="go">选一个最接近你处境的描述。</p>
+  </div>
+  <div class="qgrid" id="pkQ"></div>
+  <div class="info" id="pkA">选一个问题。</div>
+</section>
+
+<section class="part" id="algo">
+  <div class="part-head"><h2>算法卡索引</h2><span class="meta">各篇“算法卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每张算法卡都按同一格式写：解决什么问题、核心做法、关键公式、何时用、代价与坑。这里按篇汇总，可以输入关键词过滤（如 KL、Critic、离线、token）。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="alQ" type="search" placeholder="关键词，如 Critic、KL、离线" aria-label="搜索算法卡" style="max-width:260px"><span class="note" id="alN" style="margin:0"></span></div>
+  <div class="alist" id="alL"></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>概念速记卡</h2><span class="meta">每篇两张</span></div>
+  <div class="sec-lede">
+    <p>每篇挑两个最值得记住的问题。打开自测模式后答案会被遮住：先在心里回答，再点卡片翻开对照；答不上来的，回到对应那一篇。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找（如 on-policy、Critic、DPO、token），标题链接回到原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 Critic、DPO、off-policy" aria-label="搜索易混辨析" style="max-width:260px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="part" id="fx">
+  <div class="part-head"><h2>全系列公式速查</h2><span class="meta">各篇“公式卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾都有一张公式卡，这里汇总在一起，可以按部分筛选或输入关键词（如 clip、KL、GAE、σ）查找。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="fxQ" type="search" placeholder="关键词，如 clip、KL、GAE" aria-label="搜索公式" style="max-width:260px"><div class="seg" id="fxP"><button data-v="0" aria-pressed="true">全部</button><button data-v="1">01–06</button><button data-v="2">07–10</button><button data-v="3">11–12</button></div></div>
+  <div class="fxl" id="fxL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-19-modernrl-';
+var chs = [[1, "从 CartPole 看懂训练闭环", "一根杆子，讲完整个训练闭环", ["一次 PPO 迭代分哪三步？Actor 和 Critic 各自负责什么？", "terminated 和 truncated 有什么区别，为什么算价值时必须区分？", "训练奖励涨了，还要看哪几条曲线才能判断训练健康？on-policy 和 offline 又分别在问什么？"], "环境与策略 · 一次迭代 · 读训练日志 · 数据从哪来 · 奖励即任务"], [2, "DQN：把 Q 表换成网络", "把 Q 表换成一张网络", ["把 Q 表直接换成神经网络，会冒出哪两个不稳定来源？经验回放和目标网络分别对付哪一个？", "为什么 max 运算会让 Q 值系统性偏高？Double DQN 只改了哪一行？", "优先经验回放为什么还要乘一个重要性权重？Rainbow 合了哪六样东西？"], "为什么需要网络 · 三个组件 · 动手训练 · DQN 家族"], [3, "策略梯度与 Actor-Critic", "不再给动作打分，直接学怎么选", ["什么情况下 argmax Q 走不通？策略网络怎样同时处理离散和连续动作？", "REINFORCE 的梯度长什么样？为什么减去一个基线不改变期望却能降方差？", "Actor-Critic 的 TD 误差 δ 同时被谁用、怎么用？它比 REINFORCE 好在哪、又付出了什么？"], "为什么直接学策略 · 策略梯度与基线 · Actor-Critic · 连续动作"], [4, "TRPO、PPO 与 GAE", "每一步都别走太远", ["TRPO 和 PPO 解决的是同一个什么问题？为什么工业界几乎都选 PPO？", "PPO 目标里的 min 为什么不能换成 max？什么时候梯度为零、什么时候不为零？", "GAE 的 λ 从 0 调到 1，优势估计会怎样变？为什么默认取 0.95？"], "信任域 · 裁剪目标 · 复用 K 轮 · GAE · 动手训练"], [5, "连续控制与基于模型的 RL", "省样本的两条路：复用旧数据，或者想象新数据", ["DDPG 怎样在连续动作上做 off-policy？它的三个缺陷分别被 TD3 的哪个补丁修复？", "SAC 的最大熵目标比“只最大化奖励”多了什么？温度 α 起什么作用、怎样自动调？", "基于模型的 RL 为什么能省 10–100 倍样本？为什么 MBPO 只推演 5 步左右？"], "DDPG · TD3 · SAC · 基于模型"], [6, "离线 RL、模仿学习与探索", "当“试错”这条路走不通", ["离线 RL 为什么不能直接拿 DQN / SAC 在固定数据上跑？外推误差从哪来，CQL 和 IQL 各怎么对付？", "行为克隆的误差为什么随任务长度平方增长？DAgger 和 GAIL 各补了什么？", "稀疏奖励下的内在奖励要满足哪两个条件？多智能体的“非平稳”指什么，CTDE 怎样绕开？"], "离线 RL · 序列建模 · 模仿学习 · 探索与多智能体"], [7, "RLHF：SFT、奖励模型与 PPO", "让模型更常选人类偏好的那种回答", ["SFT 已经能让模型像个助手了，为什么还要 RLHF？RLHF 会给模型注入新知识吗？", "奖励模型怎样从“A 比 B 好”学出一个分数？它最容易学歪成什么？", "PPO-RLHF 的四个模型各干什么？token 级奖励怎么构造，β 太大和太小各会怎样？"], "LLM 即策略 · 奖励模型 · PPO-RLHF · 读日志与排障"], [8, "DPO 与离线偏好优化", "奖励模型藏在策略里", ["DPO 凭什么能跳过奖励模型？推导里被消掉的是哪一项、为什么能消？", "DPO 的 β 控制什么？Loss、Margin、Accuracy、Chosen / Rejected Reward 各说明什么？", "IPO、KTO、SimPO 分别去掉或改了 DPO 的哪一部分？什么时候该用 PPO / GRPO 而不是 DPO？"], "推导 · 损失与 β · 动手训练 · DPO 家族"], [9, "GRPO、RLVR 与可验证奖励", "跟同一道题的其他回答比", ["GRPO 用什么替代了 Critic？为什么“同一题的组内均值”能当基线？", "一组回答全对或全错时会发生什么？组大小 G 怎么选，DAPO 的动态采样在解决什么？", "RLVR 的奖励从哪里来、可能被怎样钻空子？R1-Zero 证明了什么？"], "组内优势 · 学习信号 · 逐 token 细节 · 可验证奖励 · R1-Zero 与改进"], [10, "推理模型、测试时计算与过程奖励", "训练决定上限，推理计算决定发挥", ["哪类失败可以靠推理时多算来补救，哪类只能靠训练？Best-of-N 的收益为什么一定递减？", "覆盖率高不等于答对率高——中间差了什么？多数投票在什么情况下会失灵？", "ORM 和 PRM 的区别是什么？步骤分数用 mean、min、product 聚合，各自在表达什么态度？"], "推理模型 · 测试时计算 · 思考预算 · 过程奖励"], [11, "Agentic RL：多轮轨迹与信用分配", "训练单位从一段回答变成一整条轨迹", ["多轮智能体的状态由哪三部分组成？为什么环境返回的 token 不能参与策略梯度？", "一个轨迹级的成败信号要经过哪三层才落到 token 上？GiGPO 怎样不训练 PRM 也得到步骤级优势？", "为什么 Agentic RL 的奖励方差大、GPU 常常空等？只给结果奖励会让模型学到什么？"], "形式化 · 信用分配 · 系统挑战 · 各类智能体"], [12, "奖励黑客、评测与训练排障", "优化器只看得见那个数字", ["奖励黑客和规格博弈各从什么角度描述问题？要下“欺骗”的结论需要哪些证据？", "为什么代理奖励一路上升时，独立评价会先涨后跌？训练中该同时看哪几块仪表、按什么早停？", "“100 道题 60% vs 55%”能说明谁更好吗？训练出问题时，应该按什么顺序排查？"], "奖励黑客 · 过度优化 · 评测 · 排障"]], ALGO = [{"n": 2, "sid": "three", "name": "DQN", "en": "Deep Q-Network（Mnih et al., 2013 / Nature 2015）", "prob": "状态无法枚举（连续、像素）时，表格 Q-learning 装不下；直接换成网络又训练不稳。", "how": "Q 网络近似 Q(s,·)；<strong>经验回放</strong>随机抽样打破相关；<strong>目标网络</strong>冻结 θ⁻ 稳住 TD 目标；ε-贪心探索。", "fx": "L(θ) = 𝔼[(r + γ(1 − d) max<sub>a′</sub> Q(s′,a′;θ⁻) − Q(s,a;θ))²]，每 C 步 θ⁻ ← θ", "when": "离散动作、可以反复交互的环境（Atari、LunarLander、CartPole）；需要复用旧数据（off-policy）时。", "cost": "只能离散动作；max 带来过估计；对 lr、C、ε 衰减敏感；评估曲线即使收敛后仍会波动。"}, {"n": 2, "sid": "family", "name": "Double DQN", "en": "van Hasselt et al., 2016", "prob": "max 同时“选”和“评”，噪声被挑中，Q 值系统性偏高。", "how": "当前网络选动作，目标网络评估这个动作。", "fx": "a* = argmax<sub>a′</sub> Q(s′,a′;θ)，y = r + γ(1 − d) Q(s′,a*;θ⁻)", "when": "几乎总是——它是很多实现里 DQN 的默认版本。", "cost": "只是缓解，θ 与 θ⁻ 相关时仍有残余偏差；连续动作里同样的思路演化成 TD3 的双 Q 取 min。"}, {"n": 3, "sid": "pg", "name": "REINFORCE", "en": "Williams, 1992", "prob": "直接优化参数化策略，绕开 argmax，离散 / 连续动作通用，不需要环境模型。", "how": "跑完整回合 → 算每步之后的回报 G<sub>t</sub> → 按 G<sub>t</sub> − b(s<sub>t</sub>) 加权提高 / 降低所选动作的对数概率。", "fx": "∇J ≈ Σ<sub>t</sub> ∇log π_θ(a<sub>t</sub>|s<sub>t</sub>)(G<sub>t</sub> − b(s<sub>t</sub>))；loss = −log_prob × (G − b)", "when": "回合短、奖励可在结尾算清的任务；作为理解 PPO / GRPO 的起点（GRPO 本质是“组内均值当基线”的 REINFORCE + 裁剪）。", "cost": "方差大，必须等回合结束；on-policy，数据用一次就过期；学习率稍大就会被早期运气锁死。"}, {"n": 3, "sid": "ac", "name": "Actor-Critic / A2C", "en": "Advantage Actor-Critic", "prob": "REINFORCE 方差大、要等回合结束。", "how": "Critic 学 V(s)，用 TD 误差 δ 当优势；Actor 按 δ 调整动作概率；A2C 用多个并行环境（原文 16 个）稳定梯度。", "fx": "δ = r + γV(s′) − V(s)；L = −log π(a|s)·δ̄ + c·δ²（δ̄ 表示 detach）", "when": "需要每步更新、连续动作（Pendulum、BipedalWalker）；作为 PPO 的底座。", "cost": "Critic 自举带来偏差；没有更新幅度约束，复杂任务上震荡；仍是 on-policy。"}, {"n": 4, "sid": "trpo", "name": "TRPO", "en": "Trust Region Policy Optimization（Schulman et al., 2015）", "prob": "策略梯度一步走太远会毁掉策略，且旧数据随之失效。", "how": "最大化重要性采样代理目标，同时把新旧策略的平均 KL 限制在 δ 以内（信任域）。", "fx": "max 𝔼[r<sub>t</sub>A<sub>t</sub>]  s.t.  𝔼[KL(π<sub>old</sub> ‖ π<sub>θ</sub>)] ≤ δ，δ ≈ 0.01", "when": "理论分析、需要严格控制策略变化的小规模问题；理解 PPO 的来历。", "cost": "需要二阶信息（Hessian / 共轭梯度），慢、实现复杂，大模型上不可行；二阶近似本身也有误差。"}, {"n": 4, "sid": "gae", "name": "GAE", "en": "Generalized Advantage Estimation（Schulman et al., 2016）", "prob": "优势估计的偏差—方差两难：TD 依赖 Critic、MC 方差大且要等回合结束。", "how": "对后续 TD 误差做 (γλ)<sup>k</sup> 指数加权，倒序递推；在 done 处切断。", "fx": "Â<sub>t</sub> = Σ<sub>k</sub>(γλ)<sup>k</sup>δ<sub>t+k</sub> = δ<sub>t</sub> + γλ(1 − done)Â<sub>t+1</sub>；returns = Â + V", "when": "PPO / A2C 的默认优势估计；LLM 的 PPO-RLHF 用它把末尾的 RM 分数传回每个 token。", "cost": "必须倒序算；done mask 别漏；values 要有 T + 1 个（最后一个是 bootstrap）；优势通常再做 batch 内归一化。"}, {"n": 4, "sid": "train", "name": "PPO", "en": "Proximal Policy Optimization（Schulman et al., 2017）", "prob": "Actor-Critic 更新幅度无约束、训练震荡；TRPO 有约束但二阶计算太贵。", "how": "重要性采样复用一批 rollout K 轮；策略比率裁剪 + min 保证“只停不反”；GAE 估优势；总损失 = 裁剪策略损失 + 价值损失 − 熵。", "fx": "L = −𝔼[min(r<sub>t</sub>A<sub>t</sub>, clip(r<sub>t</sub>, 1 − ε, 1 + ε)A<sub>t</sub>)] + c₁(V − R)² − c₂H，r = exp(logπ − logπ<sub>old</sub>)", "when": "默认的 on-policy 算法：游戏、连续控制、经典 RLHF；仿真便宜、追求稳定时。", "cost": "仍是 on-policy，样本效率低；LLM 上要四个模型同台（第 7 篇）；ratio 分母必须是采样时的旧策略、old_logp 要 detach、GAE 要倒序。"}, {"n": 5, "sid": "ddpg", "name": "DDPG", "en": "Deep Deterministic Policy Gradient（Lillicrap et al., 2015）", "prob": "连续动作上的 off-policy 学习：DQN 的 argmax 算不出来，PPO 又不能复用旧数据。", "how": "确定性 Actor μ(s) + Critic Q(s,a)；回放池；Actor / Critic 各有目标网络并软更新；训练时动作加高斯噪声探索。", "fx": "y = r + γQ<sub>φ′</sub>(s′, μ<sub>θ′</sub>(s′))；L<sub>actor</sub> = −Q<sub>φ</sub>(s, μ<sub>θ</sub>(s))；θ′ ← τθ + (1 − τ)θ′", "when": "现在主要是教学价值；原文的实战建议是“DDPG 已不推荐”。", "cost": "过估计正反馈、超参敏感、容易崩且救不回来。"}, {"n": 5, "sid": "td3", "name": "TD3", "en": "Twin Delayed DDPG（Fujimoto et al., 2018）", "prob": "DDPG 的过估计、Critic 不准时带偏 Actor、追逐 Q 函数的虚假尖峰。", "how": "双 Q 取 min；Critic 每步更新、Actor 每 2 步更新；目标动作加截断噪声做局部平滑。", "fx": "a′ = clip(μ′(s′) + clip(𝒩(0, σ), −c, c))，y = r + γ min<sub>i</sub> Q<sub>φᵢ′</sub>(s′, a′)；σ = 0.2，c = 0.5，d = 2", "when": "连续控制、明确需要确定性策略（部署时不希望有随机性）。", "cost": "仍靠外加噪声探索、要调噪声大小；min 带来轻微低估。"}, {"n": 5, "sid": "sac", "name": "SAC", "en": "Soft Actor-Critic（Haarnoja et al., 2018）", "prob": "DDPG / TD3 靠外加噪声探索、对超参敏感；想要 off-policy 的样本效率 + 稳定性。", "how": "最大熵目标；随机高斯策略 + 重参数化；双 Q 取 min；α 自动调节到目标熵。", "fx": "y = r + γ(min Q′(s′,ã′) − α log π(ã′|s′))；L<sub>actor</sub> = 𝔼[α log π(a|s) − min Q(s,a)]；𝓗₀ = −|𝒜|", "when": "连续控制的首选，尤其是真实机器人这类样本昂贵的场景。", "cost": "要用 rsample 而非 sample；log π 的 tanh 修正等实现细节多；离散动作需改写。"}, {"n": 5, "sid": "mb", "name": "MBPO", "en": "Model-Based Policy Optimization（Janner et al., 2019）", "prob": "真实交互昂贵；但长推演的模型误差会累积到完全失真。", "how": "用真实数据训练模型集成 → 从回放池里的真实状态出发推演 k（1–5）步 → 真假数据混合，用 SAC 更新；k 随模型变准逐步加大。", "fx": "误差界 e<sub>k</sub> ≤ εΣ<sub>i&lt;k</sub>L<sup>i</sup>；性能差距 ~ O(ε<sub>m</sub>/(1 − γ)²)，短推演相当于缩短有效视野", "when": "机器人、工业控制等每一步都贵的场景；部署时不想每步规划。", "cost": "模型质量决定一切，超参（模型容量、训练频率、k）更敏感；渐进性能可能被模型误差卡住天花板。"}, {"n": 6, "sid": "offline", "name": "CQL / IQL", "en": "Conservative Q-Learning（Kumar 2020）/ Implicit Q-Learning（Kostrikov 2022）", "prob": "固定数据上做 Bellman 备份时，max 选中数据外动作，虚高的 Q 被一轮轮放大且无法纠正。", "how": "CQL：给 Q 加保守正则，数据外压低、数据内拉高；IQL：用 expectile 在数据内学偏乐观的 V，备份用 V(s′)，策略做优势加权回归。", "fx": "CQL：α(𝔼<sub>s</sub>[log Σ<sub>a</sub> e<sup>Q(s,a)</sup>] − 𝔼<sub>𝒟</sub>[Q(s,a)]) + L<sub>Bellman</sub>；IQL：L<sub>2</sub><sup>τ</sup>(x) = |τ − 1(x &lt; 0)|x²，L<sub>π</sub> = −𝔼[e<sup>βA</sup> log π(a|s)]", "when": "只有历史日志、交互昂贵或危险：自动驾驶日志、推荐、医疗；离线预训练再在线微调。", "cost": "上限受数据覆盖限制；太保守会退化成模仿数据；CQL 在稀疏数据上偶有不稳定。"}, {"n": 7, "sid": "rm", "name": "Reward Model", "en": "InstructGPT（Ouyang et al., 2022）等经典 RLHF 流水线的第二步", "prob": "“好回答”写不成规则；人给绝对分不稳定，但比较容易。", "how": "收集 (prompt, chosen, rejected)；RM 输入 prompt + 回答、输出一个标量；最大化 chosen 比 rejected 分高的 BT 似然。", "fx": "P(y<sub>w</sub> ≻ y<sub>l</sub>) = σ(r(x,y<sub>w</sub>) − r(x,y<sub>l</sub>))；L = −log σ(r<sub>w</sub> − r<sub>l</sub>)", "when": "主观偏好对齐（有帮助、礼貌、安全）；也可作为 GRPO 的奖励函数之一。", "cost": "标注贵、有噪声；学到长度 / 格式等表面特征；策略一变就分布外；分数只有相对意义需归一化。"}, {"n": 7, "sid": "ppo", "name": "PPO-RLHF", "en": "InstructGPT 式三阶段：SFT → RM → PPO", "prob": "把人类偏好变成可优化的信号，在模型自己的回答上纠正它真实会犯的错。", "how": "Actor 生成 → RM 打分 → Reference 算 KL → Critic + GAE 算 token 优势 → PPO 裁剪更新 Actor 和 Critic。", "fx": "r<sub>t</sub> = −β(log π<sub>θ</sub> − log π<sub>ref</sub>)(y<sub>t</sub>) + 1[t = T]·r<sub>RM</sub>(x, y)；目标 𝔼[r<sub>RM</sub>] − β·KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)", "when": "主观偏好对齐、需要在线探索、上限要求高时。", "cost": "四模型同台、显存和工程复杂度高；RM 被 hack；β 难调；数据非平稳（Actor 一更新下一批回答分布就变了）。"}, {"n": 8, "sid": "loss", "name": "DPO", "en": "Direct Preference Optimization（Rafailov et al., 2023）", "prob": "PPO-RLHF 要训 RM、四模型同台、在线采样、超参敏感。", "how": "利用 KL 正则目标的闭式解，把奖励写成 β·对数概率比；在偏好对上直接最小化 BT 负对数似然。", "fx": "L = −log σ(β[(logπ<sub>θ</sub> − logπ<sub>ref</sub>)(y<sub>w</sub>) − (logπ<sub>θ</sub> − logπ<sub>ref</sub>)(y<sub>l</sub>)])", "when": "已有可靠偏好对、想快速验证数据和流程、显存有限时的首选基线。", "cost": "离线：不能探索，上限受数据覆盖限制；偏好标错照样学进去（loss 照常下降）；Accuracy 很快到 100% 往往是过拟合；可能学到长度等表面特征。"}, {"n": 9, "sid": "grpo", "name": "GRPO", "en": "Group Relative Policy Optimization（DeepSeekMath, Shao et al., 2024）", "prob": "PPO 的 Critic 吃显存、难训、工程复杂，而 LLM 的奖励只在末尾。", "how": "每个 prompt 在线采 G 个回答 → 打分 → 组内 z-score 作为每个回答的优势 → 逐 token 比值、裁剪、KL → 只更新 Policy。", "fx": "Â<sub>i</sub> = (r<sub>i</sub> − mean(r)) / (std(r) + ε)；J = (1/G)Σ<sub>i</sub>(1/T<sub>i</sub>)Σ<sub>t</sub>[min(ρ<sub>i,t</sub>Â<sub>i</sub>, clip(ρ<sub>i,t</sub>, 1 ± ε)Â<sub>i</sub>) − βD̂<sub>i,t</sub>]", "when": "有可计算奖励（规则验证器或 RM）的在线后训练，尤其是数学、代码等长推理任务。", "cost": "每题采 G 次，生成成本高；全对 / 全错的组没有信号；除以 std 和按长度平均会带来偏差（Dr.GRPO）；奖励稀疏时样本浪费。"}, {"n": 9, "sid": "rlvr", "name": "RLVR", "en": "Reinforcement Learning with Verifiable Rewards", "prob": "RM 需要标注、有噪声、会被 hack；而很多任务本身就能自动判对错。", "how": "用确定性验证器（答案匹配、单元测试、形式证明）给回答打分，通常配合 GRPO / PPO 在线训练；格式分 + 正确性分。", "fx": "r = 0.5·1[格式合规] + 1.0·1[答案等价于标准答案]（原文 GSM8K 示例）", "when": "数学、代码、工具调用参数、逻辑推理等有客观对错的任务。", "cost": "不适用主观偏好；验证器漏洞会被利用；奖励稀疏（太难全错、太易全对）；“提升能力还是提升搜索效率”仍有争议。"}, {"n": 9, "sid": "family", "name": "DAPO", "en": "Decoupled Clip and Dynamic Sampling Policy Optimization", "prob": "GRPO 在长思维链训练中的熵坍缩、零信号样本、长回答 token 被稀释、长度失控。", "how": "上下裁剪界解耦（上界放宽）；过滤全对 / 全错的组；token 级平均；平滑的超长惩罚。", "fx": "clip(ρ, 1 − ε<sub>low</sub>, 1 + ε<sub>high</sub>)，ε<sub>high</sub> &gt; ε<sub>low</sub>；loss 对 batch 内全部有效 token 求平均", "when": "数学 / 代码 RLVR 的长推理训练；多轮工具调用（原文选型树）。", "cost": "动态采样要多生成来补满 batch；token 级平均会给长回答更大权重。"}, {"n": 10, "sid": "tts", "name": "Best-of-N / 多数投票", "en": "并行采样型测试时计算（self-consistency：Wang et al., 2022）", "prob": "模型会做、但单次生成可能偶然出错（采样型失败）。", "how": "独立生成 N 个候选；有验证器就选分最高的，没有就把最终答案规范化后多数投票。", "fx": "覆盖率 1 − (1 − p)<sup>N</sup>；第 N + 1 个的边际收益 p(1 − p)<sup>N</sup>", "when": "有可靠验证器（代码可运行测试）时最有效；答案可规范化、一题多解时用投票。", "cost": "成本线性增长、收益几何衰减；验证器误判则 N 越大越容易挑错；系统性错误会骗过多数投票。"}, {"n": 10, "sid": "prm", "name": "PRM", "en": "Let's Verify Step by Step（Lightman et al., 2023）等", "prob": "长推理只在末尾一个分数：对的结论里藏着错的步骤也会被强化，错了又不知道错在哪一步。", "how": "把回答切成步骤，对每一步打“是否正确”的分；用于重排序、搜索剪枝，或作为 RL 的稠密奖励。", "fx": "ORM(q, o) ∈ ℝ；PRM(q, o, i) ∈ ℝ；聚合 mean = Σp<sub>i</sub>/T，min = min p<sub>i</sub>，product = Πp<sub>i</sub>", "when": "步骤能稳定切分、错误会向后传播、结果验证不足或太稀疏时（数学证明、代码、Agent 工具调用）。", "cost": "标注成本按步骤数放大；跨领域泛化差；标注噪声；步骤切分本身影响效果；PRM 也会被 hack。"}, {"n": 11, "sid": "credit", "name": "GiGPO", "en": "Group-in-Group Policy Optimization", "prob": "多轮智能体只有轨迹级成败，GRPO 的组内比较只能告诉你“哪条轨迹好”，不能告诉你“哪一步好”；训练 PRM 又太贵。", "how": "外层：同一任务的轨迹之间做相对优势 A<sup>E</sup>；内层：把不同轨迹中相同的环境状态聚成组，用后续折扣回报做相对优势 A<sup>S</sup>；两者加权相加。", "fx": "R<sub>t</sub> = Σ<sub>k≥t</sub>γ<sup>k−t</sup>r<sub>k</sub>；A<sup>S</sup> = (R<sub>t</sub> − mean<sub>G<sup>S</sup>(s)</sub>R)/F<sub>norm</sub>；A = A<sup>E</sup> + ω·A<sup>S</sup>", "when": "环境状态会在不同轨迹中重复出现（网页、游戏、工具环境），且只有结果奖励时。", "cost": "需要能判断“状态相同”；当前状态相同不代表历史相同（HGPO 的修正）；状态很少重复时内层组太小。"}, {"n": 11, "sid": "domains", "name": "Agentic RL（多轮 GRPO）", "en": "Search-R1 / Agent-R1 / RAGEN 一类的做法", "prob": "让模型学会在多轮中调用工具、利用观测修正计划，而不只是模仿示范（SFT / prompting 学不到“哪一步该做什么”）。", "how": "在沙箱环境里在线采多条轨迹 → 结果 / 格式 / 成本奖励 → 组内或步骤级优势 → action mask 只在动作 token 上做 PPO / GRPO 更新。", "fx": "∇J = 𝔼[R(x) Σ<sub>t∈a(x)</sub> ∇log p<sub>θ</sub>(x<sub>t</sub>|c, x<sub>&lt;t</sub>)]；Δθ = A<sub>i,t</sub>·Σ<sub>k∈a<sub>i,t</sub></sub>∇log π(y<sub>k</sub>)", "when": "搜索问答、代码修复、工具调用、网页与 GUI 操作等多步任务。", "cost": "环境搭建与沙箱成本高；奖励方差大；GPU 等工具；只有结果奖励时学到浅层策略；安全边界（提示注入、越权）。"}, {"n": 12, "sid": "over", "name": "KL 约束与独立早停", "en": "对付奖励模型过度优化的最常用组合（InstructGPT；Gao et al., 2022）", "prob": "代理奖励持续上升，真实偏好在某点之后下降。", "how": "奖励里减 β·KL(π ‖ π<sub>ref</sub>) 限制漂移速度；同一时间轴记录代理奖励、独立效用、KL、失败行为；按独立效用选检查点。", "fx": "R′ = R<sub>proxy</sub> − β·KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)；gold<sub>RL</sub>(d) ≈ d(α − β log d)，d = √KL", "when": "所有以学到的奖励（RM、LLM judge）为目标的训练；RLVR 也需要隐藏测试做独立评价。", "cost": "参考模型本身可能有错；β 过大压掉真正有价值的新行为；β 要和独立效用曲线一起选，不能只看 KL 数值。"}];
+var read = S.readList();
+chs.forEach(function (c) {
+  var n = c[0], box = n <= 6 ? $('#chapA') : n <= 10 ? $('#chapB') : $('#chapC'), done = read.indexOf(String(n)) >= 0;
+  var a = S.h('a', { href: P + n + '/', class: done ? 'done' : '' }, box);
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3][0] + '</p><span class="tag">' + c[4] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-why'), {
+  c: [
+    ['三个贯穿问题', '如何表示决策过程、如何把结果归因给此前的动作、如何确认策略真的变好。'],
+    ['教学节奏', '问题 → 方法 → 实验 → 反思（假设、失败模式、适用边界）。'],
+    ['核心主张', 'RLHF、DPO、GRPO 是序贯决策思想在语言模型上的延伸。'],
+    ['许可', 'CC BY-NC-SA 4.0：署名、非商业、相同方式共享。']
+  ],
+  p: [
+    ['原教程推荐路径', '先读 1–4 章建立术语；6–8 章（策略梯度、AC、PPO）后可直接进 RLHF / DPO / GRPO'],
+    ['每章四件事', '复述要解决的问题、手推核心公式、跑一个实验、改一个假设并解释指标变化'],
+    ['数学推导', '见《强化学习的数学原理》系列'],
+    ['存疑处理', '原教程自述 AI 协助生成，只采信能与原论文对上的内容']
+  ]
+});
+
+/* ---------- 演化地图 ---------- */
+var NODES = [
+  { id: 'ql', t: 'Q-learning', x: 90, y: 70, ch: 2, d: '表格版的 TD 控制：r + γ max Q(s′,·) 修正一个格子。前提是状态能枚举。' },
+  { id: 'dqn', t: 'DQN', x: 265, y: 70, ch: 2, d: '用网络替代 Q 表；经验回放打破相关、目标网络稳住 TD 目标。' },
+  { id: 'ddqn', t: 'Double / Dueling / PER', x: 440, y: 40, ch: 2, d: '分别修过估计、状态与动作价值混在一起、采样预算平均分配。' },
+  { id: 'rainbow', t: 'Rainbow', x: 615, y: 40, ch: 2, d: '六项改进合一（再加 n 步、分布式价值、Noisy Net）。' },
+  { id: 'rf', t: 'REINFORCE', x: 90, y: 170, ch: 3, d: '直接对策略做梯度上升：∇log π × 回报；方差大，要等回合结束。' },
+  { id: 'ac', t: 'Actor-Critic', x: 265, y: 170, ch: 3, d: '基线 + Critic 的 TD 误差，每步更新；用偏差换方差。' },
+  { id: 'trpo', t: 'TRPO', x: 440, y: 170, ch: 4, d: '用 KL 信任域限制一步走多远；需要二阶近似。' },
+  { id: 'ppo', t: 'PPO + GAE', x: 615, y: 170, ch: 4, d: '一阶裁剪近似信任域，GAE 估优势，同批数据复用 K 轮。默认的 on-policy 算法。' },
+  { id: 'ddpg', t: 'DDPG', x: 440, y: 270, ch: 5, d: '确定性策略梯度 + DQN 组件，把 off-policy 带进连续动作；不稳定。' },
+  { id: 'td3', t: 'TD3', x: 615, y: 250, ch: 5, d: '双 Q 取 min、延迟更新、目标平滑：给 DDPG 打三个补丁。' },
+  { id: 'sac', t: 'SAC', x: 615, y: 305, ch: 5, d: '最大熵目标 + 自动调温；连续控制首选。' },
+  { id: 'mbpo', t: 'Dyna → MBPO', x: 265, y: 370, ch: 5, d: '学环境模型造数据；只推演几步避免误差累积，样本效率高 10–100 倍。' },
+  { id: 'az', t: 'AlphaZero → MuZero', x: 440, y: 370, ch: 5, d: 'MCTS + 策略 / 价值网络；MuZero 在隐空间学模型。“网络引导搜索”。' },
+  { id: 'off', t: 'CQL / IQL', x: 265, y: 470, ch: 6, d: '离线 RL：对数据外动作保守，避免外推误差被 Bellman 放大。' },
+  { id: 'bc', t: 'BC → DAgger / GAIL', x: 90, y: 470, ch: 6, d: '模仿学习：行为克隆有复合误差，DAgger 让专家补标，GAIL 用判别器当奖励。' },
+  { id: 'rlhf', t: 'PPO-RLHF', x: 800, y: 170, ch: 7, llm: 1, d: 'SFT → 奖励模型 → PPO；四个模型同台，KL 拉住参考模型。' },
+  { id: 'dpo', t: 'DPO', x: 985, y: 105, ch: 8, llm: 1, d: '闭式解反解奖励，Z(x) 抵消；直接在偏好对上训练，去掉 RM 与 Critic。' },
+  { id: 'dpof', t: 'IPO / KTO / SimPO', x: 985, y: 40, ch: 8, llm: 1, d: '分别改损失形状、去掉成对数据、去掉参考模型。' },
+  { id: 'grpo', t: 'GRPO + RLVR', x: 985, y: 230, ch: 9, llm: 1, d: '同题多答的组内均值替代 Critic；规则验证器替代 RM。' },
+  { id: 'dapo', t: 'DAPO / GSPO / VAPO', x: 985, y: 165, ch: 9, llm: 1, d: 'GRPO 的各路修补：裁剪、动态采样、序列级比值、重新引入 value。' },
+  { id: 'prm', t: 'PRM + 搜索', x: 800, y: 370, ch: 10, llm: 1, d: '过程奖励给每一步打分，配合 Best-of-N / beam search；推理时计算。' },
+  { id: 'agent', t: 'Agentic RL', x: 985, y: 400, ch: 11, llm: 1, d: '多轮工具调用的 POMDP；action mask、步骤级优势（GiGPO）。' },
+  { id: 'eval', t: '奖励黑客与评测', x: 800, y: 470, ch: 12, llm: 1, d: '所有算法都要过这一关：代理奖励与独立效用的分叉、早停与排障。' }
+];
+var EDGES = [['ql', 'dqn'], ['dqn', 'ddqn'], ['ddqn', 'rainbow'], ['rf', 'ac'], ['ac', 'trpo'], ['trpo', 'ppo'], ['dqn', 'ddpg'], ['ac', 'ddpg'], ['ddpg', 'td3'], ['ddpg', 'sac'], ['ppo', 'rlhf'], ['rlhf', 'dpo'], ['dpo', 'dpof'], ['rlhf', 'grpo'], ['grpo', 'dapo'], ['az', 'prm'], ['grpo', 'agent'], ['mbpo', 'az'], ['bc', 'off'], ['prm', 'agent']];
+var NW = 160, NH = 38, svg = S.svg('svg', { viewBox: '0 0 1075 520', width: 1075, height: 520 }, $('#evo'));
+S.svg('rect', { x: 708, y: 6, width: 364, height: 508, rx: 10, class: 'band' }, svg);
+S.svg('text', { x: 718, y: 26, class: 'lane', text: '大模型时代' }, svg);
+var NM = {}; NODES.forEach(function (n) { NM[n.id] = n; });
+EDGES.forEach(function (e) {
+  var a = NM[e[0]], b = NM[e[1]], x1 = a.x + NW / 2, y1 = a.y, x2 = b.x - NW / 2, y2 = b.y;
+  if (b.x <= a.x) { var dn = b.y > a.y; x1 = a.x; y1 = a.y + (dn ? 1 : -1) * NH / 2; x2 = b.x; y2 = b.y - (dn ? 1 : -1) * NH / 2; }
+  var mx = (x1 + x2) / 2;
+  S.svg('path', { d: b.x <= a.x ? 'M' + x1 + ' ' + y1 + 'L' + x2 + ' ' + y2 : 'M' + x1 + ' ' + y1 + 'C' + mx + ' ' + y1 + ' ' + mx + ' ' + y2 + ' ' + x2 + ' ' + y2, class: 'eg', 'marker-end': 'url(#arr)' }, svg);
+});
+var defs = S.svg('defs', null, svg), mk = S.svg('marker', { id: 'arr', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+S.svg('path', { d: 'M0 0L10 5L0 10z', style: 'fill:var(--rule)' }, mk);
+var gs = {};
+NODES.forEach(function (n) {
+  var g = S.svg('g', { class: 'nd' + (n.llm ? ' llm' : ''), tabindex: 0, role: 'button', 'aria-label': n.t }, svg);
+  S.svg('rect', { x: n.x - NW / 2, y: n.y - NH / 2, width: NW, height: NH, rx: 8 }, g);
+  S.svg('text', { x: n.x, y: n.y + 5, 'text-anchor': 'middle', text: n.t }, g);
+  function pick() {
+    Object.keys(gs).forEach(function (k) { gs[k].classList.remove('on'); }); g.classList.add('on');
+    var card = ALGO.filter(function (a) { return a.n === n.ch && n.t.indexOf(a.name.split(' ')[0].split('（')[0]) >= 0; })[0];
+    $('#evoI').innerHTML = '<b>' + n.t + '</b> · <a href="' + P + n.ch + '/">第 ' + n.ch + ' 篇</a><br>' + n.d + (card ? '<br><span style="color:var(--ink-3)">算法卡：</span>' + card.prob : '');
+  }
+  g.addEventListener('click', pick); g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  gs[n.id] = g;
+});
+
+/* ---------- 选型器 ---------- */
+var PICK = [
+  ['离散动作、仿真器便宜、能大量交互', 'DQN（含 Double / Dueling）或 PPO', '离散动作且需要复用旧数据时 DQN；追求稳定、实现简单时 PPO 是默认选择。', [2, 4]],
+  ['连续动作控制，仿真便宜', 'PPO 或 SAC', 'PPO 稳定好调；SAC 是 off-policy、样本效率更高，原教程把它列为连续控制首选。', [4, 5]],
+  ['真实机器人，每一步交互都很贵', 'SAC → MBPO', '先用 off-policy 复用数据，再学环境模型做短推演，样本效率可再高 10–100 倍。', [5]],
+  ['只有一份历史日志，不能再交互', 'IQL（基线）/ CQL / TD3+BC', '必须对数据外动作保守；IQL 超参少、全程只用数据内动作。', [6]],
+  ['没有奖励函数，只有专家示范', 'BC → DAgger 或 GAIL', '先行为克隆；专家能在线标注用 DAgger，不能则用 GAIL / 逆强化学习。', [6]],
+  ['奖励极稀疏，随机探索碰不到', '内在奖励（RND / ICM）+ PPO', '给新颖状态加奖励，且要满足可计算、可耗尽。', [6]],
+  ['LLM 对齐，手里有大量偏好对', 'DPO', '两个模型、像监督学习一样训练、迭代最快；先用它验证数据和流程。', [8]],
+  ['只有用户点赞 / 点踩', 'KTO', '单条二元反馈即可，不需要成对比较。', [8]],
+  ['数学 / 代码，有标准答案或单元测试', 'GRPO + RLVR（必要时 DAPO 的改进）', '规则验证器当奖励、组内均值当基线，不需要 RM 和 Critic。', [9]],
+  ['主观偏好对齐，要在线探索、追求上限', 'PPO-RLHF（RM + KL）', '需要训练 RM、四模型同台；β 和独立评测是关键。', [7]],
+  ['模型会做，但单次经常出错', 'Best-of-N / 多数投票 / PRM 引导搜索', '推理时多算；有可靠验证器最有效，p ≈ 0 时多算无用。', [10]],
+  ['多轮工具调用、搜索、写代码的智能体', '多轮 GRPO + action mask（+ GiGPO 等步骤优势）', '只在动作 token 上算梯度；关注奖励方差、异步训练与沙箱。', [11]],
+  ['训练奖励一直涨，但总觉得不对劲', '先查奖励黑客三联征', '由外到内排查：环境数据 → 评测协议 → 奖励 → 算法；按独立效用早停。', [12]]
+];
+PICK.forEach(function (p, i) {
+  var b = S.h('button', { type: 'button', 'aria-pressed': 'false', text: p[0] }, $('#pkQ'));
+  b.addEventListener('click', function () {
+    S.$$('#pkQ button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true');
+    $('#pkA').innerHTML = '<b>' + p[1] + '</b><br>' + p[2] + '<br>回看：' + p[3].map(function (n) { return '<a href="' + P + n + '/">第 ' + n + ' 篇 · ' + chs[n - 1][1] + '</a>'; }).join('，');
+  });
+});
+
+/* ---------- 算法卡 ---------- */
+function alDraw() {
+  var q = $('#alQ').value.trim().toLowerCase(), box = $('#alL'); box.innerHTML = ''; var hits = 0;
+  ALGO.forEach(function (a) {
+    var txt = (a.name + a.en + a.prob + a.how + a.fx + a.when + a.cost).toLowerCase();
+    if (q && txt.indexOf(q) < 0) return; hits++;
+    var d = S.h('details', null, box);
+    S.h('summary', { html: a.name + '<small>' + (a.n < 10 ? '0' : '') + a.n + ' · ' + chs[a.n - 1][1] + '</small>' }, d);
+    S.h('dl', { html: '<dt>解决什么问题</dt><dd>' + a.prob + '</dd><dt>核心做法</dt><dd>' + a.how + '</dd><dt>关键公式</dt><dd>' + a.fx + '</dd><dt>何时用</dt><dd>' + a.when + '</dd><dt>代价与坑</dt><dd>' + a.cost + '</dd><dt>原文位置</dt><dd><a href="' + P + a.n + '/#' + a.sid + '">第 ' + a.n + ' 篇的这一节</a></dd>' }, d);
+  });
+  $('#alN').textContent = '共 ' + hits + ' 张';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的算法卡。' }, box);
+}
+$('#alQ').addEventListener('input', alDraw); alDraw();
+
+/* ---------- 速记卡 ---------- */
+var MG = [
+  [1, 'terminated 与 truncated 在算价值时有什么区别？', 'terminated（杆倒、出界）后续价值取 0；truncated（时间上限）状态可能还好，用 V(s′) 估计。两者都要在 GAE 递推里切断；rollout 边界两者都不是。'],
+  [1, 'on-policy / off-policy 与 online / offline 各问什么？', '前者问数据是不是当前策略自己采的，后者问训练中还能不能采新数据。DQN = off-policy + online。'],
+  [2, '直接把 Q 表换成网络会出哪两个问题？', '样本相关（→ 经验回放）和目标移动（→ 目标网络）。三者叠加的根源是致命三要素：函数逼近 + 自举 + off-policy。'],
+  [2, 'Double DQN 改了什么？', '当前网络选动作、目标网络给它打分，缓解 max 带来的过估计（𝔼[max] ≥ max 𝔼）。'],
+  [3, '为什么减去基线不改变策略梯度的期望？', '𝔼_{a~π}[∇log π(a|s)] = ∇Σπ = 0，乘一个与动作无关的 b(s) 仍为 0；但信号从绝对回报变成“比预期好多少”，方差下降。'],
+  [3, 'Actor-Critic 的 δ 怎么被两边使用？', 'δ = r + γV(s′) − V(s)：Actor 把它（detach 后）当优势乘 ∇log π；Critic 最小化 δ²。'],
+  [4, 'PPO 的 min 为什么不能换成 max？', 'min 让顺方向越界时梯度为 0（停止过冲）、反方向越界时梯度为 A（纠偏），∂L/∂r ∈ {0, A}，永不反向。'],
+  [4, 'GAE 的 λ 从 0 到 1 意味着什么？', 'λ = 0 是一步 TD（方差小、依赖 Critic），λ = 1 是 G − V（无偏、方差大）；0.95 对不准的 Critic 更鲁棒。'],
+  [5, 'TD3 的三个补丁？', '双 Q 取 min（过估计）、延迟策略更新（Critic 先学好）、目标策略平滑（不追 Q 的尖峰）。'],
+  [5, 'MBPO 为什么只推演几步？', '模型误差 e_T ≤ εΣL^i 随推演步数累积；从真实状态出发只走 1–5 步，误差来不及放大。'],
+  [6, '离线 RL 的外推误差从哪来？', 'Bellman 目标的 max 选中数据外动作，网络在那里任意外推、可能虚高，又没机会试错纠正，误差约放大 1/(1 − γ) 倍。'],
+  [6, '行为克隆为什么误差随长度平方增长？', '一步错进入陌生状态，之后更易错，累计代价 O(T²ε)；DAgger 补标策略访问的状态，降到 O(Tε)。'],
+  [7, 'PPO-RLHF 的 token 级奖励怎么构造？', '每个 token 扣 β·(log π − log π_ref)，最后一个 token 再加 RM 分；Critic + GAE 把它分回每个 token。'],
+  [7, 'β 太大和太小各会怎样？', '太大：KL ≈ 0、reward 不动，退化成 SFT；太小：KL 失控、reward hacking、乱码或坍缩。'],
+  [8, 'DPO 推导里被消掉的是什么？', '配分函数 β log Z(x)：它只依赖 prompt，Bradley–Terry 只用同一 prompt 下两个回答的奖励差，相减抵消。'],
+  [8, 'DPO 的初始 loss、accuracy、margin 是多少？', 'π_θ = π_ref 时 margin = 0，loss = ln 2 ≈ 0.693，accuracy ≈ 0.5。'],
+  [9, 'GRPO 用什么替代 Critic？', '同一 prompt 的 G 个回答的组内均值（再除以标准差）；它就是 V(prompt) 的蒙特卡洛估计。'],
+  [9, '一组回答全对或全错会怎样？', '标准差为 0，优势全为 0，没有梯度；有信号的概率 1 − p^G − (1 − p)^G，DAPO 用动态采样过滤这类 prompt。'],
+  [10, 'Best-of-N 的收益为什么递减？', '第 N+1 个候选的边际收益 p(1 − p)^N，每多一个乘一次 (1 − p)，而成本固定。覆盖率高也不等于挑得出来。'],
+  [10, 'PRM 的 mean / min / product 聚合各表达什么？', 'mean 容忍个别差步骤；min 一步差整条不行（最保守）；product 在步骤独立时是“全对”的概率，对低分步最敏感。'],
+  [11, '为什么观测 token 要 mask 掉？', '它们由环境决定、不是策略采样的；参与梯度等于教模型预测网页 / API 返回，污染策略梯度。'],
+  [11, 'GiGPO 怎样得到步骤级优势？', '把不同轨迹中相同的环境状态聚成组，用各动作之后的回报做组内比较，再和轨迹级优势加权相加。'],
+  [12, '训练奖励涨了，怎样判断是不是奖励黑客？', '三联征：reward 升 + 副指标异常（长度、重复、模板）+ 独立评测不涨。按独立效用早停。'],
+  [12, '100 道题 60% vs 55% 能说明谁更好吗？', '不能：60% 的 95% 区间约 50%–70%；要报告置信区间、同一批题做配对检验，或加大题量。']
+];
+var order = MG.map(function (_, i) { return i; }), opened = {};
+function mgDraw() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var m = MG[i], b = S.h('button', { class: 'mcard' + (opened[i] ? ' open' : ''), type: 'button' }, g);
+    b.innerHTML = '<small>第 ' + m[0] + ' 篇 · ' + chs[m[0] - 1][1] + '</small><span class="q">' + m[1] + '</span><span class="a">' + m[2] + '</span>';
+    b.addEventListener('click', function () { opened[i] = !opened[i]; b.classList.toggle('open', !!opened[i]); mgCount(); });
+  });
+  mgCount();
+}
+function mgCount() { var on = $('#mgG').classList.contains('test'), k = Object.keys(opened).filter(function (x) { return opened[x]; }).length; $('#mgC').textContent = on ? '已翻开 ' + k + ' / ' + MG.length + ' 张' : '共 ' + MG.length + ' 张'; }
+$('#mgT').addEventListener('click', function () { var on = !$('#mgG').classList.contains('test'); $('#mgG').classList.toggle('test', on); this.setAttribute('aria-pressed', on); this.textContent = on ? '退出自测：显示全部' : '自测模式：遮住答案'; opened = {}; mgDraw(); });
+$('#mgS').addEventListener('click', function () { var r = S.rng(Date.now() % 100000); for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; } mgDraw(); });
+mgDraw();
+
+/* ---------- 易混辨析 ---------- */
+var CF = [[1, "data", "on/off-policy 与 online/offline", ["<b>On/off-policy 问“谁采的数据”</b>：行为策略 μ 与目标策略 π 是否同一个。<b>Online/offline 问“还能不能采新数据”</b>：训练中数据集是否还在增长。DQN = off-policy + online，是最好的反例。", "<b>Off-policy ≠ 可以乱用数据</b>：需要覆盖条件，历史数据必须覆盖目标策略会访问的状态—动作。", "<b>DPO 算不算 RL</b>：原文的看法是，它的损失写成了分类形式，但本质是在固定偏好数据上调整策略分布，属于 offline 设定下的策略优化，同样面临分布外风险（第 8 篇）。"]], [2, "family", "目标网络、Double DQN 与 PER", ["<b>目标网络 vs 经验回放</b>：前者稳住“标准答案”（目标移动），后者打散“样本”（时间相关）。拆掉哪个，坏掉的是不同的东西。", "<b>目标网络 vs Double DQN</b>：目标网络让靶子慢下来，但 max 仍在同一组估计里选和评，过估计还在；Double DQN 把“选”交给 θ、“评”交给 θ⁻。", "<b>PER 的 α 与 β</b>：α 决定“多偏心”（0 退化为均匀采样），β 决定“偏心之后修正多少”（0 等于不修正、1 完全修正）。", "<b>DQN vs Q-learning</b>：TD 思想完全一样，变的只是 Q 的存储方式（表 → 网络）以及为此加的两个稳定化组件。"]], [3, "ac", "基线、优势与 Critic", ["<b>REINFORCE + 价值基线 vs Actor-Critic</b>：两者都学一个 V(s)。前者仍用完整回合的 G<sub>t</sub>，V 只用来减方差，必须等回合结束；后者用 r + γV(s′) 自举估计回报，能每步更新。原文把前者称为“通往 Critic 的中间路线”。", "<b>Q、V、A</b>：Q(s,a) 是“做了这个动作之后的期望回报”，V(s) 是“按策略平均的期望回报”，A = Q − V 是“这个动作比平均好多少”。策略梯度真正需要的是 A 的符号和大小。", "<b>偏差 vs 方差</b>：MC 回报无偏、方差大；TD 自举方差小、有偏差（来自 Critic 的误差）。GAE 用 λ 在两者间连续调（第 4 篇）。"]], [4, "clip", "PPO 与 TRPO、clip 与 KL", ["<b>PPO vs TRPO</b>：同一个目标（别让一次更新走太远）。TRPO 用整体 KL 做硬约束、需要二阶近似；PPO 对每个样本的比率做一阶裁剪，一个 clamp 搞定。原文：OpenAI 的实验里 PPO 多数任务与 TRPO 相当甚至更好，而 TRPO 的二阶近似本身也有误差。", "<b>PPO-Clip vs PPO-Penalty</b>：后者把 β·KL 作为惩罚项加进目标、β 自适应调节；实践中 Clip 更常用。", "<b>裁剪 ≠ 约束了 KL</b>：clip 只管单个动作的比率，所有样本都推到边界时整体分布的变化仍可能超标，所以要同时监控 approx_kl。", "<b>policy loss 取 min，value loss 取 max</b>：值裁剪版本的价值损失是 max((V − R)², (V_clip − R)²)，同样是“取更保守的”，方向相反，附录 B.2 把它列为高频易错点。"]], [5, "mb", "model-based 与 model-free", ["<b>“模型”指什么</b>：环境的转移与奖励 P̂(s′|s,a)、R̂(s,a)，不是“神经网络模型”。DQN 有网络，但它是 model-free。", "<b>样本效率 vs 渐进性能</b>：model-based 省真实样本；样本无限时 model-free 通常最终更强，因为没有模型偏差。", "<b>数据增强路线 vs 搜索路线</b>：Dyna / MBPO 用模型“造数据”，最后仍以 model-free 方式训练策略；AlphaZero / MuZero / PETS 在决策时用模型搜索或规划。", "<b>确定性策略 vs 随机策略的 off-policy</b>：DDPG / TD3 靠确定性 μ(s) + 外加噪声；SAC 是随机策略，靠重参数化和熵项，同样 off-policy。"]], [6, "imit", "BC、离线 RL 与 DPO", ["<b>BC vs 离线 RL</b>：两者都只用固定数据。BC 不看奖励，数据里的动作照单全收；离线 RL 用奖励在数据支撑范围内<b>改进</b>策略，所以要担心外推误差。数据质量参差时，离线 RL 能挑出更好的动作，BC 只会学到平均水平。", "<b>SFT vs DPO</b>：SFT 是行为克隆，只告诉模型“这样回答可以”；DPO 用偏好对告诉它“这个比那个好”，是离线偏好优化（第 8 篇）。", "<b>DAgger vs GAIL</b>：都想覆盖策略自己会去的状态。DAgger 让专家现场补标，GAIL 只用现成示范、靠判别器把“像不像专家”变成奖励。"]], [7, "rm", "奖励模型 vs Critic", ["<b>RM</b> 评价<b>完整回答</b>“好不好”，从人类偏好训练、PPO 阶段冻结，给出的是奖励 r；<b>Critic</b> 评价<b>写到一半的前缀</b>“预计最终能拿多少”，从 RL 过程中的回报回归、和 Actor 一起更新，给出的是价值 V(s<sub>t</sub>)，用来算优势。", "<b>RM 分数 ≠ 人类偏好</b>：它是偏好的近似，策略会主动搜索它给分高、但人并不喜欢的区域。", "<b>SFT ≠ RLHF</b>：SFT 是监督学习（标准答案），RLHF 是强化学习（偏好奖励）；两者都属于后训练，训练信号不同。"]], [8, "family", "DPO、SFT 与 PPO-RLHF", ["<b>DPO vs SFT</b>：SFT 只拉高 y_w 的概率；DPO 要求 y_w 相对 y_l 的比值上升——如果两者概率一起涨（模型变“话多”），DPO 的损失不会下降。没有 rejected，DPO 跑不了；原文还提醒，高质量的 rejected（看似合理、实则有错的 hard negative）往往比 chosen 更难找、更重要。", "<b>DPO vs PPO-RLHF</b>：两者优化同一个 KL 正则目标；PPO 显式训练 RM、在线生成、用 Critic 估优势，DPO 把 RM 隐含在策略里、只用固定偏好对。DPO 是 offline，PPO 是 online（第 1 篇的四种数据形态）。", "<b>隐式奖励 vs RM 分数</b>：前者 β log(π_θ/π_ref) 由策略自身给出，训练中随策略变化；后者是独立网络的输出。", "<b>DPO 的 β vs RLHF 的 β</b>：是同一个 β——KL 正则的系数，推导中直接继承下来。"]], [9, "family", "GRPO 与 PPO、DPO、REINFORCE", ["<b>GRPO vs PPO</b>：基线从 Critic 的 V(s) 换成组内均值；保留比值与裁剪，不用 GAE；模型从 4 个变成 2 个（Policy + Reference，用规则奖励时无需 RM）。", "<b>GRPO vs DPO</b>：GRPO 在线生成、按奖励在组内比较；DPO 离线、按人标的偏好对比较。两者都在“比较”，但比较的对象来源不同。", "<b>GRPO vs REINFORCE</b>：GRPO 本质上是“组内均值当基线 + 归一化 + PPO 裁剪 + KL”的 REINFORCE；同一组的回答共享 prompt，唯一差异是采样随机性，所以组内比较是一个很好的控制变量。", "<b>token 比值 vs 序列比值</b>：GRPO 逐 token 裁剪；整段 logp 求和取指数是连乘、不是 GRPO；GSPO 用的是长度归一化后的几何平均。"]], [10, "prm", "ORM、PRM、验证器与奖励模型", ["<b>ORM vs PRM</b>：一条回答一个分 vs 每一步一个分。ORM 便宜稳定但归因困难；PRM 能定位错误但标注贵。", "<b>规则验证器 vs PRM</b>：验证器通常只能检查最终结果（答案、测试），是 ORM 的一种；Lean 这类形式化验证器能逐步检查，是确定性的 PRM。", "<b>覆盖率 vs 准确率</b>：覆盖率是“候选里有没有正确答案”，准确率还取决于“挑不挑得出来”。", "<b>训练计算 vs 推理计算</b>：前者改参数、提高上限，后者不动参数、让这一次更接近上限；知识型失败只能靠前者。"]], [11, "domains", "动作 token、观测 token 与 Agent 的“环境”", ["<b>动作 vs 观测</b>：模型自己采样的 token（思考、工具调用、回答）是动作，参与策略梯度；工具 / 网页 / API 返回的是观测，要 mask 掉。", "<b>轨迹奖励 vs 步骤优势</b>：前者是环境给的全部信号；后者是算法构造出来的、分给每一轮的功劳。", "<b>单轮 RL 的“环境”vs Agent 的环境</b>：前者只是把 token 拼到上下文；后者有隐藏状态 s₀，会随动作改变，可能随机、可能失败、需要沙箱。", "<b>指令 vs 数据</b>：网页、工具返回里出现的“指令”是数据，不是用户或系统的命令——这是对抗提示注入的核心原则。"]], [12, "over", "奖励黑客、规格博弈、谄媚与欺骗", ["<b>奖励黑客 vs 规格博弈</b>：常常是同一件事的两个视角——前者看“策略怎样拿到不该拿的分”，后者看“规则为什么允许它算成功”。都不要求智能体理解设计者意图。", "<b>谄媚 vs 欺骗</b>：谄媚是可测的行为倾向（答案随用户立场改变）；欺骗要证明策略利用评估者的错误判断换取后续收益，需要排除随机误差、分布偏移和提示歧义。", "<b>代理奖励 vs 独立效用</b>：训练系统直接优化的分数 vs 隐藏测试 / 人工 / 独立验证器给出的结果。早停看后者。", "<b>隐藏测试 vs 门禁集</b>：反复根据隐藏集调奖励、选模型以后，它也参与了训练决策；真正独立的只剩只用一次的门禁集。"]]];
+function cfDraw() {
+  var q = $('#cfQ').value.trim().toLowerCase(), box = $('#cfL'); box.innerHTML = ''; var hits = 0;
+  CF.forEach(function (g) {
+    var list = g[3].filter(function (p) { return !q || p.toLowerCase().indexOf(q) >= 0 || g[2].toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + g[0] + '/#' + g[1], html: (g[0] < 10 ? '0' : '') + g[0] + ' · ' + chs[g[0] - 1][1] + ' · ' + g[2] }, hd);
+    list.forEach(function (p) { S.h('p', { html: p }, box); hits++; });
+  });
+  $('#cfN').textContent = '共 ' + hits + ' 条';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的条目。' }, box);
+}
+$('#cfQ').addEventListener('input', cfDraw); cfDraw();
+
+/* ---------- 公式 ---------- */
+var FX = {"1": ["观测 s = [x, ẋ, θ, θ̇]；动作 a ∈ {左, 右}；每步 r = +1；|x| &gt; 2.4 或 |θ| &gt; ~12° 终止，500 步截断", "TD 误差 δ_t = r_t + γV(s_{t+1})(1 − terminated) − V(s_t)；GAE A_t = δ_t + γλ(1 − done)A_{t+1}", "PPO：r_t = exp(logπ_new − logπ_old)，loss = −min(r_t A_t, clip(r_t, 0.8, 1.2) A_t)", "裁剪比例 clipfrac = 平均 1[|r_t − 1| &gt; ε]；近似 KL ≈ 平均 (r − 1) − log r", "势能塑形 F(s, s′) = γΦ(s′) − Φ(s)，Σ γ^t F = γ^T Φ(s_T) − Φ(s_0)"], "2": ["DQN：y = r + γ(1 − d) max_{a′} Q(s′,a′;θ⁻)；L = 𝔼[(y − Q(s,a;θ))²]；每 C 步 θ⁻ ← θ", "软更新：θ⁻ ← τθ + (1 − τ)θ⁻（τ ≈ 0.005）", "过估计：𝔼[max_a Q̂(s,a)] ≥ max_a 𝔼[Q̂(s,a)]", "Double DQN：a* = argmax_{a′} Q(s′,a′;θ)，y = r + γ(1 − d) Q(s′,a*;θ⁻)", "Dueling：Q(s,a) = V(s) + A(s,a) − (1/|𝒜|) Σ_{a′} A(s,a′)", "PER：P(i) = p_i^α / Σ_k p_k^α，p_i = |δ_i| + ε；w_i = (1/(N·P(i)))^β", "n 步目标：y = Σ_{k&lt;n} γ^k r_{t+k} + γ^n max_a Q(s_{t+n},a;θ⁻)"], "3": ["策略梯度定理：∇J(θ) = 𝔼_π[Σ_t ∇log π_θ(a_t|s_t) · G_t]", "对数导数：∇log π = ∇π / π；𝔼_{a~π}[∇log π(a|s)] = 0（所以基线不改期望）", "带基线：∇J ≈ Σ_t ∇log π(a_t|s_t)(G_t − b(s_t))；优势 A(s,a) = Q(s,a) − V(s)", "Actor-Critic：δ = r + γV(s′) − V(s)；L_actor = −log π(a|s)·δ̄，L_critic = δ²", "高斯策略：∂log π/∂μ = (a − μ)/σ²，∂log π/∂σ = ((a − μ)² − σ²)/σ³"], "4": ["重要性采样：𝔼_{π_old}[(π_θ/π_old)·f] = 𝔼_{π_θ}[f]；r_t(θ) = π_θ(a_t|s_t) / π_old(a_t|s_t)", "TRPO：max 𝔼[r_t A_t]  s.t.  𝔼[KL(π_old ‖ π_θ)] ≤ δ", "PPO-Clip：L^CLIP = 𝔼[min(r_t A_t, clip(r_t, 1−ε, 1+ε) A_t)]；∂L/∂r ∈ {0, A}", "PPO-Penalty：𝔼[r_t A_t − β·KL(π_old, π_θ)]", "GAE：Â_t = Σ_k (γλ)^k δ_{t+k} = δ_t + γλ(1 − done_t) Â_{t+1}；returns = Â + V", "总损失：L = L^CLIP + c₁(V_θ(s) − V^targ)² − c₂ H[π_θ]，c₁ = 0.5，c₂ = 0.01"], "5": ["DPG：∇_θ J = 𝔼_s[∇_θ μ_θ(s) · ∇_a Q(s,a)|_{a=μ_θ(s)}]；DDPG Actor 损失 −Q(s, μ(s))", "软更新：θ′ ← τθ + (1 − τ)θ′，τ = 0.005", "TD3：a′ = clip(μ′(s′) + clip(𝒩(0, 0.2), −0.5, 0.5))；y = r + γ min(Q₁′, Q₂′)(s′, a′)；Actor 每 2 步更新", "SAC：J = 𝔼[Σ γ^t (r_t + α𝓗(π(·|s_t)))]；π* ∝ exp(Q/α)；V = α log Σ_a exp(Q/α)", "重参数化：a = μ(s) + σ(s) ⊙ ε，ε ~ 𝒩(0, I)；L_actor = 𝔼[α log π(a|s) − min Q(s,a)]", "模型误差：e_{t+1} ≤ L e_t + ε ⇒ e_T ≤ ε Σ_{i&lt;T} L^i"], "6": ["离线目标：max_θ 𝔼_{s~𝒟}[Q(s, π_θ(s))]  s.t.  D(π_θ ‖ π_β) ≤ ε；OOD 误差约放大 1/(1 − γ) 倍", "CQL：α(𝔼_s[log Σ_a exp Q(s,a)] − 𝔼_{(s,a)~𝒟}[Q(s,a)]) + L_Bellman", "IQL：L_V = 𝔼[|τ − 1(x&lt;0)|·x²]，x = Q(s,a) − V(s)；L_π = −𝔼[exp(βA) log π(a|s)]", "TD3+BC：L = −𝔼[Q(s, μ(s))] + λ𝔼[(μ(s) − a)²]，λ = α / mean|Q|，α = 2.5", "Return-to-go：R̂_t = Σ_{t′≥t} r_{t′}；DT 输入序列 (R̂₁, s₁, a₁, R̂₂, …)", "BC：L = −𝔼[log π(a|s)]；全程无错 (1 − ε)^T；累计代价 BC O(T²ε)，DAgger O(Tε)", "内在奖励：r_total = r_ext + β r_int；RND：r_int(s) = ‖f_ψ(s) − f̂(s)‖²"], "7": ["SFT：L = −Σ_t log π_θ(y_t | x, y_&lt;t)", "Bradley–Terry：P(y_w ≻ y_l | x) = σ(r(x,y_w) − r(x,y_l))；L_RM = −log σ(r_w − r_l)", "RLHF 目标：max 𝔼[r_RM(x,y)] − β·KL(π_θ(·|x) ‖ π_ref(·|x))", "token 奖励：r_t = −β(log π_θ(y_t|s_t) − log π_ref(y_t|s_t))，t = T 时再加 r_RM(x,y)", "优势：δ_t = r_t + γV(s_{t+1}) − V(s_t)，A_t = Σ(γλ)^l δ_{t+l}；PPO 比率 ρ_t = π_θ(y_t)/π_old(y_t)", "自适应 β：β ← β·(1 + (KL_obs − KL_target)/KL_target / horizon)"], "8": ["闭式解：π*(y|x) = π_ref(y|x)·exp(r(x,y)/β) / Z(x)", "反解：r(x,y) = β log(π*(y|x)/π_ref(y|x)) + β log Z(x)；BT 取差后 Z 抵消", "DPO：L = −log σ(β[(logπ_θ − logπ_ref)(y_w) − (logπ_θ − logπ_ref)(y_l)])", "隐式奖励：r_chosen = β log(π_θ(y_w)/π_ref(y_w))；margin = r_chosen − r_rejected；初始 loss = ln 2", "IPO：(Δ − 1/(2β))²；SimPO：−log σ(β(logp_w/|y_w| − logp_l/|y_l|) − γ)", "KTO：好样本 −log σ(β·logr − z_ref)，坏样本 −log σ(z_ref − β·logr)，λ_U &gt; λ_D"], "9": ["组内优势：Â_i = (r_i − mean(r_1..G)) / (std(r_1..G) + ε)；Dr.GRPO：Â_i = r_i − mean(r)", "GRPO 目标：(1/G)Σ_i (1/T_i)Σ_t [min(ρ_{i,t}Â_i, clip(ρ_{i,t}, 1−ε, 1+ε)Â_i) − β D̂_{i,t}]，ρ_{i,t} = π_θ(o_{i,t})/π_old(o_{i,t})", "k3 KL：D̂ = e^Δ − Δ − 1，Δ = log π_ref − log π_θ；≈ Δ²/2；β = 0.04（DeepSeekMath）", "有信号的概率：1 − p^G − (1 − p)^G", "GSPO：s_i = (Π_t ρ_{i,t})^{1/|y_i|}；DAPO：clip(ρ, 1 − ε_low, 1 + ε_high)", "GSM8K 规则奖励：0.5·1[有 \\boxed{}] + 1.0·1[答案等于标准答案]"], "10": ["覆盖率：P(至少一个正确) = 1 − (1 − p)^N；边际收益 P(N+1) − P(N) = p(1 − p)^N", "o1 读榜（原文）：AIME 2024 GPT-4o 单次 ~12% / 64 次共识 ~56%；o1 单次 ~74% / 64 次共识 ~83%", "ORM(q, o) ∈ ℝ；PRM(q, o, i) ∈ ℝ；r_t = PRM(q, o, step(t))", "聚合：mean = (1/T)Σp_i，min = min_i p_i，product = Π_i p_i", "预算恒等式：C_total = C_train + Q·C_test（Q 为预期请求量，第 12 篇）"], "11": ["状态：z_t = [s₀, c, x_{1:t}]（隐藏环境、任务上下文、token 历史）", "轨迹概率：ρ_θ(x | s₀, c) = 𝕀(s₀, x) · Π_{t∈a(x)} p_θ(x_t | c, x_{&lt;t})", "action mask 梯度：∇J = 𝔼[R(x) Σ_{t∈a(x)} ∇log p_θ(x_t | c, x_{&lt;t})]", "三层信号：R(τ_i) → A_{i,t} → Δθ = A_{i,t} Σ_{k∈a_{i,t}} ∇log π_θ(y_k | h_{i,t}, y_{&lt;k})", "GiGPO：A = A^E(τ) + ω·A^S(a_t)，A^S = (R_t − mean_{同状态组} R) / F_norm"], "12": ["策略实际求解 π_R* = argmax_π 𝔼_{τ~π}[R(τ)]；设计者想要 argmax 𝔼[U(τ)]；R 与 U 排序不同即可能分叉", "Gao 等人：d = √KL(π ‖ π_init)；gold_BoN(d) = d(α − βd)，gold_RL(d) = d(α − β log d)", "KL 约束：R′ = R_proxy − β·KL(π_θ(·|x) ‖ π_ref(·|x))", "奖励层模板：R(τ) = R_success − λ_p C_permission − λ_i C_irreversible；稳健组合 mean(r_k) − λ·Std(r_k)", "标准误 √(p(1 − p)/n)；Wilson 区间 (p̂ + z²/2n ± z√(p̂(1−p̂)/n + z²/4n²)) / (1 + z²/n)", "预算：C_total = C_train + Q·C_test"]}, fxP = '0';
+function fxDraw() {
+  var q = $('#fxQ').value.trim().toLowerCase(), box = $('#fxL'); box.innerHTML = ''; var hits = 0;
+  chs.forEach(function (c) {
+    var n = c[0], grp = n <= 6 ? '1' : n <= 10 ? '2' : '3';
+    if (fxP !== '0' && fxP !== grp) return;
+    var list = (FX[n] || []).filter(function (f) { return !q || f.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + n + '/#back', text: (n < 10 ? '0' : '') + n + ' · ' + c[1] }, hd);
+    list.forEach(function (f) { S.h('div', { class: 'fx', html: f }, box); hits++; });
+  });
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的公式。' }, box);
+}
+S.seg($('#fxP'), function (v) { fxP = v; fxDraw(); });
+$('#fxQ').addEventListener('input', fxDraw); fxDraw();
+
+S.notes($('#n-back'), {
+  c: [
+    ['① 教程要讲清什么', '一个系统采取行动、观察结果、改进下一次行动——表示决策、归因结果、确认真的变好。'],
+    ['② 算法怎么演化', '每一步修一个具体问题：装不下 → 网络；连续动作 → 策略梯度；方差 → Critic；走太远 → PPO；太重 → DPO / GRPO；单轮 → Agentic。'],
+    ['③ 怎么选、怎么复习', '按“手里有什么、缺什么”用选型器起步；先翻速记卡自测，再用算法卡、易混辨析和公式速查定位回看。']
+  ],
+  p: [
+    ['一条主线', 'CartPole → DQN → 策略梯度 → PPO → RLHF → DPO / GRPO → 推理 → Agentic RL'],
+    ['贯穿全书的坑', '奖励黑客、KL 漂移、熵坍缩、分布偏移、评测泄漏'],
+    ['这个系列的做法', '每节先铺垫，再动手实验，最后“记下来”自测；示意数据标“示意”，原教程数据标“原书数据”']
+  ],
+  ph: '一句话'
+});

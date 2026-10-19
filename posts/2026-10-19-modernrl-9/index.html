@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRPO、RLVR 与可验证奖励：用同题多答替代 Critic，用规则替代奖励模型</title>
+<meta name="description" content="动手学现代强化学习笔记（九）：GRPO 的组内相对优势怎样替代 Critic；从 PPO 改到 GRPO 只换了哪几行；逐 token 比值、裁剪与 k3 KL 估计；什么样的题提供学习信号、组大小怎么选；在浏览器里对比 GRPO 与无基线策略梯度；RLVR 的规则奖励与验证器漏洞；DeepSeek-R1-Zero、DAPO 的四项改进与 Dr.GRPO、GSPO、CISPO、VAPO。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='15' width='18' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 15L16 4' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='4' r='2.2' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.diff { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; white-space: pre-wrap; word-break: break-all; color: var(--ink-2); }
+.diff .m { color: var(--alert); } .diff .p { color: var(--ok); }
+textarea.field { min-height: 7.5em; font-family: var(--f-num); font-size: 15px; max-width: 100%; }
+</style>
+</head>
+<body data-series="modernrl-series" data-part="9">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>动手学现代强化学习 · 09</span><span>对应原教程第 15 章（docs/chapter18_grpo）与附录 B.4–B.5</span><span>约 55 分钟</span></p>
+  <h1>跟<em>同一道题的其他回答</em>比</h1>
+  <p class="lead">PPO 问“这个回答比 Critic 预估的好吗”，GRPO 问“这个回答比同一道题的其他回答好吗”。DeepSeekMath 提出 GRPO 时明确说它 foregoes the critic model：同一个 prompt 采 G 个回答，组内均值当基线、标准差做归一化，其余照搬 PPO 的比值和裁剪。再配上 RLVR——数学答案对不对、代码测试过不过直接当奖励——奖励模型也省了。原教程用一句话概括：GRPO = 在线组采样 + 规则 / 奖励打分 + 组内相对优势 + PPO 式裁剪更新。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">Hands-On Modern RL（动手学现代强化学习）</a>》（WalkingLabs 社区编写的开源课程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 1 日的仓库版本（docs/ 讲义与 code/ 实验代码））的学习笔记。原教程沿“CartPole → DQN → 策略梯度 → PPO → RLHF / DPO / GRPO → Agentic RL”一条线展开，这里按它的章节重新组织成十二篇，用自己的话重讲，并把关键实验搬进浏览器：CartPole 的 DQN 与 PPO 是用 JavaScript 真实训练的缩小版，其余公式演示的数值都在页面里实时计算。原教程数据（如训练日志 CSV、实验表格）标“原书数据”，为演示设的数值标“示意”，每节标出对应的原文路径。原教程自述“由 AI 协助生成、尚未全面审稿”，本笔记只采信能与原始论文对上的内容，存疑处单独注明。改编内容同样按 CC BY-NC-SA 4.0 分享、仅限非商业用途；数学推导部分可与同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>对照着读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-modernrl/"><b>总览</b>算法地图</a>
+  <a href="../2026-10-19-modernrl-1/" data-part="1"><b>01</b>训练闭环</a>
+  <a href="../2026-10-19-modernrl-2/" data-part="2"><b>02</b>DQN 家族</a>
+  <a href="../2026-10-19-modernrl-3/" data-part="3"><b>03</b>策略梯度</a>
+  <a href="../2026-10-19-modernrl-4/" data-part="4"><b>04</b>PPO 与 GAE</a>
+  <a href="../2026-10-19-modernrl-5/" data-part="5"><b>05</b>连续控制</a>
+  <a href="../2026-10-19-modernrl-6/" data-part="6"><b>06</b>离线与模仿</a>
+  <a href="../2026-10-19-modernrl-7/" data-part="7"><b>07</b>RLHF</a>
+  <a href="../2026-10-19-modernrl-8/" data-part="8"><b>08</b>DPO 家族</a>
+  <a href="../2026-10-19-modernrl-9/" aria-current="page" data-part="9"><b>09</b>GRPO 与 RLVR</a>
+  <a href="../2026-10-19-modernrl-10/" data-part="10"><b>10</b>推理与搜索</a>
+  <a href="../2026-10-19-modernrl-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-19-modernrl-12/" data-part="12"><b>12</b>奖励黑客与评测</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#grpo">组内优势</a><a href="#signal">学习信号</a><a href="#token">逐 token 细节</a><a href="#rlvr">可验证奖励</a><a href="#family">R1-Zero 与改进</a><a href="#back">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>GRPO 用什么替代了 Critic？为什么“同一题的组内均值”能当基线？</li>
+    <li>一组回答全对或全错时会发生什么？组大小 G 怎么选，DAPO 的动态采样在解决什么？</li>
+    <li>RLVR 的奖励从哪里来、可能被怎样钻空子？R1-Zero 证明了什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="grpo">
+  <div class="part-head"><h2>组内相对优势：没有 Critic 怎么知道好坏</h2><span class="meta">原文 docs/chapter18_grpo/grpo-practice-and-mechanism.md（15.1 节）</span></div>
+  <div class="sec-lede">
+    <p>Critic 在 LLM 训练里有三个问题（原文）：<strong>吃显存</strong>——和 Actor 同等规模，PPO 要同时装 Actor + Critic + Reference + RM；<strong>不稳定</strong>——要从“写到一半的文本”预测 500 个 token 之后才出现的分数；<strong>工程复杂</strong>——四套优化器和超参。但 Critic 的本职只是提供基线来降方差（第 3 篇）。GRPO 的想法是：同一个 prompt 采 G 个回答，它们的平均分就是 V(prompt) 的 G 次蒙特卡洛估计，直接拿来当基线。</p>
+    <p>组内优势 Â<sub>j,i</sub> = (r<sub>j,i</sub> − r̄<sub>j</sub>) / (s<sub>j</sub> + ε)：<strong>减均值</strong>替代 Critic，保证优势的正负与“是否好于同组平均”一致、组内期望为 0；<strong>除标准差</strong>把不同难度题目的优势拉到同一尺度（z-score）。原文的苹果题：4 个回答得 1.5、1.0、0、0，均值 0.625，前两个该多生成、后两个该少生成。一条回答只有一个结果奖励，所以它的所有 token 共享同一个 Â；但比值、裁剪、KL 仍然逐 token 计算。</p>
+    <p>原文用一个 diff 说明“到底换了哪几行”：生成、打分、比值、裁剪都不变，只是删掉 <code>values = critic(...)</code> 和 <code>advantages = rewards − values</code>，换成按组 reshape 后减均值、除标准差。GRPO 也<strong>没有继承 GAE</strong>：奖励只在序列末尾、又没有逐 token 的 V，多步 TD 退化为单步，和“最终奖励减均值”没有本质区别。显存上，原文给的经验是比 PPO 省约 30–40%。</p>
+    <p class="go">编辑一组回答的奖励，看 GRPO 和 Dr.GRPO 的优势。</p>
+  </div>
+  <div>
+    <div class="lab">
+      <p class="lab-t">组内优势计算器（默认值是原文的苹果题）</p>
+      <div class="btnrow"><input class="field" id="gaI" value="1.5, 1.0, 0, 0" aria-label="一组回答的奖励，逗号分隔" style="max-width:280px"><button class="btn pri" type="button" id="gaB">计算</button></div>
+      <div class="selrow"><span>预设</span><div class="seg" id="gaP"><button data-v="1.5, 1.0, 0, 0">苹果题</button><button data-v="1.5, 0, 1.5, 0, 1.0, 1.5, 0.5, 1.5">原文 8 个回答</button><button data-v="1, 1, 1, 1, 1, 1, 1, 1">全对</button><button data-v="1, 0, 0, 0, 0, 0, 0, 0">8 个里只对 1 个</button></div></div>
+      <div id="gaBars"></div>
+      <p class="cap" id="gaW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">从 PPO 改到 GRPO（摘自原文 15.1 节）</p>
+      <div class="diff">  responses = policy_old.generate(prompts)
+  rewards = reward_model_or_rule(prompts, responses)
+<span class="m">- values = critic(prompts, responses)</span>
+<span class="m">- advantages = rewards - values</span>
+<span class="p">+ rewards_by_group = rewards.view(batch_size, G)</span>
+<span class="p">+ group_mean = rewards_by_group.mean(dim=1, keepdim=True)</span>
+<span class="p">+ group_std = rewards_by_group.std(dim=1, keepdim=True)</span>
+<span class="p">+ advantages = ((rewards_by_group - group_mean)</span>
+<span class="p">+               / (group_std + 1e-4)).view(-1)</span>
+  loss = ppo_style_clipped_loss(logps_new, logps_old, advantages)</div>
+    </div>
+  </div>
+  <div class="card2 algo" data-algo="GRPO">
+    <h3>算法卡 · GRPO</h3><p class="en">Group Relative Policy Optimization（DeepSeekMath, Shao et al., 2024）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>PPO 的 Critic 吃显存、难训、工程复杂，而 LLM 的奖励只在末尾。</dd>
+      <dt>核心做法</dt><dd>每个 prompt 在线采 G 个回答 → 打分 → 组内 z-score 作为每个回答的优势 → 逐 token 比值、裁剪、KL → 只更新 Policy。</dd>
+      <dt>关键公式</dt><dd>Â<sub>i</sub> = (r<sub>i</sub> − mean(r)) / (std(r) + ε)；J = (1/G)Σ<sub>i</sub>(1/T<sub>i</sub>)Σ<sub>t</sub>[min(ρ<sub>i,t</sub>Â<sub>i</sub>, clip(ρ<sub>i,t</sub>, 1 ± ε)Â<sub>i</sub>) − βD̂<sub>i,t</sub>]</dd>
+      <dt>何时用</dt><dd>有可计算奖励（规则验证器或 RM）的在线后训练，尤其是数学、代码等长推理任务。</dd>
+      <dt>代价与坑</dt><dd>每题采 G 次，生成成本高；全对 / 全错的组没有信号；除以 std 和按长度平均会带来偏差（Dr.GRPO）；奖励稀疏时样本浪费。</dd>
+      <dt>相关</dt><dd>REINFORCE + 基线（第 3 篇）、PPO 裁剪（第 4 篇）；DAPO / Dr.GRPO / GSPO / VAPO（下文）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-grpo"></div>
+</section>
+
+<section class="part" id="signal">
+  <div class="part-head"><h2>哪些题提供学习信号：全对和全错都学不到东西</h2><span class="meta">原文 15.1“组内方差的演化”“k 值的选择”、deepseek-dapo.md（15.2）</span></div>
+  <div class="sec-lede">
+    <p>组内标准差为 0 时（全对或全错），所有优势都是 0，这道题这一轮<strong>没有任何梯度</strong>。原文把训练后期的这种现象叫“毕业”：模型已经全会的题自然退出训练，信号转移到还没掌握的题上。反过来，太难的题全错，同样没有信号。所以真正有用的是“有对有错”的题：单次正确率为 p、组大小为 G 时，这个概率是 1 − p<sup>G</sup> − (1 − p)<sup>G</sup>。</p>
+    <p>原文给的组大小经验：G = 2 均值和标准差极不稳定，只适合快速验证；4 资源有限时用；<strong>8 是默认推荐</strong>；16 更稳；DeepSeekMath 正式实验用的是 64。<strong>DAPO</strong> 的“动态采样”直接针对这个问题：采样后过滤掉已经全对（或全错）的 prompt，只保留有梯度信号的，补满 batch 再训练。</p>
+    <p>下面先算这个概率，再在一个小模型上真的跑一遍：策略是 6 种“解题路线”上的 softmax，每条路线答对的概率不同（0.05 到 0.8），奖励 = 格式分 0.5（总能拿到）+ 答对 1。比较 GRPO（组内 z-score）、Dr.GRPO（只减均值）和不减基线的 REINFORCE（奖励直接乘对数概率梯度）。</p>
+    <p class="go">先估一下，再拖动组大小。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一组里“有对有错”的概率 1 − pᴳ − (1 − p)ᴳ</p>
+      <div id="sgC"></div>
+    </div>
+    <div class="lab"><p class="lab-t">先估再算</p><div id="sgG"></div></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">小规模 GRPO 实验：6 条解题路线、0/1 奖励、每步 8 道“题”（各 30 个种子平均，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>组大小 G <output id="gtG">8</output></span><input type="range" id="gtGs" min="2" max="16" step="2" value="8"></label>
+    </div>
+    <div class="seg" id="gtM"><button data-v="acc" aria-pressed="true">期望正确率</button><button data-v="zero">零信号组比例</button></div>
+    <div id="gtC"></div>
+    <p class="cap" id="gtW"></p>
+  </div>
+  <div class="notes" id="n-signal"></div>
+</section>
+
+<section class="part" id="token">
+  <div class="part-head"><h2>逐 token 的比值、裁剪与 KL</h2><span class="meta">原文 15.1“策略比值与 PPO Clip”“KL 惩罚”、grpo-family.md（GSPO）</span></div>
+  <div class="sec-lede">
+    <p>原文专门纠正了一个常见的实现错误：GRPO 原始定义（DeepSeekMath 式 3）是<strong>每个 token 分别</strong>算比值 ρ<sub>t</sub> = π<sub>θ</sub>(o<sub>t</sub>)/π<sub>old</sub>(o<sub>t</sub>)、分别裁剪，再对一段回答的有效 token 求平均，最后对组内回答求平均。如果先把整段 logp 求和再取指数，得到的是所有 token 比值的<strong>连乘</strong>：长度被带进比值，整段只裁剪一次——那不是 GRPO。原文的例子：三个 token 比值 [1.1, 0.9, 1.5]，逐 token 裁剪得 [1.1, 0.9, 1.2]；连乘是 1.485，裁成 1.2。</p>
+    <p><strong>GSPO</strong>（Qwen3 采用）则是有意地改用序列级比值，但必须做长度归一化：s<sub>i</sub> = (Π<sub>t</sub>ρ<sub>t</sub>)<sup>1/|y|</sup>，即 token 比值的几何平均——原文说这对 MoE 模型训练的稳定性很重要，代价是单 token 的信用分配变粗。另一个细节是归约方式：原始 GRPO 每段回答先除以自己的长度（TRL 的 <code>loss_type="grpo"</code>），把整个 batch 的 token 一起平均则是 <code>bnpo</code>，长回答权重更大。</p>
+    <p>KL 惩罚也逐 token 计算，用的是 k3 估计：D̂ = e<sup>Δ</sup> − Δ − 1，Δ = log π<sub>ref</sub> − log π<sub>θ</sub>。原文证明了它的三条性质：<strong>恒非负</strong>（u − log u − 1 是凸函数，最小值 0 在 Δ = 0）；<strong>无偏</strong>（在 π<sub>θ</sub> 下期望正好等于 KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)）；<strong>小偏差处约等于 Δ²/2</strong>。朴素估计 −Δ 虽然也无偏，但单个样本可能为负。DeepSeekMath 用 β = 0.04。</p>
+    <p class="go">输入三个 token 的比值，比较三种算法怎么处理；再看 k3 的形状。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">同一段回答的三种比值处理（ε = 0.2）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>ρ₁ <output id="r1">1.10</output></span><input type="range" id="r1s" min="0.5" max="1.8" step="0.05" value="1.1"></label>
+        <label class="ctl"><span>ρ₂ <output id="r2">0.90</output></span><input type="range" id="r2s" min="0.5" max="1.8" step="0.05" value="0.9"></label>
+        <label class="ctl"><span>ρ₃ <output id="r3">1.50</output></span><input type="range" id="r3s" min="0.5" max="1.8" step="0.05" value="1.5"></label>
+      </div>
+      <div class="tblw"><table class="calc" id="rtT"></table></div>
+      <p class="cap" id="rtW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">KL 估计：k3 = e^Δ − Δ − 1</p>
+      <label class="ctl"><span>Δ = log π_ref − log π_θ <output id="k3D">0.50</output></span><input type="range" id="k3Ds" min="-2" max="2" step="0.05" value="0.5"></label>
+      <div id="k3C"></div>
+      <p class="cap" id="k3W"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-token"></div>
+</section>
+
+<section class="part" id="rlvr">
+  <div class="part-head"><h2>RLVR：规则就是裁判</h2><span class="meta">原文 docs/chapter18_grpo/rlvr.md（15.3）、rl-environments.md（15.5）</span></div>
+  <div class="sec-lede">
+    <p>数学有标准答案、代码能跑单元测试、形式证明能用 Lean 检查——这些任务可以直接把<strong>验证结果</strong>当奖励，这就是可验证奖励强化学习（RLVR）。原文的 GSM8K 例子：抽出 <code>\boxed{…}</code> 里的答案，有框 +0.5（格式），数值对 +1.0（正确性），满分 1.5。不用训练 RM，不用偏好标注，奖励确定、可复查。训练后模型从“直接猜答案”变成“先列算式再计算”——不是谁教的，而是因为展示步骤更容易拿到高分。</p>
+    <p>原文给验证器定了三条标准：<strong>确定性</strong>、<strong>正确性</strong>（等价表示要判对：22/7 与 3.1428…、(x+1)(x−2) 与 x² − x − 2，需要数值容差和符号化简）、<strong>高效</strong>（不能成为训练瓶颈）；还要<strong>抗作弊</strong>。RLVR 被 hack 的方式和 RM 不同：模型利用的是验证器<strong>遗漏的条件</strong>——只检查格式、只匹配最后一个数字、单元测试覆盖不全、甚至去改测试本身（第 12 篇）。原文也记录了一个开放争议：RLVR 究竟是在“注入新推理能力”，还是只是提高了模型在已有能力里搜到正确答案的效率？</p>
+    <p class="go">在下面写一个回答，看原文那个规则奖励函数给几分；试试怎样“骗分”。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原文 GSM8K 规则奖励（题目：每天 16 个蛋，早上吃 3 个、下午烤松饼用 4 个，每周能卖多少？标准答案 63）</p>
+    <textarea class="field" id="rvI" aria-label="模型回答">首先计算每天剩余的鸡蛋数：16 - 3 - 4 = 9 个
+每周有 7 天，所以每周能卖：9 × 7 = 63 个
+\boxed{63}</textarea>
+    <div class="btnrow"><div class="seg" id="rvP"><button data-v="good">原文的好回答</button><button data-v="bad">原文的坏回答</button><button data-v="hack">只写框</button><button data-v="multi">框里写两个数</button></div></div>
+    <div class="read"><div><div class="v" id="rvF">–</div><div class="k">格式分</div></div><div><div class="v" id="rvA">–</div><div class="k">答案分</div></div><div class="hl"><div class="v" id="rvT">–</div><div class="k">总奖励</div></div></div>
+    <p class="cap" id="rvW"></p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th></th><th>RLHF（奖励模型）</th><th>RLVR（验证器）</th></tr></thead>
+    <tbody>
+      <tr><td>数据成本</td><td>人工偏好对</td><td>标准答案或测试用例</td></tr>
+      <tr><td>奖励质量</td><td>受标注一致性与 RM 误差影响</td><td>受验证器覆盖范围影响</td></tr>
+      <tr><td>适用</td><td>主观偏好：礼貌、安全、有帮助</td><td>客观任务：数学、代码、逻辑</td></tr>
+      <tr><td>被 hack 的方式</td><td>利用 RM 的盲区（长度、格式、讨好）</td><td>利用验证器遗漏的条件</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 rlvr.md“与传统 RLHF 的对比”表（节选）。</p>
+  <div class="card2 algo" data-algo="RLVR">
+    <h3>算法卡 · RLVR</h3><p class="en">Reinforcement Learning with Verifiable Rewards</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>RM 需要标注、有噪声、会被 hack；而很多任务本身就能自动判对错。</dd>
+      <dt>核心做法</dt><dd>用确定性验证器（答案匹配、单元测试、形式证明）给回答打分，通常配合 GRPO / PPO 在线训练；格式分 + 正确性分。</dd>
+      <dt>关键公式</dt><dd>r = 0.5·1[格式合规] + 1.0·1[答案等价于标准答案]（原文 GSM8K 示例）</dd>
+      <dt>何时用</dt><dd>数学、代码、工具调用参数、逻辑推理等有客观对错的任务。</dd>
+      <dt>代价与坑</dt><dd>不适用主观偏好；验证器漏洞会被利用；奖励稀疏（太难全错、太易全对）；“提升能力还是提升搜索效率”仍有争议。</dd>
+      <dt>相关</dt><dd>GRPO（本篇）；PRM 给每一步打分（第 10 篇）；验证器漏洞与评测泄漏（第 12 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-rlvr"></div>
+</section>
+
+<section class="part" id="family">
+  <div class="part-head"><h2>R1-Zero、DAPO 与 GRPO 的改进路线</h2><span class="meta">原文 docs/chapter18_grpo/deepseek-dapo.md（15.2）、grpo-family.md（15.4）</span></div>
+  <div class="sec-lede">
+    <p>在 DeepSeek-R1 之前，几乎没人质疑“必须先 SFT 再 RL”。<strong>R1-Zero</strong> 证明：在有客观规则奖励的领域，可以直接对 base 模型做大规模 GRPO，不需要 SFT 冷启动——只要偶尔答对一次拿到奖励，RL 就会强化那条路径。训练中出现了长思维链、自我检查（“等等，让我重新算一下”的 aha moment）等涌现行为。原文的解读是：推理的“原材料”来自预训练，RL 把它们组织成可用的解题策略。R1-Zero 的缺点是语言混杂、可读性差，所以正式的 DeepSeek-R1 用了多阶段流程（见下）。SimpleRL-Zoo 等开源工作在多种 base 模型上复现了“zero RL”，也说明 base 模型的选择决定了起点和上限。</p>
+    <p><strong>DAPO</strong> 针对 GRPO 的四个工程痛点：<strong>Clip-Higher</strong>（上下界解耦，给低概率但有潜力的 token 更多上升空间，防止探索被压死）；<strong>动态采样</strong>（过滤全对 / 全错的 prompt）；<strong>token 级损失</strong>（按 token 而非按序列平均，长回答里的 token 不被稀释）；<strong>超长奖励塑形</strong>（用平滑的长度惩罚代替硬截断）。原文给的结果是 DAPO 用 R1-Zero 一半的训练步数在 AIME 2024 上达到 50 分。</p>
+    <p>原文把 2025 年之后的变体按“修补哪一处”归为几条路线：<strong>Dr.GRPO</strong> 指出除以 std（以及按回答长度平均）会引入偏差、助长回答变长，改为只减均值；<strong>GSPO</strong> 改用长度归一化的序列级比值（MoE 更稳）；<strong>CISPO</strong> 裁剪重要性权重本身而不是丢弃 token 的梯度；<strong>VAPO</strong> 反其道而行，重新引入 value model + GAE 做 token 级信用分配——原文的评语是“critic-free 是工程妥协，不是算法必然”。原文最后的建议是建立一种判断力：看到新变体时，先问它修补的是归一化、比值层级、裁剪对象，还是价值估计。</p>
+    <p class="go">点 DeepSeek-R1 的五个阶段看各自的作用。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">DeepSeek-R1 的多阶段流程（原文 15.2 节）</p>
+    <ol class="flow2" id="r1F">
+      <li>冷启动 SFT<small>少量高质量长思维链数据，让模型先学会基本的输出格式与可读的语言——修 R1-Zero 的语言混杂问题。</small></li>
+      <li>大规模 GRPO（推理 RL）<small>核心阶段：数学、代码等可验证任务上的规则奖励，强化推理能力。</small></li>
+      <li>拒绝采样<small>用 RL 后的模型大量生成，只留下正确且可读的样本，造出新的高质量数据。</small></li>
+      <li>SFT 精调<small>用筛选出的数据（加上通用数据）再做一轮 SFT，提升格式和语言质量、覆盖非推理任务。</small></li>
+      <li>二次 RL<small>结合奖励模型与规则奖励的 GRPO，做最终的有用性 / 安全性对齐。</small></li>
+    </ol>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>变体</th><th>改了什么</th><th>针对的问题</th><th>原文提到的使用者</th></tr></thead>
+    <tbody>
+      <tr><td>DAPO</td><td>Clip-Higher、动态采样、token 级损失、超长奖励塑形</td><td>探索被压、零信号样本、长序列稀释、长度失控</td><td>字节 Seed + 清华</td></tr>
+      <tr><td>Dr.GRPO</td><td>只减均值、不除 std</td><td>归一化偏差、回答长度膨胀</td><td>—</td></tr>
+      <tr><td>GSPO</td><td>序列级比值（长度归一化的几何平均）</td><td>token 级比值方差大，MoE 训练不稳</td><td>Qwen3</td></tr>
+      <tr><td>CISPO</td><td>裁剪重要性权重，保留所有 token 的梯度</td><td>裁剪后 token 不再更新</td><td>MiniMax-M1</td></tr>
+      <tr><td>VAPO</td><td>重新引入 value model + GAE</td><td>长思维链的 token 级信用分配</td><td>字节 Seed</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">按原文 grpo-family.md 选型表整理。原教程自述有 AI 协助生成，这一节里个别工程细节（如某些模型的内部做法与分数）我没有核实，表中只保留与原论文标题和摘要一致的部分。</p>
+  <div class="card2 algo" data-algo="DAPO">
+    <h3>算法卡 · DAPO</h3><p class="en">Decoupled Clip and Dynamic Sampling Policy Optimization</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>GRPO 在长思维链训练中的熵坍缩、零信号样本、长回答 token 被稀释、长度失控。</dd>
+      <dt>核心做法</dt><dd>上下裁剪界解耦（上界放宽）；过滤全对 / 全错的组；token 级平均；平滑的超长惩罚。</dd>
+      <dt>关键公式</dt><dd>clip(ρ, 1 − ε<sub>low</sub>, 1 + ε<sub>high</sub>)，ε<sub>high</sub> &gt; ε<sub>low</sub>；loss 对 batch 内全部有效 token 求平均</dd>
+      <dt>何时用</dt><dd>数学 / 代码 RLVR 的长推理训练；多轮工具调用（原文选型树）。</dd>
+      <dt>代价与坑</dt><dd>动态采样要多生成来补满 batch；token 级平均会给长回答更大权重。</dd>
+      <dt>相关</dt><dd>GRPO、Dr.GRPO；超长塑形与第 10 篇的思考预算控制。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：GRPO 与 PPO、DPO、REINFORCE</h4>
+    <p><b>GRPO vs PPO</b>：基线从 Critic 的 V(s) 换成组内均值；保留比值与裁剪，不用 GAE；模型从 4 个变成 2 个（Policy + Reference，用规则奖励时无需 RM）。</p>
+    <p><b>GRPO vs DPO</b>：GRPO 在线生成、按奖励在组内比较；DPO 离线、按人标的偏好对比较。两者都在“比较”，但比较的对象来源不同。</p>
+    <p><b>GRPO vs REINFORCE</b>：GRPO 本质上是“组内均值当基线 + 归一化 + PPO 裁剪 + KL”的 REINFORCE；同一组的回答共享 prompt，唯一差异是采样随机性，所以组内比较是一个很好的控制变量。</p>
+    <p><b>token 比值 vs 序列比值</b>：GRPO 逐 token 裁剪；整段 logp 求和取指数是连乘、不是 GRPO；GSPO 用的是长度归一化后的几何平均。</p>
+  </div>
+  <div class="notes" id="n-family"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">组内优势：Â_i = (r_i − mean(r_1..G)) / (std(r_1..G) + ε)；Dr.GRPO：Â_i = r_i − mean(r)</div>
+    <div class="fx">GRPO 目标：(1/G)Σ_i (1/T_i)Σ_t [min(ρ_{i,t}Â_i, clip(ρ_{i,t}, 1−ε, 1+ε)Â_i) − β D̂_{i,t}]，ρ_{i,t} = π_θ(o_{i,t})/π_old(o_{i,t})</div>
+    <div class="fx">k3 KL：D̂ = e^Δ − Δ − 1，Δ = log π_ref − log π_θ；≈ Δ²/2；β = 0.04（DeepSeekMath）</div>
+    <div class="fx">有信号的概率：1 − p^G − (1 − p)^G</div>
+    <div class="fx">GSPO：s_i = (Π_t ρ_{i,t})^{1/|y_i|}；DAPO：clip(ρ, 1 − ε_low, 1 + ε_high)</div>
+    <div class="fx">GSM8K 规则奖励：0.5·1[有 \boxed{}] + 1.0·1[答案等于标准答案]</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. GRPO 用什么替代了 Critic？为什么组内均值能当基线？</summary><p class="ans">同一 prompt 的 G 个回答的平均奖励（再除以组内标准差）。Critic 的本职是估计“这个 prompt 下平均能拿多少分”来降方差，而同一 prompt 的 G 个回答正是 V(prompt) 的 G 次蒙特卡洛样本，均值就是它的估计；组内回答只在采样随机性上不同，比较起来是很好的控制变量。</p></details>
+    <details><summary>2. 全对或全错时会怎样？G 怎么选？DAPO 的动态采样解决什么？</summary><p class="ans">组内标准差为 0，所有优势为 0，这组没有梯度（“毕业”或太难）。有信号的概率是 1 − p^G − (1 − p)^G，G 越大越不容易落空，原文默认 8、大规模用到 64；G 太小统计量不稳。DAPO 动态采样过滤掉全对 / 全错的 prompt、补满 batch，避免算力浪费在零信号样本上。</p></details>
+    <details><summary>3. RLVR 的奖励从哪来、会被怎样钻空子？R1-Zero 证明了什么？</summary><p class="ans">来自确定性验证器：答案匹配、单元测试、形式证明。会被利用的是验证器遗漏的条件——只看格式、只查框里的数、测试覆盖不全、改测试本身。R1-Zero 证明在有规则奖励的领域可以跳过 SFT 直接对 base 模型做大规模 GRPO，并涌现长思维链和自我检查；但可读性差，正式版 R1 用了冷启动 SFT → GRPO → 拒绝采样 → SFT → 二次 RL 的多阶段流程。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-modernrl-8/"><small>上一篇</small><span>08 · DPO 与离线偏好优化</span></a><a class="nx" href="../2026-10-19-modernrl-10/"><small>下一篇</small><span>10 · 推理模型、测试时计算与过程奖励</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">walkinglabs/hands-on-modern-rl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 组内优势 ---------- */
+function ga() {
+  var rs = $('#gaI').value.split(/[,，\s]+/).filter(function (x) { return x !== ''; }).map(Number).filter(function (x) { return isFinite(x); }).slice(0, 16);
+  if (rs.length < 2) { $('#gaW').textContent = '至少输入两个奖励。'; return; }
+  var G = rs.length, mu = rs.reduce(function (a, b) { return a + b; }, 0) / G, sd = Math.sqrt(rs.reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / (G - 1));
+  var A = rs.map(function (r) { return sd < 1e-4 ? 0 : (r - mu) / (sd + 1e-4); }), D = rs.map(function (r) { return r - mu; }), mx = Math.max(1e-9, Math.max.apply(null, A.map(Math.abs)));
+  var html = '<div class="bars wide">';
+  html += rs.map(function (r, i) { var w = Math.abs(A[i]) / mx * 50; return '<span class="lb">回答 ' + (i + 1) + '（r = ' + r + '）</span><span class="tr"><span class="fl ' + (A[i] >= 0 ? '' : 'alt') + '" style="width:' + w + '%;margin-left:' + (A[i] >= 0 ? 50 : 50 - w) + '%"></span></span><span class="nv">' + S.f(A[i], 2) + ' / ' + S.f(D[i], 2) + '</span>'; }).join('');
+  $('#gaBars').innerHTML = html + '</div>';
+  $('#gaW').innerHTML = '均值 ' + S.f(mu, 3) + '，标准差 ' + S.f(sd, 3) + '（按 PyTorch 默认的 G − 1 分母）。右侧两个数依次是 GRPO 优势（除以 std）和 Dr.GRPO 优势（只减均值）。' +
+    (sd < 1e-4 ? '<b>标准差为 0：全组优势为 0，这道题这一轮没有任何训练信号。</b>' : rs.filter(function (r) { return r > mu; }).length === 1 && G >= 6 ? '只有一个回答高于均值：除以很小的 std 后它的优势被放得很大，这是 Dr.GRPO 质疑的“归一化偏差”之一——难题上偶然答对一次会被强烈放大。' : '高于均值的回答得到正优势、被强化；低于均值的被抑制。同一回答里的每个 token 共享这个优势。') +
+    '（原文 8 个回答的例子用的是总体标准差 0.634，得到 0.89 / −1.48 / 0.10 / −0.69；这里用 G − 1 分母，数值按同一比例略小，正负顺序不变。）';
+}
+$('#gaB').addEventListener('click', ga); $('#gaI').addEventListener('keydown', function (e) { if (e.key === 'Enter') ga(); });
+S.seg($('#gaP'), function (v) { $('#gaI').value = v; ga(); }); ga();
+S.notes($('#n-grpo'), {
+  c: [
+    ['同题多答', '同一 prompt 在线采 G 个回答，放在一组比较。'],
+    ['组内均值', '替代 Critic 的基线：V(prompt) 的蒙特卡洛估计。'],
+    ['除以 std', 'z-score，把不同难度题目的优势拉到同一尺度。'],
+    ['共享优势', '结果奖励只有一个，同一回答的 token 共享 Â。'],
+    ['不用 GAE', '奖励只在末尾、无逐 token V，多步 TD 退化为单步。']
+  ],
+  p: [
+    ['一句话', 'GRPO = 在线组采样 + 规则 / 奖励打分 + 组内相对优势 + PPO 裁剪'],
+    ['苹果题', '[1.5, 1.0, 0, 0] → 均值 0.625 → +0.875, +0.375, −0.625, −0.625'],
+    ['模型数', '2 个（Policy + Reference）；PPO 4 个'],
+    ['显存（原文经验）', '比 PPO 省约 30–40%'],
+    ['TRL 对应', 'num_generations = G；reward_funcs 可以是普通 Python 函数']
+  ]
+});
+
+/* ---------- 信号概率 ---------- */
+var sgChart = S.chart($('#sgC'), { h: 230, x: [0, 1], y: [0, 1], xt: [0, 0.25, 0.5, 0.75, 1], yt: [0, 0.5, 1], xl: '单次正确率 p', yl: '有对有错的概率' });
+sgChart({ curves: [2, 4, 8, 16].map(function (G, i) { return { f: function (p) { return 1 - Math.pow(p, G) - Math.pow(1 - p, G); }, c: ['dim', 'c3', 'c1', 'ok'][i], label: 'G = ' + G }; }) });
+S.guess($('#sgG'), { q: '某道题模型已经有 90% 的单次正确率，组大小 G = 8。这道题这一轮“有对有错、能提供梯度”的概率是百分之多少？', unit: '%', ans: (1 - Math.pow(0.9, 8) - Math.pow(0.1, 8)) * 100, fmt: function (x) { return S.f(x, 0); }, why: '1 − 0.9⁸ − 0.1⁸ ≈ 0.57：有 43% 的时候 8 个回答全对，这道题白采了 8 次。正确率到 99% 时只剩 8%。这就是“毕业”，也是 DAPO 动态采样要过滤的样本。' });
+
+/* ---------- 小 GRPO 实验 ---------- */
+var PC = [0.05, 0.15, 0.3, 0.45, 0.6, 0.8], gtMetric = 'acc', gtData = null;
+function gtRun(G, mode, seed) {
+  var r = S.rng(seed), th = [0.6, 0.4, 0.2, 0, -0.2, -0.6], acc = [], zero = [];
+  for (var step = 0; step < 60; step++) {
+    var p = S.softmax(th, 1), g = [0, 0, 0, 0, 0, 0], nz = 0;
+    for (var q = 0; q < 8; q++) {
+      var acts = [], rew = [];
+      for (var i = 0; i < G; i++) { var u = r(), a = 0, c = p[0]; while (u > c && a < 5) { a++; c += p[a]; } acts.push(a); rew.push(0.5 + (r() < PC[a] ? 1 : 0)); }
+      var mu = rew.reduce(function (s, x) { return s + x; }, 0) / G, sd = Math.sqrt(rew.reduce(function (s, x) { return s + (x - mu) * (x - mu); }, 0) / (G - 1));
+      if (sd < 1e-6) nz++;
+      for (i = 0; i < G; i++) {
+        var A = mode === 'grpo' ? (sd < 1e-6 ? 0 : (rew[i] - mu) / sd) : mode === 'dr' ? rew[i] - mu : rew[i];
+        for (var k = 0; k < 6; k++) g[k] += A * ((k === acts[i] ? 1 : 0) - p[k]) / (8 * G);
+      }
+    }
+    var lr = 0.5;
+    for (k = 0; k < 6; k++) th[k] += lr * g[k];
+    p = S.softmax(th, 1);
+    acc.push(p.reduce(function (s, x, k) { return s + x * PC[k]; }, 0)); zero.push(nz / 8);
+  }
+  return { acc: acc, zero: zero };
+}
+var gtChart = S.chart($('#gtC'), { h: 250, x: [1, 60], xt: [1, 20, 40, 60], xl: '训练步（每步 8 道题 × G 个回答）' });
+function gt() {
+  var G = +$('#gtGs').value; $('#gtG').textContent = G;
+  var M = { grpo: ['GRPO（÷std）', 'c1'], dr: ['Dr.GRPO（只减均值）', 'ok'], none: ['不减基线（奖励直接当权重）', 'dim'] }, res = {};
+  Object.keys(M).forEach(function (m) { var acc = new Array(60).fill(0), zero = new Array(60).fill(0), fin = []; for (var s = 0; s < 30; s++) { var o = gtRun(G, m, s * 131 + 7); o.acc.forEach(function (v, i) { acc[i] += v / 30; }); o.zero.forEach(function (v, i) { zero[i] += v / 30; }); fin.push(o.acc[59]); } var mu = fin.reduce(function (a, b) { return a + b; }, 0) / 30; res[m] = { acc: acc, zero: zero, sd: Math.sqrt(fin.reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / 30) }; });
+  gtData = { res: res, M: M, G: G }; gtDraw();
+}
+function gtDraw() {
+  var d = gtData, curves = Object.keys(d.M).map(function (m) { return { pts: d.res[m][gtMetric].map(function (v, i) { return [i + 1, v]; }), c: d.M[m][1], label: d.M[m][0] }; });
+  if (gtMetric === 'acc') gtChart({ y: [0.2, 0.85], yt: [0.2, 0.4, 0.6, 0.8], yl: '策略的期望正确率', curves: curves, hl: [{ y: 0.8, c: 'dim', label: '最好路线 0.8' }] });
+  else gtChart({ y: [0, 1], yt: [0, 0.25, 0.5, 0.75, 1], yl: '全对 / 全错的组所占比例', curves: curves.slice(0, 1), hl: [] });
+  var r = d.res, f = function (m) { return S.f(r[m].acc[59], 3); }, sd = function (m) { return S.f(r[m].sd, 3); };
+  $('#gtW').innerHTML = 'G = ' + d.G + '：60 步后期望正确率 GRPO ' + f('grpo') + '、Dr.GRPO ' + f('dr') + '、不减基线 ' + f('none') + '（初始约 0.30）；30 个种子之间的标准差分别为 ' + sd('grpo') + '、' + sd('dr') + '、' + sd('none') + '。' +
+    '奖励里有一个人人都能拿的 0.5 格式分：不减基线时，<b>采到什么就鼓励什么</b>（只是答对的鼓励得多一点），更新方向被采样噪声左右，种子之间差得最多；减去组内均值后，这 0.5 被抵消，答错的回答被明确压低。GRPO 在这里最快，部分原因是除以 std 把优势放大到单位尺度、相当于更大的步长——Dr.GRPO 恰恰认为这种按组缩放会改变不同题目的权重。' +
+    '切到“零信号组比例”：策略越集中到 0.8 那条路线，全对的组越多（“毕业”）；G 越大，零信号组越少，但每步生成成本按 G 线性增加。（tabular 策略、同一学习率 0.5，示意。）';
+}
+S.seg($('#gtM'), function (v) { gtMetric = v; gtDraw(); });
+$('#gtGs').addEventListener('change', gt); $('#gtGs').addEventListener('input', function () { $('#gtG').textContent = this.value; }); gt();
+S.notes($('#n-signal'), {
+  c: [
+    ['零信号组', '全对或全错，std = 0，优势全为 0。'],
+    ['毕业', '模型已掌握的题自然退出训练。'],
+    ['动态采样', 'DAPO：过滤零信号 prompt，补满 batch。'],
+    ['组大小 G', '每个 prompt 采几个回答。']
+  ],
+  p: [
+    ['有信号概率', '1 − p^G − (1 − p)^G'],
+    ['G 经验（原文）', '2 快速验证 / 4 资源有限 / 8 默认 / 16 更稳 / 64 大规模'],
+    ['p = 0.9, G = 8', '只有 57% 的轮次有信号'],
+    ['失效情形', 'G 太小；奖励偏斜；全组相同；0/1 奖励太粗']
+  ]
+});
+
+/* ---------- token 比值 ---------- */
+function rt() {
+  var p = [+$('#r1s').value, +$('#r2s').value, +$('#r3s').value], e = 0.2;
+  $('#r1').textContent = S.f(p[0], 2); $('#r2').textContent = S.f(p[1], 2); $('#r3').textContent = S.f(p[2], 2);
+  var cl = p.map(function (x) { return S.clamp(x, 1 - e, 1 + e); }), prod = p[0] * p[1] * p[2], geo = Math.pow(prod, 1 / 3);
+  $('#rtT').innerHTML = '<tr><td>做法</td><td class="n">比值</td><td class="n">裁剪后</td></tr>' +
+    '<tr><td>GRPO：逐 token 分别裁剪</td><td class="n">' + p.map(function (x) { return S.f(x, 2); }).join(', ') + '</td><td class="n">' + cl.map(function (x) { return S.f(x, 2); }).join(', ') + '</td></tr>' +
+    '<tr><td>错误写法：整段 logp 求和再 exp（连乘）</td><td class="n">' + S.f(prod, 3) + '</td><td class="n">' + S.f(S.clamp(prod, 1 - e, 1 + e), 2) + '</td></tr>' +
+    '<tr><td>GSPO：长度归一化的几何平均</td><td class="n">' + S.f(geo, 3) + '</td><td class="n">' + S.f(S.clamp(geo, 1 - e, 1 + e), 2) + '</td></tr>';
+  $('#rtW').innerHTML = '连乘把长度带进了比值：这里只有 3 个 token，若回答有 300 个 token、每个比值都是 1.01，连乘就是 1.01³⁰⁰ ≈ 19.8，几乎必然被裁剪；几何平均仍是 1.01。逐 token 做法里，只有越界的那个 token 被截住，其他 token 照常学习。';
+}
+['r1s', 'r2s', 'r3s'].forEach(function (id) { $('#' + id).addEventListener('input', rt); }); rt();
+var k3Chart = S.chart($('#k3C'), { h: 220, x: [-2, 2], y: [-2, 4.5], xt: [-2, -1, 0, 1, 2], yt: [-2, 0, 2, 4], xl: 'Δ' });
+function k3() {
+  var d = +$('#k3Ds').value; $('#k3D').textContent = S.f(d, 2);
+  k3Chart({ curves: [{ f: function (x) { return Math.exp(x) - x - 1; }, c: 'c1', label: 'k3 = e^Δ − Δ − 1' }, { f: function (x) { return x * x / 2; }, c: 'ok', dash: 1, label: 'Δ²/2' }, { f: function (x) { return -x; }, c: 'dim', dash: 1, label: '朴素 −Δ' }], dots: [{ x: d, y: Math.exp(d) - d - 1, c: 'c1', r: 6 }] });
+  $('#k3W').innerHTML = 'Δ = ' + S.f(d, 2) + '：k3 = ' + S.f(Math.exp(d) - d - 1, 3) + '，Δ²/2 = ' + S.f(d * d / 2, 3) + '，朴素估计 −Δ = ' + S.f(-d, 2) + (d > 0 ? '（<b>为负</b>：单个样本上出现“负的 KL”）' : '') + '。k3 是一条最低点在 0 的 U 形曲线：偏离越大罚得越重，小偏离时温和。';
+}
+$('#k3Ds').addEventListener('input', k3); k3();
+S.notes($('#n-token'), {
+  c: [
+    ['逐 token 比值', 'ρ_t = π_θ(o_t)/π_old(o_t)，每个 token 分别裁剪。'],
+    ['连乘陷阱', '整段 logp 求和再 exp = 比值连乘，不是 GRPO。'],
+    ['GSPO', '序列级比值，用 1/|y| 次方做长度归一化。'],
+    ['归约方式', 'grpo：每段先除自身长度；bnpo：batch 内 token 一起平均。'],
+    ['k3 估计', 'e^Δ − Δ − 1：非负、无偏、小偏差处 ≈ Δ²/2。']
+  ],
+  p: [
+    ['原文例子', '[1.1, 0.9, 1.5] → 逐 token [1.1, 0.9, 1.2]；连乘 1.485 → 1.2'],
+    ['KL 系数', 'DeepSeekMath β = 0.04'],
+    ['复现原论文（TRL）', 'importance_sampling_level="token"，loss_type="grpo"，num_iterations=1'],
+    ['DeepSeekMath 正式设置', '每题 64 个回答，batch 1024，lr 1e-6']
+  ]
+});
+
+/* ---------- 规则奖励 ---------- */
+var RV = {
+  good: '首先计算每天剩余的鸡蛋数：16 - 3 - 4 = 9 个\n每周有 7 天，所以每周能卖：9 × 7 = 63 个\n\\boxed{63}',
+  bad: '我觉得大概能卖 50 个左右吧。\\boxed{50}',
+  hack: '\\boxed{63}',
+  multi: '可能是 \\boxed{63} 也可能是 \\boxed{50}'
+};
+function rv() {
+  var t = $('#rvI').value, f = 0, a = 0, m = t.match(/\\boxed\{([^}]+)\}/);
+  if (/\\boxed\{[^}]+\}/.test(t)) f = 0.5;
+  if (m) { var x = m[1].trim(), v = parseFloat(x); if (isFinite(v) ? Math.abs(v - 63) < 0.01 : x === '63') a = 1; }
+  $('#rvF').textContent = S.f(f, 1); $('#rvA').textContent = S.f(a, 1); $('#rvT').textContent = S.f(f + a, 1);
+  var boxes = (t.match(/\\boxed\{/g) || []).length, words = t.replace(/\\boxed\{[^}]*\}/g, '').trim().length;
+  $('#rvW').innerHTML = (boxes > 1 ? '回答里写了 ' + boxes + ' 个框，这个函数只看<b>第一个</b>——把正确答案放在最前面就能拿满分。真实验证器要处理“多个答案”的情形，否则模型会学会“多写几个碰运气”。' :
+    f + a === 1.5 && words < 5 ? '<b>没有任何推理也拿了满分。</b>这个奖励只检查格式和最终答案，不检查过程：在数学题上通常没关系（答案对了过程多半也对），但它给了“猜答案”和“背答案”同样的分——这正是第 10 篇过程奖励要补的。' :
+    f + a === 1.5 ? '原文的好回答：格式 0.5 + 正确 1.0。' : f === 0.5 && a === 0 ? '有框但答案错：只拿格式分 0.5（原文的坏回答）。格式分的存在让模型很快学会“总要写个框”，但也可能让它满足于格式。' : '没有 \\boxed{}：抽不出答案，0 分——哪怕正文里算对了。验证器的“答案抽取”本身就是一个需要测试的环节。') + '（判定逻辑照搬原文 rule_based_reward。）';
+}
+$('#rvI').addEventListener('input', rv);
+S.seg($('#rvP'), function (v) { $('#rvI').value = RV[v]; rv(); }); rv();
+S.notes($('#n-rlvr'), {
+  c: [
+    ['RLVR', '用确定性验证器的结果当奖励，不需要 RM。'],
+    ['格式奖励', '输出能被解析（如 \\boxed{}、合法 JSON）。'],
+    ['正确性奖励', '答案等价于标准答案 / 测试通过。'],
+    ['验证器漏洞', '模型利用验证器遗漏的条件拿分。'],
+    ['1-shot RLVR', '极少样本也能引起变化：RL 更多是“激活”已有能力。']
+  ],
+  p: [
+    ['验证器三标准', '确定性、正确性（等价判定）、高效；再加抗作弊'],
+    ['等价判定', '22/7 vs 3.1428…；(x+1)(x−2) vs x² − x − 2'],
+    ['各领域验证方式', '数学答案匹配；代码单元测试；逻辑用 Lean / Coq'],
+    ['开放争议', 'RLVR 提升的是推理能力，还是搜索到正确答案的效率？']
+  ]
+});
+S.$$('#r1F li').forEach(function (li) { li.addEventListener('click', function () { S.$$('#r1F li').forEach(function (x) { x.classList.remove('on'); }); li.classList.add('on'); }); });
+S.$$('#r1F li')[0].classList.add('on');
+S.notes($('#n-family'), {
+  c: [
+    ['R1-Zero', '不做 SFT，直接对 base 模型大规模 GRPO + 规则奖励。'],
+    ['Aha moment', '训练中涌现的自我检查行为（“等等，让我重新算”）。'],
+    ['DAPO', 'Clip-Higher、动态采样、token 级损失、超长塑形。'],
+    ['Dr.GRPO', '只减均值、不除 std，缓解长度膨胀。'],
+    ['GSPO / CISPO', '序列级比值 / 裁剪重要性权重。'],
+    ['VAPO', '重新引入 value model 做 token 级信用分配。']
+  ],
+  p: [
+    ['R1 五阶段', '冷启动 SFT → GRPO → 拒绝采样 → SFT → 二次 RL'],
+    ['DAPO 结果（原文）', '用 R1-Zero 一半步数在 AIME 2024 达到 50 分'],
+    ['看新变体先问', '修的是归一化、比值层级、裁剪对象，还是价值估计？'],
+    ['原文的话', 'critic-free 是工程妥协，不是算法必然']
+  ]
+});
+})();
+</script>
+</body>
+</html>

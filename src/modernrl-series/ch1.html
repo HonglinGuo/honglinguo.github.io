@@ -1,0 +1,448 @@
+---
+title: 从 CartPole 看懂训练闭环：观测、策略、价值与训练日志
+desc: 动手学现代强化学习笔记（一）：CartPole 的观测、动作与奖励，Actor 与 Critic，一次 PPO 迭代的三步（采样 rollout、GAE 优势、裁剪更新），terminated 与 truncated 的区别，用原教程真实训练日志读回合奖励、策略熵、价值损失、近似 KL 与裁剪比例；on-policy / off-policy 与 online / offline 四种数据形态；奖励规则怎样决定任务。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 01</span><span>对应原教程第 1 章与第 4 章 4.2–4.3 节</span><span>约 40 分钟</span>
+h1: 一根杆子，<em>讲完整个训练闭环</em>
+lead: 原教程不从定义开始，而是先让你跑通一次 CartPole：30 秒训练，奖励从 20 分涨到 500 分。跑通之后再拆开看：环境每一步给了智能体什么，策略怎么选动作，PPO 怎么用一段交互数据改进自己，训练日志上的每条曲线各说明哪个环节出了问题。这一篇先把这个闭环吃透，后面十一篇讲的每个算法，都是在替换闭环里的某一个零件。
+nav: env|环境与策略;loop|一次迭代;log|读训练日志;data|数据从哪来;reward|奖励即任务;back|回扣三问
+---
+<style>
+.part-head .meta { overflow-wrap: anywhere; }
+main sub, main sup { font-size: 15px; line-height: 0; }
+.cpw { position: relative; }
+.cpw canvas { display: block; width: 100%; max-width: 640px; height: auto; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); touch-action: manipulation; }
+.obs4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 10px 0 4px; max-width: 640px; }
+.obs4 div { background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 6px 8px; }
+.obs4 b { display: block; font-family: var(--f-num); font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.obs4 span { font-size: 15px; color: var(--ink-3); }
+@media (max-width: 520px) { .obs4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.quad { display: grid; grid-template-columns: 7em repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+.quad > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.quad > div.hd { background: none; border: 0; font-weight: 650; color: var(--ink-3); padding: 6px 4px; }
+.quad b { color: var(--ink); }
+@media (max-width: 640px) { .quad { grid-template-columns: minmax(0, 1fr); } .quad > div.hd.c { display: none; } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>一次 PPO 迭代分哪三步？Actor 和 Critic 各自负责什么？</li>
+    <li><code>terminated</code> 和 <code>truncated</code> 有什么区别，为什么算价值时必须区分？</li>
+    <li>训练奖励涨了，还要看哪几条曲线才能判断训练健康？on-policy 和 offline 又分别在问什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="env">
+  <div class="part-head"><h2>环境给什么，策略回什么</h2><span class="meta">原文 docs/chapter01_cartpole/metrics.md（1.2 节）</span></div>
+  <div class="sec-lede">
+    <p>CartPole 是强化学习的 hello world：一根杆子用铰链立在小车上，控制器每一步只能<strong>全力向左推或全力向右推</strong>，没有“不推”，也不能选力度。环境每一步返回四个数——小车位置 x、速度 ẋ、杆角 θ、角速度 θ̇，这就是<strong>观测</strong>（状态）；每撑过一步给 <strong>+1 奖励</strong>；小车出界（|x| &gt; 2.4）或杆倒过约 12° 时回合结束，撑满 500 步则被时间上限截断。所以回合奖励就等于存活步数。</p>
+    <p>原文特别强调一点：<strong>角度和角速度必须同时看</strong>。只知道杆子向右倾，分不清它是正在倒向右边，还是正在摆回中间——两种情况需要的动作正好相反。奖励也不直接告诉你“该向左推”，它只说“任务还在继续”。从一串 +1 里找出哪些动作更容易带来长回合，正是后面策略网络和价值网络要做的事。</p>
+    <p><strong>策略</strong> π(a|s) 把观测映射成两个动作的概率。原教程用一个 4 → 64 → 64 → 2 的小网络（Actor），输出层初始化得很小，所以训练开始时左右概率都接近 0.5。下面先不训练，用三种“策略”在真实的 CartPole 物理方程上各跑 100 回合：随机推、只看角度推、看角度加角速度推。</p>
+    <p class="go">先自己手动玩一下（建议开慢放），再点“跑 100 回合”比较三种策略。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">CartPole 实验台（Gymnasium CartPole-v1 的同一套运动方程，在浏览器里逐步积分）</p>
+    <div class="ctrls">
+      <div class="seg" id="cpMode"><button data-v="hand" aria-pressed="true">我来推</button><button data-v="rand">随机策略</button><button data-v="theta">只看角度</button><button data-v="both">角度 + 角速度</button></div>
+      <div class="seg" id="cpSpd"><button data-v="0.25" aria-pressed="true">慢放 ×¼</button><button data-v="1">实时</button></div>
+    </div>
+    <div class="cpw"><canvas id="cpC" width="640" height="220" tabindex="0" aria-label="CartPole 画面，可用方向键控制"></canvas></div>
+    <div class="obs4" id="cpObs"></div>
+    <div class="btnrow">
+      <button class="btn" type="button" id="cpL">← 向左推</button><button class="btn" type="button" id="cpR">向右推 →</button>
+      <button class="btn pri" type="button" id="cpGo">开始一回合</button>
+      <span class="stepinfo" id="cpInfo" style="margin:0"></span>
+    </div>
+    <p class="note">手动模式：按住按钮或键盘方向键改变推力方向，松开后保持上一次的方向（环境要求每一步都必须推）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三种策略各跑 100 回合的平均存活步数（上限 500）</p>
+    <div class="btnrow"><button class="btn pri" type="button" id="cpEval">跑 100 回合</button></div>
+    <div id="cpBars"></div>
+    <p class="cap" id="cpEW">点按钮开始。</p>
+  </div>
+  <div class="notes" id="n-env"></div>
+</section>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>一次 PPO 迭代：采样、估优势、裁剪更新</h2><span class="meta">原文 metrics.md、training.md；代码 code/chapter01_cartpole/2-pytorch_ppo.py</span></div>
+  <div class="sec-lede">
+    <p>只看一步的 +1，分不出“这一步向右推”是让杆子多撑了几十步，还是只推迟了倒下。所以 PPO 加了第二个网络 <strong>Critic</strong>：输入状态，输出状态价值 V(s)——按当前策略继续走，预计还能拿多少折扣回报。Actor 决定怎么动，Critic 给每一步提供一个“预期基准”。</p>
+    <p>一次迭代三步。<strong>① 采样</strong>：用当前策略走 2048 步（一段 rollout，可能包含多个回合，也可能在回合中间停下），记下状态、动作、奖励、动作的对数概率和 V(s)。<strong>② 估优势</strong>：每一步算 TD 误差 δ<sub>t</sub> = r<sub>t</sub> + γV(s<sub>t+1</sub>) − V(s<sub>t</sub>)，再用 GAE 把后面几步的 δ 按 (γλ)<sup>k</sup> 加权合成优势 A<sub>t</sub>——“这一步比预期好多少”。<strong>③ 更新</strong>：对同一批数据做 10 轮小批量更新，用新旧策略的概率比 r = π<sub>θ</sub>/π<sub>old</sub> 乘优势，并把 r 裁剪在 [0.8, 1.2]，防止一批数据把策略推得太远。三步的细节分别在第 3、4 篇展开。</p>
+    <p>原文花了不少篇幅讲两个结束标记：<code>terminated</code> 是杆倒或出界，回合自然结束，后续价值取 0；<code>truncated</code> 是撞到 500 步上限，杆子此时可能还立着，后续价值仍用 V(s′) 估计。两种结束都要在 GAE 递推里“切断”，新回合的优势不能传回旧回合；而 2048 步的 rollout 边界不是回合结束，下一轮从当前状态接着跑。另一个细节：归一化后的优势只给 Actor 用，Critic 的回归目标是未归一化的 returns = 优势 + V，两者不能互换。</p>
+    <p class="go">逐行看原教程纯 PyTorch 版的 GAE 与 PPO 更新代码。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">代码逐行读：compute_gae 与 ppo_update（摘自 code/chapter01_cartpole/2-pytorch_ppo.py）</p>
+    <div class="tape" id="cdT"></div>
+    <div id="cdS"></div>
+    <p class="cap" id="cdW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">结束标记三连问</p>
+    <div id="tmQ"></div>
+  </div>
+  <div class="notes" id="n-loop"></div>
+</section>
+
+<section class="part" id="log">
+  <div class="part-head"><h2>读训练日志：一条奖励曲线不够</h2><span class="meta">原文 metrics.md；数据 code/chapter01_cartpole/output/training_metrics_seed42.csv</span></div>
+  <div class="sec-lede">
+    <p>原教程保存了一次真实运行的完整记录：seed = 42，40 轮 × 2048 步 = 81,920 个环境步，每轮的指标都没有平滑。第 1 轮结束了 91 个回合，平均 21.4 分；第 10 轮达到 500；第 11 轮回落到 460.4（采样有随机性，每轮完成的回合又只有 4–5 个，单点下降很正常）；最后 20 回合确定性评估 500.0 ± 0.0。</p>
+    <p>原文提醒两件事。第一，<strong>训练奖励 ≠ 模型好坏</strong>：训练时按概率抽动作，带着探索噪声；独立评估要用确定性动作（取概率最大的），从新的初始状态跑，报告时两者分开写。第二，奖励只告诉你“好不好”，训练失败时给不出原因。四个辅助指标各对应闭环的一个环节：<strong>策略熵</strong>看策略是否过早变得确定，<strong>价值损失</strong>看 Critic 学没学会预测，<strong>近似 KL</strong> 和<strong>裁剪比例</strong>看每次 PPO 更新是否过大。</p>
+    <p>它们都不能单独下结论：熵下降只说明更确定了，可能是更确定地选错；价值损失小只说明 Critic 接近当前目标；KL 和裁剪比例要和学习率、奖励一起读。单种子曲线只能证明“这套配置能跑通”，比较算法要多种子、报告原始曲线和达到目标分数所需的步数。</p>
+    <p class="go">切换指标，看同一次运行的五条曲线（原书数据）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">seed = 42 的 PPO 训练日志（原书数据，未平滑）</p>
+    <div class="seg" id="lgS"><button data-v="reward" aria-pressed="true">回合奖励</button><button data-v="entropy">策略熵</button><button data-v="vloss">价值损失</button><button data-v="kl">近似 KL</button><button data-v="clip">裁剪比例</button></div>
+    <div id="lgC" style="margin-top:8px"></div>
+    <p class="cap" id="lgW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原文给的排查顺序：先查数据，再解释优化指标（点一步看说明）</p>
+    <ol class="flow2" id="dbF">
+      <li>检查 terminated 与 truncated<small>自然终止后价值为 0，时间截断仍要用 V(s′)。错了会直接改变训练目标。</small></li>
+      <li>检查 GAE 是否在每次 reset 处切断<small>优势不能从新回合传回旧回合，否则等于让上一局的结果影响下一局的判断。</small></li>
+      <li>检查日志是否只统计完整回合<small>跨 rollout 边界的回合要继续累计，直到真正结束；否则回合奖励被系统性低估。</small></li>
+      <li>比较训练奖励与独立评估<small>先确定问题出在训练过程（采样噪声、探索）还是最终策略本身。</small></li>
+      <li>再看熵、价值损失、KL、裁剪比例<small>数据正确之后，才用这四个指标定位是策略、Critic 还是更新幅度出了问题。错误的回合边界靠调学习率修不好。</small></li>
+    </ol>
+  </div>
+  <div class="notes" id="n-log"></div>
+</section>
+
+<section class="part" id="data">
+  <div class="part-head"><h2>数据从哪来：两组常被混用的概念</h2><span class="meta">原文 docs/chapter03_mdp/algorithm-taxonomy.md（4.2 节）</span></div>
+  <div class="sec-lede">
+    <p>所有更新公式都要吃 (s, a, r, s′)，这些数据从哪来，往往比目标函数本身更能区分算法。原文先拆开两个“策略”角色：<strong>行为策略 μ</strong> 是真正和环境交互、产生数据的那个（可能是带探索噪声的、昨天的旧版本、专家甚至人类）；<strong>目标策略 π<sub>θ</sub></strong> 是我们想学出来的那个。</p>
+    <p>第一组问题：<strong>数据是不是当前策略自己刚采的？</strong> 是，叫 on-policy（μ ≈ π），如 SARSA、REINFORCE、PPO、GRPO——稳定，但策略一更新旧数据就“过期”；不是，叫 off-policy（μ ≠ π），如 Q-learning、DQN、SAC——可以把旧数据、别人的数据放进回放池反复学，代价是分布偏移，历史数据没覆盖的动作只能靠外推去猜。第二组问题：<strong>训练时还能不能继续和环境交互？</strong> 能，数据集在长大，叫 online；不能，数据集训练前就封存，叫 offline，如 CQL、IQL、固定偏好数据上的 DPO。</p>
+    <p>两组是独立的。原文点名了几个误区：DQN 是 off-policy 但仍是 online（一边打游戏收新数据，一边从回放池抽旧数据）；PPO 虽是 on-policy，却在同一批数据上更新 10 轮——只要新策略没偏离采样策略太远（裁剪保证），这批数据就还算“近似 on-policy”；off-policy 也不是什么数据都能学，旧数据必须<strong>覆盖</strong>目标策略会去的状态。</p>
+    <p class="go">把下面的方法放进四种数据形态。</p>
+  </div>
+  <div class="quad">
+    <div class="hd c"></div><div class="hd">On-policy（自己刚采的）</div><div class="hd">Off-policy（可用别人的 / 旧的）</div>
+    <div class="hd">Online<br>可继续交互</div>
+    <div><b>Online + On-policy</b><br>边采边学、用完即弃。REINFORCE、SARSA、PPO、GRPO。风险：样本效率低。</div>
+    <div><b>Online + Off-policy</b><br>边交互边从回放池复用旧数据。Q-learning、DQN、SAC、TD3。风险：新旧分布差异。</div>
+    <div class="hd">Offline<br>数据已封存</div>
+    <div><b>Offline + On-policy</b><br>边界情形：数据固定又要代表当前策略，只在固定策略评估、极小步模仿时出现。</div>
+    <div><b>Offline + Off-policy</b><br>只从一份历史数据里挖策略。CQL、IQL、固定数据上的 DPO。风险：对没见过的动作盲目高估。</div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分一分：属于哪种数据形态（按各方法最常见的用法）</p>
+    <div id="dfG"></div>
+  </div>
+  <div class="confuse"><h4>易混辨析：on/off-policy 与 online/offline</h4>
+    <p><b>On/off-policy 问“谁采的数据”</b>：行为策略 μ 与目标策略 π 是否同一个。<b>Online/offline 问“还能不能采新数据”</b>：训练中数据集是否还在增长。DQN = off-policy + online，是最好的反例。</p>
+    <p><b>Off-policy ≠ 可以乱用数据</b>：需要覆盖条件，历史数据必须覆盖目标策略会访问的状态—动作。</p>
+    <p><b>DPO 算不算 RL</b>：原文的看法是，它的损失写成了分类形式，但本质是在固定偏好数据上调整策略分布，属于 offline 设定下的策略优化，同样面临分布外风险（第 8 篇）。</p>
+  </div>
+  <div class="notes" id="n-data"></div>
+</section>
+
+<section class="part" id="reward">
+  <div class="part-head"><h2>奖励就是任务定义</h2><span class="meta">原文 docs/chapter03_mdp/reward-design.md（4.3 节）</span></div>
+  <div class="sec-lede">
+    <p>算法看不到你的意图，只看到一个数 r。原文用一个网格例子说明这一点：地图、动作、转移完全一样，只改奖励。<strong>规则 A</strong>：只有到终点 +1，其余 0——看似最“干净”，但走 8 步和绕 20 步回报一样都是 1，它根本不在乎快慢；<strong>规则 B</strong>：每步 −0.01，终点 +1——8 步得 0.92，20 步得 0.80，“时间有成本”；<strong>规则 C</strong>：每步 +0.02，终点 +1——在终点旁绕 100 圈能拿 2 分，比到终点还多，任务变成了“一直走”。</p>
+    <p>写奖励有三个常见困难。<strong>稀疏</strong>：只有终点给分，随机探索很久都是一串 0，看不出哪一步“更接近成功”。<strong>延迟</strong>：CartPole 每步都有 +1，但导致倒下的错误可能发生在几十步之前，要把失败追溯回去就是<strong>信用分配</strong>，LLM 里一段回答末尾才打分也是同一问题。<strong>多目标</strong>：机器人要前进、要平衡、要省力，加权求和时量纲和权重一旦没配好，智能体会优先优化数值最大的那一项（比如干脆站着不动省控制成本）。</p>
+    <p>稠密化奖励能加速学习，但可能悄悄改变任务。原文介绍了唯一有保证的形式——<strong>势能塑形</strong>（PBRS）：附加 F = γΦ(s′) − Φ(s)，整条轨迹上的附加项会“望远镜求和”只剩起终点的常数，所以最优策略不变。而 Goodhart 定律（指标一旦成为目标就不再是好指标）在 RL 里尤其致命：优化越强，代理奖励和真实目标之间的缝隙被利用得越彻底——第 12 篇专门讲。</p>
+    <p class="go">拖动路线长度，看三条规则给出的回报和偏好。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">同一张地图，三种奖励规则（γ = 1，数值同原文）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>最短路线步数 <output id="rwA">8</output></span><input type="range" id="rwAs" min="4" max="20" value="8"></label>
+        <label class="ctl"><span>绕远路线步数 <output id="rwB">20</output></span><input type="range" id="rwBs" min="10" max="60" value="20"></label>
+        <label class="ctl"><span>不去终点、原地绕圈步数 <output id="rwC">100</output></span><input type="range" id="rwCs" min="10" max="300" step="10" value="100"></label>
+      </div>
+      <div class="tblw"><table class="calc" id="rwT"></table></div>
+      <p class="cap" id="rwW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">势能塑形：附加奖励和走哪条路无关</p>
+      <p class="lab-s">取 Φ(s) = −到终点的曼哈顿距离，γ = 1，F = Φ(s′) − Φ(s)。随机生成一条从起点 (0,0) 走到终点 (4,4) 的路线，把每一步的 F 加起来。</p>
+      <div class="btnrow"><button class="btn pri" type="button" id="pbGo">换一条随机路线</button></div>
+      <div class="tape" id="pbT"></div>
+      <p class="cap" id="pbW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-reward"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">观测 s = [x, ẋ, θ, θ̇]；动作 a ∈ {左, 右}；每步 r = +1；|x| &gt; 2.4 或 |θ| &gt; ~12° 终止，500 步截断</div>
+    <div class="fx">TD 误差 δ_t = r_t + γV(s_{t+1})(1 − terminated) − V(s_t)；GAE A_t = δ_t + γλ(1 − done)A_{t+1}</div>
+    <div class="fx">PPO：r_t = exp(logπ_new − logπ_old)，loss = −min(r_t A_t, clip(r_t, 0.8, 1.2) A_t)</div>
+    <div class="fx">裁剪比例 clipfrac = 平均 1[|r_t − 1| &gt; ε]；近似 KL ≈ 平均 (r − 1) − log r</div>
+    <div class="fx">势能塑形 F(s, s′) = γΦ(s′) − Φ(s)，Σ γ^t F = γ^T Φ(s_T) − Φ(s_0)</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 一次 PPO 迭代分哪三步？Actor 和 Critic 各自负责什么？</summary><p class="ans">用当前策略采一段 rollout（2048 步）→ 用 TD 误差和 GAE 算每一步的优势 → 在同一批数据上做多轮裁剪更新。Actor 输出动作概率、决定怎么动；Critic 输出 V(s)，给每一步一个“预期基准”，让优势表示“比预期好多少”。</p></details>
+    <details><summary>2. terminated 和 truncated 有什么区别，为什么算价值时必须区分？</summary><p class="ans">terminated 是任务自然结束（杆倒、出界），之后不会再有奖励，后续价值取 0；truncated 是时间上限截断，状态本身可能还很好，后续价值要用 V(s′) 估计。两者都要在 GAE 递推里切断；rollout 边界则两者都不是，要接着跑。混淆它们会直接改变训练目标。</p></details>
+    <details><summary>3. 训练奖励涨了还要看什么？on-policy 和 offline 各在问什么？</summary><p class="ans">还要看独立的确定性评估，以及策略熵（是否过早确定）、价值损失（Critic 是否学会）、近似 KL 与裁剪比例（更新是否过大），并用多随机种子。On/off-policy 问数据是不是当前策略自己采的；online/offline 问训练中还能不能继续采新数据，两者独立。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- CartPole 物理（与 Gymnasium CartPole-v1 相同的方程，欧拉积分） ---------- */
+function cpStep(s, a) {
+  var x = s[0], xd = s[1], th = s[2], thd = s[3], f = a ? 10 : -10, c = Math.cos(th), sn = Math.sin(th);
+  var tmp = (f + 0.05 * thd * thd * sn) / 1.1, tha = (9.8 * sn - c * tmp) / (0.5 * (4 / 3 - 0.1 * c * c / 1.1)), xa = tmp - 0.05 * tha * c / 1.1;
+  return [x + 0.02 * xd, xd + 0.02 * xa, th + 0.02 * thd, thd + 0.02 * tha];
+}
+function cpFail(s) { return Math.abs(s[0]) > 2.4 || Math.abs(s[2]) > 0.2095; }
+var POL = {
+  rand: function (s, r) { return r() < 0.5 ? 1 : 0; },
+  theta: function (s) { return s[2] > 0 ? 1 : 0; },
+  both: function (s) { return s[2] + 0.5 * s[3] > 0 ? 1 : 0; }
+};
+function drawCart(cv, s, act) {
+  var ctx = cv.getContext('2d'), W = cv.width, H = cv.height, sc = W / 5.6, cx = W / 2 + s[0] * sc, gy = H - 48;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = S.css('--bg'); ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = S.css('--rule'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, gy + 18); ctx.lineTo(W - 10, gy + 18); ctx.stroke();
+  ctx.fillStyle = S.css('--alert'); [-2.4, 2.4].forEach(function (b) { ctx.fillRect(W / 2 + b * sc - 1, gy + 4, 3, 26); });
+  ctx.fillStyle = S.css('--ink'); ctx.fillRect(cx - 34, gy - 4, 68, 22);
+  var L = 1.0 * sc * 0.9, tx = cx + Math.sin(s[2]) * L, ty = gy - 4 - Math.cos(s[2]) * L;
+  ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(cx, gy - 4); ctx.lineTo(tx, ty); ctx.stroke();
+  ctx.fillStyle = S.css('--s1'); ctx.beginPath(); ctx.arc(cx, gy - 4, 6, 0, 7); ctx.fill();
+  if (act != null) { ctx.fillStyle = S.css('--s1'); ctx.font = '600 16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(act ? '推 →' : '← 推', cx, gy + 42); }
+}
+var cv = $('#cpC'), cpS = [0, 0, 0, 0], cpT = 0, cpRun = false, cpAct = 1, cpMode = 'hand', cpSpd = 0.25, cpR = S.rng(7), cpAcc = 0, cpLast = 0;
+function cpObs() {
+  var lab = ['小车位置 x', '小车速度 ẋ', '杆角 θ（度）', '角速度 θ̇'];
+  var v = [cpS[0], cpS[1], cpS[2] * 180 / Math.PI, cpS[3]];
+  $('#cpObs').innerHTML = v.map(function (x, i) { return '<div><b>' + S.f(x, 2) + '</b><span>' + lab[i] + '</span></div>'; }).join('');
+}
+function cpReset() { cpS = [0, 0, 0, 0].map(function () { return (cpR() - 0.5) * 0.1; }); cpT = 0; cpObs(); drawCart(cv, cpS, null); }
+function cpFrame(ts) {
+  if (!cpRun) return;
+  var dt = cpLast ? Math.min(100, ts - cpLast) : 16; cpLast = ts; cpAcc += dt * cpSpd;
+  while (cpAcc >= 20 && cpRun) {
+    cpAcc -= 20;
+    if (cpMode !== 'hand') cpAct = POL[cpMode](cpS, cpR);
+    cpS = cpStep(cpS, cpAct); cpT++;
+    if (cpFail(cpS)) { cpRun = false; $('#cpInfo').innerHTML = '第 <b>' + cpT + '</b> 步 terminated：' + (Math.abs(cpS[0]) > 2.4 ? '小车出界' : '杆子倒过 12°') + '，回合奖励 = ' + cpT; }
+    else if (cpT >= 500) { cpRun = false; $('#cpInfo').innerHTML = '撑满 500 步，<b>truncated</b>（杆子还立着，只是到了时间上限）。'; }
+  }
+  if (cpRun) $('#cpInfo').innerHTML = '第 <b>' + cpT + '</b> 步';
+  cpObs(); drawCart(cv, cpS, cpAct);
+  if (cpRun) requestAnimationFrame(cpFrame); else $('#cpGo').textContent = '再来一回合';
+}
+$('#cpGo').addEventListener('click', function () { cpReset(); cpRun = true; cpLast = 0; cpAcc = 0; this.textContent = '重新开始'; requestAnimationFrame(cpFrame); cv.focus(); });
+S.seg($('#cpMode'), function (v) { cpMode = v; });
+S.seg($('#cpSpd'), function (v) { cpSpd = +v; });
+function hold(btn, a) {
+  ['pointerdown'].forEach(function (e) { btn.addEventListener(e, function () { cpAct = a; }); });
+  btn.addEventListener('click', function () { cpAct = a; });
+}
+hold($('#cpL'), 0); hold($('#cpR'), 1);
+cv.addEventListener('keydown', function (e) { if (e.key === 'ArrowLeft') { cpAct = 0; e.preventDefault(); } if (e.key === 'ArrowRight') { cpAct = 1; e.preventDefault(); } });
+(function () { var r = cv.getBoundingClientRect(); void r; })();
+cpReset();
+S.onTheme(function () { drawCart(cv, cpS, cpRun ? cpAct : null); });
+
+$('#cpEval').addEventListener('click', function () {
+  var names = { rand: '随机推', theta: '只看角度', both: '角度 + 角速度' }, rows = [], res = {};
+  Object.keys(POL).forEach(function (k) {
+    var r = S.rng(2024), tot = 0;
+    for (var e = 0; e < 100; e++) { var s = [0, 0, 0, 0].map(function () { return (r() - 0.5) * 0.1; }), t = 0; while (t < 500) { s = cpStep(s, POL[k](s, r)); t++; if (cpFail(s)) break; } tot += t; }
+    res[k] = tot / 100; rows.push({ label: names[k], value: res[k] / 500, text: S.f(res[k], 1), cls: k === 'both' ? 'ok' : k === 'theta' ? 'alt' : 'dim' });
+  });
+  S.bars($('#cpBars'), rows);
+  $('#cpEW').innerHTML = '随机推平均只撑 <b>' + S.f(res.rand, 0) + '</b> 步——和原文“白纸策略杆子平均撑 20 步左右”一致。只看角度（往倒的方向推）也只有 <b>' + S.f(res.theta, 0) + '</b> 步：它分不清杆子是在倒下还是在摆回来，常常推过头。加上角速度后 <b>' + S.f(res.both, 0) + '</b> 步，几乎每回合都撑满上限。这正是原文说“角度和角速度必须同时出现”的原因。这条规则是人写的；强化学习要做的，是只凭 +1 奖励把类似的规则自己学出来（第 2 篇用 DQN、第 4 篇用 PPO 在浏览器里真的训练一次）。';
+});
+S.notes($('#n-env'), {
+  c: [
+    ['观测 / 状态', '环境每步返回给智能体的信息；CartPole 是 [x, ẋ, θ, θ̇] 四个数。'],
+    ['动作', '每步必须选一个：左推或右推，没有“不推”。'],
+    ['奖励', '每存活一步 +1，回合奖励 = 存活步数，不直接告诉你该怎么推。'],
+    ['策略 π(a|s)', '状态 → 动作概率；原教程用 4→64→64→2 的 Actor 网络。'],
+    ['回合 episode', '从 reset 到结束的一段；结束分自然终止和时间截断。']
+  ],
+  p: [
+    ['终止条件', '|x| > 2.4 或 |θ| > ~12° → terminated；500 步 → truncated'],
+    ['为什么要角速度', '只看角度分不清“正在倒”还是“正在回”'],
+    ['初始策略', '输出层小初始化，左右概率≈0.5，平均撑 ~20 步'],
+    ['训练成本', '普通笔记本 CPU 约 30 秒跑完 81,920 步']
+  ]
+});
+
+/* ---------- 代码逐行 ---------- */
+var CODE = [
+  ['for step in reversed(range(len(transitions))):', 'GAE 必须从 rollout 的最后一步往前算，因为 A_t 依赖 A_{t+1}。'],
+  ['    episode_end = t["terminated"] or t["truncated"]', '两种结束都要切断递推：新回合的优势不能传回旧回合。'],
+  ['    delta = t["reward"] + gamma * t["next_value"] - t["value"]', 'TD 误差 δ。next_value 在采样时已按 terminated 置 0、truncated 用 V(s′) 处理好，所以这里不再乘 (1 − done)。'],
+  ['    gae = delta + gamma * lam * (1.0 - float(episode_end)) * gae', '递推 A_t = δ_t + γλ·A_{t+1}；回合结束处乘 0，把链条剪断。γ = 0.99，λ = 0.95。'],
+  ['returns = raw_advantages + values', 'Critic 的回归目标：未归一化的优势 + 采样时的 V(s)。'],
+  ['advantages = (raw - raw.mean()) / (raw.std() + 1e-8)', '只给 Actor 用的归一化优势。原文强调：advantages 和 returns 不能互换。'],
+  ['ratio = torch.exp(new_log_probs - batch_old_log_probs)', '概率比 r = π_new / π_old，用对数概率相减再取指数，数值更稳。'],
+  ['surr2 = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * batch_advantages', 'clip_eps = 0.2：比值被夹在 [0.8, 1.2]。'],
+  ['policy_loss = -torch.min(surr1, surr2).mean()', '两个代理目标取更保守的那个，加负号变成要最小化的损失（第 4 篇详解为什么是 min）。'],
+  ['value_loss = ((values - batch_returns) ** 2).mean()', 'Critic 的均方误差。'],
+  ['loss = policy_loss + 0.5 * value_loss - 0.0 * entropy', '总损失：价值项系数 0.5；这份代码把熵系数设成了 0（CartPole 足够简单，不额外鼓励探索）。'],
+  ['total_kl += ((log_ratio.exp() - 1) - log_ratio).mean().item()', '近似 KL 用 (r − 1) − log r，非负，与 SB3 的 approx_kl 相同；裁剪比例统计 |r − 1| > 0.2 的样本占比。']
+];
+S.stepper($('#cdS'), CODE.length, function (i) {
+  $('#cdT').innerHTML = CODE.map(function (c, k) { var t = c[0].replace(/&/g, '&amp;').replace(/</g, '&lt;'); return k === i ? '<span class="fresh">' + t + '</span>' : '<span class="r-sys">' + t + '</span>'; }).join('\n');
+  $('#cdW').innerHTML = CODE[i][1];
+}, CODE.map(function (c, k) { return k < 6 ? 'compute_gae' : 'ppo_update'; }));
+S.quiz($('#tmQ'), [
+  { q: '杆子倒下，环境返回 terminated = True。计算这一步 TD 误差时，后续价值取多少？', o: ['V(s′)', '0', '上一步的 V(s)'], a: 1, why: '回合自然结束，之后不可能再有奖励，所以后续价值取 0。' },
+  { q: '第 500 步到时间上限，truncated = True，杆子还立着。后续价值取多少？', o: ['0', 'V(s′)，用 Critic 估计', '500'], a: 1, why: '截断不是失败，状态本身可能还很好，用 V(s′) 估计截断之后的价值；但 GAE 递推仍要在这里切断。' },
+  { q: '2048 步采完时，一个回合正跑到第 300 步。下一轮该怎么办？', o: ['reset 环境重新开始', '从当前状态接着跑，并继续累计这一回合的奖励', '把这 300 步丢掉'], a: 1, why: 'rollout 边界不是回合结束。原教程的脚本不会 reset，下一轮从当前观测继续，回合奖励也继续累计。' }
+]);
+S.notes($('#n-loop'), {
+  c: [
+    ['Critic', '估计 V(s)：按当前策略继续走预计还能拿多少回报，提供比较基准。'],
+    ['rollout', '一次迭代用当前策略采的一段数据（2048 步），可跨多个回合。'],
+    ['TD 误差 δ', '执行动作后的新估计减去执行前的预期；> 0 表示比预期好。'],
+    ['优势 A_t', 'GAE 把当前及后续 δ 加权合成：这一步比预期好多少。'],
+    ['裁剪更新', '概率比被夹在 [1 − ε, 1 + ε]，限制一批数据带来的策略变化。']
+  ],
+  p: [
+    ['默认超参', 'γ = 0.99，λ = 0.95，ε = 0.2，10 epochs，batch 64，学习率线性衰减'],
+    ['terminated', '后续价值 = 0'],
+    ['truncated', '后续价值 = V(s′)；GAE 仍切断'],
+    ['rollout 边界', '不 reset，接着跑、接着累计'],
+    ['两种优势', '归一化 advantages → Actor；未归一化 returns → Critic']
+  ]
+});
+
+/* ---------- 训练日志 ---------- */
+var LG = {
+  reward: [21.4,33.3,49.2,69.4,133.4,189.4,224.3,213.7,318.0,500.0,460.4,500.0,500.0,500.0,500.0,482.8,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0],
+  entropy: [0.685,0.657,0.625,0.595,0.571,0.574,0.578,0.552,0.563,0.559,0.545,0.526,0.5,0.502,0.514,0.508,0.503,0.487,0.489,0.496,0.496,0.485,0.471,0.479,0.484,0.479,0.476,0.468,0.454,0.454,0.474,0.458,0.455,0.452,0.45,0.444,0.44,0.432,0.426,0.421],
+  vloss: [51.379,41.822,57.382,64.059,64.139,39.166,31.726,53.932,31.507,17.761,30.058,8.557,5.861,3.842,2.4,29.523,1.869,0.926,0.418,0.255,0.194,0.101,0.062,0.039,0.025,0.016,0.01,0.007,0.004,0.003,0.002,0.001,0.001,0.0006,0.0005,0.0003,0.0002,0.00017,0.00016,0.00014],
+  kl: [0.00871,0.00808,0.00616,0.00492,0.00429,0.00545,0.00443,0.00682,0.00541,0.00591,0.00765,0.00458,0.00246,0.00142,0.00069,0.00146,0.00101,0.00417,0.00716,0.00187,0.00362,0.00413,0.00484,0.00212,0.00525,0.0013,0.00129,0.00207,0.00272,0.0025,0.0015,0.00237,0.00164,0.0041,0.00189,0.00143,0.00037,0.00014,0.00011,0.00038],
+  clip: [0.1448,0.0955,0.0855,0.0647,0.0523,0.0735,0.0519,0.0911,0.0754,0.0744,0.1282,0.0551,0.0158,0.0079,0.0053,0.0054,0.0085,0.053,0.1164,0.0159,0.0396,0.0515,0.0637,0.0131,0.0732,0.0026,0.0051,0.0108,0.0284,0.0279,0.0151,0.0165,0.0042,0.0573,0.0135,0.0098,0.0006,0,0,0]
+};
+var LGD = {
+  reward: { y: [0, 520], yt: [0, 100, 200, 300, 400, 500], yl: '平均回合奖励', f: function (v) { return v; }, c: 'c1', hl: [{ y: 500, c: 'dim', label: '500 步上限' }],
+    w: '第 1 轮 21.4（91 个回合），第 5 轮 133.4，第 10 轮首次到 500（累计 20,480 步），第 11 轮回落到 460.4，之后基本稳定在 500。每个点只统计这一轮结束的完整回合；后期每轮只结束 4 个回合，所以一个回合提前倒下就会让点明显下降。' },
+  entropy: { y: [0.4, 0.7], yt: [0.4, 0.5, 0.6, 0.7], yl: '策略熵（nats）', f: function (v) { return v; }, c: 'c2', hl: [{ y: Math.log(2), c: 'dim', label: 'ln 2 ≈ 0.693（完全随机）' }],
+    w: '从 0.685（接近两动作完全随机的 ln 2）降到 0.421：动作概率逐渐拉开，但没有塌成确定性。原文提醒：熵下降只说明“更确定了”，如果奖励没同时上升，也可能是更确定地选错了。' },
+  vloss: { y: [-4, 2], yt: [-4, -3, -2, -1, 0, 1, 2], yl: 'log₁₀(价值损失)', f: function (v) { return Math.log10(v); }, c: 'c3',
+    w: '纵轴是对数：前期在 41.8–64.1 之间波动，最后降到 0.00014。第 16 轮那个尖峰（29.5）对应奖励回落到 482.8——策略到了新的状态分布，Critic 要重新调整。价值损失小只说明 Critic 接近当前目标，任务完成得好不好还得看奖励和独立评估。' },
+  kl: { y: [0, 0.01], yt: [0, 0.0025, 0.005, 0.0075, 0.01], yl: '近似 KL', f: function (v) { return v; }, c: 'ok',
+    w: '最大 0.00871（第 1 轮），最后一轮 0.00038。KL 衡量一次 PPO 更新让策略变了多少。这份代码没有按 KL 提前停止，原文也刻意不给“适用于所有任务的阈值”，只报告实测值。' },
+  clip: { y: [0, 0.16], yt: [0, 0.04, 0.08, 0.12, 0.16], yl: '裁剪比例', f: function (v) { return v; }, c: 'c1',
+    w: '第 1 轮 14.48% 的样本触发了裁剪，最后三轮为 0%——学习率线性衰减到 0，策略变化也随之变小。第 11、19 轮的小高峰和 KL 的高峰同时出现。单独一个高值或低值说明不了训练成败，要和 KL、学习率、奖励一起读。' }
+};
+var lgChart = S.chart($('#lgC'), { h: 260, x: [1, 40], xt: [1, 10, 20, 30, 40], xl: '训练轮次（每轮 2048 步）' });
+function lg(k) {
+  var d = LGD[k];
+  lgChart({ y: d.y, yt: d.yt, yl: d.yl, hl: d.hl || [], curves: [{ pts: LG[k].map(function (v, i) { return [i + 1, d.f(v)]; }), c: d.c }], dots: LG[k].map(function (v, i) { return { x: i + 1, y: d.f(v), r: 3, c: d.c }; }) });
+  $('#lgW').innerHTML = d.w + '（数据来自原教程仓库的 training_metrics_seed42.csv。）';
+}
+S.seg($('#lgS'), lg); lg('reward');
+S.$$('#dbF li').forEach(function (li) { li.addEventListener('click', function () { S.$$('#dbF li').forEach(function (x) { x.classList.remove('on'); }); li.classList.add('on'); }); });
+S.$$('#dbF li')[0].classList.add('on');
+S.notes($('#n-log'), {
+  c: [
+    ['训练奖励', '按概率采样动作时的回合奖励，带探索噪声。'],
+    ['独立评估', '确定性动作、新初始状态、固定回合数；与训练奖励分开报告。'],
+    ['策略熵', '动作分布的分散程度；两动作完全随机时为 ln 2 ≈ 0.693。'],
+    ['价值损失', 'Critic 预测 V(s) 与目标回报的均方误差。'],
+    ['近似 KL', '一次更新前后动作概率的差异。'],
+    ['裁剪比例', '概率比超出 [1 − ε, 1 + ε] 的样本占比。']
+  ],
+  p: [
+    ['本次运行（原书数据）', '第 1 轮 21.4 → 第 10 轮 500；评估 500.0 ± 0.0'],
+    ['熵', '0.685 → 0.421'],
+    ['价值损失', '41.8–64.1 → 0.00014'],
+    ['KL / 裁剪', '最大 0.0087 / 14.5%，最后 ≈ 0 / 0%'],
+    ['比较算法时', '多种子、同训练量、同评估方法，报告原始曲线与达标步数']
+  ]
+});
+
+/* ---------- 数据形态 ---------- */
+S.sortGame($('#dfG'), {
+  bins: [{ k: 'onon', t: 'Online + On-policy' }, { k: 'onoff', t: 'Online + Off-policy' }, { k: 'offoff', t: 'Offline + Off-policy' }],
+  items: [
+    { t: 'PPO', k: 'onon', why: '每轮用当前策略采样，裁剪保证同一批数据的多轮复用仍近似 on-policy。' },
+    { t: 'GRPO', k: 'onon', why: '每个 prompt 由当前模型现场生成一组回答，打分后立刻更新（第 9 篇）。' },
+    { t: 'SARSA', k: 'onon', why: '用当前策略在 s′ 实际会选的 a′ 更新。' },
+    { t: 'REINFORCE', k: 'onon', why: '用当前策略跑完整回合，按回报更新，数据用完即弃。' },
+    { t: 'DQN', k: 'onoff', why: '回放池里是旧策略的数据（off-policy），但训练中仍在不停打游戏收新数据（online）。' },
+    { t: 'SAC', k: 'onoff', why: '连续控制的 off-policy 算法，同样边交互边从回放池学（第 5 篇）。' },
+    { t: 'Q-learning', k: 'onoff', why: '行为策略带探索，目标策略是贪心的 argmax。' },
+    { t: 'CQL', k: 'offoff', why: '只用固定数据集，并压低没见过动作的 Q 值（第 6 篇）。' },
+    { t: 'IQL', k: 'offoff', why: '固定数据集上学习，完全不查询数据外动作的价值。' },
+    { t: '固定偏好数据上的 DPO', k: 'offoff', why: '训练中不再生成新回答、不再要新标注，原文把它归为接近 offline 的设定。' }
+  ]
+});
+S.notes($('#n-data'), {
+  c: [
+    ['行为策略 μ', '真正与环境交互、产生数据的策略。'],
+    ['目标策略 π_θ', '我们想学出来、被优化的策略。'],
+    ['On-policy', 'μ ≈ π：用自己刚采的数据更新自己。'],
+    ['Off-policy', 'μ ≠ π：可以用旧数据、别人的数据。'],
+    ['Online', '训练中仍可交互，数据集在增长。'],
+    ['Offline', '训练前数据就封存，不允许再交互。']
+  ],
+  p: [
+    ['on-policy 的代价', '样本效率低，策略一变旧数据就过期'],
+    ['off-policy 的代价', '分布偏移；需要数据覆盖目标策略会去的地方'],
+    ['offline 的致命问题', '对没见过的动作外推出离谱高分，又没机会试错纠正'],
+    ['反例记忆', 'DQN = off-policy + online；PPO 同批数据 10 轮仍算近似 on-policy']
+  ]
+});
+
+/* ---------- 奖励规则 ---------- */
+function rw() {
+  var a = +$('#rwAs').value, b = Math.max(+$('#rwBs').value, a + 1), c = +$('#rwCs').value;
+  $('#rwA').textContent = a; $('#rwB').textContent = b; $('#rwC').textContent = c;
+  var R = { A: [0, 1], B: [-0.01, 1], C: [0.02, 1] };
+  function ret(k, n, goal) { return R[k][0] * n + (goal ? R[k][1] : 0); }
+  var rows = '<tr><td>规则</td><td class="n">最短 ' + a + ' 步</td><td class="n">绕远 ' + b + ' 步</td><td class="n">绕圈 ' + c + ' 步不到终点</td><td>最优行为</td></tr>';
+  var verdict = {};
+  ['A', 'B', 'C'].forEach(function (k) {
+    var s1 = ret(k, a, 1), s2 = ret(k, b, 1), s3 = ret(k, c, 0), best = Math.max(s1, s2, s3);
+    var v = s3 === best && s3 > s1 + 1e-9 ? '<b style="color:var(--alert)">绕圈刷分</b>' : Math.abs(s1 - s2) < 1e-9 ? '快慢无所谓' : s1 > s2 ? '<b style="color:var(--ok)">尽快到终点</b>' : '绕远';
+    verdict[k] = v;
+    rows += '<tr><td>' + k + '（每步 ' + (R[k][0] > 0 ? '+' : '') + R[k][0] + '）</td><td class="n">' + S.f(s1, 2) + '</td><td class="n">' + S.f(s2, 2) + '</td><td class="n">' + S.f(s3, 2) + '</td><td>' + v + '</td></tr>';
+  });
+  $('#rwT').innerHTML = rows;
+  var brk = Math.ceil(1 / 0.02);
+  $('#rwW').innerHTML = '规则 A 下最短和绕远回报都是 1，它不区分快慢；规则 B 让“时间有成本”，短路线更好；规则 C 只要绕圈超过 ' + brk + ' 步（0.02 × ' + brk + ' = 1）就比去终点划算——如果环境没有时间上限，智能体为什么要去终点？三张地图完全一样，<b>只改了奖励，任务就变了</b>。';
+}
+['rwAs', 'rwBs', 'rwCs'].forEach(function (id) { $('#' + id).addEventListener('input', rw); }); rw();
+var pbR = S.rng(11);
+function pb() {
+  var x = 0, y = 0, path = [[0, 0]], guard = 0;
+  while ((x !== 4 || y !== 4) && guard < 60) {
+    guard++;
+    var mv = [[1, 0], [0, 1], [-1, 0], [0, -1]][Math.floor(pbR() * 4)];
+    if (pbR() < 0.55) mv = pbR() < 0.5 ? [1, 0] : [0, 1];
+    var nx = S.clamp(x + mv[0], 0, 4), ny = S.clamp(y + mv[1], 0, 4); x = nx; y = ny; path.push([x, y]);
+  }
+  if (x !== 4 || y !== 4) { while (x < 4) { x++; path.push([x, y]); } while (y < 4) { y++; path.push([x, y]); } }
+  function phi(p) { return -((4 - p[0]) + (4 - p[1])); }
+  var sum = 0, lines = [];
+  for (var i = 1; i < path.length; i++) { var F = phi(path[i]) - phi(path[i - 1]); sum += F; if (i <= 10) lines.push('(' + path[i - 1] + ') → (' + path[i] + ')   F = ' + (F > 0 ? '+' : '') + F); }
+  if (path.length > 11) lines.push('…… 共 ' + (path.length - 1) + ' 步');
+  $('#pbT').textContent = lines.join('\n');
+  $('#pbW').innerHTML = '这条路线走了 <b>' + (path.length - 1) + '</b> 步，附加奖励总和 ΣF = <b>' + sum + '</b> = Φ(终点) − Φ(起点) = 0 − (−8)。再换几条路线：无论绕多远，总和永远是 8。附加项只给每一步“方向提示”，不改变不同路线之间的优劣次序（终点给的原奖励和每步成本仍然决定谁更好）——这就是势能塑形“不改变最优策略”的原因。';
+}
+$('#pbGo').addEventListener('click', pb); pb();
+S.notes($('#n-reward'), {
+  c: [
+    ['稀疏奖励', '只在终点给分；随机探索很久都是一串 0。'],
+    ['稠密奖励', '每步都有反馈，学得快，但可能悄悄改变任务。'],
+    ['延迟奖励', '关键后果很久才显现，需要把失败追溯回早期动作。'],
+    ['信用分配', '把最终结果的功劳 / 责任分给此前的各个动作。'],
+    ['势能塑形 PBRS', '附加 γΦ(s′) − Φ(s)，保证最优策略不变。'],
+    ['Goodhart 定律', '指标一旦成为目标，就不再是好指标。']
+  ],
+  p: [
+    ['规则 A / B / C', '到终点就行 / 尽快到 / 绕圈刷分'],
+    ['多目标加权', '权重即超参；量纲没配好就只优化数值最大的一项'],
+    ['安全约束', '不宜写成惩罚项，适合写成约束（如 CPO）'],
+    ['数学推导', 'MDP、回报与贝尔曼方程的推导见<a href="../2026-10-19-rlmath-1/">《数学原理》01–03</a>']
+  ]
+});

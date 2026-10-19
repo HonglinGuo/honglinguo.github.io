@@ -1,0 +1,321 @@
+---
+title: DPO 与离线偏好优化：跳过奖励模型，直接在偏好对上训练
+desc: 动手学现代强化学习笔记（八）：RLHF 的工程负担与 DPO 的出发点；从 KL 正则目标推出最优策略的闭式解、反解奖励、代入 Bradley-Terry 消去配分函数；DPO 损失、隐式奖励与 β 的含义；训练指标（loss、margin、accuracy、chosen/rejected reward）怎样读；在浏览器里训练一个小 DPO；IPO、KTO、SimPO 各去掉了什么，以及选型。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 08</span><span>对应原教程第 14 章（docs/chapter17_dpo）与附录 B.3</span><span>约 45 分钟</span>
+h1: 奖励模型<em>藏在策略里</em>
+lead: PPO-RLHF 要训一个奖励模型，再让四个模型同台跑在线强化学习。DPO（Rafailov 2023）发现：在 KL 约束下，最优策略和奖励之间有一个精确的闭式关系，奖励可以直接用“当前模型相对参考模型的对数概率比”表示。于是对齐变成了一个分类损失：让好回答的这个比值比坏回答的大。原教程把它比作“看录像学开车”：简单、便宜、快，但只能学数据里有的东西。
+nav: derive|推导;loss|损失与 β;train|动手训练;family|DPO 家族;back|回扣三问
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>DPO 凭什么能跳过奖励模型？推导里被消掉的是哪一项、为什么能消？</li>
+    <li>DPO 的 β 控制什么？Loss、Margin、Accuracy、Chosen / Rejected Reward 各说明什么？</li>
+    <li>IPO、KTO、SimPO 分别去掉或改了 DPO 的哪一部分？什么时候该用 PPO / GRPO 而不是 DPO？</li>
+  </ol>
+</div>
+
+<section class="part" id="derive">
+  <div class="part-head"><h2>从 KL 正则目标到 DPO 损失</h2><span class="meta">原文 docs/chapter17_dpo/dpo-objective-derivation.md（14.1 节）、dpo-theory-and-family.md“DPO 推导三步走”</span></div>
+  <div class="sec-lede">
+    <p>原文先把后训练的三种数据形态摆出来：预训练是纯文本（学会续写），SFT 是问答对（“好回答长什么样”），对齐阶段是 (prompt, chosen, rejected) 三元组（“好回答比坏回答好在哪”）。SFT 只有正面示范：它能让好回答概率变高，却不保证远离坏回答——原文的例子是模型学会了礼貌，却在用户说“学数学没用”时盲目附和（谄媚）。偏好对的对比结构信息密度更高：DPO 通常几千到几万条偏好对就能明显改变行为。</p>
+    <p>推导的起点就是 RLHF 的目标：max 𝔼[r(x, y)] − β·KL(π ‖ π<sub>ref</sub>)。<strong>第一步</strong>，这个约束优化问题有闭式解：π*(y|x) = π<sub>ref</sub>(y|x)·exp(r(x,y)/β) / Z(x)——最优策略就是在参考策略上按 exp(r/β) 重新加权。<strong>第二步</strong>，两边取对数反解奖励：r(x,y) = β log(π*(y|x)/π<sub>ref</sub>(y|x)) + β log Z(x)。Z(x) 要对所有可能回答求和，算不出来——但它只依赖 x。<strong>第三步</strong>，代入 Bradley–Terry：只关心同一个 x 下两个回答的<strong>奖励差</strong>，β log Z(x) 正好相减抵消。</p>
+    <p>于是 L<sub>DPO</sub> = −log σ(β log(π<sub>θ</sub>(y<sub>w</sub>)/π<sub>ref</sub>(y<sub>w</sub>)) − β log(π<sub>θ</sub>(y<sub>l</sub>)/π<sub>ref</sub>(y<sub>l</sub>)))。原文对“为什么用比值而不是绝对概率”的解释很直观：两个模型对同一回答都受“生成难度”（罕见词多则概率低）影响，相除后难度被约掉，只剩训练带来的变化。整个过程只需要策略模型和一份冻结的参考副本：TRL 的 DPOTrainer 只传一个 model，内部自动复制参考模型。</p>
+    <p class="go">逐步看推导；再拖动 β，看最优策略怎样在参考策略上重新加权。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">推导三步走</p>
+    <ol class="derive" id="dvL">
+      <li>RLHF 目标（KL 正则）<div class="fx">max_π 𝔼_{y~π}[r(x,y)] − β·KL(π(·|x) ‖ π_ref(·|x)) = max_π 𝔼_{y~π}[r(x,y) − β log(π(y|x)/π_ref(y|x))]</div></li>
+      <li>闭式解：在参考策略上按 exp(r/β) 重新加权<div class="fx">π*(y|x) = π_ref(y|x)·exp(r(x,y)/β) / Z(x)，Z(x) = Σ_y π_ref(y|x) exp(r(x,y)/β)</div></li>
+      <li>反解奖励：奖励 = 对数概率比 + 只依赖 x 的常数<div class="fx">r(x,y) = β log(π*(y|x)/π_ref(y|x)) + β log Z(x)</div></li>
+      <li>代入 Bradley–Terry：同一 x 下取差，β log Z(x) 抵消<div class="fx">r(x,y_w) − r(x,y_l) = β log(π*(y_w|x)/π_ref(y_w|x)) − β log(π*(y_l|x)/π_ref(y_l|x))</div></li>
+      <li>用 π_θ 代替 π*，最大化偏好似然 = DPO 损失<div class="fx">L_DPO = −𝔼 log σ(β log(π_θ(y_w)/π_ref(y_w)) − β log(π_θ(y_l)/π_ref(y_l)))</div></li>
+    </ol>
+    <div id="dvS"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">最优策略 π* ∝ π_ref · exp(r/β)：同一个 prompt 的 6 个候选回答（概率与奖励为示意）</p>
+    <label class="ctl"><span>β <output id="osB">0.50</output></span><input type="range" id="osBs" min="0.05" max="3" step="0.05" value="0.5"></label>
+    <div class="tblw"><table class="calc" id="osT"></table></div>
+    <div class="read"><div><div class="v" id="osR">–</div><div class="k">π* 下的期望奖励</div></div><div class="warn"><div class="v" id="osK">–</div><div class="k">KL(π* ‖ π_ref)</div></div></div>
+    <p class="cap" id="osW"></p>
+  </div>
+  <div class="notes" id="n-derive"></div>
+</section>
+
+<section class="part" id="loss">
+  <div class="part-head"><h2>DPO 损失、隐式奖励与 β</h2><span class="meta">原文 dpo-objective-derivation.md 14.1.4.2、metrics.md（14.2）、dpo-hands-on.md 14.4.4</span></div>
+  <div class="sec-lede">
+    <p>损失括号里的两项叫<strong>隐式奖励</strong>：r<sub>chosen</sub> = β log(π<sub>θ</sub>(y<sub>w</sub>)/π<sub>ref</sub>(y<sub>w</sub>))，r<sub>rejected</sub> 同理；两者之差就是 <strong>Reward Margin</strong>。它们不是真的 RM 打分，而是从概率比推出来的。训练开始时 π<sub>θ</sub> = π<sub>ref</sub>，margin = 0，σ(0) = 0.5，所以 loss 从 ln 2 ≈ 0.693 开始——原文日志第 5 步是 0.6821。梯度的大小正比于 σ(−margin)：模型已经分得很开的样本几乎不贡献梯度，还没分开（或分反了）的样本梯度最大。</p>
+    <p>附录 B.3 的速记：“<strong>4 条 logp</strong>（2 个模型 × 2 个回答）：每条算‘当前 − 参考’；好减坏、乘 β、过 sigmoid、取负 log。”常见坑：用了 raw log-prob 而不是比值；参考模型的 logp 忘了 detach；chosen / rejected 弄反；手写 log σ 溢出（用 logaddexp 或 F.logsigmoid）。</p>
+    <p><strong>β</strong> 是最关键的超参，作用和 RLHF 里的 KL 系数相同：控制能偏离参考模型多远。原文的经验表：0.01 几乎没有约束，快但可能语言退化；<strong>0.1 是默认</strong>；0.5 约束强、变化慢；1.0 几乎学不到东西。还有一个读日志时容易误判的现象：margin 在涨，可能是 chosen 和 rejected 的 logp <strong>都在下降</strong>、只是 rejected 降得更多——所以 TRL 会把 rewards/chosen 和 rewards/rejected 拆开记录。</p>
+    <p class="go">输入两条回答相对参考模型的 logp 变化，算 DPO 的每一项。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">DPO 损失计算器（每条回答取整段 logp 之和）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>log π_θ(y_w) − log π_ref(y_w) <output id="dlW">1.0</output></span><input type="range" id="dlWs" min="-10" max="10" step="0.5" value="1"></label>
+        <label class="ctl"><span>log π_θ(y_l) − log π_ref(y_l) <output id="dlL">−2.0</output></span><input type="range" id="dlLs" min="-10" max="10" step="0.5" value="-2"></label>
+        <label class="ctl"><span>β <output id="dlB">0.10</output></span><input type="range" id="dlBs" min="0.01" max="1" step="0.01" value="0.1"></label>
+      </div>
+      <div class="tblw"><table class="calc" id="dlT"></table></div>
+      <p class="cap" id="dlX"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">损失随 logp 比值之差 Δ 的变化</p>
+      <div id="dlC"></div>
+      <p class="note">横轴 Δ = (logπ_θ − logπ_ref)(y_w) − (logπ_θ − logπ_ref)(y_l)，不含 β。β 越大，同样的 Δ 损失降得越快——更少的偏离就能“分开”好坏回答。</p>
+    </div>
+  </div>
+  <div class="card2 algo" data-algo="DPO">
+    <h3>算法卡 · DPO</h3><p class="en">Direct Preference Optimization（Rafailov et al., 2023）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>PPO-RLHF 要训 RM、四模型同台、在线采样、超参敏感。</dd>
+      <dt>核心做法</dt><dd>利用 KL 正则目标的闭式解，把奖励写成 β·对数概率比；在偏好对上直接最小化 BT 负对数似然。</dd>
+      <dt>关键公式</dt><dd>L = −log σ(β[(logπ<sub>θ</sub> − logπ<sub>ref</sub>)(y<sub>w</sub>) − (logπ<sub>θ</sub> − logπ<sub>ref</sub>)(y<sub>l</sub>)])</dd>
+      <dt>何时用</dt><dd>已有可靠偏好对、想快速验证数据和流程、显存有限时的首选基线。</dd>
+      <dt>代价与坑</dt><dd>离线：不能探索，上限受数据覆盖限制；偏好标错照样学进去（loss 照常下降）；Accuracy 很快到 100% 往往是过拟合；可能学到长度等表面特征。</dd>
+      <dt>相关</dt><dd>IPO / KTO / SimPO（下文）；Iterative DPO（周期性用新模型生成新偏好对）；离线 RL 的分布偏移（第 6 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-loss"></div>
+</section>
+
+<section class="part" id="train">
+  <div class="part-head"><h2>动手：训练一个小 DPO，读它的四条指标</h2><span class="meta">参照原文 metrics.md 指标速查表；实验为本笔记自设</span></div>
+  <div class="sec-lede">
+    <p>原文的实验用 Qwen2.5-0.5B-Instruct 和一份“减少过度顺从”的偏好数据，DPOConfig 里 β = 0.1、学习率 1e-5、3 个 epoch，几分钟跑完；训练后同一个模型学会了在用户观点有误时礼貌反驳，而不是附和。浏览器里跑不动 0.5B，这里换成一个能看清全部数字的缩小版：一个 prompt 的 8 个候选回答，策略就是这 8 个回答上的 softmax，参考策略固定。每个回答有一个“真实质量”，偏好对按质量差加噪声生成（10% 的标签是反的）。</p>
+    <p>训练 400 步，每步 64 对，记录原文速查表里的指标：<strong>Loss</strong> 应从 0.693 下降并趋稳（降到接近 0 多半是过拟合）；<strong>Accuracy</strong> 从 0.5 升到 0.8–0.95；<strong>Margin</strong> 从 0 上升并趋稳；<strong>Chosen Reward</strong> 应升、<strong>Rejected Reward</strong> 应降（原文速查表的标准）。另外记下两个只有“上帝视角”才有的量：策略的真实期望质量，以及相对参考模型的 KL。</p>
+    <p class="go">先用 β = 0.1 训练，再换 β = 0.01 和 β = 1 比较。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">小 DPO 训练（8 个候选回答、tabular softmax 策略，示意）</p>
+    <div class="ctrls"><span class="note" style="margin:0">β</span><div class="seg" id="trB"><button data-v="0.01">0.01</button><button data-v="0.1" aria-pressed="true">0.1</button><button data-v="0.5">0.5</button><button data-v="1">1.0</button></div>
+      <div class="seg" id="trM"><button data-v="loss" aria-pressed="true">Loss</button><button data-v="acc">Accuracy</button><button data-v="rw">Chosen / Rejected</button><button data-v="kl">真实质量与 KL</button></div></div>
+    <div id="trC"></div>
+    <p class="cap" id="trW"></p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>指标</th><th>TRL 日志键</th><th>健康表现</th><th>异常信号</th></tr></thead>
+    <tbody>
+      <tr><td>Loss</td><td>loss</td><td>从 ln 2 ≈ 0.69 下降并趋稳</td><td>卡在 0.69；快速降到接近 0</td></tr>
+      <tr><td>Margin</td><td>rewards/margins</td><td>从 0 上升并趋稳</td><td>为负；在 0 附近震荡</td></tr>
+      <tr><td>Accuracy</td><td>rewards/accuracies</td><td>从 0.5 升到 0.8–0.95</td><td>长期停在 0.5</td></tr>
+      <tr><td>Chosen Reward</td><td>rewards/chosen</td><td>逐步上升</td><td>下降或不变</td></tr>
+      <tr><td>Rejected Reward</td><td>rewards/rejected</td><td>逐步下降</td><td>上升</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 docs/chapter17_dpo/metrics.md“指标速查表”。</p>
+  <div class="notes" id="n-train"></div>
+</section>
+
+<section class="part" id="family">
+  <div class="part-head"><h2>DPO 家族：每次都在问“哪个组件可以安全去掉”</h2><span class="meta">原文 dpo-theory-and-family.md“DPO-style 离线偏好优化家族”、附录 docs/appendix_code_cheatsheet/dpo-family.md</span></div>
+  <div class="sec-lede">
+    <p>DPO 的局限原文列了三条：依赖数据质量（offline）、无法探索（只能看到数据里已有的回答）、偏好冲突会让它困惑。于是有一族“沿着 DPO 继续简化或修补”的方法，原文按“去掉了什么”来记：<strong>KTO</strong> 去掉成对数据——只要单条回答的点赞 / 点踩（生产日志里几乎免费），借前景理论对坏样本罚得更重（λ<sub>U</sub> &gt; λ<sub>D</sub>），用一个基线 z<sub>ref</sub> 把好样本推上去、坏样本压下来；<strong>SimPO</strong> 去掉参考模型——用长度归一化的平均 logp 当隐式奖励，并减一个目标 margin γ，省一个完整模型的显存，也消除了“长回答 logp 天然更低”的偏差，代价是少了安全绳；<strong>IPO</strong> 保留偏好对和参考模型，但把 −log σ 换成平方损失 (Δ − 1/(2β))²——差距达到目标就够了，不会无限拉开，小数据（原文说少于约 1000 条）下更稳。</p>
+    <p>和 PPO 比，DPO 是“看录像学开车”，PPO 是“边开边学”：DPO 不需要 RM、不需要 Critic、不需要在线采样，同时只跑 2 个模型，显存约为 PPO 的 1/2–1/4，实验迭代以分钟到小时计；PPO / GRPO 能在线探索、理论上限更高。原文的建议是项目初期先用 DPO 快速验证数据和流程，确认可行后再考虑在线方法。</p>
+    <p class="go">在同一个横轴上比较 DPO、IPO 的损失形状，然后做一次选型练习。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">DPO vs IPO：同一 β 下的损失曲线</p>
+    <label class="ctl"><span>β <output id="fmB">0.10</output></span><input type="range" id="fmBs" min="0.05" max="1" step="0.05" value="0.1"></label>
+    <div id="fmC"></div>
+    <p class="cap" id="fmW"></p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>方法</th><th>数据</th><th>参考模型</th><th>损失核心</th><th>适用（原文选型表）</th></tr></thead>
+    <tbody>
+      <tr><td>DPO</td><td>偏好对</td><td>需要</td><td>−log σ(βΔ)</td><td>有大量偏好对；快速验证流程；通用首选</td></tr>
+      <tr><td>IPO</td><td>偏好对</td><td>需要</td><td>(Δ − 1/(2β))²</td><td>数据少（几百条以内）</td></tr>
+      <tr><td>KTO</td><td>单条好 / 坏标签</td><td>需要</td><td>好样本推过 z_ref、坏样本压到 z_ref 下，坏样本权重更高</td><td>只有点赞 / 点踩</td></tr>
+      <tr><td>SimPO</td><td>偏好对</td><td><b>不需要</b></td><td>−log σ(β(logp̄_w − logp̄_l) − γ)，logp̄ 为长度平均</td><td>显存紧（如大模型单卡）</td></tr>
+      <tr><td>PPO / GRPO</td><td>在线采样 + 奖励</td><td>需要</td><td>裁剪策略梯度</td><td>追求上限、需要探索</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">合并原文“一张表看懂家族差异”“选型指南”与附录 B.3“家族对比速查”。</p>
+  <div class="lab"><p class="lab-t">选型练习</p><div id="fmG"></div></div>
+  <div class="confuse"><h4>易混辨析：DPO、SFT 与 PPO-RLHF</h4>
+    <p><b>DPO vs SFT</b>：SFT 只拉高 y_w 的概率；DPO 要求 y_w 相对 y_l 的比值上升——如果两者概率一起涨（模型变“话多”），DPO 的损失不会下降。没有 rejected，DPO 跑不了；原文还提醒，高质量的 rejected（看似合理、实则有错的 hard negative）往往比 chosen 更难找、更重要。</p>
+    <p><b>DPO vs PPO-RLHF</b>：两者优化同一个 KL 正则目标；PPO 显式训练 RM、在线生成、用 Critic 估优势，DPO 把 RM 隐含在策略里、只用固定偏好对。DPO 是 offline，PPO 是 online（第 1 篇的四种数据形态）。</p>
+    <p><b>隐式奖励 vs RM 分数</b>：前者 β log(π_θ/π_ref) 由策略自身给出，训练中随策略变化；后者是独立网络的输出。</p>
+    <p><b>DPO 的 β vs RLHF 的 β</b>：是同一个 β——KL 正则的系数，推导中直接继承下来。</p>
+  </div>
+  <div class="notes" id="n-family"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">闭式解：π*(y|x) = π_ref(y|x)·exp(r(x,y)/β) / Z(x)</div>
+    <div class="fx">反解：r(x,y) = β log(π*(y|x)/π_ref(y|x)) + β log Z(x)；BT 取差后 Z 抵消</div>
+    <div class="fx">DPO：L = −log σ(β[(logπ_θ − logπ_ref)(y_w) − (logπ_θ − logπ_ref)(y_l)])</div>
+    <div class="fx">隐式奖励：r_chosen = β log(π_θ(y_w)/π_ref(y_w))；margin = r_chosen − r_rejected；初始 loss = ln 2</div>
+    <div class="fx">IPO：(Δ − 1/(2β))²；SimPO：−log σ(β(logp_w/|y_w| − logp_l/|y_l|) − γ)</div>
+    <div class="fx">KTO：好样本 −log σ(β·logr − z_ref)，坏样本 −log σ(z_ref − β·logr)，λ_U &gt; λ_D</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. DPO 凭什么跳过奖励模型？消掉的是哪一项？</summary><p class="ans">KL 正则的 RLHF 目标有闭式最优解 π* ∝ π_ref·exp(r/β)，反解得 r = β log(π*/π_ref) + β log Z(x)。Bradley–Terry 只用同一 prompt 下两个回答的奖励差，β log Z(x) 只依赖 x，相减抵消；奖励差完全由两个模型的对数概率比决定，于是可以直接在偏好对上优化策略，不需要单独的 RM。</p></details>
+    <details><summary>2. β 控制什么？几条指标各说明什么？</summary><p class="ans">β 是 KL 正则系数：越大越不敢偏离参考模型（0.01 易跑偏、0.1 默认、1.0 几乎不动）。Loss 从 0.693 下降并趋稳；Accuracy 从 0.5 升到 0.8–0.95；Margin 从 0 上升；Chosen Reward 应升、Rejected Reward 应降——两者同升同降时要结合 margin 看，可能是两者 logp 都在降、只是降得不一样多。</p></details>
+    <details><summary>3. IPO、KTO、SimPO 各改了什么？什么时候用 PPO / GRPO？</summary><p class="ans">IPO 把 −log σ 换成回归到 1/(2β) 的平方损失，避免无限拉开、小数据更稳；KTO 不要成对数据，只要单条好 / 坏标签；SimPO 去掉参考模型，用长度归一化 logp 加 margin。追求上限、需要模型在线探索新回答、有可计算奖励（尤其可验证奖励）时，用 PPO / GRPO。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 推导 ---------- */
+var dvItems = S.$$('#dvL li');
+S.stepper($('#dvS'), dvItems.length, function (i) { dvItems.forEach(function (li, k) { li.classList.toggle('hide', k > i); li.classList.toggle('on', k === i); }); }, ['目标', '闭式解', '反解奖励', 'Z 抵消', 'DPO 损失']);
+var OS = { p: [0.30, 0.25, 0.20, 0.12, 0.08, 0.05], r: [0.2, -0.5, 0.0, 1.0, 1.5, -1.0], n: ['套话但正确', '盲目附和', '简短正确', '礼貌纠正', '纠正 + 解释', '冷嘲热讽'] };
+function os() {
+  var b = +$('#osBs').value; $('#osB').textContent = S.f(b, 2);
+  var w = OS.p.map(function (p, i) { return p * Math.exp(OS.r[i] / b); }), Z = w.reduce(function (a, c) { return a + c; }, 0), ps = w.map(function (x) { return x / Z; });
+  var ER = ps.reduce(function (s, p, i) { return s + p * OS.r[i]; }, 0), ER0 = OS.p.reduce(function (s, p, i) { return s + p * OS.r[i]; }, 0), KL = ps.reduce(function (s, p, i) { return s + p * Math.log(p / OS.p[i]); }, 0);
+  $('#osT').innerHTML = '<tr><td>候选回答</td><td class="n">奖励 r</td><td class="n">π_ref</td><td class="n">π*</td><td class="n">β log(π*/π_ref)</td></tr>' + OS.n.map(function (n, i) { return '<tr><td>' + n + '</td><td class="n">' + S.f(OS.r[i], 1) + '</td><td class="n">' + S.pct(OS.p[i], 0) + '</td><td class="n"><b>' + S.pct(ps[i], 1) + '</b></td><td class="n">' + S.f(b * Math.log(ps[i] / OS.p[i]), 2) + '</td></tr>'; }).join('');
+  $('#osR').textContent = S.f(ER, 2); $('#osK').textContent = S.f(KL, 3);
+  $('#osW').innerHTML = '参考策略下期望奖励 ' + S.f(ER0, 2) + '。β = ' + S.f(b, 2) + ' 时最优策略的期望奖励是 ' + S.f(ER, 2) + '，代价是偏离参考 KL = ' + S.f(KL, 3) + '。β 小：几乎全押在奖励最高的回答上，KL 大；β 大：基本维持参考分布。最后一列验证了第三步：β log(π*/π_ref) = r − β log Z，每一行都比奖励 r 小同一个常数 β log Z = ' + S.f(b * Math.log(Z), 2) + '——所以两个回答相减时它消失了。';
+}
+$('#osBs').addEventListener('input', os); os();
+S.notes($('#n-derive'), {
+  c: [
+    ['三种数据形态', '纯文本 → 问答对 → (prompt, chosen, rejected)。'],
+    ['闭式解', '最优策略 = 参考策略按 exp(r/β) 重新加权。'],
+    ['配分函数 Z(x)', '对所有回答求和、算不出来，但只依赖 prompt。'],
+    ['Z 抵消', 'BT 只用同一 prompt 下的奖励差，β log Z 相减消失。'],
+    ['参考模型', '训练开始时的冻结快照，提供比值的分母。']
+  ],
+  p: [
+    ['为何用比值', '约掉“生成难度”，只剩训练带来的变化'],
+    ['只要两个模型', 'Policy + Reference（PPO 要四个）'],
+    ['数据量（原文）', 'SFT 数万到数十万；DPO 数千到数万偏好对'],
+    ['谄媚例子', '“学数学没用”→ 礼貌纠正 vs 盲目附和'],
+    ['没有 rejected', 'DPO 跑不了；hard negative 更重要']
+  ]
+});
+
+/* ---------- 损失计算器 ---------- */
+var dlChart = S.chart($('#dlC'), { h: 230, x: [-20, 20], y: [0, 3], xt: [-20, -10, 0, 10, 20], yt: [0, 1, 2, 3], xl: 'Δ（logp 比值之差）' });
+function dl() {
+  var w = +$('#dlWs').value, l = +$('#dlLs').value, b = +$('#dlBs').value;
+  $('#dlW').textContent = S.f(w, 1); $('#dlL').textContent = S.f(l, 1); $('#dlB').textContent = S.f(b, 2);
+  var rc = b * w, rr = b * l, m = rc - rr, loss = Math.log(1 + Math.exp(-m)), gw = 1 - S.sigmoid(m);
+  $('#dlT').innerHTML = [['隐式奖励 r_chosen = β × ' + S.f(w, 1), rc], ['隐式奖励 r_rejected = β × ' + S.f(l, 1), rr], ['Margin = r_chosen − r_rejected', m], ['Loss = −log σ(margin)', loss], ['梯度权重 β·σ(−margin)', b * gw]].map(function (r, i) { return '<tr' + (i === 3 ? ' class="tot"' : '') + '><td>' + r[0] + '</td><td class="n">' + S.f(r[1], 3) + '</td></tr>'; }).join('');
+  var both = w < 0 && l < w;
+  $('#dlX').innerHTML = (m < 0 ? '<b style="color:var(--alert)">分反了</b>：模型反而更偏向坏回答，loss 大、梯度强。' : m < 0.5 ? '还没分开，梯度仍然较强。' : '已经分得较开，σ(−margin) 很小，这条样本几乎不再贡献梯度。') +
+    (both ? ' 注意：chosen 的 logp 也在<b>下降</b>，只是 rejected 降得更多——margin 是正的，但好回答的生成概率其实变低了，这是拆开看 chosen / rejected reward 的原因。' : '');
+  dlChart({ curves: [0.01, 0.1, 0.5].map(function (bb, i) { return { f: function (x) { return Math.log(1 + Math.exp(-bb * x)); }, c: ['dim', 'c1', 'c2'][i], label: 'β = ' + bb }; }), dots: [{ x: S.clamp(w - l, -20, 20), y: Math.log(1 + Math.exp(-b * (w - l))), c: 'ok', r: 6 }], hl: [{ y: Math.log(2), c: 'dim', label: 'ln 2' }] });
+}
+['dlWs', 'dlLs', 'dlBs'].forEach(function (id) { $('#' + id).addEventListener('input', dl); }); dl();
+S.notes($('#n-loss'), {
+  c: [
+    ['隐式奖励', 'β log(π_θ/π_ref)：由策略自身给出的“奖励”。'],
+    ['Reward Margin', 'chosen 与 rejected 隐式奖励之差。'],
+    ['Reward Accuracy', 'batch 中 chosen 隐式奖励更高的比例。'],
+    ['β', 'KL 正则系数：越大越不敢偏离参考模型。']
+  ],
+  p: [
+    ['一句话记忆', '4 条 logp：当前 − 参考；好减坏；乘 β；过 sigmoid；取负 log'],
+    ['初始值', 'loss = ln 2 ≈ 0.693；accuracy ≈ 0.5；margin ≈ 0'],
+    ['β 经验', '0.01 跑偏 / 0.1 默认 / 0.5 慢 / 1.0 几乎不动'],
+    ['易错', 'raw logp 当比值；ref 忘 detach；chosen / rejected 反了；log σ 溢出'],
+    ['标签标错', 'loss 照样下降——garbage in, garbage out']
+  ]
+});
+
+/* ---------- 小 DPO 训练 ---------- */
+var trBeta = 0.1, trMetric = 'loss', trRes = null;
+function trainDPO(beta) {
+  var r = S.rng(2026), K = 8, ref = [], u = [], i;
+  for (i = 0; i < K; i++) { ref.push(S.randn(r) * 0.8); u.push(S.randn(r)); }
+  var th = ref.slice(), m = new Array(K).fill(0), v = new Array(K).fill(0), hist = [];
+  function lse(z) { var mx = Math.max.apply(null, z), s = 0; z.forEach(function (x) { s += Math.exp(x - mx); }); return mx + Math.log(s); }
+  var Lref = lse(ref);
+  for (var step = 1; step <= 400; step++) {
+    var lr = 0.1 * (1 - step / 420), L0 = lse(th), g = new Array(K).fill(0), loss = 0, acc = 0, rc = 0, rj = 0, pi = th.map(function (x) { return Math.exp(x - L0); });
+    for (var b = 0; b < 64; b++) {
+      var a = Math.floor(r() * K), c = Math.floor(r() * (K - 1)); if (c >= a) c++;
+      var aWins = r() < S.sigmoid(1.5 * (u[a] - u[c])); if (r() < 0.1) aWins = !aWins;
+      var w = aWins ? a : c, l = aWins ? c : a;
+      var dw = (th[w] - L0) - (ref[w] - Lref), dlv = (th[l] - L0) - (ref[l] - Lref), mg = beta * (dw - dlv), s = S.sigmoid(-mg);
+      loss += Math.log(1 + Math.exp(-mg)) / 64; acc += (mg > 0 ? 1 : 0) / 64; rc += beta * dw / 64; rj += beta * dlv / 64;
+      g[w] -= beta * s / 64; g[l] += beta * s / 64;
+    }
+    for (i = 0; i < K; i++) { m[i] = 0.9 * m[i] + 0.1 * g[i]; v[i] = 0.999 * v[i] + 0.001 * g[i] * g[i]; th[i] -= lr * (m[i] / (1 - Math.pow(0.9, step))) / (Math.sqrt(v[i] / (1 - Math.pow(0.999, step))) + 1e-8); }
+    var L1 = lse(th), p1 = th.map(function (x) { return Math.exp(x - L1); }), pr = ref.map(function (x) { return Math.exp(x - Lref); });
+    var EU = p1.reduce(function (s, p, k) { return s + p * u[k]; }, 0), KL = p1.reduce(function (s, p, k) { return s + p * Math.log(p / pr[k]); }, 0);
+    hist.push({ s: step, loss: loss, acc: acc, rc: rc, rj: rj, eu: EU, kl: KL });
+  }
+  var pr0 = ref.map(function (x) { return Math.exp(x - Lref); }), EU0 = pr0.reduce(function (s, p, k) { return s + p * u[k]; }, 0);
+  return { h: hist, eu0: EU0, umax: Math.max.apply(null, u) };
+}
+var trChart = S.chart($('#trC'), { h: 260, x: [1, 400], xt: [1, 100, 200, 300, 400], xl: '训练步' });
+function sm(arr, key) { var out = []; for (var i = 0; i < arr.length; i++) { var s = 0, n = 0; for (var j = Math.max(0, i - 9); j <= i; j++) { s += arr[j][key]; n++; } out.push([arr[i].s, s / n]); } return out; }
+function trDraw() {
+  var h = trRes.h, cfg;
+  if (trMetric === 'loss') cfg = { y: [0, 0.8], yt: [0, 0.2, 0.4, 0.6, 0.8], yl: 'Loss（10 步平滑）', curves: [{ pts: sm(h, 'loss'), c: 'c1' }], hl: [{ y: Math.log(2), c: 'dim', label: 'ln 2' }] };
+  else if (trMetric === 'acc') cfg = { y: [0.3, 1], yt: [0.4, 0.6, 0.8, 1], yl: 'Reward Accuracy（10 步平滑）', curves: [{ pts: sm(h, 'acc'), c: 'ok' }], hl: [{ y: 0.5, c: 'dim', label: '随机' }] };
+  else if (trMetric === 'rw') { var all = h.map(function (x) { return x.rc; }).concat(h.map(function (x) { return x.rj; })), lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), pad = (hi - lo) * 0.1 + 0.01; cfg = { y: [lo - pad, hi + pad], yt: [+(lo).toFixed(2), 0, +(hi).toFixed(2)], yl: '隐式奖励（10 步平滑）', curves: [{ pts: sm(h, 'rc'), c: 'ok', label: 'Chosen' }, { pts: sm(h, 'rj'), c: 'c2', label: 'Rejected' }], hl: [] }; }
+  else { var km = Math.max.apply(null, h.map(function (x) { return x.kl; })), top = Math.max(trRes.umax, km) * 1.1; cfg = { y: [Math.min(0, trRes.eu0) - 0.1, top], yt: [0, +(top / 2).toFixed(2), +top.toFixed(2)], yl: '真实期望质量 / KL', curves: [{ pts: h.map(function (x) { return [x.s, x.eu]; }), c: 'ok', label: '真实期望质量' }, { pts: h.map(function (x) { return [x.s, x.kl]; }), c: 'c2', label: 'KL(π_θ ‖ π_ref)' }], hl: [{ y: trRes.umax, c: 'dim', label: '最好回答的质量' }] }; }
+  trChart(cfg);
+  var last = h[h.length - 1];
+  $('#trW').innerHTML = 'β = ' + trBeta + '：400 步后 loss ' + S.f(last.loss, 3) + '、accuracy ' + S.pct(last.acc, 0) + '、chosen reward ' + S.f(last.rc, 2) + ' / rejected ' + S.f(last.rj, 2) + '；策略的真实期望质量从 ' + S.f(trRes.eu0, 2) + ' 变成 ' + S.f(last.eu, 2) + '，KL = ' + S.f(last.kl, 2) + '。' +
+    (trBeta <= 0.01 ? '<b>β 很小</b>：隐式奖励 = β × 比值，β 小就要很大的比值才能分开好坏，策略被推得很远（KL 大）——在真实模型上这对应“语言退化”的风险。' : trBeta >= 1 ? '<b>β 很大</b>：一点点偏离就让 margin 很大、loss 很快饱和，策略只挪动了一点（KL 小），真实质量提升也有限——再大就是原文说的“几乎学不到东西”。' : 'loss 从 0.693 下降并趋稳（有错标和随机性，不会降到 0），accuracy 升到 0.8 左右。' + (last.rc < 0 ? '注意 chosen reward 也是<b>负的</b>：概率被集中到少数最好的回答上，大多数“中等但被选为 chosen”的回答 logp 也下降了，只是 rejected 降得更多——正是上一节说的“margin 为正、chosen 也在降”，在真实训练里要结合生成样本判断。' : 'chosen 升、rejected 降。')) + '（tabular 策略、合成偏好，示意。）';
+}
+function trRun() { trRes = trainDPO(trBeta); trDraw(); }
+S.seg($('#trB'), function (v) { trBeta = +v; trRun(); });
+S.seg($('#trM'), function (v) { trMetric = v; trDraw(); });
+trRun();
+S.notes($('#n-train'), {
+  c: [
+    ['Loss 曲线', '从 ln 2 下降并趋稳；有标注噪声时不会到 0。'],
+    ['Accuracy', '只看谁大谁小（二值）。'],
+    ['Margin', '还看大多少（连续）；与 accuracy 应同步改善。'],
+    ['拆开看', 'chosen 升、rejected 降才是健康的“双向”学习。']
+  ],
+  p: [
+    ['原文实验', 'Qwen2.5-0.5B-Instruct，β 0.1，lr 1e-5，3 epochs，几分钟'],
+    ['过拟合信号', 'accuracy 很快到 100%、loss 接近 0，但人工评估不变'],
+    ['标错数据', 'loss 正常下降，模型迅速学会坏模式'],
+    ['泛化检验', '训练集指标好 ≠ 新 prompt 上好，要看独立提示的生成']
+  ]
+});
+
+/* ---------- 家族 ---------- */
+var fmChart = S.chart($('#fmC'), { h: 240, x: [-10, 30], y: [0, 6], xt: [-10, 0, 10, 20, 30], yt: [0, 2, 4, 6], xl: 'Δ = logp 比值之差（不含 β）' });
+function fm() {
+  var b = +$('#fmBs').value; $('#fmB').textContent = S.f(b, 2); var t = 1 / (2 * b);
+  fmChart({ curves: [{ f: function (x) { return Math.log(1 + Math.exp(-b * x)); }, c: 'c1', label: 'DPO：−log σ(βΔ)' }, { f: function (x) { return Math.min(6.5, (x - t) * (x - t) / Math.max(1, t * t / 2)); }, c: 'c2', label: 'IPO：(Δ − 1/(2β))²（纵向缩放）' }], vl: [{ x: t, c: 'c2', label: '1/(2β) = ' + S.f(t, 1) }] });
+  $('#fmW').innerHTML = 'DPO 的损失随 Δ 单调下降、永远不为 0：只要还能把好坏拉得更开，就一直有（越来越小的）动力继续拉——偏好数据有噪声或很少时，这会把 logp 比值推到很极端（过拟合）。IPO 有一个目标点 Δ = 1/(2β) = ' + S.f(t, 1) + '，超过它反而受罚：“好作文比坏作文高这么多就够了”。（IPO 曲线做了纵向缩放以便同图比较。）';
+}
+$('#fmBs').addEventListener('input', fm); fm();
+S.sortGame($('#fmG'), {
+  bins: [{ k: 'dpo', t: 'DPO' }, { k: 'kto', t: 'KTO' }, { k: 'simpo', t: 'SimPO' }, { k: 'ipo', t: 'IPO' }, { k: 'online', t: 'PPO / GRPO' }],
+  items: [
+    { t: '只有产品里的点赞 / 点踩日志', k: 'kto', why: '数据天然是单条二元反馈，不需要成对比较。' },
+    { t: '70B 模型、单卡显存放不下参考模型', k: 'simpo', why: '去掉参考模型，省一个完整模型的显存。' },
+    { t: '手里只有 300 条偏好对', k: 'ipo', why: '平方损失有目标点，不会无限拉开，小数据更稳。' },
+    { t: '有几万条高质量偏好对，想尽快出一版', k: 'dpo', why: '经典稳定、生态最好、迭代最快。' },
+    { t: '数学题有标准答案，想让模型自己探索更好的解法', k: 'online', why: '可验证奖励 + 在线采样，上限更高（第 9 篇）。' },
+    { t: '先验证数据质量和训练流程', k: 'dpo', why: '原文建议：先用 DPO 快速验证，再考虑在线方法。' }
+  ]
+});
+S.notes($('#n-family'), {
+  c: [
+    ['KTO', '单条好 / 坏标签 + 基线 z_ref，坏样本权重更高（损失厌恶）。'],
+    ['SimPO', '无参考模型；长度归一化 logp + margin γ。'],
+    ['IPO', '平方损失回归到 1/(2β)，防止无限拉开。'],
+    ['Iterative DPO', '周期性用新模型生成新偏好对，半在线。']
+  ],
+  p: [
+    ['去掉了什么', 'PPO→DPO：RM 与 Critic；DPO→KTO：成对；DPO→SimPO：参考模型'],
+    ['DPO vs PPO（原文）', '2 vs 4 个模型；显存约 1/2–1/4；上限受数据限制 vs 可探索'],
+    ['SimPO 典型超参', 'β ≈ 2.0（比 DPO 大），γ ≈ 0.5'],
+    ['KTO 典型权重', 'λ_D = 1.0，λ_U ≈ 1.33'],
+    ['不是谁更好', '按最紧缺的资源选：显存、数据、算力还是标注']
+  ]
+});

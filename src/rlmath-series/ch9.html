@@ -1,0 +1,325 @@
+---
+title: 策略梯度方法：策略的函数表示、两类指标、策略梯度定理与 REINFORCE
+desc: 强化学习的数学原理学习笔记（九）：从表格策略到参数化策略（softmax）；平均状态值 v̄ 与平均奖励 r̄ 两类标量指标及其等价表达，r̄ = (1 − γ)v̄；策略梯度定理 ∇J = 𝔼[∇ln π(A|S, θ) q(S, A)] 及其在折扣、无折扣情形下的分布 η；对数导数技巧；蒙特卡罗策略梯度 REINFORCE 与 β = q/π 体现的探索—利用平衡；策略梯度是 on-policy。
+kicker: <span>技术学习</span><span>强化学习的数学原理 · 09</span><span>对应原书第 9 章（第 191–214 页）</span><span>约 45 分钟</span>
+h1: 不再先算值再选动作，<em>直接把策略往上推</em>
+lead: 前八章的方法都是基于值的：先估计值，再从值里“读出”策略。这一章是全书的一大步——基于策略的方法。把策略本身写成带参数的函数 π(a|s, θ)，选一个能衡量策略好坏的标量指标 J(θ)，然后做梯度上升。思路很简单，难点全在“这个梯度怎么求”。原书把各种情形的结论总结成一个定理：策略梯度定理。读懂它和由它导出的 REINFORCE，就站在了几乎所有现代策略优化算法的起点上。
+nav: repr|策略的函数表示;metric|两类指标;grad|策略梯度定理;reinforce|REINFORCE;back|三个问题
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>策略写成函数后，“最优策略”怎么重新定义？平均状态值和平均奖励这两个指标是什么关系？</li>
+  <li>策略梯度定理说了什么？式子里为什么会出现 ln？</li>
+  <li>REINFORCE 每一步在做什么？它是怎样同时兼顾探索和利用的？为什么它是 on-policy？</li>
+</ol></div>
+
+<section class="part" id="repr">
+  <div class="part-head"><h2>策略：从表格到函数</h2><span class="meta">原书 9.1 节 · 第 192–193 页</span></div>
+  <div class="sec-lede">
+    <p>把策略写成 π(a|s, θ)，θ 是参数（比如神经网络的权重）。和表格相比有三处不同。<strong>最优怎么定义</strong>：表格时，最优策略在每个状态上都让状态值最大；函数时，改为让某个<strong>标量指标</strong>最大。<strong>怎么更新</strong>：不能直接改表格里的数，只能改 θ。<strong>怎么取概率</strong>：要把 (s, a) 代进函数计算；也可以设计成输入 s、一次输出所有动作的概率。</p>
+    <p>为了后面能取对数，必须保证每个动作的概率都大于 0。常用 <strong>softmax</strong>：π(a|s, θ) = e<sup>h(s, a, θ)</sup> / Σ<sub>a′</sub>e<sup>h(s, a′, θ)</sup>，h 是对动作 a 的“偏好”，用神经网络实现时输出层就是 softmax 层。这样的策略天然是随机的、有探索性：它不直接告诉你选哪个动作，而是给出一个分布去采样。</p>
+    <p>基本思路就一行：θ<sub>t+1</sub> = θ<sub>t</sub> + α∇<sub>θ</sub>J(θ<sub>t</sub>)。剩下三个问题：用什么指标（9.2）、梯度怎么算（9.3）、怎么用样本估计梯度（9.4）。</p>
+    <p class="go">拖动一个状态里 5 个动作的偏好 h，看 softmax 给出的概率。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">softmax 策略：偏好 h(s, a) → 概率 π(a|s)</p>
+    <div class="lab-split">
+      <div class="ctl-grid" id="smS"></div>
+      <div><div id="smB"></div><p class="cap" id="smW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-repr"></div>
+</section>
+
+<section class="part" id="metric">
+  <div class="part-head"><h2>定义最优策略的两类指标</h2><span class="meta">原书 9.2 节 · 第 193–198 页</span></div>
+  <div class="sec-lede">
+    <p><strong>指标一：平均状态值</strong> v̄<sub>π</sub> = Σ<sub>s</sub>d(s)v<sub>π</sub>(s) = 𝔼<sub>S∼d</sub>[v<sub>π</sub>(S)]，d 是状态上的权重分布。d 怎么选？一种是<strong>与策略无关</strong>，记作 d<sub>0</sub>、v̄<sub>π</sub><sup>0</sup>：可以均匀（所有状态同等重要），也可以只关心某个起点 s<sub>0</sub>（d<sub>0</sub>(s<sub>0</sub>) = 1）。另一种是<strong>依赖策略</strong>，取平稳分布 d<sub>π</sub>：常去的状态权重大。文献里常见的 J(θ) = 𝔼[Σ<sub>t</sub>γ<sup>t</sup>R<sub>t+1</sub>] 其实就是 v̄<sub>π</sub>（用全期望公式展开即得）；它还能写成内积 d<sup>T</sup>v<sub>π</sub>。</p>
+    <p><strong>指标二：平均（单步）奖励</strong> r̄<sub>π</sub> = Σ<sub>s</sub>d<sub>π</sub>(s)r<sub>π</sub>(s)，r<sub>π</sub>(s) = Σ<sub>a</sub>π(a|s, θ)r(s, a) 是该状态下即时奖励的期望。文献里常见的 lim<sub>n→∞</sub>(1/n)𝔼[Σ<sub>t=0</sub><sup>n−1</sup>R<sub>t+1</sub>] 就等于它（框 9.1：用 Cesàro 平均和平稳分布的定义证明，而且与起点无关）。</p>
+    <p>两者看起来一个看长期、一个只看一步，其实在折扣情形下是<strong>等价</strong>的。<strong>引理 9.1</strong>：取 d = d<sub>π</sub> 时，r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>。证明只有一行：对贝尔曼方程 v<sub>π</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>π</sub> 两边左乘 d<sub>π</sub><sup>T</sup>，利用 d<sub>π</sub><sup>T</sup>P<sub>π</sub> = d<sub>π</sub><sup>T</sup> 得 v̄ = r̄ + γv̄。所以两个指标可以同时最大化。</p>
+    <p class="go">用一族 softmax 策略 π<sub>τ</sub>(a|s) ∝ e<sup>q*(s, a)/τ</sup> 在 5×5 网格上验证：τ 小接近最优，τ 大接近均匀随机。下面每个数都是按模型精确算的，最后一项是跑一条 20 万步轨迹的平均奖励。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">两类指标（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = 1）</p>
+    <label class="ctl"><span>温度 τ（越大越随机） <output id="mtTv">1.0</output></span><input type="range" id="mtT" min="-1.5" max="1.5" step="0.1" value="0"></label>
+    <div class="lab-split">
+      <div><div id="mtG"></div></div>
+      <div><table class="kvt" id="mtK"></table><p class="cap" id="mtW"></p></div>
+    </div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>指标</th><th>表达式 1</th><th>表达式 2</th><th>表达式 3（文献常见）</th></tr></thead>
+    <tbody>
+      <tr><td>平均状态值 v̄<sub>π</sub></td><td>Σ<sub>s</sub>d(s)v<sub>π</sub>(s)</td><td>𝔼<sub>S∼d</sub>[v<sub>π</sub>(S)]</td><td>lim<sub>n→∞</sub>𝔼[Σ<sub>t=0</sub><sup>n</sup>γ<sup>t</sup>R<sub>t+1</sub>]</td></tr>
+      <tr><td>平均奖励 r̄<sub>π</sub></td><td>Σ<sub>s</sub>d<sub>π</sub>(s)r<sub>π</sub>(s)</td><td>𝔼<sub>S∼d<sub>π</sub></sub>[r<sub>π</sub>(S)]</td><td>lim<sub>n→∞</sub>(1/n)𝔼[Σ<sub>t=0</sub><sup>n−1</sup>R<sub>t+1</sub>]</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 9.2。v̄<sub>π</sub> 特指 d = d<sub>π</sub>，v̄<sub>π</sub><sup>0</sup> 指 d<sub>0</sub> 与策略无关。</p>
+  <div class="confuse"><h4>易混辨析：v̄<sub>π</sub> vs v̄<sub>π</sub><sup>0</sup> vs r̄<sub>π</sub></h4>
+    <p><b>v̄<sub>π</sub><sup>0</sup></b>：状态权重 d<sub>0</sub> 与策略无关（均匀，或只看起点）。<b>v̄<sub>π</sub></b>：权重是策略自己的平稳分布 d<sub>π</sub>。<b>r̄<sub>π</sub></b>：平稳分布下的平均单步奖励。</p>
+    <p><b>关系</b>：折扣情形下 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>，两者同增同减；v̄<sub>π</sub><sup>0</sup> 与它们一般不成比例，但最优策略下也会同时最大。</p>
+  </div>
+  <div class="notes" id="n-metric"></div>
+</section>
+
+<section class="part" id="grad">
+  <div class="part-head"><h2>策略梯度定理</h2><span class="meta">原书 9.3 节 · 第 198–210 页</span></div>
+  <div class="sec-lede">
+    <p>这是本章最重要的理论结果。<strong>定理 9.1</strong>：</p>
+    <div class="eq">∇<sub>θ</sub>J(θ) = Σ<sub>s</sub>η(s) Σ<sub>a</sub>∇<sub>θ</sub>π(a|s, θ) q<sub>π</sub>(s, a) = 𝔼<sub>S∼η, A∼π(S, θ)</sub>[∇<sub>θ</sub>ln π(A|S, θ) q<sub>π</sub>(S, A)]<small>原书式 (9.8)(9.9)</small></div>
+    <p>它其实是三个定理的总结：J 可以是 v̄<sub>π</sub><sup>0</sup>、v̄<sub>π</sub> 或 r̄<sub>π</sub>，η 是相应的状态分布，等号有的严格、有的近似（见下表）。原书说，对多数读者知道这个结论就够了，推导可以选读。推导的骨架是<strong>引理 9.2</strong>：∇v<sub>π</sub>(s) = Σ<sub>s′</sub>Pr<sub>π</sub>(s′|s)Σ<sub>a</sub>∇π(a|s′, θ)q<sub>π</sub>(s′, a)，其中 Pr<sub>π</sub>(s′|s) = [(I − γP<sub>π</sub>)<sup>−1</sup>]<sub>ss′</sub> = Σ<sub>k</sub>γ<sup>k</sup>[P<sub>π</sub><sup>k</sup>]<sub>ss′</sub> 是“从 s 出发、任意步数到达 s′ 的折扣总概率”。</p>
+    <p>为什么出现 ln？为了把梯度写成<strong>期望</strong>，这样才能用样本（随机梯度）去近似。关键是<strong>对数导数技巧</strong>：∇<sub>θ</sub>ln π = ∇<sub>θ</sub>π / π，所以 Σ<sub>a</sub>∇π(a|s)q(s, a) = Σ<sub>a</sub>π(a|s)∇ln π(a|s)q(s, a) = 𝔼<sub>A∼π</sub>[∇ln π(A|s)q(s, A)]。这也是 π 必须处处为正的原因。</p>
+    <p class="go">在 5×5 网格上用表格 softmax 策略（每个 (s, a) 一个参数 θ<sub>sa</sub>）验证定理 9.2：J = v̄<sub>π</sub><sup>0</sup>（d<sub>0</sub> 均匀）。比较“扰动 θ 重算 J”的数值梯度和定理给出的解析梯度。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>情形</th><th>J</th><th>η</th><th>等号</th></tr></thead>
+    <tbody>
+      <tr><td>定理 9.2（折扣）</td><td>v̄<sub>π</sub><sup>0</sup> = d<sub>0</sub><sup>T</sup>v<sub>π</sub></td><td>ρ<sub>π</sub>(s) = Σ<sub>s′</sub>d<sub>0</sub>(s′)Pr<sub>π</sub>(s|s′)</td><td>严格</td></tr>
+      <tr><td>定理 9.3（折扣）</td><td>r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub></td><td>d<sub>π</sub></td><td>近似，γ 越接近 1 越准</td></tr>
+      <tr><td>定理 9.5（无折扣）</td><td>r̄<sub>π</sub></td><td>d<sub>π</sub></td><td>严格，形式最简洁</td></tr>
+    </tbody>
+  </table></div>
+  <div class="lab">
+    <p class="lab-t">数值验证策略梯度定理（γ = 0.9，基准奖励，θ 随机初始化）</p>
+    <div class="btnrow"><button class="btn" type="button" id="pgN">换一组随机 θ</button></div>
+    <div class="lab-split">
+      <div><div class="tblw"><table class="kvt" id="pgT"></table></div></div>
+      <div><p class="cap" id="pgW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-grad"></div>
+</section>
+
+<section class="part" id="reinforce">
+  <div class="part-head"><h2>蒙特卡罗策略梯度：REINFORCE</h2><span class="meta">原书 9.4 节 · 第 210–213 页</span></div>
+  <div class="sec-lede">
+    <p>梯度上升 θ<sub>t+1</sub> = θ<sub>t</sub> + α𝔼[∇ln π(A|S, θ<sub>t</sub>)q<sub>π</sub>(S, A)] 里的期望未知，换成随机梯度：</p>
+    <div class="eq">θ<sub>t+1</sub> = θ<sub>t</sub> + α∇<sub>θ</sub>ln π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>) q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)<small>原书式 (9.32)</small></div>
+    <p>q<sub>t</sub> 是 q<sub>π</sub>(s<sub>t</sub>, a<sub>t</sub>) 的估计。如果用蒙特卡罗（从 t 开始的折扣回报）来估计，就是 <strong>REINFORCE</strong>（也叫蒙特卡罗策略梯度），最早、最简单的策略梯度算法之一，很多算法都由它扩展而来。</p>
+    <p>原书建议看它的等价形式：θ<sub>t+1</sub> = θ<sub>t</sub> + αβ<sub>t</sub>∇<sub>θ</sub>π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>)，β<sub>t</sub> = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)/π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>)。这是对 π(a<sub>t</sub>|s<sub>t</sub>) 本身的梯度上升，一阶泰勒展开得 π<sub>new</sub> ≈ π<sub>old</sub> + αβ<sub>t</sub>‖∇π‖<sup>2</sup>：<strong>β<sub>t</sub> ≥ 0 时这个动作的概率增大，β<sub>t</sub> &lt; 0 时减小</strong>，|β| 越大改得越多。而 β<sub>t</sub> 同时体现了两件事：与 q<sub>t</sub> 成正比——值大的动作被加强，这是<strong>利用</strong>；q<sub>t</sub> &gt; 0 时与 π 成反比——本来很少选的动作一旦被选中且回报不错，会被大幅加强，这是<strong>探索</strong>。</p>
+    <p>样本该怎么采？S 应服从 η（d<sub>π</sub> 或 ρ<sub>π</sub>，都是 π 下的长期行为），A 应服从 π(·|S, θ)：<strong>动作必须由当前策略产生，所以策略梯度是 on-policy</strong>。理想采样方式效率低，实际中并不严格遵守：算法 9.1 先按 π(θ) 生成一整个回合，再用回合中的每个样本更新 θ。</p>
+    <p class="go">先在一个状态、三个动作上体会 β 的作用；再在网格里训练一个表格 softmax 策略。</p>
+  </div>
+  <div class="algo"><h4>算法 9.1　REINFORCE（蒙特卡罗策略梯度）</h4><ol>
+    <li>初始参数 θ，γ ∈ (0, 1)，α &gt; 0。对每个回合：按 π(θ) 生成 {s<sub>0</sub>, a<sub>0</sub>, r<sub>1</sub>, …, s<sub>T−1</sub>, a<sub>T−1</sub>, r<sub>T</sub>}；对 t = 0, 1, …, T − 1：
+      <ol><li>值更新：<code>q_t(s_t, a_t) = Σ_{k=t+1}^{T} γ^{k−t−1} r_k</code></li>
+      <li>策略更新：<code>θ ← θ + α ∇_θ ln π(a_t|s_t, θ) q_t(s_t, a_t)</code></li></ol></li>
+  </ol></div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">β = q/π：一次更新会怎样改变概率（单状态三动作，α = 0.5，示意）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>被选中动作 a<sub>1</sub> 当前概率 π <output id="btPv">0.20</output></span><input type="range" id="btP" min="0.05" max="0.9" step="0.05" value="0.2"></label>
+        <label class="ctl"><span>这次得到的 q<sub>t</sub> <output id="btQv">1.0</output></span><input type="range" id="btQ" min="-2" max="2" step="0.5" value="1"></label>
+      </div>
+      <div id="btB"></div>
+      <p class="cap" id="btW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">网格中的 REINFORCE（示意）</p>
+      <div class="btnrow"><button class="btn pri" type="button" id="rfGo">重新训练 5000 个回合</button></div>
+      <div id="rfG"></div>
+      <div id="rfC"></div>
+      <p class="cap" id="rfW"></p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：基于值 vs 基于策略</h4>
+    <p><b>基于值</b>（第 4–8 章）：先估计值，再从值里取贪心 / ε-贪心得到策略；策略是“派生”的。<b>基于策略</b>（第 9–10 章）：策略本身是带参数的函数，直接对标量指标做梯度上升；天然随机、天然能处理大的或连续的动作空间。</p>
+    <p><b>但仍需要值</b>：策略梯度里有 q<sub>π</sub>(s, a)，必须另外估计——用 MC 就是 REINFORCE，用 TD 就是第 10 章的 Actor-Critic。</p>
+  </div>
+  <div class="notes" id="n-reinforce"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">softmax 策略：π(a|s, θ) = e<sup>h(s,a,θ)</sup> / Σ<sub>a′</sub>e<sup>h(s,a′,θ)</sup></div>
+    <div class="fx">平均状态值 v̄<sub>π</sub> = Σ<sub>s</sub>d(s)v<sub>π</sub>(s) = d<sup>T</sup>v<sub>π</sub> = 𝔼[Σ<sub>t</sub>γ<sup>t</sup>R<sub>t+1</sub>]</div>
+    <div class="fx">平均奖励 r̄<sub>π</sub> = Σ<sub>s</sub>d<sub>π</sub>(s)r<sub>π</sub>(s) = lim<sub>n→∞</sub>(1/n)𝔼[Σ<sub>t=0</sub><sup>n−1</sup>R<sub>t+1</sub>]；折扣时 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub></div>
+    <div class="fx">策略梯度定理：∇J = Σ<sub>s</sub>η(s)Σ<sub>a</sub>∇π(a|s, θ)q<sub>π</sub>(s, a) = 𝔼<sub>S∼η, A∼π</sub>[∇ln π(A|S, θ)q<sub>π</sub>(S, A)]</div>
+    <div class="fx">对数导数：∇<sub>θ</sub>π = π∇<sub>θ</sub>ln π；折扣总概率 Pr<sub>π</sub>(s′|s) = [(I − γP<sub>π</sub>)<sup>−1</sup>]<sub>ss′</sub></div>
+    <div class="fx">REINFORCE：θ ← θ + α∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ)q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)，q<sub>t</sub> = Σ<sub>k=t+1</sub><sup>T</sup>γ<sup>k−t−1</sup>r<sub>k</sub></div>
+    <div class="fx">等价形式：θ ← θ + αβ<sub>t</sub>∇π(a<sub>t</sub>|s<sub>t</sub>, θ)，β<sub>t</sub> = q<sub>t</sub>/π(a<sub>t</sub>|s<sub>t</sub>, θ)</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>函数表示下最优怎么定义？两个指标什么关系？
+      <details><summary>先自己答，再点开</summary><p class="ans">改为最大化一个标量指标：平均状态值 v̄（按 d 加权的状态值）或平均奖励 r̄（平稳分布下的平均单步奖励）。折扣情形下 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>，两者可以同时最大化。</p></details></li>
+    <li>策略梯度定理说了什么？为什么有 ln？
+      <details><summary>先自己答，再点开</summary><p class="ans">各种指标的梯度都具有 Σ<sub>s</sub>η(s)Σ<sub>a</sub>∇π q 的形式，可写成期望 𝔼[∇ln π(A|S)q(S, A)]，不需要对状态分布求导。ln 来自对数导数技巧 ∇π = π∇ln π，作用是把梯度写成期望，从而能用样本近似。</p></details></li>
+    <li>REINFORCE 在做什么？怎样兼顾探索与利用？为何 on-policy？
+      <details><summary>先自己答，再点开</summary><p class="ans">用 MC 回报估计 q，沿 ∇ln π 方向更新 θ；等价于对 π(a<sub>t</sub>|s<sub>t</sub>) 做系数为 β = q/π 的梯度上升。β 与 q 成正比（利用），q &gt; 0 时与 π 成反比（探索）。真实梯度要求 A ∼ π(θ)，动作必须由当前策略产生，所以是 on-policy。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- softmax ---------- */
+var SMH = [0.5, 1.5, 0, -0.5, 1];
+RL.ANAME.forEach(function (nm, a) {
+  var l = h('label', { class: 'ctl' }, $('#smS'));
+  l.innerHTML = '<span>h(s, a' + (a + 1) + ' ' + RL.AN[a] + ') <output>' + S.f(SMH[a], 1) + '</output></span><input type="range" min="-3" max="3" step="0.5" value="' + SMH[a] + '">';
+  S.$('input', l).addEventListener('input', function () { SMH[a] = +this.value; S.$('output', l).textContent = S.f(SMH[a], 1); sm(); });
+});
+function sm() {
+  var p = S.softmax(SMH);
+  S.bars($('#smB'), p.map(function (x, a) { return { label: 'π(a' + (a + 1) + ' ' + RL.AN[a] + ')', value: x, text: S.f(x, 3) }; }));
+  $('#smW').innerHTML = '所有概率都严格大于 0、加起来为 1。把某个 h 加上常数，其他不变，概率只取决于偏好的<b>差</b>；把所有 h 同时加同一个数，概率完全不变。最小的概率是 ' + S.f(Math.min.apply(null, p), 4) + '——再小也不是 0，所以 ln π 总有定义。';
+}
+sm();
+S.notes($('#n-repr'), {
+  c: [
+    ['参数化策略', 'π(a|s, θ)：用参数 θ 表示策略。'],
+    ['最优的新定义', '最大化某个标量指标 J(θ)。'],
+    ['更新方式', '只能通过改 θ 来改策略。'],
+    ['softmax', '把偏好 h 变成严格为正、和为 1 的概率；天然随机、有探索性。']
+  ],
+  p: [
+    ['基本算法', 'θ<sub>t+1</sub> = θ<sub>t</sub> + α∇<sub>θ</sub>J(θ<sub>t</sub>)'],
+    ['softmax', 'π(a|s) = e<sup>h(s,a)</sup>/Σ<sub>a′</sub>e<sup>h(s,a′)</sup>'],
+    ['三个问题', '用什么指标、梯度怎么求、怎么用样本估计']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 指标 ---------- */
+var E5 = RL.book5({ gamma: 0.9 }), vS = RL.vStar(E5), qS = RL.qFromV(E5, vS);
+var mtDraw = RL.grid($('#mtG'), E5, { cell: 72 });
+function stat(P) { var d = new Array(P.length).fill(1 / P.length); for (var k = 0; k < 4000; k++) { var nd = new Array(P.length).fill(0); for (var i = 0; i < P.length; i++) { if (!d[i]) continue; for (var j = 0; j < P.length; j++) nd[j] += d[i] * P[i][j]; } d = nd; } return d; }
+function softPi(tau) { return qS.map(function (row) { return S.softmax(row.map(function (x) { return x / tau; })); }); }
+function mt() {
+  var tau = Math.pow(10, +$('#mtT').value); $('#mtTv').textContent = S.f(tau, tau < 1 ? 2 : 1);
+  var pi = softPi(tau), v = RL.evalExact(E5, pi), m = RL.rP(E5, pi), d = stat(m.P);
+  var vbar = 0, rbar = 0, v0 = 0; for (var s = 0; s < 25; s++) { vbar += d[s] * v[s]; rbar += d[s] * m.r[s]; v0 += v[s] / 25; }
+  var rnd = S.rng(5), st = 0, acc = 0, N = 200000; for (var t = 0; t < N; t++) { var a = RL.sampleA(pi[st], rnd), mm = E5.move(st, a); acc += mm[1]; st = mm[0]; }
+  mtDraw({ v: v, pi: pi, note: d.map(function (x) { return x >= 0.005 ? S.f(x, 2) : ''; }) });
+  $('#mtK').innerHTML = '<tr><th>量</th><th>值</th></tr><tr><td>v̄<sub>π</sub><sup>0</sup>（d<sub>0</sub> 均匀）</td><td>' + S.f(v0, 3) + '</td></tr><tr><td>v̄<sub>π</sub>（d = d<sub>π</sub>）</td><td>' + S.f(vbar, 3) + '</td></tr><tr class="on"><td>r̄<sub>π</sub> = Σd<sub>π</sub>r<sub>π</sub></td><td>' + S.f(rbar, 4) + '</td></tr><tr class="on"><td>(1 − γ)v̄<sub>π</sub></td><td>' + S.f(0.1 * vbar, 4) + '</td></tr><tr><td>20 万步的平均奖励（模拟）</td><td>' + S.f(acc / N, 4) + '</td></tr>';
+  $('#mtW').innerHTML = '格子下方的小数字是平稳分布 d<sub>π</sub>（&lt; 0.005 不显示）。两行高亮的数相等（引理 9.1）；长轨迹的平均奖励也与 r̄<sub>π</sub> 一致（式 (9.5)，只差模拟误差）。' + (tau < 0.2 ? 'τ 小时策略接近最优，几乎总待在目标格，d<sub>π</sub> 集中在那里。' : tau > 5 ? 'τ 大时接近均匀随机，d<sub>π</sub> 接近均匀，两个指标都是负的。' : '');
+}
+$('#mtT').addEventListener('input', mt); mt();
+S.notes($('#n-metric'), {
+  c: [
+    ['平均状态值 v̄', '按状态分布 d 加权平均的状态值。'],
+    ['d 的两种选法', '与策略无关的 d<sub>0</sub>（均匀或只看起点），或策略的平稳分布 d<sub>π</sub>。'],
+    ['平均奖励 r̄', '平稳分布下单步即时奖励的期望。'],
+    ['引理 9.1', '折扣情形下 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>，两者等价。'],
+    ['与起点无关', '平均奖励的极限形式对任何起点都相同。']
+  ],
+  p: [
+    ['v̄ 的三种写法', 'Σd(s)v<sub>π</sub>(s) = 𝔼<sub>S∼d</sub>[v<sub>π</sub>(S)] = 𝔼[Σγ<sup>t</sup>R<sub>t+1</sub>]'],
+    ['r̄ 的三种写法', 'Σd<sub>π</sub>r<sub>π</sub> = 𝔼<sub>S∼d<sub>π</sub></sub>[r<sub>π</sub>(S)] = lim(1/n)𝔼[ΣR<sub>t+1</sub>]'],
+    ['即时奖励期望', 'r<sub>π</sub>(s) = Σ<sub>a</sub>π(a|s, θ)r(s, a)'],
+    ['证明', 'd<sub>π</sub><sup>T</sup>v<sub>π</sub> = d<sub>π</sub><sup>T</sup>r<sub>π</sub> + γd<sub>π</sub><sup>T</sup>P<sub>π</sub>v<sub>π</sub> ⇒ v̄ = r̄ + γv̄']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 策略梯度定理数值验证 ---------- */
+var pgSeed = 1;
+function Jof(theta) { var pi = theta.map(function (r) { return S.softmax(r); }); var v = RL.evalExact(E5, pi); return RL.sum(v) / 25; }
+function pg() {
+  var r = S.rng(pgSeed * 13 + 1), th = []; for (var s = 0; s < 25; s++) { var row = []; for (var a = 0; a < 5; a++) row.push(S.randn(r)); th.push(row); }
+  var pi = th.map(function (x) { return S.softmax(x); }), v = RL.evalExact(E5, pi), q = RL.qFromV(E5, v), m = RL.rP(E5, pi);
+  var A = m.P.map(function (row, i) { return row.map(function (x, j) { return (i === j ? 1 : 0) - 0.9 * x; }); });
+  // ρ(s) = Σ_s0 d0(s0) [(I−γP)^{-1}]_{s0 s}  ⇒ ρ^T = d0^T (I−γP)^{-1}  ⇒ (I−γP)^T ρ = d0
+  var AT = A[0].map(function (_, j) { return A.map(function (row) { return row[j]; }); });
+  var rho = RL.solveLin(AT, new Array(25).fill(1 / 25));
+  var picks = [[0, 1], [7, 2], [12, 3], [16, 1], [17, 4], [24, 0]], rows = '<tr><th>参数 θ<sub>s,a</sub></th><th>数值梯度</th><th>定理给出</th></tr>', maxd = 0;
+  var J0 = Jof(th);
+  picks.forEach(function (pk) {
+    var s = pk[0], b = pk[1], e = 1e-5, tp = th.map(function (x) { return x.slice(); }), tm = th.map(function (x) { return x.slice(); });
+    tp[s][b] += e; tm[s][b] -= e;
+    var num = (Jof(tp) - Jof(tm)) / (2 * e), ana = rho[s] * pi[s][b] * (q[s][b] - v[s]);
+    maxd = Math.max(maxd, Math.abs(num - ana));
+    rows += '<tr><td>' + E5.label(s) + ' ' + RL.AN[b] + '</td><td>' + S.f(num, 5) + '</td><td>' + S.f(ana, 5) + '</td></tr>';
+  });
+  $('#pgT').innerHTML = rows;
+  $('#pgW').innerHTML = '当前 J = v̄<sub>π</sub><sup>0</sup> = ' + S.f(J0, 3) + '。<b>数值梯度</b>：把一个参数加减 10<sup>−5</sup>，各解一次贝尔曼方程求 J，取差商。<b>定理给出</b>：ρ<sub>π</sub>(s) Σ<sub>a</sub>∇<sub>θ<sub>sb</sub></sub>π(a|s) q<sub>π</sub>(s, a)；对表格 softmax，∂π(a|s)/∂θ<sub>sb</sub> = π(a|s)(𝟙[a = b] − π(b|s))，化简为 ρ<sub>π</sub>(s) π(b|s)(q<sub>π</sub>(s, b) − v<sub>π</sub>(s))。两列最大相差 ' + S.sci(maxd, 1) + '，只是差商的截断误差。注意化简结果里自然出现了 q − v——第 10 章的“优势函数”。（本页计算）';
+}
+$('#pgN').addEventListener('click', function () { pgSeed++; pg(); });
+pg();
+S.notes($('#n-grad'), {
+  c: [
+    ['策略梯度定理', '各种指标的梯度都是 Σ<sub>s</sub>η(s)Σ<sub>a</sub>∇π q 的形式。'],
+    ['写成期望的好处', '可以用随机梯度（样本）近似。'],
+    ['对数导数技巧', '∇π = π∇ln π；要求 π 处处为正。'],
+    ['引理 9.2', '∇v<sub>π</sub>(s) 等于折扣总概率加权的 Σ<sub>a</sub>∇π q。'],
+    ['三种情形', 'v̄<sup>0</sup> 折扣严格；r̄ 与 v̄ 折扣近似；r̄ 无折扣严格。']
+  ],
+  p: [
+    ['定理 9.1', '∇J = 𝔼<sub>S∼η, A∼π</sub>[∇ln π(A|S, θ)q<sub>π</sub>(S, A)]'],
+    ['折扣总概率', 'Pr<sub>π</sub>(s′|s) = Σ<sub>k</sub>γ<sup>k</sup>[P<sub>π</sub><sup>k</sup>]<sub>ss′</sub> = [(I − γP<sub>π</sub>)<sup>−1</sup>]<sub>ss′</sub>'],
+    ['定理 9.2 的 η', 'ρ<sub>π</sub>(s) = Σ<sub>s′</sub>d<sub>0</sub>(s′)Pr<sub>π</sub>(s|s′)'],
+    ['表格 softmax', '∂J/∂θ<sub>sb</sub> = ρ(s)π(b|s)(q(s, b) − v(s))']
+  ],
+  ph: '公式'
+});
+
+/* ---------- β = q/π ---------- */
+function bt() {
+  var p1 = +$('#btP').value, q = +$('#btQ').value; $('#btPv').textContent = S.f(p1, 2); $('#btQv').textContent = S.f(q, 1);
+  var rest = (1 - p1) / 2, base = [Math.log(p1), Math.log(rest), Math.log(rest)], pi = S.softmax(base);
+  var g = pi.map(function (p, b) { return (b === 0 ? 1 : 0) - p; }), th = base.map(function (x, b) { return x + 0.5 * g[b] * q; }), np = S.softmax(th);
+  S.bars($('#btB'), [{ label: '更新前 π(a<sub>1</sub>)', value: pi[0], text: S.f(pi[0], 3), cls: 'dim' }, { label: '更新后 π(a<sub>1</sub>)', value: np[0], text: S.f(np[0], 3), cls: np[0] >= pi[0] ? 'ok' : 'alt' }]);
+  S.$$('#btB .lb').forEach(function (e) { e.innerHTML = e.textContent; }); $('#btB').classList.add('wide');
+  var beta = q / p1;
+  $('#btW').innerHTML = 'β = q/π = ' + S.f(q, 1) + ' / ' + S.f(p1, 2) + ' = <b>' + S.f(beta, 2) + '</b>。' + (q > 0 ? '回报为正，a<sub>1</sub> 被加强；把 π 拖小，同样的 q 带来更大的 β——很少被选中的动作一旦表现好就被大幅加强，这就是探索。' : q < 0 ? '回报为负，a<sub>1</sub> 被削弱。' : 'q = 0 时不更新。') + ' 注意这里的更新量还乘了 ∇π 的大小，π 极小时 ∇π 也小，所以变化不会无限大。（示意）';
+}
+['btP', 'btQ'].forEach(function (id) { $('#' + id).addEventListener('input', bt); }); bt();
+
+/* ---------- 网格 REINFORCE ---------- */
+var EPG = RL.book5({ gamma: 0.9, rb: -1, rf: -1, rt: 1, ro: 0, terminal: true }), vSP = RL.vStar(EPG), qSP = RL.qFromV(EPG, vSP), rfSeed = 1;
+var rfDraw = RL.grid($('#rfG'), EPG, { cell: 64 });
+var rfChart = S.chart($('#rfC'), { h: 200, x: [0, 5000], y: [0, 50], xt: [0, 1000, 2000, 3000, 4000, 5000], yt: [0, 10, 20, 30, 40, 50], xl: '回合', yl: '回合长度（100 回合平均）' });
+function rf() {
+  var rnd = S.rng(rfSeed), th = []; for (var s = 0; s < 25; s++) th.push([0, 0, 0, 0, 0]);
+  var Ls = [], pts = [];
+  for (var e = 0; e < 5000; e++) {
+    var st = Math.floor(rnd() * 25); while (EPG.isT(st)) st = Math.floor(rnd() * 25);
+    var tr = [];
+    while (!EPG.isT(st) && tr.length < 50) { var p = S.softmax(th[st]), a = RL.sampleA(p, rnd), m = EPG.move(st, a); tr.push([st, a, m[1]]); st = m[0]; }
+    var g = 0, G = new Array(tr.length); for (var t = tr.length - 1; t >= 0; t--) { g = tr[t][2] + 0.9 * g; G[t] = g; }
+    for (var t2 = 0; t2 < tr.length; t2++) { var s1 = tr[t2][0], a1 = tr[t2][1], pp = S.softmax(th[s1]); for (var b = 0; b < 5; b++) th[s1][b] += 0.05 * ((b === a1 ? 1 : 0) - pp[b]) * G[t2]; }
+    Ls.push(tr.length);
+    if (e % 100 === 99) { var acc = 0; for (var k = e - 99; k <= e; k++) acc += Ls[k]; pts.push([e + 1, acc / 100]); }
+  }
+  var pi = th.map(function (r) { return S.softmax(r); }), v = RL.evalExact(EPG, pi), hl = {}, nOpt = 0;
+  pi.forEach(function (p, s2) { if (EPG.isT(s2)) return; var a2 = RL.argmax(p); if (qSP[s2][a2] > Math.max.apply(null, qSP[s2]) - 1e-6) { hl[s2] = 'ok'; nOpt++; } });
+  rfDraw({ v: v, pi: pi, hl: hl });
+  rfChart({ curves: [{ pts: pts, c: 'c1' }] });
+  $('#rfW').innerHTML = '任务：随机起点，到达目标即结束（r<sub>target</sub> = 1，撞墙、进禁区 −1，其余 0，γ = 0.9，每回合最多 50 步）。表格 softmax 策略，θ 初值全 0（即均匀随机），α = 0.05。训练后 <b>' + nOpt + ' / 24</b> 个格子概率最大的动作是最优动作；格内数字是当前随机策略的真实状态值。策略始终是随机的（箭头长短不一），这正是它能继续探索的原因；也因此收敛慢、方差大，下一章用基线和 TD 来改进。（本页模拟）';
+}
+$('#rfGo').addEventListener('click', function () { rfSeed++; rf(); });
+rf();
+S.notes($('#n-reinforce'), {
+  c: [
+    ['REINFORCE', '用 MC 回报估计 q 的策略梯度算法。'],
+    ['β 形式', '对 π(a<sub>t</sub>|s<sub>t</sub>) 本身做系数为 β = q/π 的梯度上升。'],
+    ['利用', 'β 与 q 成正比：值大的动作被加强。'],
+    ['探索', 'q &gt; 0 时 β 与 π 成反比：小概率动作表现好时被大幅加强。'],
+    ['on-policy', '真实梯度要求 A ∼ π(θ)，动作必须由当前策略产生。'],
+    ['实际采样', '先按 π(θ) 生成整个回合，再用其中每个样本更新。']
+  ],
+  p: [
+    ['更新', 'θ ← θ + α∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ)q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)'],
+    ['MC 估计', 'q<sub>t</sub> = Σ<sub>k=t+1</sub><sup>T</sup>γ<sup>k−t−1</sup>r<sub>k</sub>'],
+    ['泰勒展开', 'π<sub>new</sub> ≈ π<sub>old</sub> + αβ‖∇π‖<sup>2</sup>'],
+    ['表格 softmax 的 ∇ln π', '∂ln π(a|s)/∂θ<sub>sb</sub> = 𝟙[a = b] − π(b|s)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 指标', '平均状态值 v̄ 与平均奖励 r̄；折扣情形下 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>。'],
+    ['② 定理', '∇J = 𝔼[∇ln π(A|S)q(S, A)]；ln 来自对数导数技巧，让梯度变成可采样的期望。'],
+    ['③ REINFORCE', 'MC 估 q + 随机梯度上升；β = q/π 兼顾探索与利用；动作须来自当前策略，on-policy。']
+  ],
+  p: [
+    ['下一篇', '把 MC 换成 TD 来估计 q，再加一个基线降方差：Actor-Critic。'],
+    ['原书一句话', '策略梯度方法的基本思想很简单：选一个合适的标量指标，再用梯度上升去优化它。']
+  ],
+  ph: '一句话'
+});

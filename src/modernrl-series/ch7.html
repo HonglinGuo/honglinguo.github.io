@@ -1,0 +1,316 @@
+---
+title: RLHF：从基座模型到助手——SFT、奖励模型与 PPO 的四个角色
+desc: 动手学现代强化学习笔记（七）：把 LLM 生成写成 MDP；Base、SFT、RLHF 三个版本各学到了什么；为什么 SFT 之后还要 RLHF；Bradley-Terry 奖励模型与它会学到的偏差；PPO-RLHF 的 Actor、Reference、Reward Model、Critic；token 级奖励 = 每步 KL 惩罚 + 末尾 RM 分数；β 的作用、训练曲线怎样读、常见失败怎样修。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 07</span><span>对应原教程第 13 章（docs/chapter15_rlhf）与 8.3 节奖励模型</span><span>约 50 分钟</span>
+h1: 让模型更常选<em>人类偏好的那种回答</em>
+lead: 预训练出来的基座模型擅长续写，不擅长回答；SFT 教会它“该怎么回答”，但只给了正面示范。RLHF 再往前一步：先从“A 比 B 好”的比较里学一个奖励模型，再用 PPO 让模型在自己生成的回答上追这个奖励——同时被一根叫 KL 的绳子拉住。原教程反复强调一句话：RLHF 不是让模型无约束追求高 reward，而是在 Reference 拉住、PPO 裁剪、Critic 降噪的情况下，小步提高高质量回答的概率。
+nav: mdp|LLM 即策略;rm|奖励模型;ppo|PPO-RLHF;log|读日志与排障;back|回扣三问
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.tokrow { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; margin: 10px 0; }
+.tokrow div { border: 1px solid var(--hair); border-radius: 6px; padding: 4px 2px; text-align: center; background: var(--bg); }
+.tokrow b { display: block; font-size: 17px; color: var(--ink); }
+.tokrow span { display: block; font-family: var(--f-num); font-size: 15px; color: var(--ink-2); }
+.tokrow .bar { height: 46px; position: relative; margin-top: 4px; }
+.tokrow .bar i { position: absolute; left: 20%; right: 20%; border-radius: 2px; }
+@media (max-width: 640px) { .tokrow { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>SFT 已经能让模型像个助手了，为什么还要 RLHF？RLHF 会给模型注入新知识吗？</li>
+    <li>奖励模型怎样从“A 比 B 好”学出一个分数？它最容易学歪成什么？</li>
+    <li>PPO-RLHF 的四个模型各干什么？token 级奖励怎么构造，β 太大和太小各会怎样？</li>
+  </ol>
+</div>
+
+<section class="part" id="mdp">
+  <div class="part-head"><h2>把 LLM 生成写成 MDP</h2><span class="meta">原文 docs/chapter15_rlhf/base-model-to-assistant.md（13.1 节）</span></div>
+  <div class="sec-lede">
+    <p>同一套 MDP 语言可以直接套到语言模型上：<strong>状态</strong>是 prompt 加上已生成的 token (x, y<sub>&lt;t</sub>)，<strong>动作</strong>是从词表里选下一个 token，<strong>策略</strong>就是语言模型的 next-token 分布，<strong>转移</strong>是把选中的 token 拼到上下文后面（几乎确定），<strong>回合</strong>从开始回答到 EOS 或长度上限，<strong>奖励</strong>由奖励模型 / 人 / 规则对完整回答打分。和 CartPole 最大的不同不是随机性，而是<strong>奖励来得极晚</strong>：几百个 token 只有末尾一个分数，回答得了低分，是第 3 个 token 错了还是第 80 个开始跑偏？这就是信用分配。</p>
+    <p>原教程始终比较三个版本。<strong>Base</strong> 学的是 next-token prediction：有语言、知识、代码模式，但会重复 prompt、不一定回答。<strong>SFT</strong> 在指令—回答数据上继续做同样的似然训练：学会按格式回答、模仿高质量示范——本质是行为克隆（第 6 篇）。<strong>RLHF</strong> 用偏好奖励 + PPO：更贴近偏好、少出坏回答，风险是 reward hacking、能力回退、过度迎合。</p>
+    <p>为什么 SFT 之后还要 RLHF？原文给了四个原因：SFT 只模仿单条示范，学不到“这个比那个好在哪”的偏好边界；SFT 数据覆盖不了模型自己会犯的错（分布偏移），RLHF 在模型自己生成的回答上给反馈；“更有帮助、更诚实、更安全”很难写成唯一标准答案，人却很容易比较；SFT 容易只学到表面格式。同时原文也划清了边界：RLHF 主要改变模型<strong>在已有能力空间里的选择偏好</strong>，不是知识注入的主力；reward 越高也不等于模型越好。</p>
+    <p class="go">检验一下几个常见误解。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>MDP 要素</th><th>CartPole</th><th>LLM 生成</th></tr></thead>
+    <tbody>
+      <tr><td>状态 s_t</td><td>位置、速度、角度、角速度</td><td>prompt + 已生成的 token (x, y_&lt;t)</td></tr>
+      <tr><td>动作 a_t</td><td>左推 / 右推</td><td>词表里的下一个 token</td></tr>
+      <tr><td>策略 π_θ</td><td>网络输出动作概率</td><td>语言模型的 next-token 分布</td></tr>
+      <tr><td>转移</td><td>物理方程</td><td>把 token 拼到上下文后面（确定）</td></tr>
+      <tr><td>奖励</td><td>每步 +1</td><td>完整回答结束后，RM / 人 / 规则打一个分</td></tr>
+      <tr><td>回合</td><td>一局游戏</td><td>从开始回答到 EOS 或长度上限</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 13.1 节“把 LLM 生成写成 MDP”表。</p>
+  <div class="lab"><p class="lab-t">常见误解（原文 13.1 节“常见误解”）</p><div id="mqQ"></div></div>
+  <div class="notes" id="n-mdp"></div>
+</section>
+
+<section class="part" id="rm">
+  <div class="part-head"><h2>奖励模型：从“哪个更好”学出一个分数</h2><span class="meta">原文 docs/chapter10_ppo/gae-reward-model.md“奖励模型”、chapter15_rlhf/standard-rlhf-pipeline.md</span></div>
+  <div class="sec-lede">
+    <p>人很难给一个回答打绝对分（“87 分”），但很容易比较（“A 比 B 好”）。<strong>Bradley–Terry 模型</strong>把成对比较变成标量分数：P(y<sub>w</sub> ≻ y<sub>l</sub> | x) = σ(r(x, y<sub>w</sub>) − r(x, y<sub>l</sub>))，两个分数差越大，高分者被选中的概率越接近 1。训练损失就是 −log σ(r<sub>chosen</sub> − r<sub>rejected</sub>)。注意它只约束<strong>差值</strong>：所有回答同时加一个常数，损失不变——所以 RM 的分数只有相对意义，PPO 前通常要归一化。</p>
+    <p>原文把训练 RM 称为整个 RLHF 中“最沉重的负担”，列了三大痛点：<strong>标注成本</strong>（InstructGPT 约 40 名标注员、数万条偏好）；<strong>奖励作弊</strong>（RM 学到的可能是“看起来好”而不是“真的好”——更长、术语更多、格式更花）；<strong>分布漂移</strong>（RM 在旧策略的回答上训练，策略被 RL 改变后，新回答落在 RM 没见过的区域）。原文的思考题还提醒：RM 在训练集上“太完美”反而可能是过拟合——宁可钝一点。</p>
+    <p>主观偏好（礼貌、安全、有帮助）需要 RM；数学、代码这类有客观答案的任务可以直接用规则验证当奖励——那是第 9 篇的 RLVR。下面的实验模拟“标注员略偏爱长回答”时，一个线性奖励模型会学到什么。</p>
+    <p class="go">先拖动分数差看 BT 概率与损失，再调标注员的长度偏好，训练一个小 RM。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">Bradley–Terry：分数差 → 偏好概率 → 损失</p>
+      <label class="ctl"><span>r(chosen) − r(rejected) <output id="btD">0.5</output></span><input type="range" id="btDs" min="-4" max="4" step="0.1" value="0.5"></label>
+      <div id="btC"></div>
+      <div class="read"><div class="hl"><div class="v" id="btP">–</div><div class="k">P(chosen ≻ rejected)</div></div><div class="warn"><div class="v" id="btL">–</div><div class="k">损失 −log σ(Δ)</div></div><div><div class="v" id="btG">–</div><div class="k">梯度大小 σ(−Δ)</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">RM 学到了什么：500 对合成偏好数据（示意）</p>
+      <label class="ctl"><span>标注员的长度偏好 <output id="lbB">1.50</output></span><input type="range" id="lbBs" min="0" max="3" step="0.25" value="1.5"></label>
+      <div id="lbW"></div>
+      <p class="cap" id="lbT"></p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">用这个 RM 做 Best-of-N：从 N 个候选里挑 RM 分最高的（2000 次模拟，示意）</p>
+    <div id="lbC"></div>
+    <p class="cap" id="lbX"></p>
+  </div>
+  <div class="card2 algo" data-algo="Reward Model">
+    <h3>算法卡 · 奖励模型（Bradley–Terry RM）</h3><p class="en">InstructGPT（Ouyang et al., 2022）等经典 RLHF 流水线的第二步</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>“好回答”写不成规则；人给绝对分不稳定，但比较容易。</dd>
+      <dt>核心做法</dt><dd>收集 (prompt, chosen, rejected)；RM 输入 prompt + 回答、输出一个标量；最大化 chosen 比 rejected 分高的 BT 似然。</dd>
+      <dt>关键公式</dt><dd>P(y<sub>w</sub> ≻ y<sub>l</sub>) = σ(r(x,y<sub>w</sub>) − r(x,y<sub>l</sub>))；L = −log σ(r<sub>w</sub> − r<sub>l</sub>)</dd>
+      <dt>何时用</dt><dd>主观偏好对齐（有帮助、礼貌、安全）；也可作为 GRPO 的奖励函数之一。</dd>
+      <dt>代价与坑</dt><dd>标注贵、有噪声；学到长度 / 格式等表面特征；策略一变就分布外；分数只有相对意义需归一化。</dd>
+      <dt>相关</dt><dd>DPO 把 RM 隐含进策略里（第 8 篇）；RLVR 用规则验证器替代 RM（第 9 篇）；PRM 给每一步打分（第 10 篇）。</dd>
+    </dl>
+  </div>
+  <div class="confuse"><h4>易混辨析：奖励模型 vs Critic</h4>
+    <p><b>RM</b> 评价<b>完整回答</b>“好不好”，从人类偏好训练、PPO 阶段冻结，给出的是奖励 r；<b>Critic</b> 评价<b>写到一半的前缀</b>“预计最终能拿多少”，从 RL 过程中的回报回归、和 Actor 一起更新，给出的是价值 V(s<sub>t</sub>)，用来算优势。</p>
+    <p><b>RM 分数 ≠ 人类偏好</b>：它是偏好的近似，策略会主动搜索它给分高、但人并不喜欢的区域。</p>
+    <p><b>SFT ≠ RLHF</b>：SFT 是监督学习（标准答案），RLHF 是强化学习（偏好奖励）；两者都属于后训练，训练信号不同。</p>
+  </div>
+  <div class="notes" id="n-rm"></div>
+</section>
+
+<section class="part" id="ppo">
+  <div class="part-head"><h2>PPO-RLHF：四个模型和一条“安全绳”</h2><span class="meta">原文 docs/chapter15_rlhf/ppo-rlhf-loop.md（13.9 节）</span></div>
+  <div class="sec-lede">
+    <p>经典 RLHF 的 PPO 阶段有四个角色：<strong>Actor</strong>（从 SFT 模型继续训练，生成回答、被更新）、<strong>Reference</strong>（冻结的 SFT 模型，提供 KL 约束）、<strong>Reward Model</strong>（冻结，给回答打分）、<strong>Critic</strong>（通常从 Actor 初始化，估计价值、降低方差）。原文的一句话总结：Reward Model 给方向，Reference 拉住边界，Critic 降低方差，PPO 控制更新幅度。四个模型同时占资源，7B 模型的 PPO 至少要几张 80GB 卡——这正是 DPO 和 GRPO 想省掉的东西。</p>
+    <p>RM 只给整段一个分，PPO 却要在 token 级更新。工程上把奖励拆成两部分：<strong>每个 token 都扣一点 KL</strong>：−β(log π<sub>θ</sub>(y<sub>t</sub>) − log π<sub>ref</sub>(y<sub>t</sub>))；<strong>最后一个 token 再加上 RM 分数</strong>。原文的直觉：“你可以尝试写得更好，但每一步都要为偏离原来的 SFT 模型付一点成本；只有整段完成后裁判才给总分。”然后 Critic 估计每个位置的 V，GAE 把末尾的分数沿 token 序列传回去，每个 token 得到自己的优势。</p>
+    <p>原文专门对比了<strong>序列级</strong>与<strong>token 级</strong>：序列级把总分 R 平均摊给每个 token，“答案是 21”里的“21”和开头的“这”获得同样的更新；token 级通过 Critic + GAE 让关键 token 拿到更强的信号。原文的结论是 token 级优于序列级、序列越长优势越大，TRL、OpenRLHF、veRL 默认都用 token 级损失。为什么一定要 Reference？RM 是在 SFT 模型附近的回答上训练的，Actor 离得太远，RM 就进入分布外——<strong>分布外的高分最危险，因为 PPO 会把它当真奖励继续放大</strong>。</p>
+    <p class="go">原文的例子“这 道 题 的 答 案 是 2 1”：调 β、RM 分数和 λ，看每个 token 拿到的奖励和优势（logprob 与 V 为示意值）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">token 级奖励与优势：r_t = −β·(logπ − logπ_ref)，最后一个 token 再加 RM 分（γ = 1）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>KL 系数 β <output id="tkB">0.05</output></span><input type="range" id="tkBs" min="0" max="0.5" step="0.01" value="0.05"></label>
+      <label class="ctl"><span>RM 分数 <output id="tkR">1.5</output></span><input type="range" id="tkRs" min="-2" max="3" step="0.1" value="1.5"></label>
+      <label class="ctl"><span>GAE λ <output id="tkL">0.95</output></span><input type="range" id="tkLs" min="0" max="1" step="0.05" value="0.95"></label>
+    </div>
+    <div class="tokrow" id="tkRow"></div>
+    <p class="note">每格：token / 该 token 的 logπ − logπ_ref / 奖励 r_t / 优势 Â_t（条形：蓝 = 正优势，红 = 负优势）。</p>
+    <p class="cap" id="tkW"></p>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>角色</th><th>来源</th><th>作用</th><th>需要梯度</th><th>资源</th></tr></thead>
+    <tbody>
+      <tr><td>Actor</td><td>SFT 模型继续训练</td><td>生成回答，被 PPO 更新</td><td>是</td><td>最重：训练 + 生成</td></tr>
+      <tr><td>Critic</td><td>通常从 Actor 初始化</td><td>估计 V，算优势、降方差</td><td>是</td><td>可与 Actor 共享底座、只加 value head</td></tr>
+      <tr><td>Reference</td><td>冻结的 SFT 模型</td><td>算 log π_ref，提供 KL 约束</td><td>否</td><td>冻结推理，可 offload</td></tr>
+      <tr><td>Reward Model</td><td>偏好数据训练</td><td>给完整回答打分</td><td>否</td><td>冻结推理，吞吐可能成瓶颈</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 13.9 节两张角色表合并。框架选型（原文）：135M–1B 用 TRL 理解流程；7B–32B 用 OpenRLHF（Ray + vLLM + ZeRO）；70B+ 用 NeMo RL。</p>
+  <div class="card2 algo" data-algo="PPO-RLHF">
+    <h3>算法卡 · PPO-RLHF</h3><p class="en">InstructGPT 式三阶段：SFT → RM → PPO</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>把人类偏好变成可优化的信号，在模型自己的回答上纠正它真实会犯的错。</dd>
+      <dt>核心做法</dt><dd>Actor 生成 → RM 打分 → Reference 算 KL → Critic + GAE 算 token 优势 → PPO 裁剪更新 Actor 和 Critic。</dd>
+      <dt>关键公式</dt><dd>r<sub>t</sub> = −β(log π<sub>θ</sub> − log π<sub>ref</sub>)(y<sub>t</sub>) + 1[t = T]·r<sub>RM</sub>(x, y)；目标 𝔼[r<sub>RM</sub>] − β·KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)</dd>
+      <dt>何时用</dt><dd>主观偏好对齐、需要在线探索、上限要求高时。</dd>
+      <dt>代价与坑</dt><dd>四模型同台、显存和工程复杂度高；RM 被 hack；β 难调；数据非平稳（Actor 一更新下一批回答分布就变了）。</dd>
+      <dt>相关</dt><dd>PPO 与 GAE（第 4 篇）；DPO 去掉 RM 和 Critic（第 8 篇）；GRPO 去掉 Critic（第 9 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-ppo"></div>
+</section>
+
+<section class="part" id="log">
+  <div class="part-head"><h2>读训练日志：reward 必须和 KL、长度一起看</h2><span class="meta">原文 ppo-rlhf-loop.md“训练稳定性工具箱”“训练日志解读”、evaluation.md</span></div>
+  <div class="sec-lede">
+    <p>原文反复强调：健康的 PPO-RLHF 不是 reward 一路狂飙，而是<strong>多个指标保持张力</strong>——reward 缓慢上升、KL 在目标区间附近波动、回答长度稳定、熵缓慢下降但不塌、value loss 可控、clip fraction 有一定比例、小样本 judge 胜率逐步改善。最典型的危险信号是“<strong>reward 上升 + KL 上升 + 长度暴涨 + 人工抽检变差</strong>”：这不是“继续训练就好了”，而是 reward hacking，应该暂停 PPO、回去查 RM 数据和长度惩罚。</p>
+    <p>β 是最关键的旋钮：太大，KL 很低、reward 不动，RLHF 几乎退化成 SFT；太小，reward 快速上升、KL 失控，出现 hacking、乱码、模式坍缩。常见做法是<strong>自适应 β</strong>：观测 KL 高于目标就拉紧，低于目标就放松。原文给的调参顺序：先固定生成参数（temperature、top_p、长度上限）→ 检查 RM 分数尺度 → 调 β 让 KL 回到目标区间 → 再调学习率和 batch → 看长度与重复率（reward 和长度强相关时先修奖励，不要只调 PPO）→ 每个 checkpoint 跑同一套固定评估集。</p>
+    <p class="go">四段训练日志，判断各是什么情况。</p>
+  </div>
+  <div class="lab"><p class="lab-t">读日志（原文“训练日志解读”与失败模式表改编）</p><div id="lgQ"></div></div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>现象</th><th>可能原因</th><th>检查</th><th>修复</th></tr></thead>
+    <tbody>
+      <tr><td>loss 变 NaN</td><td>梯度爆炸 / 学习率太大</td><td>梯度范数</td><td>降学习率、加强梯度裁剪</td></tr>
+      <tr><td>reward 不动</td><td>学习率太小或 β 太大</td><td>KL 是否几乎为 0</td><td>降 β 或增大学习率</td></tr>
+      <tr><td>输出乱码</td><td>参考漂移太严重</td><td>KL 是否异常大</td><td>增大 β、降学习率</td></tr>
+      <tr><td>模式坍缩</td><td>策略熵过低</td><td>熵、重复率</td><td>熵正则、降学习率</td></tr>
+      <tr><td>reward 升但质量降</td><td>reward hacking</td><td>人工抽检、judge 对比</td><td>多维奖励、对抗数据</td></tr>
+      <tr><td>回答越来越长</td><td>长度 hack</td><td>length 与 reward 的相关性</td><td>长度惩罚、重新校准 RM</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 ppo-rlhf-loop.md 失败模式表。</p>
+  <div class="notes" id="n-log"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">SFT：L = −Σ_t log π_θ(y_t | x, y_&lt;t)</div>
+    <div class="fx">Bradley–Terry：P(y_w ≻ y_l | x) = σ(r(x,y_w) − r(x,y_l))；L_RM = −log σ(r_w − r_l)</div>
+    <div class="fx">RLHF 目标：max 𝔼[r_RM(x,y)] − β·KL(π_θ(·|x) ‖ π_ref(·|x))</div>
+    <div class="fx">token 奖励：r_t = −β(log π_θ(y_t|s_t) − log π_ref(y_t|s_t))，t = T 时再加 r_RM(x,y)</div>
+    <div class="fx">优势：δ_t = r_t + γV(s_{t+1}) − V(s_t)，A_t = Σ(γλ)^l δ_{t+l}；PPO 比率 ρ_t = π_θ(y_t)/π_old(y_t)</div>
+    <div class="fx">自适应 β：β ← β·(1 + (KL_obs − KL_target)/KL_target / horizon)</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. SFT 之后为什么还要 RLHF？RLHF 会注入新知识吗？</summary><p class="ans">SFT 只模仿单条示范，学不到偏好边界；覆盖不了模型自己会犯的错；“更有帮助 / 诚实 / 安全”难以写成唯一答案但容易比较；容易只学表面格式。RLHF 在模型自己的回答上用偏好奖励纠正它。但 RLHF 主要改变已有能力空间里的选择倾向，不是知识注入的主力；新知识要靠预训练、继续预训练、检索或高质量 SFT。</p></details>
+    <details><summary>2. 奖励模型怎样从比较里学分数？最容易学歪成什么？</summary><p class="ans">Bradley–Terry：P(chosen 胜) = σ(r_chosen − r_rejected)，最小化 −log σ(差值)；只约束差值，分数需要归一化。最容易学到表面特征：长度、术语、格式、讨好语气——标注员只要略偏爱长回答，RM 就会给长度正权重，策略再顺着它把回答越写越长。</p></details>
+    <details><summary>3. 四个模型各干什么？token 奖励怎么构造？β 太大太小会怎样？</summary><p class="ans">Actor 生成并被更新；Reference（冻结 SFT）提供 KL；RM（冻结）给完整回答打分；Critic 估计每个前缀的价值来算优势。每个 token 奖励 = −β·(log π − log π_ref)，最后一个 token 再加 RM 分，然后 GAE 传回每个 token。β 太大：KL ≈ 0、reward 不动、退化成 SFT；β 太小：KL 失控、reward hacking、乱码与坍缩。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.quiz($('#mqQ'), [
+  { q: '基座模型已经很强，加一段 chat prompt 是不是就够了？', o: ['够了，prompt 能改变行为偏好', '不够：prompt 只是临时说明书，不改变参数里的行为偏好'], a: 1, why: '原文：chat prompt 能改善格式，但不能改变参数里的行为偏好。简单任务也许够，稳定的产品不够。' },
+  { q: 'SFT 是不是就是 RLHF？', o: ['是，都是后训练', '不是：SFT 是监督学习（标准答案），RLHF 用偏好奖励训练策略'], a: 1, why: '两者都属于后训练，但训练信号完全不同。' },
+  { q: '同一个 prompt，base 模型偶尔也能生成好回答。RLHF 主要做了什么？', o: ['注入了新知识', '提高了好回答被选中的概率', '扩大了词表'], a: 1, why: '原文：“模型原本就可能生成好回答，但好回答的概率不够高；RLHF 让它更常选择人类偏好的那类回答。”' }
+]);
+S.notes($('#n-mdp'), {
+  c: [
+    ['Base 模型', 'next-token 预测，擅长续写，不一定回答。'],
+    ['SFT', '指令—回答数据上的似然训练，本质是行为克隆。'],
+    ['RLHF', '偏好奖励 + PPO，提高偏好回答的概率。'],
+    ['LLM 的状态 / 动作', '状态 = prompt + 已生成前缀；动作 = 下一个 token。'],
+    ['信用分配', '末尾一个分数，要分给几百个 token。']
+  ],
+  p: [
+    ['RLHF 四个理由', '偏好边界、自身错误分布、难写成标准答案、表面格式'],
+    ['RLHF 的边界', '改选择偏好，不是知识注入主力'],
+    ['教学用小模型', 'SmolLM2-360M、Qwen2.5-0.5B、pythia-410m'],
+    ['流水线', 'base → SFT → RM → PPO → Eval']
+  ]
+});
+
+/* ---------- BT ---------- */
+var btChart = S.chart($('#btC'), { h: 200, x: [-4, 4], y: [0, 4.2], xt: [-4, -2, 0, 2, 4], yt: [0, 1, 2, 3, 4], xl: '分数差 Δ = r_w − r_l' });
+function bt() {
+  var d = +$('#btDs').value; $('#btD').textContent = S.f(d, 1);
+  var p = S.sigmoid(d), L = -Math.log(p);
+  btChart({ curves: [{ f: function (x) { return -Math.log(S.sigmoid(x)); }, c: 'c1', label: '损失 −log σ(Δ)' }, { f: function (x) { return S.sigmoid(x); }, c: 'ok', label: 'σ(Δ)' }], dots: [{ x: d, y: L, c: 'c1', r: 6 }, { x: d, y: p, c: 'ok', r: 6 }] });
+  $('#btP').textContent = S.pct(p, 1); $('#btL').textContent = S.f(L, 3); $('#btG').textContent = S.f(1 - p, 3);
+}
+$('#btDs').addEventListener('input', bt); bt();
+
+/* ---------- 合成 RM ---------- */
+function synthRM(bias) {
+  var r = S.rng(77), w = [0, 0], N = 500, pairs = [];
+  for (var i = 0; i < N; i++) {
+    var qa = S.randn(r), qb = S.randn(r), la = r(), lb = r();
+    var pref = S.sigmoid(2.5 * (qa - qb) + bias * (la - lb)), aWins = r() < pref;
+    var fa = [qa + 0.8 * S.randn(r), la], fb = [qb + 0.8 * S.randn(r), lb];
+    pairs.push(aWins ? [fa, fb] : [fb, fa]);
+  }
+  for (var ep = 0; ep < 300; ep++) {
+    var g = [0, 0];
+    pairs.forEach(function (p) { var d = w[0] * (p[0][0] - p[1][0]) + w[1] * (p[0][1] - p[1][1]), s = 1 - S.sigmoid(d); g[0] += s * (p[0][0] - p[1][0]); g[1] += s * (p[0][1] - p[1][1]); });
+    w[0] += 0.5 * g[0] / N; w[1] += 0.5 * g[1] / N;
+  }
+  var acc = pairs.filter(function (p) { return w[0] * (p[0][0] - p[1][0]) + w[1] * (p[0][1] - p[1][1]) > 0; }).length / N;
+  return { w: w, acc: acc };
+}
+var lbChart = S.chart($('#lbC'), { h: 230, x: [1, 64], y: [0, 2.2], xt: [1, 8, 16, 32, 64], yt: [0, 0.5, 1, 1.5, 2], xl: '候选数 N', yl: '被选中回答的平均值' });
+function lb() {
+  var b = +$('#lbBs').value; $('#lbB').textContent = S.f(b, 2);
+  var m = synthRM(b), w = m.w;
+  S.bars($('#lbW'), [{ label: '“质量”特征的权重', value: Math.min(1, w[0] / 3), text: S.f(w[0], 2), cls: 'ok' }, { label: '“长度”特征的权重', value: Math.min(1, Math.max(0, w[1]) / 3), text: S.f(w[1], 2), cls: 'alt' }]);
+  $('#lbT').innerHTML = '标注员判断主要看质量，长度偏好系数为 ' + S.f(b, 2) + '（0 表示完全不看长度）。RM 只能看到带噪声的质量信号和长度，用 BT 损失学出的权重如上，训练集偏好准确率 ' + S.pct(m.acc, 0) + '。' + (b > 0 ? '<b>长度权重被学成了正数</b>——RM 忠实地学到了标注员的偏差。' : '没有长度偏好时，长度权重接近 0。');
+  var r = S.rng(9), Ns = [1, 2, 4, 8, 16, 32, 64], q = [], L = [];
+  Ns.forEach(function (N) { var sq = 0, sl = 0, M = 2000; for (var k = 0; k < M; k++) { var best = -1e9, bq = 0, bl = 0; for (var i = 0; i < N; i++) { var qq = S.randn(r), ll = r(), sc = w[0] * (qq + 0.8 * S.randn(r)) + w[1] * ll; if (sc > best) { best = sc; bq = qq; bl = ll; } } sq += bq / M; sl += bl / M; } q.push([N, sq]); L.push([N, sl]); });
+  lbChart({ curves: [{ pts: q, c: 'ok', label: '真实质量（标准化）' }, { pts: L, c: 'c2', label: '长度（0–1）' }] });
+  $('#lbX').innerHTML = 'N 越大，按 RM 挑出来的回答越“优化”。真实质量在上升，' + (L[6][1] > 0.56 ? '但长度也在上升：' : '长度基本不变：') + 'N = 64 时被选中回答的平均长度是 <b>' + S.f(L[6][1], 2) + '</b>（随机回答是 0.50）。' + (b >= 1.5 ? '标注员越偏爱长度，RM 越愿意用长度换分，同样的优化预算换来的真实质量越少。' : '把标注员的长度偏好调大到 2 以上再看。') + ' PPO 比 Best-of-N 优化得更狠，又能直接改变“写多长”——这就是原文说的“模型学会拉长回答，奖励上升、人类评估却下降”。真实质量会不会掉头向下，见第 12 篇的过度优化曲线。（合成数据，示意。）';
+}
+$('#lbBs').addEventListener('input', lb); lb();
+S.notes($('#n-rm'), {
+  c: [
+    ['偏好数据', '(prompt, chosen, rejected) 三元组。'],
+    ['Bradley–Terry', '偏好概率 = σ(两个分数之差)。'],
+    ['奖励作弊', 'RM 学到“看起来好”，策略去迎合它。'],
+    ['分布漂移', 'RL 后的新回答落在 RM 没见过的区域。'],
+    ['相对分数', 'BT 只约束差值，分数整体平移不影响损失。']
+  ],
+  p: [
+    ['RM 损失', '−log σ(r_chosen − r_rejected)'],
+    ['初始损失', 'Δ = 0 时 ln 2 ≈ 0.693'],
+    ['标注规模（原文）', 'InstructGPT 约 40 名标注员、数万条偏好'],
+    ['主观 vs 客观', '主观偏好用 RM；数学 / 代码用规则验证（RLVR）'],
+    ['原文提醒', 'RM 在训练集上“太完美”可能是过拟合，宁可钝一点']
+  ]
+});
+
+/* ---------- token 奖励 ---------- */
+var TOK = ['这', '道', '题', '的', '答', '案', '是', '2', '1'], DLT = [0.05, 0.02, 0.03, 0.01, 0.04, 0.02, 0.06, 0.40, 0.35], VV = [0.6, 0.62, 0.63, 0.65, 0.66, 0.68, 0.70, 0.9, 1.2];
+function tk() {
+  var b = +$('#tkBs').value, R = +$('#tkRs').value, l = +$('#tkLs').value;
+  $('#tkB').textContent = S.f(b, 2); $('#tkR').textContent = S.f(R, 1); $('#tkL').textContent = S.f(l, 2);
+  var n = TOK.length, rew = DLT.map(function (d, t) { return -b * d + (t === n - 1 ? R : 0); }), A = new Array(n), g = 0;
+  for (var t = n - 1; t >= 0; t--) { var dl = rew[t] + (t < n - 1 ? VV[t + 1] : 0) - VV[t]; g = dl + l * g; A[t] = g; }
+  var mx = Math.max.apply(null, A.map(Math.abs)) || 1;
+  $('#tkRow').innerHTML = TOK.map(function (w, t) {
+    var h = Math.abs(A[t]) / mx * 44, pos = A[t] >= 0;
+    return '<div><b>' + w + '</b><span>' + S.f(DLT[t], 2) + '</span><span>' + S.f(rew[t], 3) + '</span><span>' + S.f(A[t], 2) + '</span><div class="bar"><i style="height:' + h + 'px;' + (pos ? 'bottom:0;background:var(--s1)' : 'top:0;background:var(--alert)') + '"></i></div></div>';
+  }).join('');
+  var kl = DLT.reduce(function (a, b) { return a + b; }, 0);
+  $('#tkW').innerHTML = '整段 KL 近似 Σ(logπ − logπ_ref) = ' + S.f(kl, 2) + '，扣掉 β × ' + S.f(kl, 2) + ' = ' + S.f(b * kl, 3) + '。原文手算的一个 token：logπ = −1.2、logπ_ref = −1.6，差 0.4，β = 0.05 时扣 0.02。' +
+    ' 注意最后两个 token“2”“1”：Actor 比 Reference 更偏爱它们（差值 0.40、0.35），所以 KL 罚得最多；它们离 RM 分数最近，在 Critic 的预期之外拿到了分，优势也最大。把 λ 调到 0：每个 token 只看一步 δ，前面的套话 token 几乎拿不到信号；把 β 调大：KL 成本压过 RM 分，连答案 token 的优势都可能变负——这就是“β 太大学不动”。（logprob 差与 V 为示意值。）';
+}
+['tkBs', 'tkRs', 'tkLs'].forEach(function (id) { $('#' + id).addEventListener('input', tk); }); tk();
+S.notes($('#n-ppo'), {
+  c: [
+    ['Actor', '被训练的语言模型，从 SFT 初始化。'],
+    ['Reference', '冻结的 SFT 模型，KL 的参照。'],
+    ['Reward Model', '冻结，给完整回答打一个分。'],
+    ['Critic', '估计前缀价值 V(s_t)，用于优势。'],
+    ['token 级损失', '每个 token 有自己的优势，关键 token 更新更强。']
+  ],
+  p: [
+    ['六步循环', '采 prompt → Actor 生成 → RM 打分 → Ref 算 KL → Critic + GAE → PPO 更新'],
+    ['KL 手算', 'logπ − logπ_ref = 0.4，β = 0.05 → 每 token 扣 0.02'],
+    ['为什么要 Ref', 'RM 在 SFT 分布附近才可信，分布外高分最危险'],
+    ['batch 概念', 'prompt batch / rollout batch / mini-batch / PPO epochs'],
+    ['ppo_epochs 不能太大', '会在旧 rollout 上过拟合，破坏 on-policy']
+  ]
+});
+
+/* ---------- 读日志 ---------- */
+S.quiz($('#lgQ'), [
+  { q: 'reward 缓慢上升，KL 在目标附近波动，长度稳定，judge 胜率上升。', o: ['健康', 'reward hacking', 'β 太大'], a: 0, why: '原文“情况一”：Actor 在 reference 附近找到了更好的回答，这是最健康的信号。' },
+  { q: 'reward 快速上升，KL 持续上升，回答长度和 reward 同步暴涨，人工抽检变差。', o: ['健康，继续训练', 'reward hacking，应暂停并检查 RM 与长度惩罚', '学习率太小'], a: 1, why: '原文“情况二”：不是继续训练就好了，要回到 RM 数据、长度惩罚和对抗样本检查。' },
+  { q: 'KL 几乎为 0，reward 一动不动。', o: ['β 太大或学习率太小', 'β 太小', 'RM 被 hack'], a: 0, why: 'Actor 被 Reference 死死拽住，RLHF 几乎退化成 SFT。先降 β 或提学习率。' },
+  { q: '熵快速掉到很低，回答越来越模板化、重复。', o: ['模式坍缩', '一切正常', 'Critic 太准'], a: 0, why: '策略过早变确定。加熵正则、降学习率，同时检查是否有某个模板 token 被少数高 reward 样本推得过高。' }
+]);
+S.notes($('#n-log'), {
+  c: [
+    ['健康信号', 'reward 缓升、KL 稳、长度稳、胜率升。'],
+    ['危险信号', 'reward 与 KL、长度同步暴涨，人工观感变差。'],
+    ['自适应 β', 'KL 高于目标拉紧，低于目标放松。'],
+    ['固定评估集', '每个 checkpoint 用同一套 prompt 比较。']
+  ],
+  p: [
+    ['必看七项', 'reward、KL、长度、熵、value loss、clip fraction、judge 胜率'],
+    ['调参顺序', '固定生成参数 → RM 尺度 → β → 学习率 / batch → 长度与重复 → 固定评估'],
+    ['β 太大', 'KL ≈ 0，reward 不动，退化成 SFT'],
+    ['β 太小', 'KL 失控，hacking、乱码、坍缩'],
+    ['先修奖励', 'reward 与长度强相关时，先改奖励，不要只调 PPO']
+  ]
+});

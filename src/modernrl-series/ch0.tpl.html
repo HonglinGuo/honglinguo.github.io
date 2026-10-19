@@ -1,0 +1,348 @@
+---
+title: 动手学现代强化学习：学习笔记总览
+desc: 开源教程 Hands-On Modern RL 的十二篇互动学习笔记总览：从 CartPole、DQN、策略梯度、PPO 到 RLHF、DPO、GRPO、推理模型与 Agentic RL；算法演化地图、按问题反查的选型器、算法卡索引、概念速记卡、易混辨析索引与公式速查。
+kicker: <span>技术学习</span><span>系列 · 共 12 篇</span><span>浏览器里真实训练 DQN 与 PPO</span><span>CC BY-NC-SA 4.0</span>
+h1: 从一根杆子，<em>到会用工具的模型</em>
+lead: 这是开源课程 Hands-On Modern RL（WalkingLabs）的学习笔记。原教程从 CartPole 的一次试错讲起，经过 DQN、策略梯度、PPO 和连续控制，一路走到 RLHF、DPO、GRPO、推理模型和 Agentic RL——它的主张是：RLHF、DPO、GRPO 不是一组孤立的新名词，而是同一套序贯决策思想在语言模型上的延伸。十二篇笔记沿这条线重新组织，每篇都有能拖、能算、能训练的实验。这一页是复习工具：演化地图、选型器、算法卡、速记卡、易混辨析和公式都汇总在这里。
+nav: why|这套教程;map|演化地图;pick|按问题选算法;algo|算法卡;cards|速记卡;cf|易混辨析;fx|公式速查;back|记下来
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.evo svg { display: block; }
+.evo .nd rect { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.evo .nd text { font-size: 15px; fill: var(--ink); }
+.evo .nd.on rect { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2.5; }
+.evo .nd.llm rect { stroke: var(--s3); }
+.evo .nd { cursor: pointer; }
+.evo .nd:focus-visible rect { stroke: var(--s1); stroke-width: 3; }
+.evo .eg { fill: none; stroke: var(--rule); stroke-width: 1.5; }
+.evo .lane { font-size: 15px; fill: var(--ink-3); }
+.evo .band { fill: var(--dim-soft); opacity: .5; }
+.info { margin-top: 12px; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 4em; }
+.info b { color: var(--ink); }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; margin-top: 10px; }
+.qgrid button { font: inherit; font-size: 15px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink-2); line-height: 1.55; }
+.qgrid button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.alist { margin-top: 12px; }
+.alist details { border-top: 1px solid var(--hair); }
+.alist details:last-child { border-bottom: 1px solid var(--hair); }
+.alist summary { cursor: pointer; padding: 10px 0; font-size: 16px; color: var(--ink); }
+.alist summary small { color: var(--ink-3); font-size: 15px; margin-left: 8px; }
+.alist dl { display: grid; grid-template-columns: 7em minmax(0, 1fr); margin: 0 0 12px; }
+.alist dt { font-size: 15px; color: var(--s1); font-weight: 650; padding: 6px 0; border-top: 1px solid var(--hair); }
+.alist dd { margin: 0; font-size: 15px; color: var(--ink-2); padding: 6px 0; border-top: 1px solid var(--hair); line-height: 1.65; }
+@media (max-width: 560px) { .alist dl { grid-template-columns: minmax(0, 1fr); } .alist dd { border-top: 0; padding-top: 0; } }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4, .fxl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a, .fxl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.fxl .fx { margin: 6px 0 0; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>这一页要回答的 3 个问题</h3>
+  <ol>
+    <li>这套教程想讲清什么？它和《强化学习的数学原理》系列怎样分工？</li>
+    <li>从 Q-learning 到 GRPO，算法之间是怎样一步步演化来的？</li>
+    <li>遇到一个具体问题时，该先考虑哪个算法、回看哪一篇？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这套教程</h2><span class="meta">原文 README.zh.md、docs/preface/</span></div>
+  <div class="sec-lede">
+    <p>原教程的问题主线很朴素：一个系统采取行动、观察结果，再根据结果改进下一次行动。当奖励会延迟出现、环境信息不完整、一次更新还会改变后续采样分布时，监督学习的“输入—标签”框架就不够用了。全书七部分二十六章，贯穿三个问题：<strong>如何表示决策过程，如何把结果归因给此前的动作，如何确认策略真的变得更好</strong>。前三部分建立统一语言与算法基础（CartPole、MDP、DQN、策略梯度、Actor-Critic、PPO、连续控制、离线 / 模仿 / 探索），第四部分把它们带入大模型后训练（RLHF、DPO、GRPO 与 RLVR、推理模型、过程奖励），第五、六部分扩展到工具、代码、浏览器与多模态智能体，第七部分讨论奖励黑客、评测与研究前沿。</p>
+    <p>它的特色是“问题—方法—实验—反思”：先用具体任务暴露困难，再引入公式，随后落到可运行代码、训练曲线与评测指标，最后检查假设、失败模式和适用边界——奖励黑客、KL 漂移、熵坍缩、分布偏移、评测泄漏贯穿全书。这个系列沿用这个精神：CartPole 的 DQN 和 PPO 在浏览器里用 JavaScript 真实训练，其余公式都做成能拖动、实时计算的小实验；原教程的训练日志等数据标“原书数据”。</p>
+    <p>两点说明。<strong>许可</strong>：原教程按 CC BY-NC-SA 4.0 发布，本系列是改编的学习笔记，同样按 CC BY-NC-SA 4.0、仅限非商业用途，出处和改动都在页内标明。<strong>可靠性</strong>：原教程自述“由 AI 协助生成、尚未全面审稿，可能有事实性或代码错误”，所以我只采信能与原始论文对上的内容，个别存疑的工程细节（如第 9 篇 GRPO 变体里某些模型的内部做法与分数）没有照搬。<strong>分工</strong>：本系列偏“现代 RL 与动手”，贝尔曼方程、值 / 策略迭代、蒙特卡罗、TD、函数近似、策略梯度定理等数学推导，见同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>。</p>
+  </div>
+  <p class="parthd">经典与深度强化学习 · 原教程第 1–12 章</p>
+  <div class="chap" id="chapA"></div>
+  <p class="parthd">大模型后训练 · 原教程第 13–18 章</p>
+  <div class="chap" id="chapB"></div>
+  <p class="parthd">智能体、多模态与评测 · 原教程第 19–26 章与附录</p>
+  <div class="chap" id="chapC"></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>算法演化地图</h2><span class="meta">每个箭头是一次“修补”</span></div>
+  <div class="sec-lede">
+    <p>把十二篇里出现的主要算法摆在一张图上，会发现几乎每一步都是在修补前一步的某个具体问题：Q 表装不下 → DQN；argmax 处理不了连续动作 → 策略梯度；方差大 → 基线与 Actor-Critic；一步走太远 → TRPO 与 PPO；四个模型太重 → DPO（去掉 RM 与 Critic）和 GRPO（去掉 Critic）；单轮变多轮 → Agentic RL。紫色边框是大模型时代的算法。</p>
+    <p class="go">点一个节点，看它修补了什么、在哪一篇。</p>
+  </div>
+  <div class="box evo" id="evo"></div>
+  <div class="info" id="evoI">点击图中的算法节点。</div>
+</section>
+
+<section class="part" id="pick">
+  <div class="part-head"><h2>按问题选算法</h2><span class="meta">选型器</span></div>
+  <div class="sec-lede">
+    <p>按“你手里有什么、缺什么”来选，而不是按算法名字选。下面的建议来自各篇里原教程的选型表和实战建议，是起点而不是定论——真正的选择还要看数据、算力和评测。</p>
+    <p class="go">选一个最接近你处境的描述。</p>
+  </div>
+  <div class="qgrid" id="pkQ"></div>
+  <div class="info" id="pkA">选一个问题。</div>
+</section>
+
+<section class="part" id="algo">
+  <div class="part-head"><h2>算法卡索引</h2><span class="meta">各篇“算法卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每张算法卡都按同一格式写：解决什么问题、核心做法、关键公式、何时用、代价与坑。这里按篇汇总，可以输入关键词过滤（如 KL、Critic、离线、token）。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="alQ" type="search" placeholder="关键词，如 Critic、KL、离线" aria-label="搜索算法卡" style="max-width:260px"><span class="note" id="alN" style="margin:0"></span></div>
+  <div class="alist" id="alL"></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>概念速记卡</h2><span class="meta">每篇两张</span></div>
+  <div class="sec-lede">
+    <p>每篇挑两个最值得记住的问题。打开自测模式后答案会被遮住：先在心里回答，再点卡片翻开对照；答不上来的，回到对应那一篇。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找（如 on-policy、Critic、DPO、token），标题链接回到原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 Critic、DPO、off-policy" aria-label="搜索易混辨析" style="max-width:260px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="part" id="fx">
+  <div class="part-head"><h2>全系列公式速查</h2><span class="meta">各篇“公式卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾都有一张公式卡，这里汇总在一起，可以按部分筛选或输入关键词（如 clip、KL、GAE、σ）查找。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="fxQ" type="search" placeholder="关键词，如 clip、KL、GAE" aria-label="搜索公式" style="max-width:260px"><div class="seg" id="fxP"><button data-v="0" aria-pressed="true">全部</button><button data-v="1">01–06</button><button data-v="2">07–10</button><button data-v="3">11–12</button></div></div>
+  <div class="fxl" id="fxL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-19-modernrl-';
+var chs = __CHS__, ALGO = __ALGO__;
+var read = S.readList();
+chs.forEach(function (c) {
+  var n = c[0], box = n <= 6 ? $('#chapA') : n <= 10 ? $('#chapB') : $('#chapC'), done = read.indexOf(String(n)) >= 0;
+  var a = S.h('a', { href: P + n + '/', class: done ? 'done' : '' }, box);
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3][0] + '</p><span class="tag">' + c[4] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-why'), {
+  c: [
+    ['三个贯穿问题', '如何表示决策过程、如何把结果归因给此前的动作、如何确认策略真的变好。'],
+    ['教学节奏', '问题 → 方法 → 实验 → 反思（假设、失败模式、适用边界）。'],
+    ['核心主张', 'RLHF、DPO、GRPO 是序贯决策思想在语言模型上的延伸。'],
+    ['许可', 'CC BY-NC-SA 4.0：署名、非商业、相同方式共享。']
+  ],
+  p: [
+    ['原教程推荐路径', '先读 1–4 章建立术语；6–8 章（策略梯度、AC、PPO）后可直接进 RLHF / DPO / GRPO'],
+    ['每章四件事', '复述要解决的问题、手推核心公式、跑一个实验、改一个假设并解释指标变化'],
+    ['数学推导', '见《强化学习的数学原理》系列'],
+    ['存疑处理', '原教程自述 AI 协助生成，只采信能与原论文对上的内容']
+  ]
+});
+
+/* ---------- 演化地图 ---------- */
+var NODES = [
+  { id: 'ql', t: 'Q-learning', x: 90, y: 70, ch: 2, d: '表格版的 TD 控制：r + γ max Q(s′,·) 修正一个格子。前提是状态能枚举。' },
+  { id: 'dqn', t: 'DQN', x: 265, y: 70, ch: 2, d: '用网络替代 Q 表；经验回放打破相关、目标网络稳住 TD 目标。' },
+  { id: 'ddqn', t: 'Double / Dueling / PER', x: 440, y: 40, ch: 2, d: '分别修过估计、状态与动作价值混在一起、采样预算平均分配。' },
+  { id: 'rainbow', t: 'Rainbow', x: 615, y: 40, ch: 2, d: '六项改进合一（再加 n 步、分布式价值、Noisy Net）。' },
+  { id: 'rf', t: 'REINFORCE', x: 90, y: 170, ch: 3, d: '直接对策略做梯度上升：∇log π × 回报；方差大，要等回合结束。' },
+  { id: 'ac', t: 'Actor-Critic', x: 265, y: 170, ch: 3, d: '基线 + Critic 的 TD 误差，每步更新；用偏差换方差。' },
+  { id: 'trpo', t: 'TRPO', x: 440, y: 170, ch: 4, d: '用 KL 信任域限制一步走多远；需要二阶近似。' },
+  { id: 'ppo', t: 'PPO + GAE', x: 615, y: 170, ch: 4, d: '一阶裁剪近似信任域，GAE 估优势，同批数据复用 K 轮。默认的 on-policy 算法。' },
+  { id: 'ddpg', t: 'DDPG', x: 440, y: 270, ch: 5, d: '确定性策略梯度 + DQN 组件，把 off-policy 带进连续动作；不稳定。' },
+  { id: 'td3', t: 'TD3', x: 615, y: 250, ch: 5, d: '双 Q 取 min、延迟更新、目标平滑：给 DDPG 打三个补丁。' },
+  { id: 'sac', t: 'SAC', x: 615, y: 305, ch: 5, d: '最大熵目标 + 自动调温；连续控制首选。' },
+  { id: 'mbpo', t: 'Dyna → MBPO', x: 265, y: 370, ch: 5, d: '学环境模型造数据；只推演几步避免误差累积，样本效率高 10–100 倍。' },
+  { id: 'az', t: 'AlphaZero → MuZero', x: 440, y: 370, ch: 5, d: 'MCTS + 策略 / 价值网络；MuZero 在隐空间学模型。“网络引导搜索”。' },
+  { id: 'off', t: 'CQL / IQL', x: 265, y: 470, ch: 6, d: '离线 RL：对数据外动作保守，避免外推误差被 Bellman 放大。' },
+  { id: 'bc', t: 'BC → DAgger / GAIL', x: 90, y: 470, ch: 6, d: '模仿学习：行为克隆有复合误差，DAgger 让专家补标，GAIL 用判别器当奖励。' },
+  { id: 'rlhf', t: 'PPO-RLHF', x: 800, y: 170, ch: 7, llm: 1, d: 'SFT → 奖励模型 → PPO；四个模型同台，KL 拉住参考模型。' },
+  { id: 'dpo', t: 'DPO', x: 985, y: 105, ch: 8, llm: 1, d: '闭式解反解奖励，Z(x) 抵消；直接在偏好对上训练，去掉 RM 与 Critic。' },
+  { id: 'dpof', t: 'IPO / KTO / SimPO', x: 985, y: 40, ch: 8, llm: 1, d: '分别改损失形状、去掉成对数据、去掉参考模型。' },
+  { id: 'grpo', t: 'GRPO + RLVR', x: 985, y: 230, ch: 9, llm: 1, d: '同题多答的组内均值替代 Critic；规则验证器替代 RM。' },
+  { id: 'dapo', t: 'DAPO / GSPO / VAPO', x: 985, y: 165, ch: 9, llm: 1, d: 'GRPO 的各路修补：裁剪、动态采样、序列级比值、重新引入 value。' },
+  { id: 'prm', t: 'PRM + 搜索', x: 800, y: 370, ch: 10, llm: 1, d: '过程奖励给每一步打分，配合 Best-of-N / beam search；推理时计算。' },
+  { id: 'agent', t: 'Agentic RL', x: 985, y: 400, ch: 11, llm: 1, d: '多轮工具调用的 POMDP；action mask、步骤级优势（GiGPO）。' },
+  { id: 'eval', t: '奖励黑客与评测', x: 800, y: 470, ch: 12, llm: 1, d: '所有算法都要过这一关：代理奖励与独立效用的分叉、早停与排障。' }
+];
+var EDGES = [['ql', 'dqn'], ['dqn', 'ddqn'], ['ddqn', 'rainbow'], ['rf', 'ac'], ['ac', 'trpo'], ['trpo', 'ppo'], ['dqn', 'ddpg'], ['ac', 'ddpg'], ['ddpg', 'td3'], ['ddpg', 'sac'], ['ppo', 'rlhf'], ['rlhf', 'dpo'], ['dpo', 'dpof'], ['rlhf', 'grpo'], ['grpo', 'dapo'], ['az', 'prm'], ['grpo', 'agent'], ['mbpo', 'az'], ['bc', 'off'], ['prm', 'agent']];
+var NW = 160, NH = 38, svg = S.svg('svg', { viewBox: '0 0 1075 520', width: 1075, height: 520 }, $('#evo'));
+S.svg('rect', { x: 708, y: 6, width: 364, height: 508, rx: 10, class: 'band' }, svg);
+S.svg('text', { x: 718, y: 26, class: 'lane', text: '大模型时代' }, svg);
+var NM = {}; NODES.forEach(function (n) { NM[n.id] = n; });
+EDGES.forEach(function (e) {
+  var a = NM[e[0]], b = NM[e[1]], x1 = a.x + NW / 2, y1 = a.y, x2 = b.x - NW / 2, y2 = b.y;
+  if (b.x <= a.x) { var dn = b.y > a.y; x1 = a.x; y1 = a.y + (dn ? 1 : -1) * NH / 2; x2 = b.x; y2 = b.y - (dn ? 1 : -1) * NH / 2; }
+  var mx = (x1 + x2) / 2;
+  S.svg('path', { d: b.x <= a.x ? 'M' + x1 + ' ' + y1 + 'L' + x2 + ' ' + y2 : 'M' + x1 + ' ' + y1 + 'C' + mx + ' ' + y1 + ' ' + mx + ' ' + y2 + ' ' + x2 + ' ' + y2, class: 'eg', 'marker-end': 'url(#arr)' }, svg);
+});
+var defs = S.svg('defs', null, svg), mk = S.svg('marker', { id: 'arr', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+S.svg('path', { d: 'M0 0L10 5L0 10z', style: 'fill:var(--rule)' }, mk);
+var gs = {};
+NODES.forEach(function (n) {
+  var g = S.svg('g', { class: 'nd' + (n.llm ? ' llm' : ''), tabindex: 0, role: 'button', 'aria-label': n.t }, svg);
+  S.svg('rect', { x: n.x - NW / 2, y: n.y - NH / 2, width: NW, height: NH, rx: 8 }, g);
+  S.svg('text', { x: n.x, y: n.y + 5, 'text-anchor': 'middle', text: n.t }, g);
+  function pick() {
+    Object.keys(gs).forEach(function (k) { gs[k].classList.remove('on'); }); g.classList.add('on');
+    var card = ALGO.filter(function (a) { return a.n === n.ch && n.t.indexOf(a.name.split(' ')[0].split('（')[0]) >= 0; })[0];
+    $('#evoI').innerHTML = '<b>' + n.t + '</b> · <a href="' + P + n.ch + '/">第 ' + n.ch + ' 篇</a><br>' + n.d + (card ? '<br><span style="color:var(--ink-3)">算法卡：</span>' + card.prob : '');
+  }
+  g.addEventListener('click', pick); g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  gs[n.id] = g;
+});
+
+/* ---------- 选型器 ---------- */
+var PICK = [
+  ['离散动作、仿真器便宜、能大量交互', 'DQN（含 Double / Dueling）或 PPO', '离散动作且需要复用旧数据时 DQN；追求稳定、实现简单时 PPO 是默认选择。', [2, 4]],
+  ['连续动作控制，仿真便宜', 'PPO 或 SAC', 'PPO 稳定好调；SAC 是 off-policy、样本效率更高，原教程把它列为连续控制首选。', [4, 5]],
+  ['真实机器人，每一步交互都很贵', 'SAC → MBPO', '先用 off-policy 复用数据，再学环境模型做短推演，样本效率可再高 10–100 倍。', [5]],
+  ['只有一份历史日志，不能再交互', 'IQL（基线）/ CQL / TD3+BC', '必须对数据外动作保守；IQL 超参少、全程只用数据内动作。', [6]],
+  ['没有奖励函数，只有专家示范', 'BC → DAgger 或 GAIL', '先行为克隆；专家能在线标注用 DAgger，不能则用 GAIL / 逆强化学习。', [6]],
+  ['奖励极稀疏，随机探索碰不到', '内在奖励（RND / ICM）+ PPO', '给新颖状态加奖励，且要满足可计算、可耗尽。', [6]],
+  ['LLM 对齐，手里有大量偏好对', 'DPO', '两个模型、像监督学习一样训练、迭代最快；先用它验证数据和流程。', [8]],
+  ['只有用户点赞 / 点踩', 'KTO', '单条二元反馈即可，不需要成对比较。', [8]],
+  ['数学 / 代码，有标准答案或单元测试', 'GRPO + RLVR（必要时 DAPO 的改进）', '规则验证器当奖励、组内均值当基线，不需要 RM 和 Critic。', [9]],
+  ['主观偏好对齐，要在线探索、追求上限', 'PPO-RLHF（RM + KL）', '需要训练 RM、四模型同台；β 和独立评测是关键。', [7]],
+  ['模型会做，但单次经常出错', 'Best-of-N / 多数投票 / PRM 引导搜索', '推理时多算；有可靠验证器最有效，p ≈ 0 时多算无用。', [10]],
+  ['多轮工具调用、搜索、写代码的智能体', '多轮 GRPO + action mask（+ GiGPO 等步骤优势）', '只在动作 token 上算梯度；关注奖励方差、异步训练与沙箱。', [11]],
+  ['训练奖励一直涨，但总觉得不对劲', '先查奖励黑客三联征', '由外到内排查：环境数据 → 评测协议 → 奖励 → 算法；按独立效用早停。', [12]]
+];
+PICK.forEach(function (p, i) {
+  var b = S.h('button', { type: 'button', 'aria-pressed': 'false', text: p[0] }, $('#pkQ'));
+  b.addEventListener('click', function () {
+    S.$$('#pkQ button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true');
+    $('#pkA').innerHTML = '<b>' + p[1] + '</b><br>' + p[2] + '<br>回看：' + p[3].map(function (n) { return '<a href="' + P + n + '/">第 ' + n + ' 篇 · ' + chs[n - 1][1] + '</a>'; }).join('，');
+  });
+});
+
+/* ---------- 算法卡 ---------- */
+function alDraw() {
+  var q = $('#alQ').value.trim().toLowerCase(), box = $('#alL'); box.innerHTML = ''; var hits = 0;
+  ALGO.forEach(function (a) {
+    var txt = (a.name + a.en + a.prob + a.how + a.fx + a.when + a.cost).toLowerCase();
+    if (q && txt.indexOf(q) < 0) return; hits++;
+    var d = S.h('details', null, box);
+    S.h('summary', { html: a.name + '<small>' + (a.n < 10 ? '0' : '') + a.n + ' · ' + chs[a.n - 1][1] + '</small>' }, d);
+    S.h('dl', { html: '<dt>解决什么问题</dt><dd>' + a.prob + '</dd><dt>核心做法</dt><dd>' + a.how + '</dd><dt>关键公式</dt><dd>' + a.fx + '</dd><dt>何时用</dt><dd>' + a.when + '</dd><dt>代价与坑</dt><dd>' + a.cost + '</dd><dt>原文位置</dt><dd><a href="' + P + a.n + '/#' + a.sid + '">第 ' + a.n + ' 篇的这一节</a></dd>' }, d);
+  });
+  $('#alN').textContent = '共 ' + hits + ' 张';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的算法卡。' }, box);
+}
+$('#alQ').addEventListener('input', alDraw); alDraw();
+
+/* ---------- 速记卡 ---------- */
+var MG = [
+  [1, 'terminated 与 truncated 在算价值时有什么区别？', 'terminated（杆倒、出界）后续价值取 0；truncated（时间上限）状态可能还好，用 V(s′) 估计。两者都要在 GAE 递推里切断；rollout 边界两者都不是。'],
+  [1, 'on-policy / off-policy 与 online / offline 各问什么？', '前者问数据是不是当前策略自己采的，后者问训练中还能不能采新数据。DQN = off-policy + online。'],
+  [2, '直接把 Q 表换成网络会出哪两个问题？', '样本相关（→ 经验回放）和目标移动（→ 目标网络）。三者叠加的根源是致命三要素：函数逼近 + 自举 + off-policy。'],
+  [2, 'Double DQN 改了什么？', '当前网络选动作、目标网络给它打分，缓解 max 带来的过估计（𝔼[max] ≥ max 𝔼）。'],
+  [3, '为什么减去基线不改变策略梯度的期望？', '𝔼_{a~π}[∇log π(a|s)] = ∇Σπ = 0，乘一个与动作无关的 b(s) 仍为 0；但信号从绝对回报变成“比预期好多少”，方差下降。'],
+  [3, 'Actor-Critic 的 δ 怎么被两边使用？', 'δ = r + γV(s′) − V(s)：Actor 把它（detach 后）当优势乘 ∇log π；Critic 最小化 δ²。'],
+  [4, 'PPO 的 min 为什么不能换成 max？', 'min 让顺方向越界时梯度为 0（停止过冲）、反方向越界时梯度为 A（纠偏），∂L/∂r ∈ {0, A}，永不反向。'],
+  [4, 'GAE 的 λ 从 0 到 1 意味着什么？', 'λ = 0 是一步 TD（方差小、依赖 Critic），λ = 1 是 G − V（无偏、方差大）；0.95 对不准的 Critic 更鲁棒。'],
+  [5, 'TD3 的三个补丁？', '双 Q 取 min（过估计）、延迟策略更新（Critic 先学好）、目标策略平滑（不追 Q 的尖峰）。'],
+  [5, 'MBPO 为什么只推演几步？', '模型误差 e_T ≤ εΣL^i 随推演步数累积；从真实状态出发只走 1–5 步，误差来不及放大。'],
+  [6, '离线 RL 的外推误差从哪来？', 'Bellman 目标的 max 选中数据外动作，网络在那里任意外推、可能虚高，又没机会试错纠正，误差约放大 1/(1 − γ) 倍。'],
+  [6, '行为克隆为什么误差随长度平方增长？', '一步错进入陌生状态，之后更易错，累计代价 O(T²ε)；DAgger 补标策略访问的状态，降到 O(Tε)。'],
+  [7, 'PPO-RLHF 的 token 级奖励怎么构造？', '每个 token 扣 β·(log π − log π_ref)，最后一个 token 再加 RM 分；Critic + GAE 把它分回每个 token。'],
+  [7, 'β 太大和太小各会怎样？', '太大：KL ≈ 0、reward 不动，退化成 SFT；太小：KL 失控、reward hacking、乱码或坍缩。'],
+  [8, 'DPO 推导里被消掉的是什么？', '配分函数 β log Z(x)：它只依赖 prompt，Bradley–Terry 只用同一 prompt 下两个回答的奖励差，相减抵消。'],
+  [8, 'DPO 的初始 loss、accuracy、margin 是多少？', 'π_θ = π_ref 时 margin = 0，loss = ln 2 ≈ 0.693，accuracy ≈ 0.5。'],
+  [9, 'GRPO 用什么替代 Critic？', '同一 prompt 的 G 个回答的组内均值（再除以标准差）；它就是 V(prompt) 的蒙特卡洛估计。'],
+  [9, '一组回答全对或全错会怎样？', '标准差为 0，优势全为 0，没有梯度；有信号的概率 1 − p^G − (1 − p)^G，DAPO 用动态采样过滤这类 prompt。'],
+  [10, 'Best-of-N 的收益为什么递减？', '第 N+1 个候选的边际收益 p(1 − p)^N，每多一个乘一次 (1 − p)，而成本固定。覆盖率高也不等于挑得出来。'],
+  [10, 'PRM 的 mean / min / product 聚合各表达什么？', 'mean 容忍个别差步骤；min 一步差整条不行（最保守）；product 在步骤独立时是“全对”的概率，对低分步最敏感。'],
+  [11, '为什么观测 token 要 mask 掉？', '它们由环境决定、不是策略采样的；参与梯度等于教模型预测网页 / API 返回，污染策略梯度。'],
+  [11, 'GiGPO 怎样得到步骤级优势？', '把不同轨迹中相同的环境状态聚成组，用各动作之后的回报做组内比较，再和轨迹级优势加权相加。'],
+  [12, '训练奖励涨了，怎样判断是不是奖励黑客？', '三联征：reward 升 + 副指标异常（长度、重复、模板）+ 独立评测不涨。按独立效用早停。'],
+  [12, '100 道题 60% vs 55% 能说明谁更好吗？', '不能：60% 的 95% 区间约 50%–70%；要报告置信区间、同一批题做配对检验，或加大题量。']
+];
+var order = MG.map(function (_, i) { return i; }), opened = {};
+function mgDraw() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var m = MG[i], b = S.h('button', { class: 'mcard' + (opened[i] ? ' open' : ''), type: 'button' }, g);
+    b.innerHTML = '<small>第 ' + m[0] + ' 篇 · ' + chs[m[0] - 1][1] + '</small><span class="q">' + m[1] + '</span><span class="a">' + m[2] + '</span>';
+    b.addEventListener('click', function () { opened[i] = !opened[i]; b.classList.toggle('open', !!opened[i]); mgCount(); });
+  });
+  mgCount();
+}
+function mgCount() { var on = $('#mgG').classList.contains('test'), k = Object.keys(opened).filter(function (x) { return opened[x]; }).length; $('#mgC').textContent = on ? '已翻开 ' + k + ' / ' + MG.length + ' 张' : '共 ' + MG.length + ' 张'; }
+$('#mgT').addEventListener('click', function () { var on = !$('#mgG').classList.contains('test'); $('#mgG').classList.toggle('test', on); this.setAttribute('aria-pressed', on); this.textContent = on ? '退出自测：显示全部' : '自测模式：遮住答案'; opened = {}; mgDraw(); });
+$('#mgS').addEventListener('click', function () { var r = S.rng(Date.now() % 100000); for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; } mgDraw(); });
+mgDraw();
+
+/* ---------- 易混辨析 ---------- */
+var CF = __CF__;
+function cfDraw() {
+  var q = $('#cfQ').value.trim().toLowerCase(), box = $('#cfL'); box.innerHTML = ''; var hits = 0;
+  CF.forEach(function (g) {
+    var list = g[3].filter(function (p) { return !q || p.toLowerCase().indexOf(q) >= 0 || g[2].toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + g[0] + '/#' + g[1], html: (g[0] < 10 ? '0' : '') + g[0] + ' · ' + chs[g[0] - 1][1] + ' · ' + g[2] }, hd);
+    list.forEach(function (p) { S.h('p', { html: p }, box); hits++; });
+  });
+  $('#cfN').textContent = '共 ' + hits + ' 条';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的条目。' }, box);
+}
+$('#cfQ').addEventListener('input', cfDraw); cfDraw();
+
+/* ---------- 公式 ---------- */
+var FX = __FX__, fxP = '0';
+function fxDraw() {
+  var q = $('#fxQ').value.trim().toLowerCase(), box = $('#fxL'); box.innerHTML = ''; var hits = 0;
+  chs.forEach(function (c) {
+    var n = c[0], grp = n <= 6 ? '1' : n <= 10 ? '2' : '3';
+    if (fxP !== '0' && fxP !== grp) return;
+    var list = (FX[n] || []).filter(function (f) { return !q || f.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + n + '/#back', text: (n < 10 ? '0' : '') + n + ' · ' + c[1] }, hd);
+    list.forEach(function (f) { S.h('div', { class: 'fx', html: f }, box); hits++; });
+  });
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的公式。' }, box);
+}
+S.seg($('#fxP'), function (v) { fxP = v; fxDraw(); });
+$('#fxQ').addEventListener('input', fxDraw); fxDraw();
+
+S.notes($('#n-back'), {
+  c: [
+    ['① 教程要讲清什么', '一个系统采取行动、观察结果、改进下一次行动——表示决策、归因结果、确认真的变好。'],
+    ['② 算法怎么演化', '每一步修一个具体问题：装不下 → 网络；连续动作 → 策略梯度；方差 → Critic；走太远 → PPO；太重 → DPO / GRPO；单轮 → Agentic。'],
+    ['③ 怎么选、怎么复习', '按“手里有什么、缺什么”用选型器起步；先翻速记卡自测，再用算法卡、易混辨析和公式速查定位回看。']
+  ],
+  p: [
+    ['一条主线', 'CartPole → DQN → 策略梯度 → PPO → RLHF → DPO / GRPO → 推理 → Agentic RL'],
+    ['贯穿全书的坑', '奖励黑客、KL 漂移、熵坍缩、分布偏移、评测泄漏'],
+    ['这个系列的做法', '每节先铺垫，再动手实验，最后“记下来”自测；示意数据标“示意”，原教程数据标“原书数据”']
+  ],
+  ph: '一句话'
+});

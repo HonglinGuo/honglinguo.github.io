@@ -1,0 +1,493 @@
+---
+title: TRPO、PPO 与 GAE：约束一步走多远，用 λ 调偏差与方差
+desc: 动手学现代强化学习笔记（四）：原始策略梯度为什么一步就能毁掉策略；重要性采样与策略比率；TRPO 的 KL 信任域；PPO 裁剪目标的四种越界情形与“梯度永不反向”；同一批数据复用 K 轮为什么需要裁剪；GAE 的指数加权、递推与 λ 的偏差—方差权衡；总损失三项与超参；在浏览器里用 PPO 真实训练 CartPole。
+kicker: <span>技术学习</span><span>动手学现代强化学习 · 04</span><span>对应原教程第 8 章（docs/chapter10_ppo）与附录 B.2</span><span>约 55 分钟</span>
+h1: 每一步都别<em>走太远</em>
+lead: Actor-Critic 已经有了方向，但没有“刹车”：一次更新可以把 0.6 的概率推到 0.99，而策略更新不可逆，采到的那批数据也随之作废。原教程沿一条推导链讲 PPO：原始策略梯度的风险 → 重要性采样让旧数据能用 → TRPO 用 KL 画出信任域 → PPO 用一个 clip 和一个 min 廉价地近似它。另一半是 GAE：优势到底怎么估。这一篇把两半都做成能拖动的实验，最后在浏览器里完整跑一遍 PPO。
+nav: trpo|信任域;clip|裁剪目标;reuse|复用 K 轮;gae|GAE;train|动手训练;back|回扣三问
+---
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.cmpt tr.on td { background: var(--s1-soft); }
+.prog { height: 6px; background: var(--dim-soft); border-radius: 3px; overflow: hidden; margin: 6px 0; max-width: 420px; }
+.prog i { display: block; height: 100%; width: 0; background: var(--s1); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>TRPO 和 PPO 解决的是同一个什么问题？为什么工业界几乎都选 PPO？</li>
+    <li>PPO 目标里的 min 为什么不能换成 max？什么时候梯度为零、什么时候不为零？</li>
+    <li>GAE 的 λ 从 0 调到 1，优势估计会怎样变？为什么默认取 0.95？</li>
+  </ol>
+</div>
+
+<section class="part" id="trpo">
+  <div class="part-head"><h2>从“一步毁掉策略”到信任域</h2><span class="meta">原文 docs/chapter10_ppo/trust-region-clipping.md（8.2 节）</span></div>
+  <div class="sec-lede">
+    <p>原文全程用一个微型例子：某状态下两个动作，初始 π(a₁) = 0.6、π(a₂) = 0.4。采到 (s, a₁)，优势 A = 2，学习率 0.5，一次普通策略梯度更新就把 π(a₁) 推到 0.99。如果这个高优势只是采样的偶然，a₂ 已经被压到 0.01，而且<strong>策略更新没有撤销键</strong>。下一轮更麻烦：数据是在 0.6 下采的，现在策略已是 0.99，这批数据也不再代表当前策略。</p>
+    <p>想复用旧数据，工具是<strong>重要性采样</strong>：𝔼<sub>a~π_old</sub>[π<sub>θ</sub>/π<sub>old</sub> · f(a)] = 𝔼<sub>a~π_θ</sub>[f(a)]。比值 r<sub>t</sub> = π<sub>θ</sub>(a<sub>t</sub>|s<sub>t</sub>)/π<sub>old</sub>(a<sub>t</sub>|s<sub>t</sub>) 叫<strong>策略比率</strong>，例子里是 0.99/0.6 = 1.65。代理目标 𝔼[r<sub>t</sub>A<sub>t</sub>] 让旧数据可以评估新策略，但 r 越大梯度被放大得越多，下一步更新更大——一个正反馈循环。</p>
+    <p><strong>TRPO</strong>（Schulman 2015）直接给距离设上限：最大化 𝔼[r<sub>t</sub>A<sub>t</sub>]，约束平均 KL(π<sub>old</sub> ‖ π<sub>θ</sub>) ≤ δ，δ 常取 0.01。例子里 0.6 → 0.99 的 KL ≈ 1.18，远超 0.01，会被拒绝。问题在计算：严格求解要用到 Hessian（参数量的平方），只能用共轭梯度近似，慢且难写；对 70B 的语言模型完全不可行。<strong>PPO</strong>（Schulman 2017）的想法是：既然目的只是“别差太远”，就不必精确测距离，直接把每个样本的比率夹在 [1 − ε, 1 + ε] 里——局部、廉价的近似，只要一个 clamp。</p>
+    <p class="go">拖动更新后的 π(a₁)，看比率、KL、TRPO 的判决和 PPO 的裁剪目标。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">两动作微型例子：π_old(a₁) = 0.6，A = 2，ε = 0.2，δ = 0.01（数值同原文）</p>
+    <label class="ctl"><span>更新后的 π_θ(a₁) <output id="trP">0.99</output></span><input type="range" id="trPs" min="0.3" max="0.995" step="0.005" value="0.99"></label>
+    <div class="read">
+      <div><div class="v" id="trR">–</div><div class="k">策略比率 r = π_θ / π_old</div></div>
+      <div class="warn"><div class="v" id="trK">–</div><div class="k">KL(π_old ‖ π_θ)</div></div>
+      <div class="hl"><div class="v" id="trU">–</div><div class="k">未裁剪 r·A</div></div>
+      <div class="good"><div class="v" id="trC">–</div><div class="k">PPO：min(rA, clip(r)A)</div></div>
+    </div>
+    <p class="cap" id="trW"></p>
+  </div>
+  <div class="card2 algo" data-algo="TRPO">
+    <h3>算法卡 · TRPO</h3><p class="en">Trust Region Policy Optimization（Schulman et al., 2015）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>策略梯度一步走太远会毁掉策略，且旧数据随之失效。</dd>
+      <dt>核心做法</dt><dd>最大化重要性采样代理目标，同时把新旧策略的平均 KL 限制在 δ 以内（信任域）。</dd>
+      <dt>关键公式</dt><dd>max 𝔼[r<sub>t</sub>A<sub>t</sub>]  s.t.  𝔼[KL(π<sub>old</sub> ‖ π<sub>θ</sub>)] ≤ δ，δ ≈ 0.01</dd>
+      <dt>何时用</dt><dd>理论分析、需要严格控制策略变化的小规模问题；理解 PPO 的来历。</dd>
+      <dt>代价与坑</dt><dd>需要二阶信息（Hessian / 共轭梯度），慢、实现复杂，大模型上不可行；二阶近似本身也有误差。</dd>
+      <dt>相关</dt><dd>PPO-Clip、PPO-Penalty（把 KL 作为惩罚项）；RLHF 里的 KL 惩罚（第 7 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-trpo"></div>
+</section>
+
+<section class="part" id="clip">
+  <div class="part-head"><h2>裁剪目标：clip 管“顺方向别过冲”，min 管“反方向要纠偏”</h2><span class="meta">原文 trust-region-clipping.md“裁剪为何让梯度归零”“min 操作的作用”</span></div>
+  <div class="sec-lede">
+    <p>PPO-Clip 的目标是 L = 𝔼[min(r<sub>t</sub>A<sub>t</sub>, clip(r<sub>t</sub>, 1 − ε, 1 + ε)A<sub>t</sub>)]。clip 是一条三段折线：两端水平（斜率 0）、中间斜率 1。链式法则里只要中间这一环是 0，整条梯度链就断了——这就是“目标在该区间变成常数”的确切含义：相对 θ 是常数，不是数值不变。</p>
+    <p>只有 clip 会出问题：好动作（A &gt; 0）的比率反而跌到 0.5（更新方向错了），裁剪项斜率仍是 0，策略会被<strong>卡死</strong>在错误的位置。外层的 min 解决这件事：它总挑数值更小（更悲观）的那一项，而 clip 的算术结构恰好让“更悲观”等于“方向正确”。原文把四种越界情形逐一验证，并给出一个简短证明：∂L/∂r 只可能是 0 或 A，<strong>梯度要么停止，要么与优势同号，永不反向</strong>。把 min 换成 max 则两种情形同时失效：顺方向越界时不砍虚高的奖励，反方向越界时还高估错误方向。</p>
+    <p>ε 的经验取值：游戏和控制默认 0.2；LLM 对齐常用 0.1 甚至更小（参数多、更脆弱，一次坏更新可能丢掉已习得的语言能力）；0.5 原文直接说“不推荐”。原文还提醒：裁剪只约束每个样本的比率，并不直接约束整体 KL，所以 LLM 训练里会同时监控 clip_fraction 和 approx_kl。</p>
+    <p class="go">切换优势正负、拖动比率，看 min 选了哪一项、梯度是多少，下表会高亮当前情形。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">PPO 裁剪目标：L(r) = min(rA, clip(r, 1 − ε, 1 + ε)A)</p>
+    <div class="ctrls"><div class="seg" id="clA"><button data-v="2" aria-pressed="true">A = +2（好动作）</button><button data-v="-2">A = −2（坏动作）</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>当前比率 r <output id="clR">1.65</output></span><input type="range" id="clRs" min="0.2" max="2" step="0.01" value="1.65"></label>
+      <label class="ctl"><span>ε <output id="clE">0.20</output></span><input type="range" id="clEs" min="0.05" max="0.5" step="0.05" value="0.2"></label>
+    </div>
+    <div id="clC"></div>
+    <div class="read"><div><div class="v" id="clU">–</div><div class="k">未裁剪 rA</div></div><div><div class="v" id="clK">–</div><div class="k">裁剪项 clip(r)A</div></div><div class="hl"><div class="v" id="clM">–</div><div class="k">min 选中</div></div><div class="good"><div class="v" id="clG">–</div><div class="k">∂L/∂r</div></div></div>
+  </div>
+  <div class="tblw"><table class="cmpt" id="clTab">
+    <thead><tr><th>A</th><th>r 的位置</th><th>min 选取</th><th>梯度</th><th>设计意图</th></tr></thead>
+    <tbody>
+      <tr data-k="p-in"><td>&gt; 0</td><td>1 − ε ≤ r ≤ 1 + ε</td><td>两项相等</td><td>A，增大 r</td><td>正常学习</td></tr>
+      <tr data-k="p-hi"><td>&gt; 0</td><td>r &gt; 1 + ε</td><td>裁剪项</td><td>0</td><td>顺方向过冲，停止</td></tr>
+      <tr data-k="p-lo"><td>&gt; 0</td><td>r &lt; 1 − ε</td><td>未裁剪项</td><td>A，增大 r</td><td>反方向纠偏</td></tr>
+      <tr data-k="n-in"><td>&lt; 0</td><td>1 − ε ≤ r ≤ 1 + ε</td><td>两项相等</td><td>A，减小 r</td><td>正常学习</td></tr>
+      <tr data-k="n-lo"><td>&lt; 0</td><td>r &lt; 1 − ε</td><td>裁剪项</td><td>0</td><td>顺方向过冲，停止</td></tr>
+      <tr data-k="n-hi"><td>&lt; 0</td><td>r &gt; 1 + ε</td><td>未裁剪项</td><td>A，减小 r</td><td>反方向纠偏</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文“四种越界情形汇总”表，补上了区间内的两种情形。</p>
+  <div class="confuse"><h4>易混辨析：PPO 与 TRPO、clip 与 KL</h4>
+    <p><b>PPO vs TRPO</b>：同一个目标（别让一次更新走太远）。TRPO 用整体 KL 做硬约束、需要二阶近似；PPO 对每个样本的比率做一阶裁剪，一个 clamp 搞定。原文：OpenAI 的实验里 PPO 多数任务与 TRPO 相当甚至更好，而 TRPO 的二阶近似本身也有误差。</p>
+    <p><b>PPO-Clip vs PPO-Penalty</b>：后者把 β·KL 作为惩罚项加进目标、β 自适应调节；实践中 Clip 更常用。</p>
+    <p><b>裁剪 ≠ 约束了 KL</b>：clip 只管单个动作的比率，所有样本都推到边界时整体分布的变化仍可能超标，所以要同时监控 approx_kl。</p>
+    <p><b>policy loss 取 min，value loss 取 max</b>：值裁剪版本的价值损失是 max((V − R)², (V_clip − R)²)，同样是“取更保守的”，方向相反，附录 B.2 把它列为高频易错点。</p>
+  </div>
+  <div class="notes" id="n-clip"></div>
+</section>
+
+<section class="part" id="reuse">
+  <div class="part-head"><h2>为什么同一批数据能用 K 轮</h2><span class="meta">原文 ppo-math.md 思考题三；实验为本笔记自设</span></div>
+  <div class="sec-lede">
+    <p>PPO 默认用同一批 rollout 更新 K = 10 个 epoch、每个 epoch 切成若干 mini-batch。原文的解释是成本权衡：采一批数据要跑环境（LLM 里要生成几分钟），一次梯度更新只要几秒。但从重要性采样的角度看，只有第一轮是无偏的，后面 θ 离 θ_old 越来越远，估计偏差越来越大——裁剪正是为此设计的：偏离过大时梯度自动归零。所以 K 不能无限加大，原文给的常用范围是 3–10。</p>
+    <p>为了直接看到裁剪在“复用”里的作用，我设了一个小实验：五臂老虎机（期望奖励 1.0、1.3、0.7、1.1、0.9，每次加标准正态噪声），softmax 策略。每轮按当前策略拉 32 次，优势 = 奖励减批内均值，然后比较三种更新：<strong>普通策略梯度只更新 1 轮</strong>；<strong>同一批数据不加裁剪更新 K 轮</strong>；<strong>PPO 裁剪后更新 K 轮</strong>。每种跑 100 个种子。</p>
+    <p class="go">先用默认学习率看，再把学习率调大到 1.5 以上。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">复用一批数据 K 轮：期望奖励（100 个种子平均，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>学习率 <output id="ruL">0.5</output></span><input type="range" id="ruLs" min="0.25" max="3" step="0.25" value="0.5"></label>
+      <label class="ctl"><span>复用轮数 K <output id="ruK">10</output></span><input type="range" id="ruKs" min="2" max="20" value="10"></label>
+    </div>
+    <div id="ruC"></div>
+    <div class="tblw"><table class="calc" id="ruT"></table></div>
+    <p class="cap" id="ruW"></p>
+  </div>
+  <div class="notes" id="n-reuse"></div>
+</section>
+
+<section class="part" id="gae">
+  <div class="part-head"><h2>GAE：在 TD 与 MC 之间连续调节</h2><span class="meta">原文 docs/chapter10_ppo/gae-reward-model.md（8.3 节）</span></div>
+  <div class="sec-lede">
+    <p>PPO 目标里的 A<sub>t</sub> 怎么来？原文用一个 5 步回合贯穿（只有最后一步奖励 1，Critic 估计 V = 0.1, 0.2, 0.3, 0.5, 0.8，γ = 1），正好是“LLM 生成 5 个 token、只在最后得分”的微缩版。<strong>TD 估计</strong> A = δ<sub>t</sub>，只用一步：方差小，但 Critic 不准时偏差直接灌进来，早期步骤的优势被压成 0.1。<strong>MC 估计</strong> A = G<sub>t</sub> − V(s<sub>t</sub>)：无偏，终点奖励直接算回每一步（早期 0.9），但带着整段的随机性，还得等回合结束。</p>
+    <p>原文强调一个容易忽略的事实：G<sub>t</sub> − V(s<sub>t</sub>) = Σγ<sup>k</sup>δ<sub>t+k</sub>——<strong>MC 不是和 TD 并列的另一种信号，而是 TD 误差的无限累加</strong>。所以插值应该作用在 δ 的权重上：w<sub>k</sub> = (γλ)<sup>k</sup>。λ = 0 回到 TD，λ = 1 回到 MC，中间指数衰减。指数形式的好处是可以递推：Â<sub>t</sub> = δ<sub>t</sub> + γλÂ<sub>t+1</sub>，从后往前扫一遍，O(N)。</p>
+    <p>λ 怎么选？原文的思考题给了一个关键视角：如果 Critic 完全是随机噪声，λ = 0 的优势就毫无意义，而 λ = 1 退化成“带噪声基线的 MC”，主体信号还在。所以较大的 λ 对 Critic 质量的依赖更弱；代价是方差。0.95 成为默认值，就是在“Critic 准不准”和“采样噪声大不大”之间取的平衡。</p>
+    <p class="go">左边复现原文的 5 步表；右边做一个偏差—方差实验：Critic 带系统误差、奖励带噪声，看 λ 改变时总误差怎样分解。</p>
+  </div>
+  <div>
+    <div class="lab">
+      <p class="lab-t">原文 5 步回合：Â_t = δ_t + γλÂ_{t+1}（γ = 1）</p>
+      <label class="ctl"><span>λ <output id="g5L">0.95</output></span><input type="range" id="g5Ls" min="0" max="1" step="0.05" value="0.95"></label>
+      <div class="tblw"><table class="calc" id="g5T"></table></div>
+      <p class="cap" id="g5W"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">λ 的偏差—方差（20 步回合，γ = 0.95，3000 次模拟，示意）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>Critic 系统误差幅度 <output id="gbB">0.6</output></span><input type="range" id="gbBs" min="0" max="1.5" step="0.1" value="0.6"></label>
+        <label class="ctl"><span>每步奖励噪声 σ <output id="gbS">0.5</output></span><input type="range" id="gbSs" min="0" max="1.5" step="0.1" value="0.5"></label>
+      </div>
+      <div id="gbC"></div>
+      <p class="cap" id="gbW"></p>
+    </div>
+  </div>
+  <div class="card2 algo" data-algo="GAE">
+    <h3>算法卡 · GAE</h3><p class="en">Generalized Advantage Estimation（Schulman et al., 2016）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>优势估计的偏差—方差两难：TD 依赖 Critic、MC 方差大且要等回合结束。</dd>
+      <dt>核心做法</dt><dd>对后续 TD 误差做 (γλ)<sup>k</sup> 指数加权，倒序递推；在 done 处切断。</dd>
+      <dt>关键公式</dt><dd>Â<sub>t</sub> = Σ<sub>k</sub>(γλ)<sup>k</sup>δ<sub>t+k</sub> = δ<sub>t</sub> + γλ(1 − done)Â<sub>t+1</sub>；returns = Â + V</dd>
+      <dt>何时用</dt><dd>PPO / A2C 的默认优势估计；LLM 的 PPO-RLHF 用它把末尾的 RM 分数传回每个 token。</dd>
+      <dt>代价与坑</dt><dd>必须倒序算；done mask 别漏；values 要有 T + 1 个（最后一个是 bootstrap）；优势通常再做 batch 内归一化。</dd>
+      <dt>相关</dt><dd>GRPO 不用 GAE：奖励只在末尾、又没有 Critic，多步 TD 退化为单步（第 9 篇）；VAPO 又把 value + GAE 请了回来。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-gae"></div>
+</section>
+
+<section class="part" id="train">
+  <div class="part-head"><h2>总损失、超参，以及在浏览器里跑一遍 PPO</h2><span class="meta">原文 ppo-math.md“PPO 损失函数”；代码 code/chapter01_cartpole/2-pytorch_ppo.py</span></div>
+  <div class="sec-lede">
+    <p>PPO 的总损失三项：L = L<sup>CLIP</sup> + c₁L<sup>VF</sup> − c₂H[π]。策略损失让好动作概率升、坏动作降、幅度受裁剪限制；价值损失让 Critic 逼近 GAE 给的 returns（更准的 V → 更准的 A）；熵奖励保持探索，取负号是因为“最大化熵 = 在损失里减去它”。原文的典型值：ε 0.1–0.2，c₁ = 0.5，c₂ = 0.01，γ = 0.99，λ = 0.95，rollout T = 2048，K = 10。完整循环：采 T 步 → GAE → K 轮 mini-batch 更新（每轮重算 r，裁剪动态生效）→ 旧策略更新为当前策略。工业框架（DeepSpeed-Chat、veRL、OpenRLHF）的结构与这份骨架一致。</p>
+    <p>下面把第 1 篇读过的那次训练<strong>真的在浏览器里跑一遍</strong>：Actor 和 Critic 都是 4 → 32 → 32 → 输出（tanh，原文是 64 宽），Adam 3 × 10⁻⁴ 线性衰减、梯度裁剪 0.5、熵系数 0，每轮 2048 步、共 40 轮——与原文 2-pytorch_ppo.py 的设置一致，只把网络缩窄以便几秒跑完。虚线是原文 seed = 42 的真实曲线，可以直接对照。调 ε、K、λ 再跑，看曲线怎么变（结果随种子波动）。</p>
+    <p class="go">点“开始训练”，约 5–10 秒。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">浏览器里的 PPO × CartPole-v1（JavaScript 手写前向与反向传播）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>裁剪 ε <output id="ppE">0.20</output></span><input type="range" id="ppEs" min="0.05" max="0.5" step="0.05" value="0.2"></label>
+      <label class="ctl"><span>复用轮数 K <output id="ppK">10</output></span><input type="range" id="ppKs" min="1" max="20" value="10"></label>
+      <label class="ctl"><span>GAE λ <output id="ppL">0.95</output></span><input type="range" id="ppLs" min="0" max="1" step="0.05" value="0.95"></label>
+    </div>
+    <div class="btnrow"><button class="btn pri" type="button" id="ppGo">开始训练</button><div class="seg" id="ppM"><button data-v="reward" aria-pressed="true">回合奖励</button><button data-v="kl">近似 KL</button><button data-v="clip">裁剪比例</button><button data-v="ent">策略熵</button></div><span class="stepinfo" id="ppP" style="margin:0"></span></div>
+    <div class="prog"><i id="ppBar"></i></div>
+    <div id="ppC"></div>
+    <p class="cap" id="ppW">还没开始。</p>
+  </div>
+  <div class="card2 algo" data-algo="PPO">
+    <h3>算法卡 · PPO</h3><p class="en">Proximal Policy Optimization（Schulman et al., 2017）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>Actor-Critic 更新幅度无约束、训练震荡；TRPO 有约束但二阶计算太贵。</dd>
+      <dt>核心做法</dt><dd>重要性采样复用一批 rollout K 轮；策略比率裁剪 + min 保证“只停不反”；GAE 估优势；总损失 = 裁剪策略损失 + 价值损失 − 熵。</dd>
+      <dt>关键公式</dt><dd>L = −𝔼[min(r<sub>t</sub>A<sub>t</sub>, clip(r<sub>t</sub>, 1 − ε, 1 + ε)A<sub>t</sub>)] + c₁(V − R)² − c₂H，r = exp(logπ − logπ<sub>old</sub>)</dd>
+      <dt>何时用</dt><dd>默认的 on-policy 算法：游戏、连续控制、经典 RLHF；仿真便宜、追求稳定时。</dd>
+      <dt>代价与坑</dt><dd>仍是 on-policy，样本效率低；LLM 上要四个模型同台（第 7 篇）；ratio 分母必须是采样时的旧策略、old_logp 要 detach、GAE 要倒序。</dd>
+      <dt>相关</dt><dd>TRPO、GAE（本篇）；PPO-RLHF（第 7 篇）；GRPO = 去掉 Critic 的 PPO（第 9 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-train"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">重要性采样：𝔼_{π_old}[(π_θ/π_old)·f] = 𝔼_{π_θ}[f]；r_t(θ) = π_θ(a_t|s_t) / π_old(a_t|s_t)</div>
+    <div class="fx">TRPO：max 𝔼[r_t A_t]  s.t.  𝔼[KL(π_old ‖ π_θ)] ≤ δ</div>
+    <div class="fx">PPO-Clip：L^CLIP = 𝔼[min(r_t A_t, clip(r_t, 1−ε, 1+ε) A_t)]；∂L/∂r ∈ {0, A}</div>
+    <div class="fx">PPO-Penalty：𝔼[r_t A_t − β·KL(π_old, π_θ)]</div>
+    <div class="fx">GAE：Â_t = Σ_k (γλ)^k δ_{t+k} = δ_t + γλ(1 − done_t) Â_{t+1}；returns = Â + V</div>
+    <div class="fx">总损失：L = L^CLIP + c₁(V_θ(s) − V^targ)² − c₂ H[π_θ]，c₁ = 0.5，c₂ = 0.01</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. TRPO 和 PPO 解决同一个什么问题？为什么工业界都选 PPO？</summary><p class="ans">都在限制单次更新让策略变化多少，防止一步毁掉策略、让旧数据可以安全复用。TRPO 用 KL 硬约束，要二阶近似（共轭梯度），慢且难写，大模型不可行；PPO 用逐样本的比率裁剪做一阶近似，一个 clamp 就实现，效果多数任务相当甚至更好。</p></details>
+    <details><summary>2. min 为什么不能换成 max？梯度什么时候为零？</summary><p class="ans">min 总选更悲观的一项：顺方向越界（A > 0 且 r > 1+ε，或 A < 0 且 r < 1−ε）时选裁剪项，梯度为 0，停止过冲；反方向越界时选未裁剪项，梯度为 A，把策略拉回来。∂L/∂r ∈ {0, A}，永不反向。换成 max 会放任过冲、还会奖励错误方向。</p></details>
+    <details><summary>3. λ 从 0 到 1 优势怎样变？为什么默认 0.95？</summary><p class="ans">λ = 0 只用一步 δ（TD）：方差小、完全依赖 Critic、早期步骤几乎拿不到终点奖励的信号；λ = 1 是 G − V（MC）：无偏、方差大。中间按 (γλ)^k 加权，λ 越大信用回传越远。0.95 偏 MC 一侧：对不准的 Critic 更鲁棒，又比纯 MC 方差小。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 信任域 ---------- */
+function tr() {
+  var p = +$('#trPs').value, p0 = 0.6, A = 2, e = 0.2; $('#trP').textContent = S.f(p, 3);
+  var r = p / p0, kl = p0 * Math.log(p0 / p) + 0.4 * Math.log(0.4 / (1 - p)), cl = Math.min(r * A, S.clamp(r, 1 - e, 1 + e) * A);
+  $('#trR').textContent = S.f(r, 3); $('#trK').textContent = S.f(kl, 3); $('#trU').textContent = S.f(r * A, 2); $('#trC').textContent = S.f(cl, 2);
+  $('#trW').innerHTML = 'TRPO（δ = 0.01）：' + (kl <= 0.01 ? '<b style="color:var(--ok)">接受</b>，KL 在信任域内。' : '<b style="color:var(--alert)">拒绝</b>，KL 是上限的 ' + S.f(kl / 0.01, 0) + ' 倍。') +
+    ' PPO：' + (r > 1 + e ? '比率超过 1.2，目标被截在 1.2 × 2 = 2.40，<b>梯度为 0</b>，不再鼓励继续抬高 π(a₁)。' : r < 1 - e ? '比率低于 0.8——好动作的概率反而降了，min 选未裁剪项，梯度会把它拉回来。' : '比率在 [0.8, 1.2] 内，正常学习。') +
+    ' 让 KL 恰好 ≤ 0.01 的 π(a₁) 大约只能到 0.67，而比率 1.2 对应 0.72——两种约束松紧不同，但都远远拦不住 0.99。原文数值：r = 1.65，KL ≈ 1.18，裁剪后 2.40。';
+}
+$('#trPs').addEventListener('input', tr); tr();
+S.notes($('#n-trpo'), {
+  c: [
+    ['更新不可逆', '一次过大的更新会把其他动作压死，没有撤销机制。'],
+    ['重要性采样', '用概率比把旧策略下的期望换算成新策略下的期望。'],
+    ['策略比率 r', 'π_θ / π_old：新策略把这个动作的概率放大了几倍。'],
+    ['信任域', '新旧策略的 KL 不超过 δ 的区域，局部近似在其中可信。'],
+    ['TRPO', 'KL 硬约束 + 共轭梯度近似二阶求解。']
+  ],
+  p: [
+    ['原文例子', '0.6 → 0.99：r = 1.65，KL ≈ 1.18，δ = 0.01'],
+    ['正反馈', 'r 越大梯度越大，下一步 r 更大'],
+    ['TRPO 的代价', 'Hessian 维度 = 参数量²，70B 模型不可行'],
+    ['KL 定义', 'KL(P‖Q) = Σ P log(P/Q) ≥ 0，相同时为 0']
+  ]
+});
+
+/* ---------- 裁剪目标 ---------- */
+var clAv = 2;
+var clChart = S.chart($('#clC'), { h: 250, x: [0.2, 2], y: [-4.2, 4.2], xt: [0.4, 0.8, 1, 1.2, 1.6, 2], yt: [-4, -2, 0, 2, 4], xl: '策略比率 r' });
+function cl() {
+  var r = +$('#clRs').value, e = +$('#clEs').value, A = clAv; $('#clR').textContent = S.f(r, 2); $('#clE').textContent = S.f(e, 2);
+  var u = r * A, c = S.clamp(r, 1 - e, 1 + e) * A, m = Math.min(u, c);
+  var zero = (A > 0 && r > 1 + e) || (A < 0 && r < 1 - e), inside = r >= 1 - e && r <= 1 + e;
+  var pick = inside ? '两项相等' : (u <= c ? '未裁剪项' : '裁剪项');
+  clChart({ curves: [{ f: function (x) { return x * A; }, c: 'dim', dash: 1, label: '未裁剪 rA' }, { f: function (x) { return S.clamp(x, 1 - e, 1 + e) * A; }, c: 'c3', dash: 1, label: '裁剪项' }, { f: function (x) { return Math.min(x * A, S.clamp(x, 1 - e, 1 + e) * A); }, c: 'c1', w: 3.5, label: 'PPO 目标（min）' }],
+    vl: [{ x: 1 - e, c: 'dim' }, { x: 1 + e, c: 'dim' }], dots: [{ x: r, y: m, c: zero ? 'c2' : 'ok', r: 7 }] });
+  $('#clU').textContent = S.f(u, 2); $('#clK').textContent = S.f(c, 2); $('#clM').textContent = pick; $('#clG').textContent = zero ? '0' : S.f(A, 0);
+  var key = (A > 0 ? 'p-' : 'n-') + (inside ? 'in' : r > 1 + e ? 'hi' : 'lo');
+  S.$$('#clTab tbody tr').forEach(function (tr) { tr.classList.toggle('on', tr.getAttribute('data-k') === key); });
+}
+S.seg($('#clA'), function (v) { clAv = +v; cl(); });
+['clRs', 'clEs'].forEach(function (id) { $('#' + id).addEventListener('input', cl); }); cl();
+S.notes($('#n-clip'), {
+  c: [
+    ['clip', '三段折线：两端水平（斜率 0），中间斜率 1。'],
+    ['min', '在两个代理目标里选更悲观（更小）的。'],
+    ['顺方向越界', '已经朝优势方向走过头 → 梯度为 0，停止。'],
+    ['反方向越界', '朝错误方向走了 → 选未裁剪项，梯度把它拉回。'],
+    ['clip_fraction', '触发裁剪的样本比例，和 approx_kl 一起监控。']
+  ],
+  p: [
+    ['梯度只有两种值', '∂L/∂r ∈ {0, A}：要么停，要么与 A 同号'],
+    ['ε 经验值', '0.2 游戏 / 控制；0.1 LLM；0.05 精调；0.5 不推荐'],
+    ['ε = 0', '策略几乎被冻结在旧策略附近'],
+    ['易错', 'ratio 用 exp(logp_new − logp_old)；clip 围绕 1 而非 0']
+  ]
+});
+
+/* ---------- 复用 K 轮 ---------- */
+var MU = [1.0, 1.3, 0.7, 1.1, 0.9];
+function smx(z) { var m = Math.max.apply(null, z), e = z.map(function (x) { return Math.exp(x - m); }), s = e.reduce(function (a, b) { return a + b; }, 0); return e.map(function (x) { return x / s; }); }
+function banditRun(mode, K, lr, seed) {
+  var r = S.rng(seed), th = [0, 0, 0, 0, 0], out = [], maxkl = 0;
+  for (var it = 0; it < 30; it++) {
+    var p0 = smx(th), B = [];
+    for (var b = 0; b < 32; b++) { var u = r(), a = 0, c = p0[0]; while (u > c && a < 4) { a++; c += p0[a]; } B.push([a, MU[a] + S.randn(r)]); }
+    var mean = B.reduce(function (s, x) { return s + x[1]; }, 0) / 32, KK = mode === 'pg' ? 1 : K;
+    for (var k = 0; k < KK; k++) {
+      var p = smx(th), g = [0, 0, 0, 0, 0];
+      B.forEach(function (x) {
+        var a = x[0], A = x[1] - mean, ratio = p[a] / p0[a];
+        if (mode === 'clip' && ((A >= 0 && ratio > 1.2) || (A < 0 && ratio < 0.8))) return;
+        for (var i = 0; i < 5; i++) g[i] += A * ratio * ((i === a ? 1 : 0) - p[i]) / 32;
+      });
+      for (var i = 0; i < 5; i++) th[i] += lr * g[i];
+    }
+    var p1 = smx(th), kl = 0; for (var j = 0; j < 5; j++) kl += p0[j] * Math.log(p0[j] / p1[j]); maxkl = Math.max(maxkl, kl);
+    out.push(p1.reduce(function (s, x, i) { return s + x * MU[i]; }, 0));
+  }
+  return { ev: out, kl: maxkl, best: smx(th)[1] };
+}
+var ruChart = S.chart($('#ruC'), { h: 240, x: [1, 30], y: [0.95, 1.32], xt: [1, 10, 20, 30], yt: [1, 1.1, 1.2, 1.3], xl: '轮次（每轮采 32 次）', yl: '当前策略的期望奖励' });
+function ru() {
+  var lr = +$('#ruLs').value, K = +$('#ruKs').value; $('#ruL').textContent = S.f(lr, 2); $('#ruK').textContent = K;
+  var M = [['pg', '普通 PG，1 轮', 'dim'], ['plain', '不裁剪，复用 ' + K + ' 轮', 'c2'], ['clip', 'PPO 裁剪，复用 ' + K + ' 轮', 'ok']], curves = [], rows = '<tr><td>方法</td><td class="n">第 30 轮期望奖励</td><td class="n">单轮最大 KL（均值）</td><td class="n">没选中最好臂（P &lt; 0.5）</td></tr>', st = {};
+  M.forEach(function (m) {
+    var ev = new Array(30).fill(0), kl = 0, miss = 0;
+    for (var s = 0; s < 100; s++) { var o = banditRun(m[0], K, lr, s * 77 + 1); o.ev.forEach(function (v, i) { ev[i] += v / 100; }); kl += o.kl / 100; if (o.best < 0.5) miss++; }
+    st[m[0]] = { e: ev[29], kl: kl, miss: miss };
+    curves.push({ pts: ev.map(function (v, i) { return [i + 1, v]; }), c: m[2], label: m[1] });
+    rows += '<tr><td>' + m[1] + '</td><td class="n">' + S.f(ev[29], 3) + '</td><td class="n">' + S.f(kl, 3) + '</td><td class="n">' + miss + ' / 100</td></tr>';
+  });
+  ruChart({ curves: curves, hl: [{ y: 1.3, c: 'dim', label: '最好那臂 1.3' }] });
+  $('#ruT').innerHTML = rows;
+  var w = '只更新 1 轮最稳但最慢（同样的数据只用了一次）。';
+  if (st.plain.kl > 5 * st.clip.kl && st.plain.miss > st.clip.miss) w += '这个学习率下，不加裁剪地复用 ' + K + ' 轮，单轮 KL 平均高达 ' + S.f(st.plain.kl, 2) + '，有 ' + st.plain.miss + ' 个种子被某一批的噪声带偏、锁在次优臂上；PPO 把 KL 压在 ' + S.f(st.clip.kl, 3) + '，只有 ' + st.clip.miss + ' 个失败——<b>裁剪的价值在更新激进时才显现</b>。';
+  else w += '学习率较小时，不裁剪的多轮复用也不会失控，甚至比 PPO 学得快一点——裁剪是“保险”，代价是更新偏保守。把学习率调到 1.5 以上再看。';
+  $('#ruW').innerHTML = w + '（自设实验，示意。）';
+}
+['ruLs', 'ruKs'].forEach(function (id) { $('#' + id).addEventListener('input', ru); }); ru();
+S.notes($('#n-reuse'), {
+  c: [
+    ['rollout batch', '一次用当前策略采出的轨迹集合。'],
+    ['epoch K', '同一批 rollout 复用更新的轮数。'],
+    ['mini-batch', 'K 轮中每一轮再切成的小批，用来算梯度。'],
+    ['近似 on-policy', '只要新策略离采样策略不远，旧数据还可用。']
+  ],
+  p: [
+    ['原文默认', 'T = 2048，K = 10，mini-batch 64'],
+    ['为什么复用', '采样（跑环境 / 生成）远比一次梯度更新贵'],
+    ['K 的上限', '常用 3–10；太大会在旧 rollout 上过拟合、破坏 on-policy 假设'],
+    ['每轮重算 r', 'θ 变了 r 也变，裁剪动态生效']
+  ]
+});
+
+/* ---------- GAE 5 步 ---------- */
+var D5 = { r: [0, 0, 0, 0, 1], v: [0.1, 0.2, 0.3, 0.5, 0.8] };
+function g5() {
+  var l = +$('#g5Ls').value; $('#g5L').textContent = S.f(l, 2);
+  var d = D5.r.map(function (r, t) { return r + (t < 4 ? D5.v[t + 1] : 0) - D5.v[t]; }), A = [0, 0, 0, 0, 0], g = 0;
+  for (var t = 4; t >= 0; t--) { g = d[t] + l * g; A[t] = g; }
+  var mc = D5.v.map(function (v) { return 1 - v; });
+  $('#g5T').innerHTML = '<tr><td>t</td><td class="n">V(s_t)</td><td class="n">δ_t</td><td class="n">Â_t（λ = ' + S.f(l, 2) + '）</td><td class="n">TD（λ=0）</td><td class="n">MC（λ=1）</td></tr>' +
+    A.map(function (a, t) { return '<tr><td>' + t + '</td><td class="n">' + S.f(D5.v[t], 1) + '</td><td class="n">' + S.f(d[t], 1) + '</td><td class="n"><b>' + S.f(a, 2) + '</b></td><td class="n">' + S.f(d[t], 1) + '</td><td class="n">' + S.f(mc[t], 1) + '</td></tr>'; }).join('');
+  $('#g5W').innerHTML = 'λ = ' + S.f(l, 2) + ' 时，终点奖励经过 4 步、每步打 ' + S.f(l, 2) + ' 折后仍有 ' + S.f(Math.pow(l, 4), 2) + ' 的权重传到第 0 步。λ = 0.95 那一列（0.80, 0.73, 0.67, 0.49, 0.20）与原文表格一致：越靠近终点越接近 MC，越靠前被压得越多。';
+}
+$('#g5Ls').addEventListener('input', g5); g5();
+
+/* ---------- GAE 偏差方差 ---------- */
+var gbChart = S.chart($('#gbC'), { h: 230, x: [0, 1], y: [0, 1.2], xt: [0, 0.25, 0.5, 0.75, 1], yt: [0, 0.4, 0.8, 1.2], xl: 'λ', yl: '估计 V*(s₀) 的均方误差' });
+function gb() {
+  var B = +$('#gbBs').value, sg = +$('#gbSs').value; $('#gbB').textContent = S.f(B, 1); $('#gbS').textContent = S.f(sg, 1);
+  var N = 20, g = 0.95, mu = 0.1, Vs = [], V = [], t, L = [];
+  for (t = 0; t <= N; t++) { Vs.push(t < N ? mu * (1 - Math.pow(g, N - t)) / (1 - g) : 0); V.push(t < N ? Vs[t] + B * Math.sin(1.3 * t + 0.7) : 0); }
+  for (var k = 0; k <= 20; k++) L.push(k / 20);
+  var M = 3000, sum = L.map(function () { return 0; }), sq = L.map(function () { return 0; }), r = S.rng(55);
+  for (var m = 0; m < M; m++) {
+    var d = []; for (t = 0; t < N; t++) { var rew = mu + sg * S.randn(r); d.push(rew + g * V[t + 1] - V[t]); }
+    L.forEach(function (l, i) { var a = 0; for (var tt = N - 1; tt >= 0; tt--) a = d[tt] + g * l * a; var est = a + V[0], err = est - Vs[0]; sum[i] += err; sq[i] += err * err; });
+  }
+  var bias2 = [], vari = [], tot = [];
+  L.forEach(function (l, i) { var mb = sum[i] / M, ms = sq[i] / M; bias2.push([l, mb * mb]); vari.push([l, ms - mb * mb]); tot.push([l, ms]); });
+  var best = tot.slice().sort(function (a, b) { return a[1] - b[1]; })[0];
+  var ymax = Math.max(0.2, Math.max.apply(null, tot.map(function (p) { return p[1]; })) * 1.1);
+  gbChart({ y: [0, ymax], yt: [0, ymax / 3, 2 * ymax / 3, ymax].map(function (x) { return +x.toFixed(2); }), curves: [{ pts: bias2, c: 'c2', label: '偏差²（来自 Critic）' }, { pts: vari, c: 'c3', label: '方差（来自奖励噪声）' }, { pts: tot, c: 'c1', w: 3.5, label: '总误差' }], vl: [{ x: best[0], c: 'ok', label: '最优 λ ≈ ' + S.f(best[0], 2) }] });
+  $('#gbW').innerHTML = '把 GAE 的回归目标 Â₀ + V(s₀)（也就是 λ-回报）当成对真值 V*(s₀) 的估计。λ 越小越依赖 Critic：系统误差变成偏差；λ 越大越依赖实际奖励：噪声累积成方差。这组设置下总误差在 λ ≈ <b>' + S.f(best[0], 2) + '</b> 最小。把 Critic 误差调到 0，最优 λ 跑到 0（Critic 完美就用 TD）；把奖励噪声调到 0，最优 λ 跑到 1（没有噪声就用 MC）。真实任务两者都有，这就是 0.9–0.99 常用的原因。（自设实验，示意。）';
+}
+['gbBs', 'gbSs'].forEach(function (id) { $('#' + id).addEventListener('input', gb); }); gb();
+S.notes($('#n-gae'), {
+  c: [
+    ['TD 估计', 'A = δ_t：方差小，偏差来自 Critic。'],
+    ['MC 估计', 'A = G_t − V：无偏，方差大，要等回合结束。'],
+    ['MC = δ 的累加', 'G_t − V(s_t) = Σγ^k δ_{t+k}。'],
+    ['GAE', '对 δ 做 (γλ)^k 指数加权的插值。'],
+    ['信用回传', 'λ 越大，末尾奖励传回早期步骤越多。']
+  ],
+  p: [
+    ['递推', 'Â_t = δ_t + γλ(1 − done)Â_{t+1}，倒序 O(N)'],
+    ['原文 5 步（λ=0.95）', '0.80, 0.73, 0.67, 0.49, 0.20'],
+    ['λ 取值', '0 纯 TD；0.95 PPO 默认；1 纯 MC'],
+    ['Critic 很差时', 'λ = 1 仍可用（带噪声基线的 MC），λ = 0 全军覆没'],
+    ['代码坑', 'values 长 T+1；done 切断；advantages 归一化给 Actor']
+  ]
+});
+
+/* ---------- 浏览器里的 PPO ---------- */
+function cpStep(s, a) {
+  var x = s[0], xd = s[1], th = s[2], thd = s[3], f = a ? 10 : -10, c = Math.cos(th), sn = Math.sin(th);
+  var tmp = (f + 0.05 * thd * thd * sn) / 1.1, tha = (9.8 * sn - c * tmp) / (0.5 * (4 / 3 - 0.1 * c * c / 1.1)), xa = tmp - 0.05 * tha * c / 1.1;
+  return [x + 0.02 * xd, xd + 0.02 * xa, th + 0.02 * thd, thd + 0.02 * tha];
+}
+function MLP(nin, H, nout, r, os) {
+  this.ni = nin; this.H = H; this.no = nout; var sz = [nin * H, H, H * H, H, H * nout, nout], k = 0, i; this.off = [];
+  for (i = 0; i < sz.length; i++) { this.off.push(k); k += sz[i]; } this.n = k;
+  var p = this.p = new Float64Array(k), o = this.off;
+  for (i = 0; i < nin * H; i++) p[o[0] + i] = S.randn(r) * Math.sqrt(1 / nin);
+  for (i = 0; i < H * H; i++) p[o[2] + i] = S.randn(r) * Math.sqrt(1 / H);
+  for (i = 0; i < H * nout; i++) p[o[4] + i] = S.randn(r) * Math.sqrt(1 / H) * os;
+  this.g = new Float64Array(k); this.m = new Float64Array(k); this.v = new Float64Array(k); this.t = 0;
+  this.h1 = new Float64Array(H); this.h2 = new Float64Array(H); this.out = new Float64Array(nout); this.d1 = new Float64Array(H); this.d2 = new Float64Array(H);
+}
+MLP.prototype.fwd = function (x) {
+  var p = this.p, o = this.off, H = this.H, ni = this.ni, i, j, z;
+  for (j = 0; j < H; j++) { z = p[o[1] + j]; for (i = 0; i < ni; i++) z += p[o[0] + j * ni + i] * x[i]; this.h1[j] = Math.tanh(z); }
+  for (j = 0; j < H; j++) { z = p[o[3] + j]; for (i = 0; i < H; i++) z += p[o[2] + j * H + i] * this.h1[i]; this.h2[j] = Math.tanh(z); }
+  for (j = 0; j < this.no; j++) { z = p[o[5] + j]; for (i = 0; i < H; i++) z += p[o[4] + j * H + i] * this.h2[i]; this.out[j] = z; }
+  return this.out;
+};
+MLP.prototype.back = function (x, dout) {
+  var p = this.p, g = this.g, o = this.off, H = this.H, ni = this.ni, i, j, d1 = this.d1, d2 = this.d2; d1.fill(0); d2.fill(0);
+  for (j = 0; j < this.no; j++) { var d = dout[j]; if (!d) continue; g[o[5] + j] += d; for (i = 0; i < H; i++) { g[o[4] + j * H + i] += d * this.h2[i]; d2[i] += d * p[o[4] + j * H + i]; } }
+  for (i = 0; i < H; i++) d2[i] *= 1 - this.h2[i] * this.h2[i];
+  for (j = 0; j < H; j++) { var dd = d2[j]; if (!dd) continue; g[o[3] + j] += dd; for (i = 0; i < H; i++) { g[o[2] + j * H + i] += dd * this.h1[i]; d1[i] += dd * p[o[2] + j * H + i]; } }
+  for (i = 0; i < H; i++) d1[i] *= 1 - this.h1[i] * this.h1[i];
+  for (j = 0; j < H; j++) { g[o[1] + j] += d1[j]; for (i = 0; i < ni; i++) g[o[0] + j * ni + i] += d1[j] * x[i]; }
+};
+MLP.prototype.step = function (lr, scale, clip) {
+  var g = this.g, n = this.n, i, nn = 0; for (i = 0; i < n; i++) { g[i] *= scale; nn += g[i] * g[i]; } nn = Math.sqrt(nn);
+  var c = clip && nn > clip ? clip / nn : 1; this.t++; var c1 = 1 - Math.pow(0.9, this.t), c2 = 1 - Math.pow(0.999, this.t);
+  for (i = 0; i < n; i++) { var gg = g[i] * c; this.m[i] = 0.9 * this.m[i] + 0.1 * gg; this.v[i] = 0.999 * this.v[i] + 0.001 * gg * gg; this.p[i] -= lr * (this.m[i] / c1) / (Math.sqrt(this.v[i] / c2) + 1e-5); g[i] = 0; }
+};
+function PPOJob(o, seed) {
+  this.o = o; this.r = S.rng(seed); this.pi = new MLP(4, 32, 2, this.r, 0.01); this.vf = new MLP(4, 32, 1, this.r, 1);
+  this.obs = this.reset(); this.epR = 0; this.it = 0; this.rows = [];
+}
+PPOJob.prototype.reset = function () { var r = this.r; this.t = 0; return [0, 0, 0, 0].map(function () { return (r() - 0.5) * 0.1; }); };
+PPOJob.prototype.iter = function () {
+  var o = this.o, r = this.r, pi = this.pi, vf = this.vf, T = 2048, trs = [], done = [], t;
+  for (t = 0; t < T; t++) {
+    var z = pi.fwd(this.obs), m = Math.max(z[0], z[1]), e0 = Math.exp(z[0] - m), e1 = Math.exp(z[1] - m), p1 = e1 / (e0 + e1), a = r() < p1 ? 1 : 0;
+    var v = vf.fwd(this.obs)[0], s2 = cpStep(this.obs, a); this.t++; this.epR++;
+    var term = Math.abs(s2[0]) > 2.4 || Math.abs(s2[2]) > 0.2095, trunc = !term && this.t >= 500, nv = term ? 0 : vf.fwd(s2)[0];
+    trs.push({ o: this.obs, a: a, lp: Math.log(a ? p1 : 1 - p1), v: v, nv: nv, end: term || trunc });
+    if (term || trunc) { done.push(this.epR); this.epR = 0; this.obs = this.reset(); } else this.obs = s2;
+  }
+  var adv = new Float64Array(T), ret = new Float64Array(T), g = 0, lam = o.lam;
+  for (t = T - 1; t >= 0; t--) { var x = trs[t]; g = 1 + 0.99 * x.nv - x.v + 0.99 * lam * (x.end ? 0 : 1) * g; adv[t] = g; ret[t] = g + x.v; }
+  var mu = 0, sd = 0; for (t = 0; t < T; t++) mu += adv[t] / T; for (t = 0; t < T; t++) sd += (adv[t] - mu) * (adv[t] - mu) / T; sd = Math.sqrt(sd) + 1e-8;
+  var lr = 3e-4 * (1 - this.it / 40), kl = 0, cf = 0, ent = 0, nu = 0, idx = []; for (t = 0; t < T; t++) idx.push(t);
+  for (var ep = 0; ep < o.K; ep++) {
+    for (t = T - 1; t > 0; t--) { var j = Math.floor(r() * (t + 1)), tmp = idx[t]; idx[t] = idx[j]; idx[j] = tmp; }
+    for (var b0 = 0; b0 < T; b0 += 64) {
+      for (var bi = b0; bi < b0 + 64; bi++) {
+        var k = idx[bi], x2 = trs[k], zz = pi.fwd(x2.o), mm = Math.max(zz[0], zz[1]), q0 = Math.exp(zz[0] - mm), q1 = Math.exp(zz[1] - mm), P1 = q1 / (q0 + q1), pp = [1 - P1, P1];
+        var lp = Math.log(Math.max(pp[x2.a], 1e-12)), ratio = Math.exp(lp - x2.lp), A = (adv[k] - mu) / sd, eps = o.eps;
+        var zero = (A >= 0 && ratio > 1 + eps) || (A < 0 && ratio < 1 - eps), dl = zero ? 0 : -A * ratio;
+        pi.back(x2.o, [dl * ((x2.a === 0 ? 1 : 0) - pp[0]), dl * ((x2.a === 1 ? 1 : 0) - pp[1])]);
+        var vv = vf.fwd(x2.o)[0]; vf.back(x2.o, [vv - ret[k]]);
+        var lr_ = lp - x2.lp; kl += Math.exp(lr_) - 1 - lr_; cf += (ratio > 1 + eps || ratio < 1 - eps) ? 1 : 0; ent += -(pp[0] * Math.log(pp[0] + 1e-12) + pp[1] * Math.log(pp[1] + 1e-12)); nu++;
+      }
+      pi.step(lr, 1 / 64, 0.5); vf.step(lr, 1 / 64, 0.5);
+    }
+  }
+  this.it++;
+  var row = { it: this.it, reward: done.length ? done.reduce(function (a, b) { return a + b; }, 0) / done.length : null, kl: kl / nu, clip: cf / nu, ent: ent / nu };
+  this.rows.push(row); return row;
+};
+var ORIG = {
+  reward: [21.4,33.3,49.2,69.4,133.4,189.4,224.3,213.7,318.0,500.0,460.4,500.0,500.0,500.0,500.0,482.8,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0,500.0],
+  kl: [0.00871,0.00808,0.00616,0.00492,0.00429,0.00545,0.00443,0.00682,0.00541,0.00591,0.00765,0.00458,0.00246,0.00142,0.00069,0.00146,0.00101,0.00417,0.00716,0.00187,0.00362,0.00413,0.00484,0.00212,0.00525,0.0013,0.00129,0.00207,0.00272,0.0025,0.0015,0.00237,0.00164,0.0041,0.00189,0.00143,0.00037,0.00014,0.00011,0.00038],
+  clip: [0.1448,0.0955,0.0855,0.0647,0.0523,0.0735,0.0519,0.0911,0.0754,0.0744,0.1282,0.0551,0.0158,0.0079,0.0053,0.0054,0.0085,0.053,0.1164,0.0159,0.0396,0.0515,0.0637,0.0131,0.0732,0.0026,0.0051,0.0108,0.0284,0.0279,0.0151,0.0165,0.0042,0.0573,0.0135,0.0098,0.0006,0,0,0],
+  ent: [0.685,0.657,0.625,0.595,0.571,0.574,0.578,0.552,0.563,0.559,0.545,0.526,0.5,0.502,0.514,0.508,0.503,0.487,0.489,0.496,0.496,0.485,0.471,0.479,0.484,0.479,0.476,0.468,0.454,0.454,0.474,0.458,0.455,0.452,0.45,0.444,0.44,0.432,0.426,0.421]
+};
+var PPM = { reward: { y: [0, 520], yt: [0, 100, 200, 300, 400, 500], yl: '平均回合奖励' }, kl: { y: [0, 0.03], yt: [0, 0.01, 0.02, 0.03], yl: '近似 KL' }, clip: { y: [0, 0.4], yt: [0, 0.1, 0.2, 0.3, 0.4], yl: '裁剪比例' }, ent: { y: [0.3, 0.72], yt: [0.3, 0.4, 0.5, 0.6, 0.7], yl: '策略熵' } };
+var ppMetric = 'reward', ppJob = null, ppRuns = 0;
+var ppChart = S.chart($('#ppC'), { h: 270, x: [1, 40], xt: [1, 10, 20, 30, 40], xl: '训练轮次（每轮 2048 步）' });
+function ppDraw() {
+  var M = PPM[ppMetric], cur = [{ pts: ORIG[ppMetric].map(function (v, i) { return [i + 1, v]; }), c: 'dim', dash: 1, label: '原文 seed = 42（原书数据，网络宽 64）' }];
+  if (ppJob) cur.push({ pts: ppJob.rows.filter(function (r) { return r[ppMetric] != null; }).map(function (r) { return [r.it, r[ppMetric]]; }), c: 'c1', w: 3, label: '本页这次训练' });
+  ppChart({ y: M.y, yt: M.yt, yl: M.yl, curves: cur, hl: ppMetric === 'reward' ? [{ y: 500, c: 'dim' }] : [] });
+}
+S.seg($('#ppM'), function (v) { ppMetric = v; ppDraw(); }); ppDraw();
+['ppEs', 'ppKs', 'ppLs'].forEach(function (id) { $('#' + id).addEventListener('input', function () { $('#ppE').textContent = S.f(+$('#ppEs').value, 2); $('#ppK').textContent = $('#ppKs').value; $('#ppL').textContent = S.f(+$('#ppLs').value, 2); }); });
+$('#ppGo').addEventListener('click', function () {
+  var btn = this; btn.disabled = true; ppRuns++;
+  var o = { eps: +$('#ppEs').value, K: +$('#ppKs').value, lam: +$('#ppLs').value };
+  ppJob = new PPOJob(o, 42 + ppRuns * 1000);
+  function tick() {
+    var row = ppJob.iter();
+    $('#ppBar').style.width = (row.it / 40 * 100) + '%';
+    $('#ppP').textContent = '第 ' + row.it + ' / 40 轮 · 奖励 ' + (row.reward == null ? '—' : S.f(row.reward, 1)) + ' · KL ' + S.f(row.kl, 4) + ' · 裁剪 ' + S.pct(row.clip, 1);
+    ppDraw();
+    if (row.it < 40) setTimeout(tick, 0);
+    else {
+      btn.disabled = false; btn.textContent = '换个种子再跑';
+      var first = ppJob.rows.filter(function (r) { return r.reward >= 475; })[0], last5 = ppJob.rows.slice(-5).reduce(function (s, r) { return s + (r.reward || 0); }, 0) / 5;
+      $('#ppW').innerHTML = '本次（ε = ' + S.f(o.eps, 2) + '，K = ' + o.K + '，λ = ' + S.f(o.lam, 2) + '）' + (first ? '在第 <b>' + first.it + '</b> 轮首次平均奖励 ≥ 475' : '40 轮内没有达到 475') + '，最后 5 轮平均 ' + S.f(last5, 0) + '；原文 seed = 42 在第 10 轮到 500。' +
+        '默认设置下我多次测试大多在第 10–30 轮达到满分，第 1 轮 KL 约 0.01、裁剪比例 10–20%，随后一起下降——和原文日志的形状一致。试试 K = 1（数据只用一次，学得慢很多）、λ = 0（只用一步 TD，早期 Critic 不准时学得慢）、ε = 0.05（更新被限制得很紧）。（浏览器缩小版，网络宽 32，示意。）';
+    }
+  }
+  setTimeout(tick, 30);
+});
+S.notes($('#n-train'), {
+  c: [
+    ['策略损失', '裁剪代理目标取负：好动作升、坏动作降，幅度受限。'],
+    ['价值损失', 'Critic 回归 GAE 给出的 returns。'],
+    ['熵奖励', '保持探索；最大化熵 = 损失里减去它。'],
+    ['学习率退火', '原文代码把学习率线性降到 0，后期 KL 与裁剪比例自然趋零。']
+  ],
+  p: [
+    ['总损失', 'L = L^CLIP + 0.5·L^VF − 0.01·H（CartPole 代码里熵系数为 0）'],
+    ['典型超参', 'ε 0.1–0.2，γ 0.99，λ 0.95，T 2048，K 10'],
+    ['完整循环', '采样 → GAE → K 轮 mini-batch（每轮重算 r）→ 旧策略 ← 当前'],
+    ['附录易错', 'old_logp detach；values 长 T+1；advantage 归一化；GAE 倒序']
+  ]
+});

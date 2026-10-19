@@ -1,0 +1,354 @@
+---
+title: 基本概念：状态、动作、策略、奖励、回报与 MDP
+desc: 强化学习的数学原理学习笔记（一）：网格世界里的状态与动作、状态转移（撞墙弹回、禁区可进入）、策略的表格表示与随机策略、奖励是人机接口、回报与折扣率、回合式与持续式任务、马尔可夫决策过程的五个要素。
+kicker: <span>技术学习</span><span>强化学习的数学原理 · 01</span><span>对应原书第 1 章（第 1–13 页）</span><span>约 30 分钟</span>
+h1: 先把<em>游戏规则</em>说清楚
+lead: 全书所有例子都发生在同一种网格世界里：一个机器人在格子间移动，想走到目标格，路上有禁区。第 1 章不讲算法，只把这个小世界的每一样东西起好名字——状态、动作、状态转移、策略、奖励、轨迹、回报、回合——最后把它们装进马尔可夫决策过程（MDP）这个框架。名字起得准，后面九章的推导才站得住。
+nav: gw|状态与转移;policy|策略;reward|奖励;return|回报与折扣;mdp|MDP;back|三个问题
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>网格世界里撞墙、进禁区、到目标分别会发生什么？状态转移和奖励为什么要写成条件概率？</li>
+  <li>为什么不能按“即时奖励最大”选动作？折扣率 γ 解决了什么问题，又带来了什么？</li>
+  <li>MDP 由哪几样东西组成？“马尔可夫”具体指什么？MDP 和马尔可夫过程差在哪？</li>
+</ol></div>
+
+<section class="part" id="gw">
+  <div class="part-head"><h2>网格世界：状态、动作与状态转移</h2><span class="meta">原书 1.1–1.3 节 · 第 1–4 页</span></div>
+  <div class="sec-lede">
+    <p>机器人叫<strong>智能体</strong>（agent），它所在的格子就是<strong>状态</strong>（state）。3×3 的网格有 9 个状态 s<sub>1</sub>…s<sub>9</sub>，全体构成<strong>状态空间</strong> 𝒮。每个状态下有 5 个<strong>动作</strong>（action）：a<sub>1</sub> 上、a<sub>2</sub> 右、a<sub>3</sub> 下、a<sub>4</sub> 左、a<sub>5</sub> 原地不动，构成<strong>动作空间</strong> 𝒜。原书特意选了最一般的情形：每个状态都允许全部 5 个动作，哪怕在角落里往外走注定撞墙。</p>
+    <p>执行动作后从一个状态到另一个状态，叫<strong>状态转移</strong>。两条约定要记住，全书都用它们：撞边界会被<strong>弹回原格</strong>（s<sub>1</sub> 向上仍在 s<sub>1</sub>）；禁区<strong>可以进入</strong>，只是会被惩罚（s<sub>5</sub> 向右就进了禁区 s<sub>6</sub>）。后一条是作者有意的选择——“禁区是墙、进不去”也说得通，但“能进但要挨罚”更一般、更有意思，后面我们会看到最优策略有时宁可穿过禁区抄近路。</p>
+    <p>状态转移在数学上写成条件概率 p(s′|s, a)。网格世界里它是确定性的（概率要么 1 要么 0），用一张表就能装下；但一般情况下可以是随机的，比如有阵风把机器人吹偏。写成条件概率，确定性和随机性就统一了。</p>
+    <p class="go">点一个格子把机器人放上去，再点动作按钮看它去哪、得多少奖励；切换“禁区是墙”和“有风”看规则怎么变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">状态转移查询器（3×3 网格，奖励设置同原书：r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = +1，其余 0）</p>
+    <div class="lab-split">
+      <div><div id="tqG"></div><div id="tqL"></div></div>
+      <div>
+        <div class="btnrow" id="tqA"></div>
+        <div class="selrow"><span>禁区</span><div class="seg" id="tqW"><button data-v="0" aria-pressed="true">可进入（原书设定）</button><button data-v="1">是墙（弹回）</button></div></div>
+        <label class="ctl"><span>有风：动作被吹偏的概率（示意） <output id="tqPv">0</output></span><input type="range" id="tqP" min="0" max="0.4" step="0.05" value="0"></label>
+        <p class="stepinfo" id="tqO"></p>
+      </div>
+    </div>
+    <p class="lab-s" style="margin-top:12px">下表就是原书表 1.1：行是状态，列是动作，格内是下一状态。当前查询的那一格加了框。</p>
+    <div class="tblw" id="tqT"></div>
+  </div>
+  <div class="notes" id="n-gw"></div>
+</section>
+
+<section class="part" id="policy">
+  <div class="part-head"><h2>策略：每个状态下怎么选动作</h2><span class="meta">原书 1.4 节 · 第 4–6 页</span></div>
+  <div class="sec-lede">
+    <p><strong>策略</strong>（policy）告诉智能体在每个状态下采取什么动作，直观上就是每个格子里画一个箭头。数学上它也是条件概率 π(a|s)：对每个状态 s，它是 5 个动作上的一个分布，且 Σ<sub>a</sub> π(a|s) = 1。</p>
+    <p>某个状态下只有一个动作概率为 1，就是<strong>确定性策略</strong>；概率分给多个动作，就是<strong>随机策略</strong>。原书图 1.5 的例子：在 s<sub>1</sub> 以各 0.5 的概率向右或向下。按随机策略从同一个起点出发，每次走出来的<strong>轨迹</strong>可能不一样。</p>
+    <p>把 π(a|s) 排成“状态 × 动作”的表，就是策略的<strong>表格表示</strong>（原书表 1.2）。第 1–7 章都用表格；第 8、9 章才把值和策略换成带参数的函数——那时“更新策略”就不再是改表格里的数，而是改参数 θ。</p>
+    <p class="go">点格子切换那里的动作（最后一档是“右、下各 0.5”的随机动作），右边的表格同步变化；再从 s<sub>1</sub> 采样几条轨迹看看。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">策略编辑器：点格子循环切换 ↑ → ↓ ← ○ 和“→↓ 各半”</p>
+    <div class="lab-split">
+      <div><div id="poG"></div>
+        <div class="btnrow"><button class="btn pri" type="button" id="poGo">从 s1 采样一条轨迹</button><button class="btn" type="button" id="poRs">恢复原书表 1.2 的策略</button></div>
+        <p class="stepinfo" id="poO"></p>
+      </div>
+      <div class="tblw" id="poT"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-policy"></div>
+</section>
+
+<section class="part" id="reward">
+  <div class="part-head"><h2>奖励：人与智能体之间的接口</h2><span class="meta">原书 1.5 节 · 第 6–8 页</span></div>
+  <div class="sec-lede">
+    <p>在状态 s 执行动作 a 之后，环境给出一个实数<strong>奖励</strong> r(s, a)。正的鼓励这个动作，负的抑制它。网格世界的设置是：撞边界 r<sub>boundary</sub> = −1，进禁区 r<sub>forbidden</sub> = −1，到目标 r<sub>target</sub> = +1，其余 r<sub>other</sub> = 0。注意目标格<strong>不是终点</strong>：在 s<sub>9</sub> 原地不动，下一状态还是 s<sub>9</sub>，又得 +1；在 s<sub>9</sub> 向右撞墙，下一状态也是 s<sub>9</sub>，却得 −1——奖励看的是“做了什么”，不只是“到了哪”。</p>
+    <p>原书把奖励称作<strong>人机接口</strong>：我们通过设计奖励告诉智能体“想要什么”，而不必告诉它“怎么做”。设计好奖励并不容易，但通常比用其他方法直接解决问题容易得多。</p>
+    <p>初学者常问：既然有了奖励表，每个状态选即时奖励最大的动作不就行了？<strong>不行</strong>。即时奖励只看一步，好策略要看长期的总奖励——眼前得 0 的动作可能通向 +1，眼前得 −1 的动作也可能是穿过禁区的近路。这正是下一节“回报”要解决的问题。一般情况下奖励也可以是随机的，用 p(r|s, a) 描述。</p>
+    <p class="go">先做几道判断题，确认你已经掌握了网格世界的奖励规则。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab"><p class="lab-t">奖励规则判断</p><div id="rwQ"></div></div>
+    <div class="lab"><p class="lab-t">原书表 1.3：奖励表</p><div class="tblw" id="rwT"></div><p class="note">b = r<sub>boundary</sub>，f = r<sub>forbidden</sub>，t = r<sub>target</sub>。</p></div>
+  </div>
+  <div class="confuse"><h4>易混辨析：奖励是 r(s, a) 还是 r(s, a, s′)</h4>
+    <p><b>直觉</b>：很多时候是“到了哪里”决定奖励（到目标得正分），似乎应该写成 p(r|s, a, s′)。</p>
+    <p><b>原书的处理</b>：r 确实依赖 s、a、s′，但 s′ 本身由 (s, a) 决定，所以可以把 s′ 边缘化掉：p(r|s, a) = Σ<sub>s′</sub> p(r|s, a, s′) p(s′|s, a)。写成 r(s, a) 形式更简洁，第 2 章推贝尔曼方程时就是这么用的（原书 1.9 节 Q&amp;A）。</p>
+  </div>
+  <div class="notes" id="n-reward"></div>
+</section>
+
+<section class="part" id="return">
+  <div class="part-head"><h2>轨迹、回报与折扣率</h2><span class="meta">原书 1.6 节 · 第 8–10 页</span></div>
+  <div class="sec-lede">
+    <p><strong>轨迹</strong>是一串“状态—动作—奖励”。沿轨迹把奖励加起来叫<strong>回报</strong>（return，也叫总奖励、累积奖励）。原书图 1.6 比较两个策略：策略 1 从 s<sub>1</sub> 绕开禁区，回报 0 + 0 + 0 + 1 = 1；策略 2 穿过禁区 s<sub>7</sub>，回报 0 − 1 + 0 + 1 = 0。回报大的策略更好——数学结论和“别进禁区”的直觉一致。</p>
+    <p>但到了 s<sub>9</sub> 过程并不停止。如果策略在 s<sub>9</sub> 原地不动，就会每步得 +1，直接求和发散到 ∞。于是引入<strong>折扣率</strong> γ ∈ (0, 1)，定义<strong>折扣回报</strong>：</p>
+    <div class="eq">G = r<sub>1</sub> + γ r<sub>2</sub> + γ<sup>2</sup> r<sub>3</sub> + …　<small>策略 1 的折扣回报 = γ<sup>3</sup>(1 + γ + γ<sup>2</sup> + …) = γ<sup>3</sup>/(1 − γ)</small></div>
+    <p>折扣率有两个作用：一是让无限长轨迹的回报有限，从而不需要“停止条件”；二是调节远近：γ 接近 0，智能体只看眼前（短视）；γ 接近 1，更看重远期回报，也更敢为了长期收益承受眼前的惩罚（第 3 章 3.5 节会在网格里看到这一点）。</p>
+    <p>智能体遇到<strong>终止状态</strong>就停下，得到的有限轨迹叫一个<strong>回合</strong>（episode）。有终止状态的是<strong>回合式任务</strong>，没有的是<strong>持续式任务</strong>。两者可以统一：把终止状态改成只进不出的<strong>吸收状态</strong>，或者像原书这样把目标当普通状态（可以离开再回来）。原书采用后者，所以必须用折扣回报。</p>
+    <p class="go">拖动 γ，看两条轨迹的折扣回报怎么变；再先估一下 γ = 0.9 时策略 1 的折扣回报。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">两个策略的折扣回报随 γ 的变化（到 s<sub>9</sub> 后原地不动）</p>
+      <label class="ctl"><span>折扣率 γ <output id="gmV">0.90</output></span><input type="range" id="gmS" min="0" max="0.99" step="0.01" value="0.9"></label>
+      <div id="gmC"></div>
+      <p class="cap" id="gmW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">先估再算</p>
+      <div id="gmG"></div>
+      <p class="lab-t" style="margin-top:14px">第 k 步奖励的权重 γ<sup>k</sup></p>
+      <div id="gmB"></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：轨迹、回合、回报</h4>
+    <p><b>轨迹</b>：任意一串状态—动作—奖励，可以无限长。<b>回合</b>：遇到终止状态而结束的有限轨迹。<b>回报</b>：沿某一条轨迹算出来的（折扣）奖励和，是一个数。</p>
+    <p><b>回合式 vs 持续式任务</b>：有没有终止状态。原书把目标格当普通状态处理，所以网格世界其实是持续式任务，用折扣回报保证有限。</p>
+  </div>
+  <div class="notes" id="n-return"></div>
+</section>
+
+<section class="part" id="mdp">
+  <div class="part-head"><h2>马尔可夫决策过程</h2><span class="meta">原书 1.7–1.9 节 · 第 11–13 页</span></div>
+  <div class="sec-lede">
+    <p>把前面的概念形式化，就是<strong>马尔可夫决策过程</strong>（MDP）。原书把它的要素分成四组：<strong>集合</strong>——状态空间 𝒮、每个状态的动作空间 𝒜(s)、每个 (s, a) 的奖励集合 ℛ(s, a)；<strong>模型</strong>——状态转移概率 p(s′|s, a) 和奖励概率 p(r|s, a)；<strong>策略</strong> π(a|s)；以及<strong>马尔可夫性</strong>。</p>
+    <div class="eq">p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>, s<sub>t−1</sub>, a<sub>t−1</sub>, …, s<sub>0</sub>, a<sub>0</sub>) = p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>)，奖励同理<small>原书式 (1.4)</small></div>
+    <p>马尔可夫性就是“无记忆”：下一个状态和奖励只取决于当前状态和动作，与更早的历史无关。它是第 2 章推导贝尔曼方程的关键一步。p(s′|s, a) 和 p(r|s, a) 合称<strong>模型</strong>或<strong>动力学</strong>；模型不随时间变化叫平稳，本书只考虑平稳模型，并且只考虑状态和动作都有限的有限 MDP。</p>
+    <p><strong>MDP 和马尔可夫过程（MP）</strong>的区别：一旦策略固定，MDP 就退化成 MP——没有“决策”了，只剩状态之间按 p<sub>π</sub>(s′|s) 跳转。最后，强化学习可以看成智能体与环境的交互闭环：智能体感知状态、按策略执行动作，环境返回新状态和奖励。</p>
+    <p>原书 Q&amp;A 里还有一个值得先记住的结论：奖励可以全是负的。决定“鼓励还是抑制”的是奖励的<strong>相对大小</strong>，给所有奖励加同一个常数（比如都减 2），最优策略不变——这叫最优策略对奖励的仿射变换不变，证明在第 3 章。</p>
+    <p class="go">把下面这些东西归到 MDP 的四组要素里。</p>
+  </div>
+  <div class="lab"><p class="lab-t">分一分：属于 MDP 的哪一组要素</p><div id="mdG"></div></div>
+  <div class="confuse"><h4>易混辨析：MDP 与马尔可夫过程</h4>
+    <p><b>MDP</b>：有动作、有策略，转移取决于 (s, a)。<b>马尔可夫过程 / 马尔可夫链</b>：策略固定后，转移只取决于 s，p<sub>π</sub>(s′|s) = Σ<sub>a</sub> π(a|s) p(s′|s, a)。原书里两个名字在离散有限情形下混用。</p>
+    <p><b>模型 vs 策略</b>：模型 p(s′|s, a)、p(r|s, a) 是环境的性质，智能体改变不了；策略 π(a|s) 是智能体的选择，是要学的东西。</p>
+  </div>
+  <div class="notes" id="n-mdp"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">状态转移 p(s′|s, a)，Σ<sub>s′</sub> p(s′|s, a) = 1；奖励 p(r|s, a)，Σ<sub>r</sub> p(r|s, a) = 1</div>
+    <div class="fx">策略 π(a|s)，Σ<sub>a∈𝒜(s)</sub> π(a|s) = 1</div>
+    <div class="fx">折扣回报 G = r<sub>1</sub> + γr<sub>2</sub> + γ<sup>2</sup>r<sub>3</sub> + …，γ ∈ (0, 1)</div>
+    <div class="fx">马尔可夫性 p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>, …, s<sub>0</sub>, a<sub>0</sub>) = p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>)</div>
+    <div class="fx">奖励依赖 s′ 时：p(r|s, a) = Σ<sub>s′</sub> p(r|s, a, s′) p(s′|s, a)</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>撞墙、进禁区、到目标分别会发生什么？为什么写成条件概率？
+      <details><summary>先自己答，再点开</summary><p class="ans">撞墙弹回原格得 r<sub>boundary</sub>；禁区可以进入但得 r<sub>forbidden</sub>；进入或停在目标得 r<sub>target</sub>，目标不是终点。条件概率能统一描述确定性和随机性（比如有风）的转移与奖励。</p></details></li>
+    <li>为什么不能按即时奖励选动作？γ 解决了什么？
+      <details><summary>先自己答，再点开</summary><p class="ans">好坏要看长期总奖励，即时奖励大的动作未必通向好结果。γ 让无限长轨迹的回报有限，同时调节远近：γ 小则短视，γ 大则远视、敢承受眼前惩罚。</p></details></li>
+    <li>MDP 由什么组成？马尔可夫指什么？
+      <details><summary>先自己答，再点开</summary><p class="ans">集合（𝒮、𝒜(s)、ℛ(s, a)）、模型（p(s′|s, a)、p(r|s, a)）、策略 π(a|s)、马尔可夫性。马尔可夫性指下一状态和奖励只依赖当前状态和动作。策略固定后 MDP 退化为马尔可夫过程。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 3×3 网格（原书图 1.2）：禁区 s6、s7，目标 s9 ---------- */
+var G3 = { rows: 3, cols: 3, forbid: [[1, 2], [2, 0]], target: [[2, 2]] };
+var tqWall = false, tqS = 0, tqA = null;
+function env3() { return RL.env({ rows: 3, cols: 3, forbid: G3.forbid, target: G3.target, slip: +$('#tqP').value }); }
+var tqDraw = RL.grid($('#tqG'), RL.env(G3), { cell: 74, onCell: function (s) { tqS = s; tqA = null; tq(); } });
+RL.legend($('#tqL'));
+RL.ANAME.forEach(function (nm, a) {
+  var b = h('button', { class: 'btn', type: 'button', text: 'a' + (a + 1) + ' ' + RL.AN[a] + ' ' + nm }, $('#tqA'));
+  b.addEventListener('click', function () { tqA = a; tq(); });
+});
+S.seg($('#tqW'), function (v) { tqWall = v === '1'; tq(); });
+$('#tqP').addEventListener('input', function () { $('#tqPv').textContent = S.f(+this.value, 2); tq(); });
+function mv(E, s, a) { // 支持“禁区是墙”
+  var m = E.move(s, a);
+  if (tqWall && E.type[m[0]] === 'f' && E.type[s] !== 'f') return [s, E.rb];
+  return m;
+}
+function tq() {
+  var E = env3(), sn = function (s) { return 's' + (s + 1); };
+  var hl = {}; hl[tqS] = 'on';
+  var st = { agent: tqS, hl: hl, v: null, pi: null };
+  var txt;
+  if (tqA == null) txt = '机器人在 <b>' + sn(tqS) + '</b>。点一个动作按钮。';
+  else {
+    var m = mv(E, tqS, tqA), p = E.rc(tqS), r = p[0] + RL.ACT[tqA][0], c = p[1] + RL.ACT[tqA][1];
+    var out = r < 0 || c < 0 || r > 2 || c > 2;
+    var why = out ? '想走出边界，被<b>弹回原格</b>，得 r<sub>boundary</sub> = −1。' : (tqWall && E.type[E.idx(r, c)] === 'f' && E.type[tqS] !== 'f') ? '前方禁区被当成墙，<b>弹回原格</b>（按撞边界计 −1；这是原书没有采用的另一种设定）。' : E.type[m[0]] === 'f' ? '进入（或停留在）禁区：<b>可以进去</b>，但得 r<sub>forbidden</sub> = −1。' : E.type[m[0]] === 't' ? '到达（或停留在）目标：得 r<sub>target</sub> = +1。过程不会就此结束。' : '普通移动，得 r<sub>other</sub> = 0。';
+    txt = sn(tqS) + ' —a' + (tqA + 1) + '→ <b>' + sn(m[0]) + '</b>，r = ' + S.f(m[1], 0) + '。' + why;
+    if (E.slip > 0) {
+      var dist = {};
+      dist[m[0]] = (dist[m[0]] || 0) + 1 - E.slip;
+      for (var b = 0; b < 5; b++) if (b !== tqA) { var x = mv(E, tqS, b); dist[x[0]] = (dist[x[0]] || 0) + E.slip / 4; }
+      txt += '<br>有风时下一状态是随机的：' + Object.keys(dist).map(function (k) { return 'p(' + sn(+k) + '|' + sn(tqS) + ', a' + (tqA + 1) + ') = ' + S.f(dist[k], 2); }).join('，') + '。表格装不下这种情形，只能写成条件概率。';
+      st.note = {}; Object.keys(dist).forEach(function (k) { st.note[k] = S.f(dist[k], 2); });
+    } else st.note = {};
+    st.path = [tqS, m[0]];
+  }
+  tqDraw(st);
+  $('#tqO').innerHTML = txt;
+  // 转移表
+  var M = [], E0 = RL.env(G3);
+  for (var s = 0; s < 9; s++) M.push([0, 1, 2, 3, 4].map(function (a) { return 's' + (mv(E0, s, a)[0] + 1); }));
+  S.grid($('#tqT'), M, { rl: M.map(function (_, i) { return 's' + (i + 1); }), cl: ['a1 ↑', 'a2 →', 'a3 ↓', 'a4 ←', 'a5 ○'], hi: tqA == null ? [] : [[tqS, tqA]] });
+}
+tq();
+S.notes($('#n-gw'), {
+  c: [
+    ['状态 s', '智能体相对环境的状况；网格世界里就是所在格子。'],
+    ['动作 a', '每个状态可选的行为；原书让每个状态都有全部 5 个动作。'],
+    ['状态转移', '执行动作后从 s 到 s′，一般写成条件概率 p(s′|s, a)。'],
+    ['两条约定', '撞边界弹回原格；禁区可以进入但受罚。']
+  ],
+  p: [
+    ['状态空间', '𝒮 = {s<sub>1</sub>, …, s<sub>9</sub>}'],
+    ['动作空间', '𝒜 = {a<sub>1</sub> 上, a<sub>2</sub> 右, a<sub>3</sub> 下, a<sub>4</sub> 左, a<sub>5</sub> 原地}'],
+    ['确定性转移', 'p(s<sub>2</sub>|s<sub>1</sub>, a<sub>2</sub>) = 1，其余为 0'],
+    ['为何用概率', '表格只能装确定性转移；随机转移（如有风）必须用条件概率']
+  ]
+});
+
+/* ---------- 策略编辑器 ---------- */
+var PO_CYCLE = [[0, 0, 0, 0, 1], [1, 0, 0, 0, 0], [0, 1, 0, 0, 0], [0, 0, 1, 0, 0], [0, 0, 0, 1, 0], [0, 0.5, 0.5, 0, 0]];
+var PO_BOOK = [5, 3, 4, 2, 3, 3, 2, 2, 0]; // 表 1.2：s1 右下各半，s2 下，s3 左，s4 右，s5 下，s6 下，s7 右，s8 右，s9 原地
+var poIdx = PO_BOOK.slice(), poPath = null;
+var poE = RL.env(G3);
+var poDraw = RL.grid($('#poG'), poE, { cell: 74, onCell: function (s) { poIdx[s] = (poIdx[s] + 1) % PO_CYCLE.length; poPath = null; po(); } });
+function poPi() { return poIdx.map(function (k) { return PO_CYCLE[k]; }); }
+function po() {
+  var pi = poPi();
+  poDraw({ pi: pi, path: poPath, agent: poPath ? poPath[poPath.length - 1] : 0 });
+  S.grid($('#poT'), pi, { rl: pi.map(function (_, i) { return 's' + (i + 1); }), cl: ['a1 ↑', 'a2 →', 'a3 ↓', 'a4 ←', 'a5 ○'], fmt: function (v) { return v === 0 ? '0' : v === 1 ? '1' : S.f(v, 1); }, heat: [0, 1] });
+}
+var poRng = S.rng(20261019);
+$('#poGo').addEventListener('click', function () {
+  var pi = poPi(), s = 0, path = [0], parts = ['s1'], G = 0, Gd = 0, g = 1;
+  for (var t = 0; t < 8; t++) {
+    var a = RL.sampleA(pi[s], poRng), m = poE.move(s, a);
+    parts.push('—a' + (a + 1) + ', r=' + S.f(m[1], 0) + '→ s' + (m[0] + 1));
+    G += m[1]; Gd += g * m[1]; g *= 0.9; s = m[0]; path.push(s);
+  }
+  poPath = path; po();
+  $('#poO').innerHTML = parts.join(' ') + '<br>前 8 步奖励直接相加 = <b>' + S.f(G, 0) + '</b>；按 γ = 0.9 折扣 = <b>' + S.f(Gd, 2) + '</b>。' + (pi[0][1] === 0.5 ? '在 s1 是随机策略，多点几次会走出不同的轨迹。' : '');
+});
+$('#poRs').addEventListener('click', function () { poIdx = PO_BOOK.slice(); poPath = null; $('#poO').textContent = ''; po(); });
+po();
+S.notes($('#n-policy'), {
+  c: [
+    ['策略 π', '每个状态下各动作的概率分布，告诉智能体怎么选动作。'],
+    ['确定性策略', '每个状态只有一个动作概率为 1。'],
+    ['随机策略', '概率分给多个动作；同一起点会走出不同轨迹。'],
+    ['表格表示', '把 π(a|s) 排成状态 × 动作的表；第 8、9 章改用参数化函数。']
+  ],
+  p: [
+    ['归一化', 'Σ<sub>a</sub> π(a|s) = 1，对每个 s 成立'],
+    ['原书图 1.5', 'π(a<sub>2</sub>|s<sub>1</sub>) = π(a<sub>3</sub>|s<sub>1</sub>) = 0.5'],
+    ['从表格到函数', '更新策略 = 改表格里的数 → 改参数 θ']
+  ]
+});
+
+/* ---------- 奖励 ---------- */
+S.quiz($('#rwQ'), [
+  { q: '在目标 s<sub>9</sub> 执行 a<sub>5</sub>（原地不动），得到多少奖励？', o: ['0', '+1', '−1'], a: 1, why: '下一状态仍是目标，得 r<sub>target</sub> = +1。目标在原书里不是终止状态。' },
+  { q: '在 s<sub>9</sub> 执行 a<sub>2</sub>（向右），得到多少？', o: ['+1', '0', '−1'], a: 2, why: '向右会撞边界被弹回 s<sub>9</sub>，按撞边界计 r<sub>boundary</sub> = −1：奖励看的是动作，不只是落点。' },
+  { q: '在 s<sub>5</sub> 执行 a<sub>2</sub> 后，下一状态是？', o: ['s<sub>5</sub>（禁区进不去）', 's<sub>6</sub>（进入禁区）'], a: 1, why: '原书设定禁区可以进入，只是得 r<sub>forbidden</sub> = −1。' },
+  { q: '给所有奖励都加上 −2（全部变成负数），最优策略会变吗？', o: ['会', '不会'], a: 1, why: '决定鼓励与否的是相对大小。最优策略对奖励的仿射变换 αr + β（α &gt; 0）不变，第 3 章证明。' }
+]);
+(function () {
+  var E = RL.env(G3), lab = {}; lab[E.rb] = 'b';
+  var M = [];
+  for (var s = 0; s < 9; s++) M.push([0, 1, 2, 3, 4].map(function (a) {
+    var p = E.rc(s), r = p[0] + RL.ACT[a][0], c = p[1] + RL.ACT[a][1];
+    if (r < 0 || c < 0 || r > 2 || c > 2) return 'b';
+    var t = E.type[E.idx(r, c)]; return t === 'f' ? 'f' : t === 't' ? 't' : '0';
+  }));
+  S.grid($('#rwT'), M, { rl: M.map(function (_, i) { return 's' + (i + 1); }), cl: ['a1', 'a2', 'a3', 'a4', 'a5'], cls: function (i, j, v) { return v === '0' ? 'dimc' : v === 'f' || v === 'b' ? 'neg' : ''; } });
+})();
+S.notes($('#n-reward'), {
+  c: [
+    ['奖励 r', '执行动作后环境给的实数反馈；正的鼓励，负的抑制。'],
+    ['人机接口', '用奖励告诉智能体想要什么，而不是怎么做。'],
+    ['即时奖励的局限', '只看一步；好策略要看长期总奖励。'],
+    ['相对值决定一切', '所有奖励加同一常数，最优策略不变。']
+  ],
+  p: [
+    ['网格世界设置', 'r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = +1，r<sub>other</sub> = 0'],
+    ['一般形式', 'p(r|s, a)；确定性时是一张奖励表'],
+    ['目标不是终点', '停在目标得 +1，在目标撞墙得 −1']
+  ]
+});
+
+/* ---------- 回报与折扣 ---------- */
+var gmChart = S.chart($('#gmC'), { h: 260, x: [0, 0.99], y: [-1, 20], xt: [0, 0.25, 0.5, 0.75, 0.99], yt: [0, 5, 10, 15, 20], xl: '折扣率 γ', yl: '折扣回报' });
+function R1(g) { return Math.pow(g, 3) / (1 - g); }
+function R2(g) { return -g + Math.pow(g, 3) / (1 - g); }
+function gm() {
+  var g = +$('#gmS').value; $('#gmV').textContent = S.f(g, 2);
+  gmChart({ curves: [{ f: R1, c: 'c1', label: '策略 1：绕开禁区' }, { f: R2, c: 'c2', label: '策略 2：穿过禁区 s7' }], vl: [{ x: g, c: 'dim', label: 'γ = ' + S.f(g, 2) }], dots: [{ x: g, y: R1(g), c: 'c1' }, { x: g, y: R2(g), c: 'c2' }] });
+  $('#gmW').innerHTML = 'γ = ' + S.f(g, 2) + '：策略 1 的折扣回报 γ³/(1 − γ) = <b>' + S.f(R1(g), 2) + '</b>，策略 2 = −γ + γ³/(1 − γ) = <b>' + S.f(R2(g), 2) + '</b>。两者恰好差 γ（就是进禁区那一步的 −1 被折扣了一次），所以对任何 γ 策略 1 都更好。γ → 1 时两者都趋于无穷，这正是要折扣的原因。';
+  var rows = []; for (var k = 0; k < 10; k++) { var w = Math.pow(g, k); rows.push({ label: 'k = ' + k, value: w, text: S.f(w, 3), cls: k ? '' : 'ok' }); }
+  S.bars($('#gmB'), rows);
+}
+$('#gmS').addEventListener('input', gm); gm();
+S.guess($('#gmG'), { q: 'γ = 0.9 时，策略 1（0, 0, 0, +1, +1, +1, …）的折扣回报是多少？', ans: Math.pow(0.9, 3) / 0.1, fmt: function (x) { return S.f(x, 2); }, why: 'γ³/(1 − γ) = 0.729/0.1 = 7.29。可以记一个粗略的“有效视野” 1/(1 − γ)：γ = 0.9 大约看 10 步，γ = 0.99 大约看 100 步。' });
+S.notes($('#n-return'), {
+  c: [
+    ['轨迹', '一串状态—动作—奖励，可以无限长。'],
+    ['回报', '沿轨迹的奖励之和，用来评价策略。'],
+    ['折扣回报', '第 k 步奖励乘 γ<sup>k</sup> 再求和，保证无限长时有限。'],
+    ['回合', '遇到终止状态而结束的有限轨迹。'],
+    ['回合式 / 持续式', '有无终止状态；可用吸收状态或“目标当普通状态”统一。']
+  ],
+  p: [
+    ['折扣回报', 'r<sub>1</sub> + γr<sub>2</sub> + γ<sup>2</sup>r<sub>3</sub> + …'],
+    ['几何级数', '1 + γ + γ<sup>2</sup> + … = 1/(1 − γ)'],
+    ['γ 的两个作用', '去掉停止条件；调节对远近奖励的重视程度'],
+    ['γ 小 / γ 大', '短视、不敢冒险 / 远视、敢为长期收益承受眼前惩罚']
+  ]
+});
+
+/* ---------- MDP 分类 ---------- */
+S.sortGame($('#mdG'), {
+  bins: [{ k: 'set', t: '集合' }, { k: 'model', t: '模型（环境动力学）' }, { k: 'pol', t: '策略' }, { k: 'mk', t: '马尔可夫性' }],
+  items: [
+    { t: '状态空间 𝒮', k: 'set', why: '所有状态的集合。' },
+    { t: '动作空间 𝒜(s)', k: 'set', why: '每个状态关联的动作集合。' },
+    { t: '奖励集合 ℛ(s, a)', k: 'set', why: '每个状态—动作对可能得到的奖励值。' },
+    { t: 'p(s′|s, a)', k: 'model', why: '状态转移概率，是环境的性质。' },
+    { t: 'p(r|s, a)', k: 'model', why: '奖励概率，也是环境的性质。' },
+    { t: 'π(a|s)', k: 'pol', why: '智能体的选择，要学的对象。' },
+    { t: '下一状态只看当前 (s, a)', k: 'mk', why: '无记忆性，式 (1.4)。' },
+    { t: '“风把机器人吹偏”', k: 'model', why: '随机的状态转移，属于模型。' },
+    { t: '“在 s1 各以 0.5 向右、向下”', k: 'pol', why: '随机策略。' }
+  ]
+});
+S.notes($('#n-mdp'), {
+  c: [
+    ['MDP', '描述随机动态系统的一般框架：集合、模型、策略、马尔可夫性。'],
+    ['模型 / 动力学', 'p(s′|s, a) 与 p(r|s, a)，环境的性质。'],
+    ['马尔可夫性', '下一状态和奖励只依赖当前状态和动作。'],
+    ['MDP → MP', '策略一固定，MDP 退化成马尔可夫过程。'],
+    ['智能体—环境闭环', '感知状态 → 执行动作 → 得到新状态和奖励。']
+  ],
+  p: [
+    ['本书范围', '有限 MDP（状态、动作有限），平稳模型'],
+    ['马尔可夫链的转移', 'p<sub>π</sub>(s′|s) = Σ<sub>a</sub> π(a|s) p(s′|s, a)'],
+    ['马尔可夫性的用处', '推导贝尔曼方程的关键一步（第 2 章）']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 规则', '撞墙弹回、禁区可进但受罚、目标得奖但不终止；转移和奖励用条件概率写，统一确定与随机。'],
+    ['② 回报', '要看长期总奖励而不是即时奖励；γ 让无限回报有限，并调节短视与远视。'],
+    ['③ MDP', '集合 + 模型 + 策略 + 马尔可夫性；策略固定后退化为马尔可夫过程。']
+  ],
+  p: [
+    ['下一篇', '回报只对一条轨迹有定义。随机时怎么评价策略？引出状态值和贝尔曼方程。'],
+    ['原书一句话', '奖励是人机接口：通过它引导智能体按我们期望的方式行动。']
+  ],
+  ph: '一句话'
+});

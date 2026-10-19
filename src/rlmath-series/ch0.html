@@ -1,0 +1,353 @@
+---
+title: 强化学习的数学原理：学习笔记
+desc: 赵世钰《强化学习的数学原理》的十篇互动学习笔记总览：全书知识地图与算法演化关系、按问题反查该用哪个算法、概念速记卡（可自测）、全系列易混辨析索引和公式速查。
+kicker: <span>技术学习</span><span>系列 · 共 10 篇</span><span>网格世界模拟器</span><span>手算再对答案</span>
+h1: 不只知道步骤，<em>还知道它为什么成立</em>
+lead: 这是西湖大学赵世钰《强化学习的数学原理》的学习笔记，按原书十章拆成十篇。原书的特点是“数学但友好”：每个算法都讲清楚它为什么这样设计、为什么有效，并且所有例子都放在同一个网格世界里。这个系列把那个网格世界搬进了浏览器——值迭代、蒙特卡罗、Sarsa、Q-learning、TD-Linear、DQN、REINFORCE、A2C 都在页面里真算，并复现了原书图中的数值。这一页是复习工具：知识地图、按问题反查、速记卡、易混辨析和公式速查。
+nav: why|这本书;map|知识地图;pick|按问题反查;cards|概念速记;cf|易混辨析;fx|公式速查;back|记下来
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+<style>
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s, opacity .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap a.hl { border-color: var(--s1); box-shadow: inset 0 0 0 1px var(--s1); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4, .fxl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a, .fxl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.fxl .fx { margin: 6px 0 0; }
+.mapinfo { min-height: 4.5em; }
+</style>
+===BODY===
+<div class="q3"><h3>这一页要回答的 3 个问题</h3><ol>
+  <li>这本书想帮读者建立什么？它和其他强化学习教材有什么不同？</li>
+  <li>十章怎么一环扣一环？每个算法是从哪个算法改出来的？</li>
+  <li>遇到一个具体问题，该从哪个算法入手？读完以后怎么快速复习？</li>
+</ol></div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这本书想做什么</h2><span class="meta">原书前言、“本书概览”</span></div>
+  <div class="sec-lede">
+    <p>作者赵世钰自 2019 年起在研究生课上讲授强化学习，这本书就是讲义整理而成，2022 年起在 GitHub 公开，2025 年由 Springer Nature 与清华大学出版社出版，PDF 和课件仍可免费下载。前言给自己定的目标是“<strong>数学但友好</strong>”（mathematical but friendly）：读者不只知道算法的步骤，还要明白它<strong>为什么这样设计、为什么有效</strong>。数学深度控制在够用的程度，较难的推导放在灰框里，可以选读。</p>
+    <p>原书还有三个刻意的安排。第一，<strong>所有例子都在同一个网格世界里</strong>，直观、好算，便于比较算法。第二，讲算法时<strong>把核心思想和分散注意力的细节分开</strong>——比如先讲样本效率很低的 MC Basic，让人看清蒙特卡罗的本质，再加上提高效率的技巧。第三，<strong>章节高度连贯</strong>，每章都建立在前一章上：要懂 MC 先得懂策略迭代，要懂策略迭代先得懂值迭代，值迭代来自贝尔曼最优方程，它又建立在贝尔曼方程之上。所以作者强烈建议按顺序读。</p>
+    <p>读者对象是高年级本科生、研究生、研究者和工程师；不需要强化学习背景，但需要概率论和线性代数（附录给了概率论、测度论概率、序列收敛和梯度下降的基础）。这个系列跟着原书的顺序走，每篇都在浏览器里复现原书的网格世界实验，凡是能和原书图中数值对上的地方都标了“原书数据”。</p>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>知识地图：算法是怎么演化出来的</h2><span class="meta">原书“本书概览”图 1</span></div>
+  <div class="sec-lede">
+    <p>原书把十章分成两部分：<strong>基本工具</strong>（第 1–3 章：概念、贝尔曼方程、贝尔曼最优方程；第 6 章：随机近似）和<strong>算法</strong>（第 4–10 章）。算法部分有三次关键跳跃：第 4 → 5 章<strong>从有模型到无模型</strong>；第 7 → 8 章<strong>从表格表示到函数表示</strong>；第 8 → 9 章<strong>从基于值到基于策略</strong>，第 10 章再把基于值和基于策略结合起来。</p>
+    <p>下图把全书的主要算法连成一张演化图：箭头表示“由……改造而来”，橙色字是改造的关键一步。</p>
+    <p class="go">点一个算法，看它的前置知识链（高亮）和一句话说明；或者选一条主线。</p>
+  </div>
+  <div class="selrow"><span>三次跳跃</span><div class="seg" id="mpL"><button data-v="all" aria-pressed="true">全部</button><button data-v="m">有模型 → 无模型</button><button data-v="f">表格 → 函数</button><button data-v="p">基于值 → 基于策略</button></div></div>
+  <div class="rlmap" id="mpS"></div>
+  <p class="verdict mapinfo" id="mpW"></p>
+  <p class="parthd" style="font-size:15px;color:var(--ink-3);margin:26px 0 0">十篇目录（左侧绿边 = 这台设备上读过）</p>
+  <div class="chap" id="chapA"></div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="pick">
+  <div class="part-head"><h2>按问题反查：该用哪个算法</h2><span class="meta">依据全书内容整理</span></div>
+  <div class="sec-lede">
+    <p>原书的算法都是在一定条件下设计的：有没有模型、状态多不多、动作连续不连续、能不能边交互边学。选好条件，下面给出书里对应的算法和章节。这是按原书内容做的复习索引，不是工程选型建议——原书也说明了本书之外还有 PPO、SAC、TD3 等更先进的方法。</p>
+  </div>
+  <div class="pick" id="pkF">
+    <fieldset><legend>目的</legend><label><input type="radio" name="goal" value="opt" checked> 找最优策略</label><label><input type="radio" name="goal" value="eval"> 评估一个给定策略</label></fieldset>
+    <fieldset><legend>模型 p(s′|s, a)、p(r|s, a)</legend><label><input type="radio" name="model" value="yes"> 已知</label><label><input type="radio" name="model" value="no" checked> 未知，只能与环境交互 / 有数据</label></fieldset>
+    <fieldset><legend>状态空间</legend><label><input type="radio" name="size" value="small" checked> 小，能列成表</label><label><input type="radio" name="size" value="big"> 大或连续</label></fieldset>
+    <fieldset><legend>动作空间</legend><label><input type="radio" name="act" value="disc" checked> 离散、有限</label><label><input type="radio" name="act" value="cont"> 连续</label></fieldset>
+    <fieldset><legend>数据</legend><label><input type="radio" name="data" value="on" checked> 能用当前策略边交互边学</label><label><input type="radio" name="data" value="off"> 只有别的策略产生的数据</label></fieldset>
+  </div>
+  <div class="verdict" id="pkW"></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>概念速记卡</h2><span class="meta">每篇两张</span></div>
+  <div class="sec-lede">
+    <p>每篇挑两个最值得记住的问题。打开自测模式后答案会被遮住：先在心里回答，再点卡片翻开对照。答不上来的，回到对应的那一篇。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找（如 on-policy、自举、基线、投影），标题链接回原篇对应的小节。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 off-policy、MC" aria-label="搜索易混辨析" style="max-width:260px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="part" id="fx">
+  <div class="part-head"><h2>全系列公式速查</h2><span class="meta">各篇“本章公式卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾的公式卡汇总在这里，可按部分筛选或输入关键词（如 贝尔曼、ln π、A⁻¹b、ε）查找。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="fxQ" type="search" placeholder="关键词，如 max、TD、ρ" aria-label="搜索公式" style="max-width:260px"><div class="seg" id="fxP"><button data-v="0" aria-pressed="true">全部</button><button data-v="1">基本工具</button><button data-v="2">表格算法</button><button data-v="3">函数近似与策略梯度</button></div></div>
+  <div class="fxl" id="fxL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-19-rlmath-';
+var chs = [[1, "基本概念", "先把游戏规则说清楚", "网格世界里撞墙、进禁区、到目标分别会发生什么？状态转移和奖励为什么要写成条件概率？", "状态与转移 · 策略 · 奖励 · 回报与折扣 · MDP"], [2, "状态值与贝尔曼方程", "一个状态值得多少，看它通向哪里", "状态值和回报是什么关系？“自举”为什么不是死循环？", "回报与自举 · 状态值 · 贝尔曼方程 · 矩阵与求解 · 动作值"], [3, "最优状态值与贝尔曼最优方程", "最优策略一定存在，而且可以算出来", "为什么“选动作值最大的动作”能改进策略？最优策略是怎么定义的？", "改进策略 · 最优与 BOE · 收缩映射 · 解出最优策略 · 影响因素"], [4, "值迭代与策略迭代", "一步值，一步策略，交替到最优", "值迭代每一轮做哪两步？它的中间值 v<sub>k</sub> 是某个策略的状态值吗？", "值迭代 · 策略迭代 · 截断策略迭代 · 三者关系"], [5, "蒙特卡罗方法", "没有模型，就用平均代替期望", "为什么“估计动作值”本质上是一个均值估计问题？MC Basic 和策略迭代差在哪一步？", "均值估计 · MC Basic · 更高效地用样本 · ε-贪心 · 探索与利用"], [6, "随机近似", "每来一个样本，就往前挪一小步", "怎样把“收集完再平均”改成“来一个更新一次”？步长从 1/k 换成别的 α<sub>k</sub> 还收敛吗？", "增量均值 · RM 算法 · Dvoretzky 定理 · 随机梯度下降"], [7, "时序差分方法", "不等回合结束，走一步就修正一步", "TD 算法在数学上解的是什么方程？TD 目标和 TD 误差分别是什么意思？它比 MC 好在哪、差在哪？", "TD 学习 · Sarsa · n 步 Sarsa · Q-learning · 统一视角"], [8, "值函数方法", "表格装不下时，用一个函数去拟合", "用函数代替表格，得到了什么、付出了什么？为什么目标函数要用平稳分布加权？", "表格到函数 · 目标与平稳分布 · TD-Linear · 它在最小化什么 · Q 学习与 DQN"], [9, "策略梯度方法", "不再先算值再选动作，直接把策略往上推", "策略写成函数后，“最优策略”怎么重新定义？平均状态值和平均奖励这两个指标是什么关系？", "策略的函数表示 · 两类指标 · 策略梯度定理 · REINFORCE"], [10, "Actor-Critic 方法", "一个负责行动，一个负责打分", "actor 和 critic 分别对应哪个更新？actor-critic 和 REINFORCE 差在哪？", "QAC · 基线与 A2C · off-policy · 确定性策略 · 全书回顾"]];
+S.notes($('#n-why'), {
+  c: [
+    ['数学但友好', '不只讲步骤，还讲为什么这样设计、为什么有效；数学深度够用即可。'],
+    ['统一的网格世界', '所有例子都在同一个网格世界里，便于比较。'],
+    ['核心与细节分开', '先讲最简单的版本（如 MC Basic），再加提效技巧。'],
+    ['按顺序读', '各章高度相关，后一章建立在前一章之上。']
+  ],
+  p: [
+    ['前置知识', '概率论、线性代数；附录有补充'],
+    ['原书公开资源', 'PDF、课件、中英文讲课视频、网格世界代码'],
+    ['本系列的约定', '模拟结果标“示意”，复现原书数值处标“原书数据”']
+  ]
+});
+
+/* ---------- 知识地图 ---------- */
+var NODES = {
+  c1: [0, 0, '基本概念', 1, '状态、动作、策略、奖励、回报、MDP。', 't'],
+  c2: [0, 1, '贝尔曼方程', 2, '状态值的定义与它满足的线性方程组；解它就是策略评估。', 't'],
+  c3: [0, 2, '贝尔曼最优方程', 3, '右端是 γ-收缩映射：最优值存在唯一，贪心策略最优。', 't'],
+  c6: [2, 0, '随机近似', 6, 'RM 算法、Dvoretzky 定理、SGD：增量式算法的数学基础。', 't'],
+  vi: [1, 2, '值迭代', 4, '收缩映射定理给出的 BOE 迭代解法。'],
+  pi: [1, 3, '策略迭代', 4, '策略评估到底 + 贪心改进；单调不减。'],
+  tpi: [1, 4, '截断策略迭代', 4, '评估只迭代 j 次；值迭代、策略迭代是它的两个极端。'],
+  mcb: [2, 3, 'MC Basic', 5, '把策略迭代的评估换成回报平均：第一个无模型算法。'],
+  mces: [2, 4, 'MC ES', 5, '每次访问 + 逐回合改进；仍需探索性起点。'],
+  mceg: [2, 5, 'MC ε-Greedy', 5, '软策略去掉探索性起点；收敛到 ε-贪心策略中的最优。'],
+  td: [3, 1, 'TD 学习', 7, '用 RM 思路求解贝尔曼期望方程，增量、自举。'],
+  sarsa: [3, 2, 'Sarsa', 7, '动作值的 TD + ε-贪心改进，on-policy。'],
+  nsarsa: [3, 3, 'n 步 Sarsa', 7, 'Sarsa 与 MC 之间：n = 1 为 Sarsa，n = ∞ 为 MC。'],
+  ql: [3, 4, 'Q-learning', 7, '求解贝尔曼最优方程，因而 off-policy。'],
+  tdl: [4, 1, 'TD-Linear', 8, '函数近似的 TD；最小化投影贝尔曼误差，表格是特例。'],
+  dqn: [4, 4, 'DQN', 8, '神经网络 Q-learning + 目标网络 + 均匀经验回放。'],
+  pg: [5, 0, 'REINFORCE', 9, '策略梯度定理 + MC 估计 q；on-policy。'],
+  qac: [5, 1, 'QAC', 10, '用 TD（Sarsa）估计 q 的策略梯度：最简单的 actor-critic。'],
+  a2c: [5, 2, 'A2C', 10, '减去基线 v 得优势，用 TD 误差近似。'],
+  off: [5, 3, 'off-policy AC', 10, '重要性权重 π/β 修正 actor 与 critic。'],
+  dpg: [5, 4, '确定性 AC', 10, '确定性策略梯度，天然 off-policy，适合连续动作。']
+};
+var EDGES = [
+  ['c1', 'c2'], ['c2', 'c3'], ['c3', 'vi', '迭代求解'], ['vi', 'pi'], ['pi', 'tpi'], ['vi', 'tpi'],
+  ['pi', 'mcb', '去掉模型', 'm'], ['mcb', 'mces'], ['mces', 'mceg'],
+  ['c2', 'td'], ['c6', 'td', '随机近似'], ['td', 'sarsa'], ['sarsa', 'nsarsa'], ['sarsa', 'ql', '解 BOE'],
+  ['td', 'tdl', '表格→函数', 'f'], ['ql', 'dqn', '神经网络', 'f'],
+  ['tdl', 'pg', '策略也用函数', 'p'], ['pg', 'qac', 'TD 估 q'], ['qac', 'a2c', '加基线'], ['a2c', 'off', '重要性采样'], ['qac', 'dpg', '确定性策略']
+];
+var COLS = ['基本工具', '动态规划', '蒙特卡罗', '时序差分', '值函数近似', '策略梯度 / AC'];
+var mpSel = null, mpLine = 'all';
+function ancestors(id) { var set = {}; (function up(n) { set[n] = 1; EDGES.forEach(function (e) { if (e[1] === n && !set[e[0]]) up(e[0]); }); })(id); return set; }
+var mpDraw = S.fit($('#mpS'), 560, function (svg, w) {
+  var W = w, cw = W / 6, nw = Math.min(150, cw - 14), nh = 46, y0 = 70, dy = 92;
+  function pos(id) { var n = NODES[id]; return [cw * n[0] + cw / 2, y0 + dy * n[1]]; }
+  COLS.forEach(function (c, i) {
+    S.svg('rect', { x: cw * i + 3, y: 6, width: cw - 6, height: 548, class: 'zone', rx: 8 }, svg);
+    S.svg('text', { x: cw * i + cw / 2, y: 30, 'text-anchor': 'middle', class: 'zl', text: c }, svg);
+  });
+  var hot = mpSel ? ancestors(mpSel) : null;
+  var defs = S.svg('defs', null, svg), mk = S.svg('marker', { id: 'mpA', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+  S.svg('path', { d: 'M0 0L10 5L0 10Z', class: 'f-dim' }, mk);
+  var mk2 = S.svg('marker', { id: 'mpB', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+  S.svg('path', { d: 'M0 0L10 5L0 10Z', class: 'f-s1' }, mk2);
+  EDGES.forEach(function (e) {
+    var a = pos(e[0]), b = pos(e[1]), d, lx, ly;
+    if (NODES[e[0]][0] === NODES[e[1]][0]) {
+      var x1 = a[0], y1 = a[1] + nh / 2, y2 = b[1] - nh / 2;
+      lx = a[0] + 8; ly = (a[1] + b[1]) / 2 + 5;
+      if (Math.abs(NODES[e[0]][1] - NODES[e[1]][1]) > 1) { var sd = NODES[e[0]][0] === 3 ? 1 : -1, bx = a[0] + sd * (nw / 2 + 12); d = 'M' + (a[0] + sd * nw / 2) + ' ' + a[1] + ' C' + bx + ' ' + a[1] + ' ' + bx + ' ' + b[1] + ' ' + (b[0] + sd * nw / 2) + ' ' + b[1]; lx = bx + sd * 4; ly = (a[1] + b[1]) / 2 + 5; }
+      else d = 'M' + x1 + ' ' + y1 + ' L' + x1 + ' ' + (y2 - 2);
+    } else {
+      var sx = a[0] + (b[0] > a[0] ? nw / 2 : -nw / 2), ex = b[0] - (b[0] > a[0] ? nw / 2 : -nw / 2) - (b[0] > a[0] ? 2 : -2), mx = (sx + ex) / 2;
+      d = 'M' + sx + ' ' + a[1] + ' C' + mx + ' ' + a[1] + ' ' + mx + ' ' + b[1] + ' ' + ex + ' ' + b[1];
+      lx = mx; ly = a[1] === b[1] ? a[1] - nh / 2 - 6 : (a[1] + b[1]) / 2 - 6;
+    }
+    var on = (hot && hot[e[0]] && hot[e[1]]) || (mpLine !== 'all' && e[3] === mpLine);
+    S.svg('path', { d: d, class: 'ed' + (on ? ' on' : ''), 'marker-end': 'url(#' + (on ? 'mpB' : 'mpA') + ')' }, svg);
+    if (e[2] && (on || mpLine === 'all' || e[3] === mpLine)) S.svg('text', { x: lx, y: ly, 'text-anchor': NODES[e[0]][0] === NODES[e[1]][0] ? (Math.abs(NODES[e[0]][1] - NODES[e[1]][1]) > 1 ? (NODES[e[0]][0] === 3 ? 'start' : 'end') : 'start') : 'middle', class: 'el', text: e[2] }, svg);
+  });
+  Object.keys(NODES).forEach(function (id) {
+    var n = NODES[id], p = pos(id), fade = hot ? !hot[id] : (mpLine !== 'all' && !EDGES.some(function (e) { return e[3] === mpLine && (e[0] === id || e[1] === id); }));
+    var g = S.svg('g', { class: 'nd' + (n[5] ? ' tool' : '') + (id === mpSel ? ' on' : '') + (fade ? ' fade' : ''), tabindex: 0, role: 'button', 'aria-label': n[2] }, svg);
+    S.svg('rect', { x: p[0] - nw / 2, y: p[1] - nh / 2, width: nw, height: nh, rx: 8 }, g);
+    S.svg('text', { x: p[0], y: p[1] - 2, 'text-anchor': 'middle', text: n[2] }, g);
+    S.svg('text', { x: p[0], y: p[1] + 17, 'text-anchor': 'middle', class: 'ch', text: '第 ' + n[3] + ' 章' }, g);
+    function pick() { mpSel = mpSel === id ? null : id; mpRender(); }
+    g.addEventListener('click', pick);
+    g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick(); } });
+  });
+}, 860);
+function mpRender() {
+  mpDraw();
+  if (mpSel) {
+    var n = NODES[mpSel], anc = Object.keys(ancestors(mpSel)).filter(function (k) { return k !== mpSel; }).map(function (k) { return NODES[k][2]; });
+    $('#mpW').innerHTML = '<b>' + n[2] + '</b>（<a href="' + P + n[3] + '/">第 ' + n[3] + ' 篇</a>）：' + n[4] + (anc.length ? '<br>前置链：' + anc.join(' · ') + '。' : '');
+  } else {
+    var t = { all: '点任意节点查看它的前置知识链。', m: '<b>有模型 → 无模型</b>：策略迭代的策略评估要用模型；MC Basic 把这一步换成回报平均，此后所有算法都不需要模型。', f: '<b>表格 → 函数</b>：TD 学习加上值函数近似得到 TD-Linear；Q-learning 加上神经网络、目标网络和经验回放得到 DQN。', p: '<b>基于值 → 基于策略</b>：把策略也写成函数，对标量指标做梯度上升（策略梯度）；再用 TD 估计 q 就是 actor-critic。' };
+    $('#mpW').innerHTML = t[mpLine];
+  }
+}
+S.seg($('#mpL'), function (v) { mpLine = v; mpSel = null; mpRender(); });
+mpRender();
+var read = S.readList();
+chs.forEach(function (c) {
+  var n = c[0], done = read.indexOf(String(n)) >= 0;
+  var a = S.h('a', { href: P + n + '/', class: done ? 'done' : '' }, $('#chapA'));
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3] + '</p><span class="tag">' + c[4] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-map'), {
+  c: [
+    ['两部分', '基本工具（第 1–3、6 章）与算法（第 4–10 章）。'],
+    ['三次跳跃', '有模型 → 无模型；表格 → 函数；基于值 → 基于策略。'],
+    ['广义策略迭代', '几乎所有算法都是值更新与策略更新的交替。'],
+    ['随机近似的位置', '第 6 章填平 MC（非增量）到 TD（增量）的鸿沟。']
+  ],
+  p: [
+    ['依赖链', 'MC ← 策略迭代 ← 值迭代 ← BOE ← 贝尔曼方程'],
+    ['TD 家族', '都是求解 BE / BOE 的随机近似'],
+    ['策略梯度家族', 'REINFORCE（MC）→ QAC（TD）→ A2C（基线）→ off-policy / 确定性']
+  ]
+});
+
+/* ---------- 按问题反查 ---------- */
+function L(n, t) { return '<a href="' + P + n + '/">' + t + '</a>'; }
+function pk() {
+  var v = {}; ['goal', 'model', 'size', 'act', 'data'].forEach(function (k) { var e = S.$('input[name=' + k + ']:checked'); v[k] = e ? e.value : ''; });
+  var out;
+  if (v.goal === 'eval') {
+    if (v.model === 'yes' && v.size === 'small') out = '解贝尔曼方程：迭代 v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub> 或闭式解（' + L(2, '第 2 篇') + '）。';
+    else if (v.size === 'small') out = '无模型评估：TD 学习（' + L(7, '第 7 篇 7.1 节') + '）或 MC 回报平均（' + L(5, '第 5 篇') + '）；TD 增量、方差小，MC 不自举。' + (v.data === 'off' ? '数据来自别的策略时，需要用重要性采样修正（' + L(10, '第 10 篇 10.3 节') + '）。' : '');
+    else out = '函数近似评估：TD-Linear 或 LSTD（' + L(8, '第 8 篇') + '），收敛到投影贝尔曼误差为 0 的点；也可用神经网络作 v̂。';
+  } else if (v.act === 'cont') {
+    out = '连续动作：基于值的方法要对动作取 max，难以直接用。用策略梯度类方法（' + L(9, '第 9 篇') + '）；' + (v.data === 'off' ? '只有他人数据时，<b>确定性 actor-critic</b> 天然 off-policy（' + L(10, '第 10 篇 10.4 节') + '）。' : '推荐<b>确定性 actor-critic</b>（' + L(10, '第 10 篇 10.4 节') + '），或高斯等随机策略的 A2C。');
+  } else if (v.model === 'yes' && v.size === 'small') {
+    out = '模型已知、状态少：动态规划。<b>值迭代、策略迭代、截断策略迭代</b>（' + L(4, '第 4 篇') + '），截断时内层迭代几次最划算。';
+  } else if (v.size === 'small') {
+    out = v.data === 'off' ? '只有别的策略的数据：<b>Q-learning</b>（off-policy，可离线，' + L(7, '第 7 篇 7.4 节') + '）。数据要足够“探索”，否则学不准。' : '表格型无模型：<b>Sarsa / Expected Sarsa / Q-learning</b>（' + L(7, '第 7 篇') + '），或 <b>MC ε-Greedy</b>（' + L(5, '第 5 篇') + '，要等回合结束）。' + (v.model === 'yes' ? '（有模型时也可以直接用第 4 篇的动态规划。）' : '');
+  } else {
+    out = v.data === 'off' ? '状态大 + 他人数据：<b>DQN</b>（off-policy，经验回放，' + L(8, '第 8 篇 8.4 节') + '）；或 off-policy actor-critic（' + L(10, '第 10 篇') + '）。' : '状态大：<b>函数近似的 Sarsa / Q-learning、DQN</b>（' + L(8, '第 8 篇') + '），或策略梯度 / <b>A2C</b>（' + L(9, '第 9 篇') + '、' + L(10, '第 10 篇') + '）。原书指出策略梯度在大状态、动作空间上更高效、泛化更强。';
+  }
+  $('#pkW').innerHTML = out;
+}
+S.$$('#pkF input').forEach(function (e) { e.addEventListener('change', pk); });
+pk();
+
+/* ---------- 速记卡 ---------- */
+var MG = [
+  [1, '网格世界里撞墙、进禁区、到目标分别怎样？', '撞墙弹回原格得 r_boundary；禁区可进入但受罚；进入或停在目标得 r_target，目标不终止。'],
+  [1, 'γ 起什么作用？', '让无限长轨迹的回报有限；γ 小则短视避险，γ 大则远视敢冒险。'],
+  [2, '贝尔曼方程的矩阵形式和两种解法？', 'v = r_π + γP_π v；闭式 (I − γP_π)⁻¹r_π，或迭代 v_{k+1} = r_π + γP_π v_k（策略评估）。'],
+  [2, '策略不选的动作有没有动作值？', '有：q(s, a) = r + γΣp(s′|s, a)v_π(s′)。找更好的策略恰恰要靠它们。'],
+  [3, 'BOE 的解为什么存在唯一？', '右端 f(v) = max_π(r_π + γP_π v) 在最大范数下是 γ-收缩映射，收缩映射定理保证不动点存在唯一、迭代指数收敛。'],
+  [3, '给每步奖励都加 −1 能让智能体走得更快吗？', '不能，也不必：这是仿射变换，最优策略不变；折扣本身已惩罚绕路。'],
+  [4, '值迭代的中间值 v_k 是状态值吗？', '不是，它一般不满足任何策略的贝尔曼方程；策略迭代的 v_{π_k} 才是。'],
+  [4, '截断策略迭代与值迭代、策略迭代的关系？', '策略评估只代入 j 次：j = 1 为值迭代，j = ∞ 为策略迭代。'],
+  [5, 'MC Basic 改了策略迭代的哪一步？', '把用模型求状态值再算动作值，换成用回报平均直接估计动作值。'],
+  [5, 'ε-贪心为什么能去掉探索性起点？', '软策略让每个动作都有正概率，一条长回合就能访问所有 (s, a)。'],
+  [6, 'RM 步长的两个条件分别防止什么？', 'Σa_k² < ∞ 让步长趋于 0、防止在根附近一直抖；Σa_k = ∞ 防止初值太远走不到根。'],
+  [6, '均值估计、SGD、RM 的关系？', '均值估计是 f = ‖w − X‖²/2 的 SGD；SGD 是求 𝔼[∇f] = 0 的 RM 算法。'],
+  [7, 'TD 在数学上做什么？', '用随机近似求解贝尔曼期望方程 v_π(s) = 𝔼[R + γv_π(S′)|s]。'],
+  [7, '为什么 Q-learning 是 off-policy？', '它解贝尔曼最优方程；估计 q*(s, a) 只需环境给出的 r、s′，与产生 a 的策略无关。'],
+  [8, 'TD-Linear 真正最小化什么？', '投影贝尔曼误差；收敛到 w* = A⁻¹b，A = Φᵀ D(I − γP_π)Φ，b = Φᵀ D r_π。'],
+  [8, 'DQN 的经验回放为什么要均匀采样？', '目标函数需要 (S, A) 的分布，最简单假设为均匀；均匀抽样打破顺序相关并重复利用样本。'],
+  [9, '策略梯度定理？', '∇J = 𝔼_{S∼η, A∼π}[∇ln π(A|S, θ) q_π(S, A)]；ln 来自对数导数技巧，让梯度成为可采样的期望。'],
+  [9, 'REINFORCE 怎样兼顾探索与利用？', '等价于对 π 做系数 β = q/π 的梯度上升：与 q 成正比（利用），q > 0 时与 π 成反比（探索）。'],
+  [10, '基线为什么不改变梯度？', 'Σ_a ∇π(a|s)·b(s) = b(s)∇Σ_a π = b(s)∇1 = 0；期望不变，方差可大大减小。'],
+  [10, '确定性策略梯度为什么天然 off-policy？', '𝔼_{S∼η}[∇_θ μ(S)∇_a q(S, a)|_{a=μ(S)}] 不含动作随机变量，任何行为策略都可以。']
+];
+var order = MG.map(function (_, i) { return i; }), opened = {};
+function mgDraw() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var m = MG[i], b = S.h('button', { class: 'mcard' + (opened[i] ? ' open' : ''), type: 'button' }, g);
+    b.innerHTML = '<small>第 ' + m[0] + ' 篇 · ' + chs[m[0] - 1][1] + '</small><span class="q">' + m[1] + '</span><span class="a">' + m[2] + '</span>';
+    b.addEventListener('click', function () { opened[i] = !opened[i]; b.classList.toggle('open', !!opened[i]); mgCount(); });
+  });
+  mgCount();
+}
+function mgCount() {
+  var on = $('#mgG').classList.contains('test'), k = Object.keys(opened).filter(function (x) { return opened[x]; }).length;
+  $('#mgC').textContent = on ? '已翻开 ' + k + ' / ' + MG.length + ' 张' : '共 ' + MG.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = !$('#mgG').classList.contains('test');
+  $('#mgG').classList.toggle('test', on); this.setAttribute('aria-pressed', on);
+  this.textContent = on ? '退出自测：显示全部' : '自测模式：遮住答案';
+  opened = {}; mgDraw();
+});
+$('#mgS').addEventListener('click', function () {
+  var r = S.rng(Date.now() % 100000);
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
+  mgDraw();
+});
+mgDraw();
+
+/* ---------- 易混辨析 ---------- */
+var CF = [[1, "reward", "奖励是 r(s, a) 还是 r(s, a, s′)", ["<b>直觉</b>：很多时候是“到了哪里”决定奖励（到目标得正分），似乎应该写成 p(r|s, a, s′)。", "<b>原书的处理</b>：r 确实依赖 s、a、s′，但 s′ 本身由 (s, a) 决定，所以可以把 s′ 边缘化掉：p(r|s, a) = Σ<sub>s′</sub> p(r|s, a, s′) p(s′|s, a)。写成 r(s, a) 形式更简洁，第 2 章推贝尔曼方程时就是这么用的（原书 1.9 节 Q&amp;A）。"]], [1, "return", "轨迹、回合、回报", ["<b>轨迹</b>：任意一串状态—动作—奖励，可以无限长。<b>回合</b>：遇到终止状态而结束的有限轨迹。<b>回报</b>：沿某一条轨迹算出来的（折扣）奖励和，是一个数。", "<b>回合式 vs 持续式任务</b>：有没有终止状态。原书把目标格当普通状态处理，所以网格世界其实是持续式任务，用折扣回报保证有限。"]], [1, "mdp", "MDP 与马尔可夫过程", ["<b>MDP</b>：有动作、有策略，转移取决于 (s, a)。<b>马尔可夫过程 / 马尔可夫链</b>：策略固定后，转移只取决于 s，p<sub>π</sub>(s′|s) = Σ<sub>a</sub> π(a|s) p(s′|s, a)。原书里两个名字在离散有限情形下混用。", "<b>模型 vs 策略</b>：模型 p(s′|s, a)、p(r|s, a) 是环境的性质，智能体改变不了；策略 π(a|s) 是智能体的选择，是要学的东西。"]], [2, "action", "状态值 vs 动作值", ["<b>状态值 v<sub>π</sub>(s)</b>：从 s 出发、全程按 π 走的期望回报。<b>动作值 q<sub>π</sub>(s, a)</b>：在 s 先做 a（不管 π 选不选它），之后按 π 走的期望回报。", "<b>换算</b>：v 是 q 按 π 的加权平均；q 是“一步奖励 + γ × 下一状态的 v”。前者不需要模型，后者需要 p(s′|s, a)——所以无模型算法直接估计 q（第 5 章）。"]], [2, "action", "回报 vs 状态值；自举", ["<b>回报</b> G<sub>t</sub>：一条轨迹上的随机量。<b>状态值</b>：它的期望，是确定的数。确定性策略和模型下二者相等。", "<b>自举</b>：用待求的值（其他状态的值）来表示一个值。贝尔曼方程本身就是自举的；第 7 章的 TD 也是，而第 5 章的蒙特卡罗不是。"]], [3, "solve", "贝尔曼方程 vs 贝尔曼最优方程", ["<b>贝尔曼方程</b> v = r<sub>π</sub> + γP<sub>π</sub>v：策略给定，线性方程，解出来是这个策略的状态值（策略评估）。<b>贝尔曼最优方程</b> v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v)：策略也是未知数，非线性，解出来是最优状态值和最优策略。", "<b>联系</b>：BOE 是 π = π* 时的贝尔曼方程。两者右端都是收缩映射（收缩系数都是 γ），所以都能从任意初值迭代求解。"]], [3, "solve", "最优状态值唯一，最优策略不唯一", ["<b>v*</b>：BOE 的解，唯一。<b>π*</b>：所有在 v* 下取到 max 的策略都最优；并列时可任选、可混合，所以可以有多个甚至无穷多个，但一定有一个是确定性的贪心策略。"]], [4, "gpi", "值迭代 vs 策略迭代", ["<b>值迭代</b>：直接解 BOE，v → π → v 交替，每次值只代入一步，v<sub>k</sub> 不是任何策略的状态值。<b>策略迭代</b>：π → v<sub>π</sub> → π 交替，每次把当前策略评估到底，v<sub>π<sub>k</sub></sub> 是真正的状态值，且单调不减。", "<b>同一个起点下</b>：策略迭代每轮都不比值迭代慢（定理 4.1 的证明就是这个比较）。二者都是截断策略迭代的极端。"]], [4, "gpi", "有模型 vs 无模型；动态规划", ["<b>动态规划</b>：已知模型、直接计算（本章）。<b>有模型强化学习</b>：用数据<b>估计</b>模型，并在学习中使用它。<b>无模型强化学习</b>：学习中不估计模型，直接从经验估值或学策略（第 5–10 章）。"]], [5, "es", "初次访问、首次访问、每次访问", ["<b>初次访问</b>（initial-visit）：一个回合只用于估计它的起点 (s<sub>0</sub>, a<sub>0</sub>)，MC Basic 用的就是它。<b>首次访问</b>（first-visit）：每个 (s, a) 只用它在回合里第一次出现之后的那截。<b>每次访问</b>（every-visit）：出现几次就用几次，样本最多，但同一回合内的样本相关。"]], [5, "tradeoff", "探索 vs 利用", ["<b>探索</b>：尝试尽可能多的动作，让估计变准，ε 大则强。<b>利用</b>：选当前估计最好的动作，与最优性直接相关，ε 小则强。ε-贪心用一个参数在两者间折中，常见做法是让 ε 随训练逐渐减小。", "<b>Π<sub>ε</sub> 内最优 vs 全局最优</b>：MC ε-Greedy 收敛到的是 ε-贪心策略集合内的最优；ε 大时它可能与全局最优策略“不一致”（如目标格选择逃离）。"]], [6, "sgd", "BGD、SGD、MBGD", ["<b>BGD</b>：每步用全部 n 个样本的平均梯度，最接近真梯度、最贵。<b>SGD</b>：每步随机抽 1 个样本，最便宜、最“抖”。<b>MBGD</b>：每步随机抽 m 个，介于两者之间；m = 1 即 SGD，m = n 也不等于 BGD（随机抽样可能重复）。", "<b>均值估计、SGD、RM 的包含关系</b>：均值估计是 f = ‖w − X‖²/2 的 SGD；SGD 是求 𝔼[∇f] = 0 的 RM 算法。"]], [7, "qlearn", "on-policy vs off-policy", ["<b>on-policy</b>：行为策略 = 目标策略。Sarsa、n 步 Sarsa、MC：它们在评估“产生样本的那个策略”。<b>off-policy</b>：两者可以不同。Q-learning：它解的是贝尔曼最优方程，估计 q*(s<sub>t</sub>, a<sub>t</sub>) 用到的 r、s′ 只由环境决定，a<sub>t</sub> 由谁产生都行。", "<b>Q-learning 的两种实现</b>：on-policy 版用同一个 ε-贪心策略既采样又改进；off-policy 版用独立的行为策略采样，目标策略取贪心（不用来采样，不需要探索）。第 10 章用重要性采样把 on-policy 算法也变成 off-policy。"]], [7, "qlearn", "on/off-policy vs online/offline", ["<b>online</b>：边与环境交互边更新；<b>offline</b>：用事先收集好的数据更新，不再交互。on-policy 算法可以 online，但不能用别的策略事先收集的数据；off-policy 算法 online、offline 都可以。上面的实验就是 off-policy + offline。"]], [7, "qlearn", "Sarsa vs Q-learning", ["<b>目标</b>：r + γq(s′, a′)（a′ 由当前策略实际选出）vs r + γ max<sub>a</sub>q(s′, a)。<b>解的方程</b>：贝尔曼方程（评估当前策略）vs 贝尔曼最优方程。<b>所需样本</b>：(s, a, r, s′, a′) vs (s, a, r, s′)。"]], [7, "unified", "TD 误差的符号", ["<b>原书第 7 章</b>把 TD 误差定义为 δ<sub>t</sub> = v(s<sub>t</sub>) − (r<sub>t+1</sub> + γv(s<sub>t+1</sub>))（估计减目标），更新写成 v ← v − αδ。<b>第 8、10 章和多数文献</b>写成 δ<sub>t</sub> = r<sub>t+1</sub> + γv(s<sub>t+1</sub>) − v(s<sub>t</sub>)（目标减估计），更新写成 v ← v + αδ。两种写法是同一个更新，只是符号约定不同，读公式时要先看清定义。"]], [7, "unified", "MC vs TD；自举", ["<b>MC</b>：用完整回报，不自举，无偏、方差大、要等回合结束。<b>TD</b>：用一步奖励 + 下一状态的当前估计，自举，依赖初值（有偏）、方差小、每步都能更新。n 步 TD 在两者之间连续过渡。"]], [8, "theory", "真值误差、贝尔曼误差、投影贝尔曼误差", ["<b>J<sub>E</sub></b> = ‖v̂ − v<sub>π</sub>‖<sub>D</sub>²：最直接，但含未知的 v<sub>π</sub>。<b>J<sub>BE</sub></b> = ‖v̂ − T<sub>π</sub>v̂‖<sub>D</sub>²：要求 v̂ 尽量满足贝尔曼方程，但 T<sub>π</sub>v̂ 一般不在可表示空间里，通常降不到 0。<b>J<sub>PBE</sub></b> = ‖v̂ − MT<sub>π</sub>v̂‖<sub>D</sub>²：先投影再比较，线性情形总能降到 0，TD-Linear 和 LSTD 求的就是它。"]], [8, "dqn", "目标网络 vs 经验回放", ["<b>目标网络</b>：解决“参数同时出现在目标和预测里、梯度难算且目标会追着自己跑”的问题——把目标里的参数冻结一段时间。<b>经验回放</b>：解决“样本按时间顺序产生、相关且分布不均”的问题——存起来均匀抽样，还能重复使用样本。", "<b>表格 Q-learning 能用经验回放吗？</b>能。它是 off-policy，对样本怎么来没有要求，回放只会让样本用得更充分（原书 Q&amp;A）。"]], [8, "dqn", "损失收敛 vs 学到了", ["<b>损失</b>（小批量上的 TD 误差平方）收敛到 0，只说明网络把给定样本拟合好了。<b>值误差</b>收敛到 0 才说明最优动作值估准了。样本太少（图 8.12）时前者成立、后者不成立。"]], [9, "metric", "v̄<sub>π</sub> vs v̄<sub>π</sub><sup>0</sup> vs r̄<sub>π</sub>", ["<b>v̄<sub>π</sub><sup>0</sup></b>：状态权重 d<sub>0</sub> 与策略无关（均匀，或只看起点）。<b>v̄<sub>π</sub></b>：权重是策略自己的平稳分布 d<sub>π</sub>。<b>r̄<sub>π</sub></b>：平稳分布下的平均单步奖励。", "<b>关系</b>：折扣情形下 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>，两者同增同减；v̄<sub>π</sub><sup>0</sup> 与它们一般不成比例，但最优策略下也会同时最大。"]], [9, "reinforce", "基于值 vs 基于策略", ["<b>基于值</b>（第 4–8 章）：先估计值，再从值里取贪心 / ε-贪心得到策略；策略是“派生”的。<b>基于策略</b>（第 9–10 章）：策略本身是带参数的函数，直接对标量指标做梯度上升；天然随机、天然能处理大的或连续的动作空间。", "<b>但仍需要值</b>：策略梯度里有 q<sub>π</sub>(s, a)，必须另外估计——用 MC 就是 REINFORCE，用 TD 就是第 10 章的 Actor-Critic。"]], [10, "a2c", "REINFORCE、带基线的 REINFORCE、QAC、A2C", ["<b>估计方式</b>：前两者用 MC（等回合结束），后两者用 TD（每步更新）。<b>有无基线</b>：REINFORCE、QAC 用 q 本身（b = 0）；带基线的 REINFORCE、A2C 用 q − v（优势）。A2C 进一步用 TD 误差近似优势，只需一个值网络。", "<b>actor-critic 是不是策略梯度？</b>是。原书 Q&amp;A：用 TD（带值函数近似）估计动作值的策略梯度算法就叫 actor-critic，名字强调“策略更新 + 值更新”的结构。"]], [10, "dpg", "随机策略梯度 vs 确定性策略梯度", ["<b>随机</b>：π(a|s, θ) &gt; 0，梯度 𝔼[∇ln π(A|S)q(S, A)] 含 A ∼ π，是 on-policy（要 off-policy 得加重要性权重）。<b>确定性</b>：a = μ(s, θ)，梯度 𝔼[∇<sub>θ</sub>μ(S)∇<sub>a</sub>q(S, a)|<sub>a=μ(S)</sub>] 不含动作随机变量，天然 off-policy，适合连续动作。", "<b>两种 off-policy</b>：A2C 的 off-policy 版靠重要性权重 π/β 修正分布；确定性 actor-critic 不需要，因为它根本不对动作求期望。"]]];
+function cfDraw() {
+  var q = $('#cfQ').value.trim().toLowerCase(), box = $('#cfL'); box.innerHTML = ''; var hits = 0;
+  CF.forEach(function (g) {
+    var list = g[3].filter(function (p) { return !q || p.toLowerCase().indexOf(q) >= 0 || g[2].toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + g[0] + '/#' + g[1], html: (g[0] < 10 ? '0' : '') + g[0] + ' · ' + chs[g[0] - 1][1] + ' · ' + g[2] }, hd);
+    list.forEach(function (p) { S.h('p', { html: p }, box); hits++; });
+  });
+  $('#cfN').textContent = '共 ' + hits + ' 条';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的条目。' }, box);
+}
+$('#cfQ').addEventListener('input', cfDraw); cfDraw();
+
+/* ---------- 公式速查 ---------- */
+var FX = {"1": ["状态转移 p(s′|s, a)，Σ<sub>s′</sub> p(s′|s, a) = 1；奖励 p(r|s, a)，Σ<sub>r</sub> p(r|s, a) = 1", "策略 π(a|s)，Σ<sub>a∈𝒜(s)</sub> π(a|s) = 1", "折扣回报 G = r<sub>1</sub> + γr<sub>2</sub> + γ<sup>2</sup>r<sub>3</sub> + …，γ ∈ (0, 1)", "马尔可夫性 p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>, …, s<sub>0</sub>, a<sub>0</sub>) = p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>)", "奖励依赖 s′ 时：p(r|s, a) = Σ<sub>s′</sub> p(r|s, a, s′) p(s′|s, a)"], "2": ["状态值 v<sub>π</sub>(s) = 𝔼[G<sub>t</sub>|S<sub>t</sub> = s]；动作值 q<sub>π</sub>(s, a) = 𝔼[G<sub>t</sub>|S<sub>t</sub> = s, A<sub>t</sub> = a]", "贝尔曼方程 v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s)[Σ<sub>r</sub> p(r|s, a)r + γΣ<sub>s′</sub> p(s′|s, a)v<sub>π</sub>(s′)]", "矩阵形式 v<sub>π</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>π</sub>；闭式解 v<sub>π</sub> = (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub>", "迭代解（策略评估）v<sub>k+1</sub> = r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>，误差 δ<sub>k</sub> = γ<sup>k</sup>P<sub>π</sub><sup>k</sup>δ<sub>0</sub> → 0", "v<sub>π</sub>(s) = Σ<sub>a</sub> π(a|s)q<sub>π</sub>(s, a)；q<sub>π</sub>(s, a) = Σ<sub>r</sub> p(r|s, a)r + γΣ<sub>s′</sub> p(s′|s, a)v<sub>π</sub>(s′)", "动作值形式 q<sub>π</sub> = r̃ + γPΠq<sub>π</sub>"], "3": ["最优策略：对所有 s 和任意 π，v<sub>π*</sub>(s) ≥ v<sub>π</sub>(s)", "BOE：v(s) = max<sub>π(s)</sub> Σ<sub>a</sub> π(a|s) q(s, a) = max<sub>a</sub> q(s, a)；矩阵形式 v = max<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v) = f(v)", "收缩映射：‖f(x<sub>1</sub>) − f(x<sub>2</sub>)‖ ≤ γ‖x<sub>1</sub> − x<sub>2</sub>‖ ⇒ 不动点存在、唯一，x<sub>k+1</sub> = f(x<sub>k</sub>) 指数收敛", "误差界：‖x* − x<sub>n</sub>‖ ≤ γ<sup>n</sup>/(1 − γ) · ‖x<sub>1</sub> − x<sub>0</sub>‖", "BOE 右端收缩：‖f(v<sub>1</sub>) − f(v<sub>2</sub>)‖<sub>∞</sub> ≤ γ‖v<sub>1</sub> − v<sub>2</sub>‖<sub>∞</sub>", "贪心最优策略：π*(a|s) = 1 当 a = argmax<sub>a</sub> q*(s, a)，q*(s, a) = Σ<sub>r</sub> p(r|s,a)r + γΣ<sub>s′</sub> p(s′|s,a)v*(s′)", "仿射不变：r → αr + β（α &gt; 0）⇒ v′ = αv* + β/(1 − γ)·𝟙，π* 不变"], "4": ["值迭代：π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>k</sub>)，v<sub>k+1</sub> = r<sub>π<sub>k+1</sub></sub> + γP<sub>π<sub>k+1</sub></sub>v<sub>k</sub>；逐元素 v<sub>k+1</sub>(s) = max<sub>a</sub> q<sub>k</sub>(s, a)", "策略迭代：v<sub>π<sub>k</sub></sub> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sub>π<sub>k</sub></sub>；π<sub>k+1</sub> = argmax<sub>π</sub>(r<sub>π</sub> + γP<sub>π</sub>v<sub>π<sub>k</sub></sub>)", "策略改进引理：v<sub>π<sub>k+1</sub></sub> ≥ v<sub>π<sub>k</sub></sub>；收敛：v<sub>k</sub>（值迭代）≤ v<sub>π<sub>k</sub></sub> ≤ v*", "截断策略迭代：内层 v<sup>(j+1)</sup> = r<sub>π<sub>k</sub></sub> + γP<sub>π<sub>k</sub></sub>v<sup>(j)</sup> 只做 j<sub>truncate</sub> 次；j = 1 为值迭代，j = ∞ 为策略迭代", "命题 4.1：初值取 v<sub>π<sub>k−1</sub></sub> 时 v<sup>(j+1)</sup> ≥ v<sup>(j)</sup>"], "5": ["均值估计：𝔼[X] ≈ x̄ = (1/n)Σ<sub>j</sub>x<sub>j</sub>；大数定律 𝔼[x̄] = 𝔼[X]，var[x̄] = var[X]/n（i.i.d.）", "MC 估计动作值：q<sub>π<sub>k</sub></sub>(s, a) = 𝔼[G<sub>t</sub>|S<sub>t</sub> = s, A<sub>t</sub> = a] ≈ (1/n)Σ<sub>i</sub> g<sup>(i)</sup>(s, a)", "倒序计算回报：g ← γg + r<sub>t+1</sub>，t = T−1, …, 0", "ε-贪心：贪心动作 1 − ε(|𝒜| − 1)/|𝒜|，其余各 ε/|𝒜|", "MC ε-Greedy 的策略改进：π<sub>k+1</sub>(s) = argmax<sub>π∈Π<sub>ε</sub></sub> Σ<sub>a</sub> π(a|s) q<sub>π<sub>k</sub></sub>(s, a)"], "6": ["增量均值：w<sub>k+1</sub> = w<sub>k</sub> − (1/k)(w<sub>k</sub> − x<sub>k</sub>)；一般形式 w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>(w<sub>k</sub> − x<sub>k</sub>)", "RM 算法：w<sub>k+1</sub> = w<sub>k</sub> − a<sub>k</sub>g̃(w<sub>k</sub>, η<sub>k</sub>)，g̃ = g(w) + η", "RM 条件：0 &lt; c<sub>1</sub> ≤ ∇g ≤ c<sub>2</sub>；Σa<sub>k</sub> = ∞，Σa<sub>k</sub><sup>2</sup> &lt; ∞；𝔼[η<sub>k</sub>|ℋ<sub>k</sub>] = 0，𝔼[η<sub>k</sub><sup>2</sup>|ℋ<sub>k</sub>] &lt; ∞", "Dvoretzky：Δ<sub>k+1</sub> = (1 − α<sub>k</sub>)Δ<sub>k</sub> + β<sub>k</sub>η<sub>k</sub>；Σα = ∞，Σα² &lt; ∞，Σβ² &lt; ∞，噪声零均值有界方差 ⇒ Δ<sub>k</sub> → 0", "多变量推广：‖𝔼[η<sub>k</sub>(s)|ℋ<sub>k</sub>]‖<sub>∞</sub> ≤ γ‖Δ<sub>k</sub>‖<sub>∞</sub>，var ≤ C(1 + ‖Δ<sub>k</sub>‖<sub>∞</sub>)<sup>2</sup>", "SGD：w<sub>k+1</sub> = w<sub>k</sub> − α<sub>k</sub>∇f(w<sub>k</sub>, x<sub>k</sub>)；相对误差 δ<sub>k</sub> ≤ |∇f(w<sub>k</sub>, x<sub>k</sub>) − 𝔼∇f| / (c|w<sub>k</sub> − w*|)", "MBGD：w<sub>k+1</sub> = w<sub>k</sub> − (α<sub>k</sub>/m)Σ<sub>j∈ℐ<sub>k</sub></sub>∇f(w<sub>k</sub>, x<sub>j</sub>)"], "7": ["TD：v<sub>t+1</sub>(s<sub>t</sub>) = v<sub>t</sub>(s<sub>t</sub>) − α[v<sub>t</sub>(s<sub>t</sub>) − (r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>))]；求解 v<sub>π</sub>(s) = 𝔼[R + γv<sub>π</sub>(S′)|s]", "TD 目标 v̄<sub>t</sub> = r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>)；TD 误差（原书第 7 章）δ<sub>t</sub> = v<sub>t</sub>(s<sub>t</sub>) − v̄<sub>t</sub>，估计准确时 𝔼[δ<sub>t</sub>] = 0", "Sarsa：q ← q − α[q(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γq(s<sub>t+1</sub>, a<sub>t+1</sub>))]", "Expected Sarsa 目标：r<sub>t+1</sub> + γΣ<sub>a</sub>π(a|s<sub>t+1</sub>)q(s<sub>t+1</sub>, a)", "n 步 Sarsa 目标：r<sub>t+1</sub> + γr<sub>t+2</sub> + … + γ<sup>n</sup>q(s<sub>t+n</sub>, a<sub>t+n</sub>)", "Q-learning：q ← q − α[q(s<sub>t</sub>, a<sub>t</sub>) − (r<sub>t+1</sub> + γ max<sub>a</sub>q(s<sub>t+1</sub>, a))]；求解 BOE q(s, a) = 𝔼[R + γ max<sub>a</sub>q(S′, a)|s, a]", "统一形式：q<sub>t+1</sub>(s<sub>t</sub>, a<sub>t</sub>) = q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − α[q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − q̄<sub>t</sub>]，MC 为 α = 1"], "8": ["目标函数 J(w) = 𝔼[(v<sub>π</sub>(S) − v̂(S, w))<sup>2</sup>] = Σ<sub>s</sub>d<sub>π</sub>(s)(v<sub>π</sub>(s) − v̂(s, w))<sup>2</sup>", "平稳分布 d<sub>π</sub><sup>T</sup> = d<sub>π</sub><sup>T</sup>P<sub>π</sub>；P<sub>π</sub><sup>k</sup> → 𝟙d<sub>π</sub><sup>T</sup>", "MC 近似：w ← w + α(g<sub>t</sub> − v̂(s<sub>t</sub>, w))∇v̂；TD 近似：w ← w + α[r + γv̂(s′, w) − v̂(s, w)]∇v̂(s, w)", "TD-Linear：w ← w + α[r + γφ<sup>T</sup>(s′)w − φ<sup>T</sup>(s)w]φ(s)；独热特征时即表格 TD", "A = Φ<sup>T</sup>D(I − γP<sub>π</sub>)Φ，b = Φ<sup>T</sup>Dr<sub>π</sub>，w* = A<sup>−1</sup>b = argmin J<sub>PBE</sub>", "J<sub>PBE</sub> = ‖v̂(w) − MT<sub>π</sub>(v̂(w))‖<sub>D</sub><sup>2</sup>，M = Φ(Φ<sup>T</sup>DΦ)<sup>−1</sup>Φ<sup>T</sup>D；误差界 ‖Φw* − v<sub>π</sub>‖<sub>D</sub> ≤ min‖v̂ − v<sub>π</sub>‖<sub>D</sub>/(1 − γ)", "LSTD：Â = (1/t)Σφ(s<sub>k</sub>)(φ(s<sub>k</sub>) − γφ(s<sub>k+1</sub>))<sup>T</sup>，b̂ = (1/t)Σr<sub>k+1</sub>φ(s<sub>k</sub>)，w = Â<sup>−1</sup>b̂", "Sarsa 近似：w ← w + α[r + γq̂(s′, a′, w) − q̂(s, a, w)]∇q̂；Q-learning 近似：把 q̂(s′, a′, w) 换成 max<sub>a</sub>q̂(s′, a, w)", "DQN：J = 𝔼[(R + γ max<sub>a</sub>q̂(S′, a, w<sub>T</sub>) − q̂(S, A, w))<sup>2</sup>]，w<sub>T</sub> 每 C 轮同步"], "9": ["softmax 策略：π(a|s, θ) = e<sup>h(s,a,θ)</sup> / Σ<sub>a′</sub>e<sup>h(s,a′,θ)</sup>", "平均状态值 v̄<sub>π</sub> = Σ<sub>s</sub>d(s)v<sub>π</sub>(s) = d<sup>T</sup>v<sub>π</sub> = 𝔼[Σ<sub>t</sub>γ<sup>t</sup>R<sub>t+1</sub>]", "平均奖励 r̄<sub>π</sub> = Σ<sub>s</sub>d<sub>π</sub>(s)r<sub>π</sub>(s) = lim<sub>n→∞</sub>(1/n)𝔼[Σ<sub>t=0</sub><sup>n−1</sup>R<sub>t+1</sub>]；折扣时 r̄<sub>π</sub> = (1 − γ)v̄<sub>π</sub>", "策略梯度定理：∇J = Σ<sub>s</sub>η(s)Σ<sub>a</sub>∇π(a|s, θ)q<sub>π</sub>(s, a) = 𝔼<sub>S∼η, A∼π</sub>[∇ln π(A|S, θ)q<sub>π</sub>(S, A)]", "对数导数：∇<sub>θ</sub>π = π∇<sub>θ</sub>ln π；折扣总概率 Pr<sub>π</sub>(s′|s) = [(I − γP<sub>π</sub>)<sup>−1</sup>]<sub>ss′</sub>", "REINFORCE：θ ← θ + α∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ)q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)，q<sub>t</sub> = Σ<sub>k=t+1</sub><sup>T</sup>γ<sup>k−t−1</sup>r<sub>k</sub>", "等价形式：θ ← θ + αβ<sub>t</sub>∇π(a<sub>t</sub>|s<sub>t</sub>, θ)，β<sub>t</sub> = q<sub>t</sub>/π(a<sub>t</sub>|s<sub>t</sub>, θ)"], "10": ["QAC：actor θ ← θ + α<sub>θ</sub>∇ln π(a|s, θ)q(s, a, w)；critic w ← w + α<sub>w</sub>[r + γq(s′, a′, w) − q(s, a, w)]∇q", "基线不变：𝔼[∇ln π(A|S)(q(S, A) − b(S))] = 𝔼[∇ln π(A|S)q(S, A)]，因为 Σ<sub>a</sub>∇π(a|s) = ∇1 = 0", "最优基线 b*(s) = 𝔼[‖∇ln π‖²q(s, A)]/𝔼[‖∇ln π‖²]；次优 b†(s) = v<sub>π</sub>(s)", "优势函数 δ<sub>π</sub>(s, a) = q<sub>π</sub>(s, a) − v<sub>π</sub>(s) ≈ r + γv(s′) − v(s)（TD 误差）", "A2C：δ<sub>t</sub> = r<sub>t+1</sub> + γv(s<sub>t+1</sub>, w) − v(s<sub>t</sub>, w)；θ ← θ + α<sub>θ</sub>δ<sub>t</sub>∇ln π；w ← w + α<sub>w</sub>δ<sub>t</sub>∇v", "重要性采样：𝔼<sub>p<sub>0</sub></sub>[X] = 𝔼<sub>p<sub>1</sub></sub>[(p<sub>0</sub>(X)/p<sub>1</sub>(X))X] ≈ (1/n)Σ(p<sub>0</sub>(x<sub>i</sub>)/p<sub>1</sub>(x<sub>i</sub>))x<sub>i</sub>", "off-policy 策略梯度：∇J = 𝔼<sub>S∼ρ, A∼β</sub>[(π(A|S, θ)/β(A|S))∇ln π(A|S, θ)q<sub>π</sub>(S, A)]", "确定性策略梯度：∇J = 𝔼<sub>S∼η</sub>[∇<sub>θ</sub>μ(S)(∇<sub>a</sub>q<sub>μ</sub>(S, a))|<sub>a=μ(S)</sub>]"]}, fxP = '0';
+function grp(n) { return [1, 2, 3, 6].indexOf(n) >= 0 ? '1' : [4, 5, 7].indexOf(n) >= 0 ? '2' : '3'; }
+function fxDraw() {
+  var q = $('#fxQ').value.trim().toLowerCase(), box = $('#fxL'); box.innerHTML = ''; var hits = 0;
+  chs.forEach(function (c) {
+    var n = c[0];
+    if (fxP !== '0' && fxP !== grp(n)) return;
+    var list = (FX[n] || []).filter(function (f) { return !q || f.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + n + '/#back', text: (n < 10 ? '0' : '') + n + ' · ' + c[1] }, hd);
+    list.forEach(function (f) { S.h('div', { class: 'fx', html: f }, box); hits++; });
+  });
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的公式。' }, box);
+}
+S.seg($('#fxP'), function (v) { fxP = v; fxDraw(); });
+$('#fxQ').addEventListener('input', fxDraw); fxDraw();
+
+S.notes($('#n-back'), {
+  c: [
+    ['① 这本书要建立什么', '“数学但友好”：每个算法都知道为什么这样设计、为什么有效；所有例子统一在网格世界里。'],
+    ['② 怎么一环扣一环', '概念 → 贝尔曼方程 → BOE → 值/策略迭代 → MC（去模型）→ 随机近似 → TD → 函数近似 → 策略梯度 → actor-critic。'],
+    ['③ 怎么用、怎么复习', '按条件反查算法；翻速记卡自测，再用易混辨析和公式速查按关键词定位，每篇“记下来”都可遮住自测。']
+  ],
+  p: [
+    ['原书一句话', '强化学习的终极目标是得到最优策略；本书的所有算法都是在不同条件下实现这一目标。'],
+    ['这个系列的做法', '每节先铺垫问题，再动手实验，最后“记下来”；模拟数据标“示意”，原书数值标节号和页码。']
+  ],
+  ph: '一句话'
+});

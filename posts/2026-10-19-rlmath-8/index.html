@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>值函数方法：从表格到函数、TD-Linear、投影贝尔曼误差与 DQN</title>
+<meta name="description" content="强化学习的数学原理学习笔记（八）：用参数化函数代替表格（省存储、能泛化、有近似误差）；以平稳分布加权的目标函数；从梯度下降到 MC / TD 的函数近似算法；TD-Linear 与多项式、傅里叶特征，表格法是其特例；TD-Linear 实际最小化的是投影贝尔曼误差及误差界；LSTD；Sarsa、Q-learning 的函数近似版本；深度 Q 学习的目标网络与经验回放。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M9 3v18M15 3v18M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.5'/%3E%3Crect x='15' y='15' width='6' height='6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+</head>
+<body data-series="rlmath-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>强化学习的数学原理 · 08</span><span>对应原书第 8 章（第 151–190 页）</span><span>约 55 分钟</span></p>
+  <h1>表格装不下时，<em>用一个函数去拟合</em></h1>
+  <p class="lead">前七章的状态值、动作值都存在表格里，一个状态一格。状态一多（或连续），表格就既存不下、也学不动——没访问过的格子永远学不到。这一章把值表示成带参数的函数 v̂(s, w)，于是“更新一个值”变成“更新参数 w”。原书强调理解这个方法的关键是它的三步优化表述：选目标函数、推梯度、用梯度算法求解。神经网络正是在这里进入强化学习的，著名的深度 Q 学习（DQN）也在这一章。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">强化学习的数学原理（Mathematical Foundations of Reinforcement Learning）</a>》（赵世钰（Shiyu Zhao）著，西湖大学；Springer Nature 与清华大学出版社 2025 年出版，作者在 GitHub 免费公开全书 PDF 与课件，本笔记依据仓库中 2025 年 7 月更新的英文 PDF（已含勘误））的学习笔记。原书仓库没有附带开源许可证，版权归作者与出版社所有；这里不转载原文和插图，而是按“先说清楚它解决什么问题、再动手算、最后记下来”的顺序用自己的话重讲，网格世界、算法与图都在浏览器里重新实现和手绘。公式、定义、例子与参数以原书为准，标注了对应的节号和页码；页面里的模拟结果标注“示意”，复现出原书图中数值的地方标注“原书数据”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-rlmath/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-19-rlmath-1/" data-part="1"><b>01</b>基本概念</a>
+  <a href="../2026-10-19-rlmath-2/" data-part="2"><b>02</b>贝尔曼方程</a>
+  <a href="../2026-10-19-rlmath-3/" data-part="3"><b>03</b>贝尔曼最优方程</a>
+  <a href="../2026-10-19-rlmath-4/" data-part="4"><b>04</b>值迭代与策略迭代</a>
+  <a href="../2026-10-19-rlmath-5/" data-part="5"><b>05</b>蒙特卡罗</a>
+  <a href="../2026-10-19-rlmath-6/" data-part="6"><b>06</b>随机近似</a>
+  <a href="../2026-10-19-rlmath-7/" data-part="7"><b>07</b>时序差分</a>
+  <a href="../2026-10-19-rlmath-8/" aria-current="page" data-part="8"><b>08</b>值函数近似</a>
+  <a href="../2026-10-19-rlmath-9/" data-part="9"><b>09</b>策略梯度</a>
+  <a href="../2026-10-19-rlmath-10/" data-part="10"><b>10</b>Actor-Critic</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#repr">表格到函数</a><a href="#obj">目标与平稳分布</a><a href="#tdlin">TD-Linear</a><a href="#theory">它在最小化什么</a><a href="#dqn">Q 学习与 DQN</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>用函数代替表格，得到了什么、付出了什么？为什么目标函数要用平稳分布加权？</li>
+  <li>TD-Linear 是怎么从梯度下降一步步“凑”出来的？它真正最小化的是什么误差？</li>
+  <li>DQN 为什么需要两个网络和经验回放？经验回放为什么要均匀采样？</li>
+</ol></div>
+
+<section class="part" id="repr">
+  <div class="part-head"><h2>值的表示：从表格到函数</h2><span class="meta">原书 8.1 节 · 第 152–155 页</span></div>
+  <div class="sec-lede">
+    <p>n 个状态的估计值 v̂(s<sub>1</sub>), …, v̂(s<sub>n</sub>) 画在图上就是 n 个点。可以用一条曲线拟合它们，最简单的是直线 v̂(s, w) = as + b = [s, 1][a, b]<sup>T</sup> = φ<sup>T</sup>(s)w，φ(s) 叫<strong>特征向量</strong>，w 是参数。换成二次曲线 φ(s) = [s<sup>2</sup>, s, 1]<sup>T</sup>，拟合能力更强，参数也更多。只要 v̂ 对 w 是线性的（对 s 可以非线性），就叫<strong>线性函数近似</strong>，是最简单的情形；不知道选什么特征时，常用神经网络作非线性近似。</p>
+    <p>与表格相比有两处根本不同。<strong>怎么取值</strong>：表格直接读一格；函数要把 s 代进去算（神经网络要做一次前向传播）。好处是只存低维的 w，省存储；代价是有<strong>近似误差</strong>——用低维向量表示高维数据，必然丢信息。<strong>怎么更新</strong>：表格直接改一格；函数只能通过改 w 间接改值。由此带来另一个好处——<strong>泛化</strong>：改 w 会同时改变没被访问的状态的值，一个状态的经验能帮到它的邻居。</p>
+    <p>若已知真值 v<sub>π</sub>，找最好的 w 就是最小二乘：min ‖Φw − v<sub>π</sub>‖<sup>2</sup>，解是 w* = (Φ<sup>T</sup>Φ)<sup>−1</sup>Φ<sup>T</sup>v<sub>π</sub>。但真值恰恰是不知道的，后面几节就是解决这个问题。</p>
+    <p class="go">左边：用多项式拟合 25 个状态值（均匀随机策略的真值，按状态编号排开），看阶数和误差。右边：对某一个状态做一次“往上推”的更新，比较表格和函数的反应。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">曲线拟合：参数个数 vs 近似误差</p>
+      <label class="ctl"><span>多项式阶数 <output id="cfDv">1</output></span><input type="range" id="cfD" min="0" max="8" step="1" value="1"></label>
+      <div id="cfC"></div>
+      <p class="cap" id="cfW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">一次更新会影响谁（示意）</p>
+      <label class="ctl"><span>被更新的状态编号 <output id="gnKv">13</output></span><input type="range" id="gnK" min="1" max="25" step="1" value="13"></label>
+      <div id="gnC"></div>
+      <p class="cap" id="gnW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-repr"></div>
+</section>
+
+<section class="part" id="obj">
+  <div class="part-head"><h2>目标函数与平稳分布</h2><span class="meta">原书 8.2.1 节 · 第 156–161 页</span></div>
+  <div class="sec-lede">
+    <p>目标是让 v̂(s, w) 在所有状态上都逼近 v<sub>π</sub>(s)：</p>
+    <div class="eq">J(w) = 𝔼[(v<sub>π</sub>(S) − v̂(S, w))<sup>2</sup>]<small>原书式 (8.3)</small></div>
+    <p>S 是随机变量，它的分布是什么？这个问题决定了“哪些状态更重要”。最简单的是<strong>均匀分布</strong>，所有状态一样重要，J = (1/n)Σ(v<sub>π</sub> − v̂)<sup>2</sup>；但策略可能很少访问某些状态，同等对待并不合理。本章用的是<strong>平稳分布</strong> d<sub>π</sub>：按策略 π 跑足够久之后，智能体处于各个状态的概率。于是 J(w) = Σ<sub>s</sub>d<sub>π</sub>(s)(v<sub>π</sub>(s) − v̂(s, w))<sup>2</sup>，常去的状态权重大。</p>
+    <p>平稳分布怎么来（原书框 8.1）：[P<sub>π</sub><sup>k</sup>]<sub>ij</sub> 是 k 步从 s<sub>i</sub> 到 s<sub>j</sub> 的概率，d<sub>k</sub><sup>T</sup> = d<sub>0</sub><sup>T</sup>P<sub>π</sub><sup>k</sup>。在一定条件下 P<sub>π</sub><sup>k</sup> → 𝟙d<sub>π</sub><sup>T</sup>（每行都相同），所以 d<sub>k</sub> → d<sub>π</sub>，<strong>与初始分布无关</strong>，并满足 d<sub>π</sub><sup>T</sup> = d<sub>π</sub><sup>T</sup>P<sub>π</sub>——它是 P<sub>π</sub> 关于特征值 1 的左特征向量。唯一性的条件：马尔可夫过程<strong>不可约</strong>（任意两状态互相可达）或<strong>正则</strong>（存在 k 使 P<sub>π</sub><sup>k</sup> &gt; 0）；ε-贪心这类探索性策略通常就能保证。好消息是：后面的算法<strong>不需要算出 d<sub>π</sub></strong>，按策略采样，样本自然就服从它。</p>
+    <p class="go">复现原书图 8.5：2×2 网格上 ε = 0.5 的 ε-贪心策略，理论值 d<sub>π</sub> = [0.0345, 0.1084, 0.1330, 0.7241]。从 s<sub>1</sub> 出发跑 1000 步，看各状态的访问比例怎么收敛。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 8.5：访问比例收敛到平稳分布（虚线为理论值）</p>
+    <div class="btnrow"><button class="btn" type="button" id="sdN">换一条轨迹</button></div>
+    <div id="sdC"></div>
+    <p class="cap" id="sdW"></p>
+  </div>
+  <div class="notes" id="n-obj"></div>
+</section>
+
+<section class="part" id="tdlin">
+  <div class="part-head"><h2>优化算法：从梯度下降到 TD-Linear</h2><span class="meta">原书 8.2.2–8.2.4 节 · 第 161–167 页</span></div>
+  <div class="sec-lede">
+    <p>对 J(w) 做梯度下降：∇J = −2𝔼[(v<sub>π</sub>(S) − v̂(S, w))∇v̂(S, w)]，所以 w<sub>k+1</sub> = w<sub>k</sub> + α𝔼[(v<sub>π</sub>(S) − v̂(S, w<sub>k</sub>))∇v̂(S, w<sub>k</sub>)]（常数 2 并进 α）。按 SGD 的思路把期望换成样本：w<sub>t+1</sub> = w<sub>t</sub> + α(v<sub>π</sub>(s<sub>t</sub>) − v̂(s<sub>t</sub>, w<sub>t</sub>))∇v̂(s<sub>t</sub>, w<sub>t</sub>)。但 v<sub>π</sub>(s<sub>t</sub>) 未知，必须再换掉：换成回报 g<sub>t</sub> 是<strong>函数近似的 MC</strong>；换成 r<sub>t+1</sub> + γv̂(s<sub>t+1</sub>, w<sub>t</sub>) 是<strong>函数近似的 TD</strong>：</p>
+    <div class="eq">w<sub>t+1</sub> = w<sub>t</sub> + α<sub>t</sub>[r<sub>t+1</sub> + γv̂(s<sub>t+1</sub>, w<sub>t</sub>) − v̂(s<sub>t</sub>, w<sub>t</sub>)]∇<sub>w</sub>v̂(s<sub>t</sub>, w<sub>t</sub>)<small>原书式 (8.13)</small></div>
+    <p>线性情形 v̂ = φ<sup>T</sup>(s)w，梯度就是 φ(s)，得到 <strong>TD-Linear</strong>：w<sub>t+1</sub> = w<sub>t</sub> + α[r<sub>t+1</sub> + γφ<sup>T</sup>(s<sub>t+1</sub>)w<sub>t</sub> − φ<sup>T</sup>(s<sub>t</sub>)w<sub>t</sub>]φ(s<sub>t</sub>)。线性情形理论最清楚，但表达能力有限、特征难选；神经网络像黑箱一样好用。原书坚持讲线性情形还有一个理由：<strong>表格法是它的特例</strong>——取独热特征 φ(s) = e<sub>s</sub>，v̂(s, w) = w(s)，TD-Linear 就退化成第 7 章的表格 TD（框 8.2）。</p>
+    <p>原书图 8.7、8.8 在 5×5 网格上用 TD-Linear 评估均匀随机策略：500 个回合、每回合 500 步、随机起点，α = 0.0005，w 按标准正态随机初始化。网格状态是二维位置，用列号 x、行号 y 构造特征：<strong>多项式特征</strong>（x、y 归一化到 [−1, 1]）[1, x, y] 是平面，[1, x, y, x², y², xy] 是二次曲面，再加三次项共 10 维；<strong>傅里叶特征</strong>（x、y 归一化到 [0, 1]）cos(π(c<sub>1</sub>x + c<sub>2</sub>y))，c<sub>1</sub>, c<sub>2</sub> ∈ {0, …, q}，共 (q + 1)<sup>2</sup> 维。特征越长，近似越准，但线性近似的误差一般降不到 0。</p>
+    <p class="go">选一种特征，在浏览器里真的跑 25 万次 TD-Linear 更新，看估计出的值曲面和误差曲线。</p>
+  </div>
+  <div class="algo"><h4>算法 8.1　函数近似的 TD 状态值学习</h4><ol>
+    <li>可微的 v̂(s, w)，初值 w<sub>0</sub>。对按 π 产生的每个回合的每个样本 (s<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>)：
+      <ol><li>一般情形：<code>w ← w + α[r + γ v̂(s′, w) − v̂(s, w)] ∇_w v̂(s, w)</code></li>
+      <li>线性情形：<code>w ← w + α[r + γ φ(s′)ᵀw − φ(s)ᵀw] φ(s)</code></li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书图 8.7 / 8.8 的复现（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −1，r<sub>target</sub> = 1）</p>
+    <div class="selrow"><span>特征</span><div class="seg" id="tlF"><button data-v="p3" aria-pressed="true">多项式 3 维</button><button data-v="p6">多项式 6 维</button><button data-v="p10">多项式 10 维</button><button data-v="f1">傅里叶 q=1（4 维）</button><button data-v="f2">傅里叶 q=2（9 维）</button><button data-v="f3">傅里叶 q=3（16 维）</button><button data-v="oh">独热 25 维（= 表格）</button></div></div>
+    <div class="lab-split">
+      <div><div class="gwrow2"><div><p class="gwcap">真值 v<sub>π</sub>（原书图 8.6）</p><div id="tlT"></div></div><div><p class="gwcap">TD-Linear 估计</p><div id="tlE"></div></div></div></div>
+      <div><div id="tlC"></div><p class="cap" id="tlW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-tdlin"></div>
+</section>
+
+<section class="part" id="theory">
+  <div class="part-head"><h2>TD-Linear 到底在最小化什么</h2><span class="meta">原书 8.2.5 节 · 第 167–179 页</span></div>
+  <div class="sec-lede">
+    <p>上面的“故事”并不严格：把 v<sub>π</sub> 换成 r + γv̂ 之后，算法其实<strong>不再最小化 J(w)</strong>。原书先分析对应的确定性算法 w<sub>t+1</sub> = w<sub>t</sub> + α𝔼[(r + γφ<sup>T</sup>(s′)w − φ<sup>T</sup>(s)w)φ(s)]（S 服从 d<sub>π</sub>），可以化简为 w<sub>t+1</sub> = w<sub>t</sub> + α(b − Aw<sub>t</sub>)，其中</p>
+    <div class="eq">A = Φ<sup>T</sup>D(I − γP<sub>π</sub>)Φ，b = Φ<sup>T</sup>Dr<sub>π</sub>，D = diag(d<sub>π</sub>)　⇒　w* = A<sup>−1</sup>b<small>原书引理 8.1、式 (8.21)</small></div>
+    <p>A 可逆且正定（框 8.4：证明 D(I − γP<sub>π</sub>) 的对称部分严格对角占优），所以收敛到 w* = A<sup>−1</sup>b；独热特征时 Φ = I，w* = (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub> = v<sub>π</sub>，又一次说明表格法是特例。</p>
+    <p>w* 是什么问题的解？原书比较了三个目标：<strong>真值误差</strong> J<sub>E</sub> = ‖v̂(w) − v<sub>π</sub>‖<sub>D</sub><sup>2</sup>（最理想，但要真值）；<strong>贝尔曼误差</strong> J<sub>BE</sub> = ‖v̂(w) − T<sub>π</sub>(v̂(w))‖<sub>D</sub><sup>2</sup>，T<sub>π</sub>(x) = r<sub>π</sub> + γP<sub>π</sub>x 是贝尔曼算子；<strong>投影贝尔曼误差</strong> J<sub>PBE</sub> = ‖v̂(w) − MT<sub>π</sub>(v̂(w))‖<sub>D</sub><sup>2</sup>，M = Φ(Φ<sup>T</sup>DΦ)<sup>−1</sup>Φ<sup>T</sup>D 是把向量投影到“所有可表示的近似”上的投影矩阵。<strong>TD-Linear 最小化的是投影贝尔曼误差</strong>：w* = A<sup>−1</sup>b 恰好让 J<sub>PBE</sub> = 0（框 8.5）。它离真值有多远？</p>
+    <div class="eq">‖Φw* − v<sub>π</sub>‖<sub>D</sub> ≤ (1/(1 − γ)) · min<sub>w</sub>‖v̂(w) − v<sub>π</sub>‖<sub>D</sub><small>原书式 (8.32)；γ 接近 1 时这个界很松，主要有理论价值</small></div>
+    <p>原书还介绍了 <strong>LSTD</strong>：既然 A = 𝔼[φ(s<sub>t</sub>)(φ(s<sub>t</sub>) − γφ(s<sub>t+1</sub>))<sup>T</sup>]、b = 𝔼[r<sub>t+1</sub>φ(s<sub>t</sub>)]，就直接用样本平均估计 Â、b̂，令 w = Â<sup>−1</sup>b̂。它不需要步长、样本效率高，代价是要存矩阵、求逆。</p>
+    <p class="go">对每种特征，按模型精确算出 TD 不动点 w* = A<sup>−1</sup>b、最佳近似 argmin J<sub>E</sub>，以及误差界；再用 LSTD 从一条采样轨迹估计 w。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">三个解的误差（均匀随机策略；这里的平稳分布恰好是均匀的 1/25）</p>
+      <div class="tblw"><table class="kvt" id="thT"></table></div>
+      <p class="cap" id="thW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">几何图：投影贝尔曼误差为 0 的点</p>
+      <div id="thS"></div>
+      <p class="cap">平面代表所有能表示的近似 {Φw}。真值 v<sub>π</sub> 通常不在平面上；它的投影 Mv<sub>π</sub> 是最佳近似（J<sub>E</sub> 最小）。TD 找的是满足 Φw = MT<sub>π</sub>(Φw) 的点：对它做一次贝尔曼更新再投影回平面，回到自己。两点一般不重合，但相距不远。（示意图）</p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：真值误差、贝尔曼误差、投影贝尔曼误差</h4>
+    <p><b>J<sub>E</sub></b> = ‖v̂ − v<sub>π</sub>‖<sub>D</sub>²：最直接，但含未知的 v<sub>π</sub>。<b>J<sub>BE</sub></b> = ‖v̂ − T<sub>π</sub>v̂‖<sub>D</sub>²：要求 v̂ 尽量满足贝尔曼方程，但 T<sub>π</sub>v̂ 一般不在可表示空间里，通常降不到 0。<b>J<sub>PBE</sub></b> = ‖v̂ − MT<sub>π</sub>v̂‖<sub>D</sub>²：先投影再比较，线性情形总能降到 0，TD-Linear 和 LSTD 求的就是它。</p>
+  </div>
+  <div class="notes" id="n-theory"></div>
+</section>
+
+<section class="part" id="dqn">
+  <div class="part-head"><h2>动作值的函数近似与深度 Q 学习</h2><span class="meta">原书 8.3–8.4 节 · 第 179–186 页</span></div>
+  <div class="sec-lede">
+    <p>把 v̂(s, w) 换成 q̂(s, a, w)，就得到函数近似的 <strong>Sarsa</strong>：w ← w + α[r + γq̂(s′, a′, w) − q̂(s, a, w)]∇q̂(s, a, w)；把 q̂(s′, a′, w) 换成 max<sub>a</sub>q̂(s′, a, w)，就是函数近似的 <strong>Q-learning</strong>。原书图 8.9、8.10 用 5 阶傅里叶特征演示了它们（α = 0.001）。注意这两个算法里<strong>策略仍是表格</strong>（对 q̂ 取 ε-贪心），还假设状态和动作有限；第 9 章才把策略也换成函数。</p>
+    <p><strong>深度 Q 学习</strong>（DQN）是最早也最成功的深度强化学习算法之一（网络不必很深，网格世界一两层就够）。它最小化<strong>贝尔曼最优误差的平方</strong>：J = 𝔼[(R + γ max<sub>a</sub>q̂(S′, a, w) − q̂(S, A, w))<sup>2</sup>]。难点在于 w 同时出现在目标 y = R + γ max q̂(S′, a, w) 和 q̂(S, A, w) 里，梯度不好算。于是第一个技巧：<strong>目标网络</strong>——假设目标里的参数在一段时间内固定为 w<sub>T</sub>，梯度就简单了；实现上维护主网络 w（每轮都更新）和目标网络 w<sub>T</sub>（每 C 轮把 w 复制过去）。第二个技巧：<strong>经验回放</strong>——经验存进回放缓冲区，每次<strong>均匀地</strong>抽一小批来训练。原书给出的数学理由很有意思：要让目标函数有定义，必须指定 (S, A) 的分布，最简单的假设就是均匀分布；而按行为策略顺序产生的样本彼此相关、也不均匀，均匀抽样正是为了打破相关性、满足这个假设。顺带的好处是每个样本可以被反复使用。</p>
+    <p>原书图 8.11：均匀随机的行为策略只产生 1000 步，回放缓冲区就是这 1000 个样本，小批量 100；损失收敛到 0，状态值误差也收敛到 0——同样的任务，表格 Q-learning 要 10 万步（图 7.4）。效率来自函数近似的泛化和样本的重复利用。图 8.12：只给 100 步，损失照样收敛到 0，值误差却降不下去——网络把给定的样本拟合得很好，但样本太少，不足以估准最优动作值。</p>
+    <p class="go">在浏览器里训练一个小 DQN（γ = 0.9，r<sub>boundary</sub> = r<sub>forbidden</sub> = −10，r<sub>target</sub> = 1）。选 1000 步或 100 步的经验，看损失和值误差两条曲线的分歧。</p>
+  </div>
+  <div class="algo"><h4>算法 8.3　深度 Q 学习（off-policy 版）</h4><ol>
+    <li>主网络与目标网络取相同初值。把行为策略 π<sub>b</sub> 产生的经验存入回放缓冲区 ℬ = {(s, a, r, s′)}。每轮：
+      <ol><li>从 ℬ 中<strong>均匀</strong>抽一小批样本</li>
+      <li>对每个样本算目标 <code>y_T = r + γ max_a q̂(s′, a, w_T)</code></li>
+      <li>用这批样本更新主网络，最小化 <code>(y_T − q̂(s, a, w))²</code></li>
+      <li>每 C 轮令 w<sub>T</sub> = w</li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">原书图 8.11 / 8.12 的复现：一个隐藏层 100 个神经元的 DQN</p>
+    <div class="selrow"><span>经验数据</span><div class="seg" id="dqT"><button data-v="1000" aria-pressed="true">1000 步（图 8.11）</button><button data-v="100">100 步（图 8.12）</button></div><button class="btn pri" type="button" id="dqGo">训练 1500 轮</button></div>
+    <div class="lab-split">
+      <div><div class="gwrow2"><div><p class="gwcap">行为策略产生的经验</p><div id="dqE"></div></div><div><p class="gwcap">学到的贪心策略</p><div id="dqG"></div></div></div></div>
+      <div><div id="dqC1"></div><div id="dqC2"></div><p class="cap" id="dqW"></p></div>
+    </div>
+    <p class="note">与原书的差别：原书网络输入是归一化的行号、列号和动作编号（3 个输入、1 个输出）；本页为了在浏览器里一两秒训完，改用原书也提到的另一种结构——输入状态、输出 5 个动作值，并把行号、列号编码成独热向量（10 个输入），用 Adam（学习率 0.01）、每 20 轮同步一次目标网络。结论不变。（本页模拟）</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：目标网络 vs 经验回放</h4>
+    <p><b>目标网络</b>：解决“参数同时出现在目标和预测里、梯度难算且目标会追着自己跑”的问题——把目标里的参数冻结一段时间。<b>经验回放</b>：解决“样本按时间顺序产生、相关且分布不均”的问题——存起来均匀抽样，还能重复使用样本。</p>
+    <p><b>表格 Q-learning 能用经验回放吗？</b>能。它是 off-policy，对样本怎么来没有要求，回放只会让样本用得更充分（原书 Q&amp;A）。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：损失收敛 vs 学到了</h4>
+    <p><b>损失</b>（小批量上的 TD 误差平方）收敛到 0，只说明网络把给定样本拟合好了。<b>值误差</b>收敛到 0 才说明最优动作值估准了。样本太少（图 8.12）时前者成立、后者不成立。</p>
+  </div>
+  <div class="notes" id="n-dqn"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">目标函数 J(w) = 𝔼[(v<sub>π</sub>(S) − v̂(S, w))<sup>2</sup>] = Σ<sub>s</sub>d<sub>π</sub>(s)(v<sub>π</sub>(s) − v̂(s, w))<sup>2</sup></div>
+    <div class="fx">平稳分布 d<sub>π</sub><sup>T</sup> = d<sub>π</sub><sup>T</sup>P<sub>π</sub>；P<sub>π</sub><sup>k</sup> → 𝟙d<sub>π</sub><sup>T</sup></div>
+    <div class="fx">MC 近似：w ← w + α(g<sub>t</sub> − v̂(s<sub>t</sub>, w))∇v̂；TD 近似：w ← w + α[r + γv̂(s′, w) − v̂(s, w)]∇v̂(s, w)</div>
+    <div class="fx">TD-Linear：w ← w + α[r + γφ<sup>T</sup>(s′)w − φ<sup>T</sup>(s)w]φ(s)；独热特征时即表格 TD</div>
+    <div class="fx">A = Φ<sup>T</sup>D(I − γP<sub>π</sub>)Φ，b = Φ<sup>T</sup>Dr<sub>π</sub>，w* = A<sup>−1</sup>b = argmin J<sub>PBE</sub></div>
+    <div class="fx">J<sub>PBE</sub> = ‖v̂(w) − MT<sub>π</sub>(v̂(w))‖<sub>D</sub><sup>2</sup>，M = Φ(Φ<sup>T</sup>DΦ)<sup>−1</sup>Φ<sup>T</sup>D；误差界 ‖Φw* − v<sub>π</sub>‖<sub>D</sub> ≤ min‖v̂ − v<sub>π</sub>‖<sub>D</sub>/(1 − γ)</div>
+    <div class="fx">LSTD：Â = (1/t)Σφ(s<sub>k</sub>)(φ(s<sub>k</sub>) − γφ(s<sub>k+1</sub>))<sup>T</sup>，b̂ = (1/t)Σr<sub>k+1</sub>φ(s<sub>k</sub>)，w = Â<sup>−1</sup>b̂</div>
+    <div class="fx">Sarsa 近似：w ← w + α[r + γq̂(s′, a′, w) − q̂(s, a, w)]∇q̂；Q-learning 近似：把 q̂(s′, a′, w) 换成 max<sub>a</sub>q̂(s′, a, w)</div>
+    <div class="fx">DQN：J = 𝔼[(R + γ max<sub>a</sub>q̂(S′, a, w<sub>T</sub>) − q̂(S, A, w))<sup>2</sup>]，w<sub>T</sub> 每 C 轮同步</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>函数代替表格得失如何？为什么用平稳分布加权？
+      <details><summary>先自己答，再点开</summary><p class="ans">得：只存低维参数，省存储；改参数会影响邻近状态，能泛化。失：有近似误差。平稳分布反映策略长期访问各状态的频率，常去的状态更重要；而且按策略采样就自动服从它，不必显式计算。</p></details></li>
+    <li>TD-Linear 怎么来的？真正最小化什么？
+      <details><summary>先自己答，再点开</summary><p class="ans">对 J(w) 做梯度下降 → 用样本代替期望（SGD）→ 把未知的 v<sub>π</sub>(s<sub>t</sub>) 换成 r + γv̂(s<sub>t+1</sub>)。换完之后它收敛到 w* = A<sup>−1</sup>b，最小化的是投影贝尔曼误差（可以降到 0），不是真值误差；与最佳近似的差距有 1/(1 − γ) 的上界。</p></details></li>
+    <li>DQN 为何要两个网络和经验回放？为何均匀采样？
+      <details><summary>先自己答，再点开</summary><p class="ans">参数同时出现在目标和预测中，固定目标网络才能简单地求梯度。目标函数要求 (S, A) 有确定的分布，最简单的假设是均匀分布；顺序产生的样本相关且不均匀，从回放缓冲区均匀抽样正是为了满足这个假设，同时还能重复利用样本。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-rlmath-7/"><small>上一篇</small><span>07 · 时序差分方法</span></a><a class="nx" href="../2026-10-19-rlmath-9/"><small>下一篇</small><span>09 · 策略梯度方法</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning" rel="noopener">MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var E5 = RL.book5({ gamma: 0.9 }), U = RL.uniform(25), vU = RL.evalExact(E5, U), MOD = RL.rP(E5, U);
+
+/* ---------- 曲线拟合 ---------- */
+function polyFit(xs, ys, deg, ws) {
+  var n = deg + 1, A = [], b = [];
+  for (var i = 0; i < n; i++) { A.push(new Array(n).fill(0)); b.push(0); }
+  xs.forEach(function (x, k) { var w = ws ? ws[k] : 1; for (var i = 0; i < n; i++) { b[i] += w * Math.pow(x, i) * ys[k]; for (var j = 0; j < n; j++) A[i][j] += w * Math.pow(x, i + j); } });
+  return RL.solveLin(A, b);
+}
+function polyVal(c, x) { var s = 0; for (var i = 0; i < c.length; i++) s += c[i] * Math.pow(x, i); return s; }
+var XS = []; for (var i0 = 0; i0 < 25; i0++) XS.push(-1 + 2 * i0 / 24);
+var cfChart = S.chart($('#cfC'), { h: 260, x: [1, 25], y: [-5, -2.5], xt: [1, 5, 10, 15, 20, 25], yt: [-5, -4, -3], xl: '状态编号 s（按行展开）', yl: 'v_π(s)' });
+function cf() {
+  var d = +$('#cfD').value; $('#cfDv').textContent = d;
+  var c = polyFit(XS, vU, d), fit = XS.map(function (x) { return polyVal(c, x); });
+  cfChart({ curves: [{ f: function (s) { return polyVal(c, -1 + 2 * (s - 1) / 24); }, c: 'c1', label: d + ' 阶多项式（' + (d + 1) + ' 个参数）' }], dots: vU.map(function (v, k) { return { x: k + 1, y: v, c: 'c2', r: 4 }; }) });
+  $('#cfW').innerHTML = '用 <b>' + (d + 1) + '</b> 个参数近似 25 个值，均方根误差 <b>' + S.f(RL.rmse(fit, vU), 3) + '</b>（表格法：25 个参数，误差 0）。按编号排开后这些值呈锯齿状（每 5 个一行），低阶多项式抓不住——这说明<b>特征怎么选</b>决定了近似能力：下一节改用二维位置 (x, y) 作特征就好得多。';
+}
+$('#cfD').addEventListener('input', cf); cf();
+var gnChart = S.chart($('#gnC'), { h: 260, x: [1, 25], y: [-5, -1], xt: [1, 5, 10, 15, 20, 25], yt: [-5, -4, -3, -2, -1], xl: '状态编号 s', yl: '估计值' });
+function gn() {
+  var k = +$('#gnK').value; $('#gnKv').textContent = k;
+  var c = polyFit(XS, vU, 2), before = XS.map(function (x) { return polyVal(c, x); });
+  // 对状态 k 做一次 SGD：目标 = 原值 + 1，步长 0.5
+  var xk = XS[k - 1], phi = [1, xk, xk * xk], err = (before[k - 1] + 1) - before[k - 1], nrm = phi.reduce(function (a, x) { return a + x * x; }, 0);
+  var c2 = c.map(function (w, i) { return w + 0.5 / nrm * err * phi[i] * 2; });
+  var after = XS.map(function (x) { return polyVal(c2, x); });
+  var tab = before.slice(); tab[k - 1] += 1;
+  gnChart({ curves: [{ pts: before.map(function (v, i) { return [i + 1, v]; }), c: 'dim', dash: 1, label: '更新前' }, { pts: after.map(function (v, i) { return [i + 1, v]; }), c: 'c1', label: '函数：改 w' }, { pts: tab.map(function (v, i) { return [i + 1, v]; }), c: 'c2', w: 1.5, label: '表格：只改一格' }], vl: [{ x: k, c: 'dim' }] });
+  var moved = after.filter(function (v, i) { return Math.abs(v - before[i]) > 0.05; }).length;
+  $('#gnW').innerHTML = '用一个样本把 s<sub>' + k + '</sub> 的估计往上推（这里用二次多项式 [1, x, x²]，3 个参数）。表格只改那一格；函数改了参数 w，<b>' + moved + '</b> 个状态的值都跟着变了——这就是泛化：一个状态的经验帮到了别的状态（也可能“帮倒忙”）。（示意）';
+}
+$('#gnK').addEventListener('input', gn); gn();
+S.notes($('#n-repr'), {
+  c: [
+    ['函数近似', '用 v̂(s, w) 代替表格存值。'],
+    ['特征向量', 'φ(s)，线性近似 v̂ = φ<sup>T</sup>(s)w。'],
+    ['线性近似', '对 w 线性（对 s 可非线性）；最简单、理论最清楚。'],
+    ['取值', '代入 s 计算；只存 w，省存储，但有近似误差。'],
+    ['更新与泛化', '改 w 间接改值，会影响未访问的状态。']
+  ],
+  p: [
+    ['直线', 'v̂(s, w) = [s, 1][a, b]<sup>T</sup>'],
+    ['二次', 'φ(s) = [s<sup>2</sup>, s, 1]<sup>T</sup>'],
+    ['已知真值时', 'w* = (Φ<sup>T</sup>Φ)<sup>−1</sup>Φ<sup>T</sup>v<sub>π</sub>'],
+    ['代价与收益', '用精度换存储；用泛化换“只能间接更新”']
+  ]
+});
+
+/* ---------- 平稳分布 ---------- */
+var PT = [[0.3, 0.1, 0.1, 0], [0.1, 0.3, 0, 0.1], [0.6, 0, 0.3, 0.1], [0, 0.6, 0.6, 0.8]]; // 原书印出的矩阵，第 i 列是从 s_i 出发的转移概率
+var DPI = [0.0345, 0.1084, 0.1330, 0.7241], sdSeed = 1;
+var sdChart = S.chart($('#sdC'), { h: 270, x: [1, 1000], y: [0, 1], xt: [1, 250, 500, 750, 1000], yt: [0, 0.25, 0.5, 0.75, 1], xl: '步数', yl: '访问比例' });
+function sd() {
+  var r = S.rng(sdSeed * 37 + 1), s = 0, cnt = [0, 0, 0, 0], pts = [[], [], [], []];
+  for (var t = 1; t <= 1000; t++) {
+    cnt[s]++;
+    if (t % 5 === 0 || t < 20) for (var i = 0; i < 4; i++) pts[i].push([t, cnt[i] / t]);
+    var u = r(), acc = 0, nx = 3; for (var j = 0; j < 4; j++) { acc += PT[j][s]; if (u < acc) { nx = j; break; } } s = nx;
+  }
+  var cs = ['c1', 'c2', 'ok', 'c3'];
+  sdChart({ curves: pts.map(function (p, i) { return { pts: p, c: cs[i], label: 's' + (i + 1) }; }).concat(DPI.map(function (d, i) { return { f: function () { return d; }, c: cs[i], dash: 1, w: 1.5 }; })) });
+  $('#sdW').innerHTML = '1000 步后的访问比例：' + cnt.map(function (c, i) { return 's' + (i + 1) + ' ' + S.f(c / 1000, 3); }).join('，') + '；理论值 d<sub>π</sub> = [0.0345, 0.1084, 0.1330, 0.7241]（原书数据）。几百步后就贴近虚线了。s<sub>4</sub> 是目标，ε-贪心策略大部分时间待在那里，所以它的权重最大——目标函数会最在意把目标附近的值估准。';
+}
+$('#sdN').addEventListener('click', function () { sdSeed++; sd(); });
+sd();
+S.notes($('#n-obj'), {
+  c: [
+    ['目标函数', '真值与近似值之差的平方的期望。'],
+    ['均匀分布加权', '所有状态同等重要；忽略策略的实际访问频率。'],
+    ['平稳分布', '长期运行后处于各状态的概率，与初始分布无关。'],
+    ['唯一性条件', '马尔可夫过程不可约或正则；探索性策略通常能保证。'],
+    ['不必算出 d<sub>π</sub>', '按策略采样，样本自然服从它。']
+  ],
+  p: [
+    ['平稳分布加权', 'J(w) = Σ<sub>s</sub>d<sub>π</sub>(s)(v<sub>π</sub>(s) − v̂(s, w))<sup>2</sup>'],
+    ['左特征向量', 'd<sub>π</sub><sup>T</sup> = d<sub>π</sub><sup>T</sup>P<sub>π</sub>，特征值 1'],
+    ['极限', 'P<sub>π</sub><sup>k</sup> → 𝟙d<sub>π</sub><sup>T</sup>，d<sub>k</sub><sup>T</sup> = d<sub>0</sub><sup>T</sup>P<sub>π</sub><sup>k</sup> → d<sub>π</sub><sup>T</sup>'],
+    ['原书图 8.5', 'd<sub>π</sub> = [0.0345, 0.1084, 0.1330, 0.7241]']
+  ],
+  ph: '公式'
+});
+
+/* ---------- TD-Linear ---------- */
+function FEAT(kind) {
+  return function (s) {
+    var p = E5.rc(s);
+    if (kind[0] === 'p') { var x = (p[1] - 2) / 2, y = (p[0] - 2) / 2, all = [1, x, y, x * x, y * y, x * y, x * x * x, y * y * y, x * x * y, x * y * y]; return all.slice(0, +kind.slice(1)); }
+    if (kind[0] === 'f') { var q = +kind.slice(1), xx = p[1] / 4, yy = p[0] / 4, f = []; for (var c1 = 0; c1 <= q; c1++) for (var c2 = 0; c2 <= q; c2++) f.push(Math.cos(Math.PI * (c1 * xx + c2 * yy))); return f; }
+    var o = new Array(25).fill(0); o[s] = 1; return o;
+  };
+}
+var PHI = {}; ['p3', 'p6', 'p10', 'f1', 'f2', 'f3', 'oh'].forEach(function (k) { var f = FEAT(k); PHI[k] = []; for (var s = 0; s < 25; s++) PHI[k].push(f(s)); });
+var tlT = RL.grid($('#tlT'), E5, { cell: 52, minCell: 44, heat: [-5, 0] }), tlE = RL.grid($('#tlE'), E5, { cell: 52, minCell: 44, heat: [-5, 0] });
+tlT({ v: vU });
+var tlChart = S.chart($('#tlC'), { h: 270, x: [0, 500], y: [0, 3], xt: [0, 100, 200, 300, 400, 500], yt: [0, 0.5, 1, 1.5, 2, 2.5, 3], xl: '回合', yl: '状态值 RMSE' });
+function tl(kind) {
+  var F = PHI[kind], n = F[0].length, rnd = S.rng(2024), w = []; for (var i = 0; i < n; i++) w.push(S.randn(rnd));
+  var pts = [], al = 0.0005;
+  function est() { return F.map(function (f) { var v = 0; for (var i = 0; i < n; i++) v += f[i] * w[i]; return v; }); }
+  pts.push([0, Math.min(3, RL.rmse(est(), vU))]);
+  for (var e = 1; e <= 500; e++) {
+    var s = Math.floor(rnd() * 25);
+    for (var t = 0; t < 500; t++) {
+      var m = E5.move(s, Math.floor(rnd() * 5)), f = F[s], f2 = F[m[0]], v = 0, v2 = 0;
+      for (var j = 0; j < n; j++) { v += f[j] * w[j]; v2 += f2[j] * w[j]; }
+      var dl = m[1] + 0.9 * v2 - v;
+      for (var j2 = 0; j2 < n; j2++) w[j2] += al * dl * f[j2];
+      s = m[0];
+    }
+    if (e % 5 === 0) pts.push([e, Math.min(3, RL.rmse(est(), vU))]);
+  }
+  var ve = est();
+  tlE({ v: ve });
+  tlChart({ curves: [{ pts: pts, c: 'c1', label: 'TD-Linear（α = 0.0005）' }] });
+  $('#tlW').innerHTML = '特征维数 <b>' + n + '</b>，500 回合后 RMSE = <b>' + S.f(RL.rmse(ve, vU), 3) + '</b>。' + (kind === 'oh' ? '独热特征就是表格法：能精确表示任何值，但每个状态只在被访问时才更新、没有泛化，在这么小的步长下学得最慢，500 回合还远没收敛。' : kind === 'p3' ? '[1, x, y] 只能表示一个平面，误差降不到 0。' : '维数越高曲面越灵活，误差越小，但线性近似一般仍降不到 0。') + '（本页模拟，曲线形状与原书图 8.7、8.8 一致）';
+}
+S.seg($('#tlF'), function (v) { tl(v); thShow(v); });
+tl('p3');
+S.notes($('#n-tdlin'), {
+  c: [
+    ['从 GD 到 SGD', '用样本梯度代替期望梯度。'],
+    ['替换真值', '换成回报 g<sub>t</sub> 是 MC；换成 r + γv̂(s′) 是 TD。'],
+    ['TD-Linear', '线性近似下梯度就是 φ(s)。'],
+    ['表格是特例', '独热特征 φ(s) = e<sub>s</sub> 时 TD-Linear 就是表格 TD。'],
+    ['特征的选择', '多项式、傅里叶、瓦片编码……维数越高越准，线性近似误差一般不为 0。']
+  ],
+  p: [
+    ['梯度', '∇J = −2𝔼[(v<sub>π</sub>(S) − v̂(S, w))∇v̂(S, w)]'],
+    ['TD 近似', 'w ← w + α[r + γv̂(s′, w) − v̂(s, w)]∇v̂(s, w)'],
+    ['TD-Linear', 'w ← w + α[r + γφ<sup>T</sup>(s′)w − φ<sup>T</sup>(s)w]φ(s)'],
+    ['傅里叶特征', 'cos(π(c<sub>1</sub>x + c<sub>2</sub>y))，c<sub>i</sub> ∈ {0, …, q}，(q + 1)<sup>2</sup> 维'],
+    ['原书设置', '500 回合 × 500 步，α = 0.0005，w ~ 𝒩(0, 1)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 理论：A⁻¹b、最佳近似、界、LSTD ---------- */
+var dU = new Array(25).fill(1 / 25);
+(function () { var d = dU.slice(); for (var k = 0; k < 3000; k++) { var nd = new Array(25).fill(0); for (var i = 0; i < 25; i++) for (var j = 0; j < 25; j++) nd[j] += d[i] * MOD.P[i][j]; d = nd; } dU = d; })();
+function nD(v) { var s = 0; for (var i = 0; i < 25; i++) s += dU[i] * (v[i] - vU[i]) * (v[i] - vU[i]); return Math.sqrt(s); }
+function solveAll(kind) {
+  var Phi = PHI[kind], n = Phi[0].length, A = [], b = [], Ae = [], be = [];
+  for (var i = 0; i < n; i++) { A.push(new Array(n).fill(0)); Ae.push(new Array(n).fill(0)); b.push(0); be.push(0); }
+  for (var s = 0; s < 25; s++) {
+    var row = []; for (var i2 = 0; i2 < n; i2++) { var x = Phi[s][i2]; for (var j = 0; j < 25; j++) x -= 0.9 * MOD.P[s][j] * Phi[j][i2]; row.push(x); }
+    for (var i3 = 0; i3 < n; i3++) { for (var k = 0; k < n; k++) { A[i3][k] += dU[s] * Phi[s][i3] * row[k]; Ae[i3][k] += dU[s] * Phi[s][i3] * Phi[s][k]; } b[i3] += dU[s] * Phi[s][i3] * MOD.r[s]; be[i3] += dU[s] * Phi[s][i3] * vU[s]; }
+  }
+  var wT = RL.solveLin(A, b), wE = RL.solveLin(Ae, be), val = function (w) { return Phi.map(function (f) { var v = 0; for (var i = 0; i < n; i++) v += f[i] * w[i]; return v; }); };
+  // LSTD：一条 20000 步的轨迹
+  var r = S.rng(31), Ah = [], bh = []; for (var i4 = 0; i4 < n; i4++) { Ah.push(new Array(n).fill(0)); bh.push(0); }
+  var st = 0;
+  for (var t = 0; t < 20000; t++) { var m = E5.move(st, Math.floor(r() * 5)), f = Phi[st], f2 = Phi[m[0]]; for (var a1 = 0; a1 < n; a1++) { for (var a2 = 0; a2 < n; a2++) Ah[a1][a2] += f[a1] * (f[a2] - 0.9 * f2[a2]); bh[a1] += m[1] * f[a1]; } st = m[0]; }
+  var wL = RL.solveLin(Ah, bh);
+  return { n: n, td: nD(val(wT)), best: nD(val(wE)), lstd: nD(val(wL)) };
+}
+var thCache = {};
+function thShow(kind) {
+  var rows = ['p3', 'p6', 'p10', 'f1', 'f2', 'f3', 'oh'], names = { p3: '多项式 3', p6: '多项式 6', p10: '多项式 10', f1: '傅里叶 4', f2: '傅里叶 9', f3: '傅里叶 16', oh: '独热 25' };
+  var html = '<tr><th>特征</th><th>最佳近似</th><th>TD 不动点</th><th>误差界</th><th>LSTD</th></tr>';
+  rows.forEach(function (k) {
+    var r = thCache[k] || (thCache[k] = solveAll(k));
+    html += '<tr' + (k === kind ? ' class="on"' : '') + '><td>' + names[k] + '</td><td>' + S.f(r.best, 3) + '</td><td>' + S.f(r.td, 3) + '</td><td>' + S.f(r.best / 0.1, 3) + '</td><td>' + S.f(r.lstd, 3) + '</td></tr>';
+  });
+  $('#thT').innerHTML = html;
+  $('#thW').innerHTML = '表中都是 ‖v̂ − v<sub>π</sub>‖<sub>D</sub>。<b>最佳近似</b> = min J<sub>E</sub> 的解（要知道真值）；<b>TD 不动点</b> = A<sup>−1</sup>b，按模型精确计算；<b>误差界</b> = 最佳近似 / (1 − γ)；<b>LSTD</b> = 一条 2 万步轨迹上的 Â<sup>−1</sup>b̂。TD 不动点几乎和最佳近似一样好，远好于那个宽松的界（γ = 0.9 时界放大了 10 倍）；独热特征三者都是 0。LSTD 用样本估计就逼近了 TD 不动点。（本页计算）';
+}
+thShow('p3');
+(function () {
+  var box = $('#thS');
+  var draw = S.fit(box, 250, function (svg, w) {
+    var cx = w / 2;
+    S.svg('path', { d: 'M' + (cx - 170) + ' 185 L' + (cx + 110) + ' 185 L' + (cx + 170) + ' 120 L' + (cx - 110) + ' 120 Z', class: 'f-s1s k-s1', 'stroke-width': 1.5 }, svg);
+    S.svg('text', { x: cx - 150, y: 210, text: '可表示的近似 {Φw}', class: 'c-s1' }, svg);
+    var vp = [cx + 20, 30], mv = [cx + 20, 152], tdp = [cx - 50, 160];
+    S.svg('line', { x1: vp[0], y1: vp[1], x2: mv[0], y2: mv[1], class: 'k-ink', 'stroke-dasharray': '5 4', 'stroke-width': 1.5 }, svg);
+    S.svg('circle', { cx: vp[0], cy: vp[1], r: 6, class: 'f-s2' }, svg);
+    S.svg('text', { x: vp[0] + 12, y: vp[1] + 5, text: 'v_π（真值）', class: 'ink' }, svg);
+    S.svg('circle', { cx: mv[0], cy: mv[1], r: 6, class: 'f-ok' }, svg);
+    S.svg('text', { x: mv[0] + 12, y: mv[1] + 22, text: 'Mv_π：最佳近似', class: 'c-ok' }, svg);
+    S.svg('circle', { cx: tdp[0], cy: tdp[1], r: 6, class: 'f-s1' }, svg);
+    S.svg('text', { x: tdp[0] - 12, y: tdp[1] + 30, 'text-anchor': 'middle', text: 'Φw*：TD 不动点', class: 'c-s1' }, svg);
+    var tv = [cx - 80, 70];
+    S.svg('path', { d: 'M' + tdp[0] + ' ' + tdp[1] + ' Q ' + (tdp[0] - 40) + ' 110 ' + tv[0] + ' ' + tv[1], class: 'ln k-dim' }, svg);
+    S.svg('circle', { cx: tv[0], cy: tv[1], r: 5, class: 'f-dim' }, svg);
+    S.svg('text', { x: tv[0] - 10, y: tv[1] - 10, 'text-anchor': 'middle', text: 'T_π(Φw*)', class: 'c-3' }, svg);
+    S.svg('line', { x1: tv[0], y1: tv[1], x2: tdp[0], y2: tdp[1], class: 'k-dim', 'stroke-dasharray': '4 4', 'stroke-width': 1.5 }, svg);
+    S.svg('text', { x: tv[0] + 20, y: 112, text: '投影 M', class: 'c-3' }, svg);
+  }, 280);
+  draw();
+})();
+S.notes($('#n-theory'), {
+  c: [
+    ['确定性版本', 'w ← w + α(b − Aw)，收敛到 w* = A<sup>−1</sup>b。'],
+    ['A 正定', 'D(I − γP<sub>π</sub>) 的对称部分严格对角占优。'],
+    ['贝尔曼算子', 'T<sub>π</sub>(x) = r<sub>π</sub> + γP<sub>π</sub>x。'],
+    ['投影贝尔曼误差', '先把 T<sub>π</sub>v̂ 投影回可表示空间再比较；TD-Linear 最小化它。'],
+    ['误差界', '与最佳近似差 1/(1 − γ) 倍以内；很松，主要有理论价值。'],
+    ['LSTD', '用样本平均直接估计 A、b，再求 w = Â<sup>−1</sup>b̂。']
+  ],
+  p: [
+    ['A, b', 'A = Φ<sup>T</sup>D(I − γP<sub>π</sub>)Φ，b = Φ<sup>T</sup>Dr<sub>π</sub>'],
+    ['期望形式', 'A = 𝔼[φ(s)(φ(s) − γφ(s′))<sup>T</sup>]，b = 𝔼[rφ(s)]'],
+    ['投影矩阵', 'M = Φ(Φ<sup>T</sup>DΦ)<sup>−1</sup>Φ<sup>T</sup>D'],
+    ['独热特征', 'w* = (I − γP<sub>π</sub>)<sup>−1</sup>r<sub>π</sub> = v<sub>π</sub>']
+  ],
+  ph: '公式'
+});
+
+/* ---------- DQN ---------- */
+var ED = RL.book5({ gamma: 0.9, rb: -10, rf: -10, rt: 1 }), vSD = RL.vStar(ED), qSD = RL.qFromV(ED, vSD);
+var dqT = 1000, dqBusy = false, dqSeed = 1;
+var dqE = RL.grid($('#dqE'), ED, { cell: 52, minCell: 44 }), dqG = RL.grid($('#dqG'), ED, { cell: 52, minCell: 44 });
+var dqC1 = S.chart($('#dqC1'), { h: 170, x: [0, 1500], y: [0, 30], xt: [0, 500, 1000, 1500], yt: [0, 10, 20, 30], yl: '损失（小批量 TD 误差平方）' });
+var dqC2 = S.chart($('#dqC2'), { h: 170, x: [0, 1500], y: [0, 15], xt: [0, 500, 1000, 1500], yt: [0, 5, 10, 15], xl: '训练轮数', yl: '状态值 RMSE' });
+var DX = []; for (var s0 = 0; s0 < 25; s0++) { var pp = ED.rc(s0), xv = new Array(10).fill(0); xv[pp[0]] = 1; xv[5 + pp[1]] = 1; DX.push(xv); }
+function dqRun() {
+  if (dqBusy) return; dqBusy = true;
+  var rnd = S.rng(dqSeed), H = 100, IN = 10, O = 5, lr = 0.01, C = 20, B = dqT === 1000 ? 100 : 50, ITERS = 1500;
+  var s = Math.floor(rnd() * 25), buf = [], path = [s], cover = {};
+  for (var t = 0; t < dqT; t++) { var a = Math.floor(rnd() * 5), m = ED.move(s, a); buf.push([s, a, m[1], m[0]]); cover[s * 5 + a] = 1; s = m[0]; path.push(s); }
+  dqE({ path: path.slice(0, 400), agent: path[0], v: null, pi: null });
+  function mk(n, sc) { var a = new Float64Array(n); for (var i = 0; i < n; i++) a[i] = sc ? S.randn(rnd) * sc : 0; return a; }
+  var P = { W1: mk(H * IN, Math.sqrt(2 / IN)), b1: mk(H, 0), W2: mk(O * H, Math.sqrt(1 / H)), b2: mk(O, 0) };
+  for (var bi = 0; bi < H; bi++) P.b1[bi] = 2 * rnd() - 1;
+  var K = ['W1', 'b1', 'W2', 'b2'], M = {}, V = {}, T = {};
+  K.forEach(function (k) { M[k] = new Float64Array(P[k].length); V[k] = new Float64Array(P[k].length); T[k] = P[k].slice(); });
+  var hh = new Float64Array(H);
+  function fwd(N, x, keep) { var out = [0, 0, 0, 0, 0]; for (var j = 0; j < H; j++) { var z = N.b1[j]; for (var i = 0; i < IN; i++) if (x[i]) z += N.W1[j * IN + i]; var a = z > 0 ? z : 0; if (keep) hh[j] = a; if (a) for (var o = 0; o < O; o++) out[o] += N.W2[o * H + j] * a; } for (var o2 = 0; o2 < O; o2++) out[o2] += N.b2[o2]; return out; }
+  var losses = [], errs = [], it = 0;
+  function evalV() { return DX.map(function (x) { return Math.max.apply(null, fwd(P, x)); }); }
+  function chunk() {
+    for (var c = 0; c < 50 && it < ITERS; c++) {
+      it++;
+      var G = {}; K.forEach(function (k) { G[k] = new Float64Array(P[k].length); });
+      var L = 0;
+      for (var k2 = 0; k2 < B; k2++) {
+        var e = buf[Math.floor(rnd() * buf.length)], qn = fwd(T, DX[e[3]]), yT = e[2] + 0.9 * Math.max.apply(null, qn);
+        var x = DX[e[0]], q = fwd(P, x, true), d = q[e[1]] - yT, a2 = e[1];
+        L += d * d; G.b2[a2] += d;
+        for (var j = 0; j < H; j++) { if (!hh[j]) continue; G.W2[a2 * H + j] += d * hh[j]; var dz = d * P.W2[a2 * H + j]; G.b1[j] += dz; for (var i = 0; i < IN; i++) if (x[i]) G.W1[j * IN + i] += dz; }
+      }
+      losses.push([it, Math.min(30, L / B)]);
+      var c1 = 1 - Math.pow(0.9, it), c2 = 1 - Math.pow(0.999, it);
+      K.forEach(function (kk) { var p = P[kk], g = G[kk], m = M[kk], v = V[kk]; for (var i = 0; i < p.length; i++) { var gg = g[i] / B; if (!gg && !m[i]) continue; m[i] = 0.9 * m[i] + 0.1 * gg; v[i] = 0.999 * v[i] + 0.001 * gg * gg; p[i] -= lr * (m[i] / c1) / (Math.sqrt(v[i] / c2) + 1e-8); } });
+      if (it % C === 0) K.forEach(function (kk) { T[kk] = P[kk].slice(); });
+      if (it % 10 === 0) errs.push([it, Math.min(15, RL.rmse(evalV(), vSD))]);
+    }
+    var sm = []; for (var i2 = 0; i2 < losses.length; i2 += 5) { var acc = 0, n = 0; for (var j2 = i2; j2 < Math.min(losses.length, i2 + 5); j2++) { acc += losses[j2][1]; n++; } sm.push([losses[i2][0], acc / n]); }
+    dqC1({ curves: [{ pts: sm, c: 'c2', w: 1.5 }] });
+    dqC2({ curves: [{ pts: errs, c: 'c1' }] });
+    var qs = DX.map(function (x) { return fwd(P, x); }), pi = RL.greedy(qs), hl = {}, nOpt = 0;
+    pi.forEach(function (p, s2) { var a3 = p.indexOf(1); if (qSD[s2][a3] > Math.max.apply(null, qSD[s2]) - 1e-6) { hl[s2] = 'ok'; nOpt++; } });
+    dqG({ v: qs.map(function (q) { return Math.max.apply(null, q); }), pi: pi, hl: hl });
+    var fin = errs.length ? errs[errs.length - 1][1] : NaN, fl = sm.length ? sm[sm.length - 1][1] : NaN;
+    $('#dqW').innerHTML = '第 ' + it + ' / ' + ITERS + ' 轮：损失 ≈ ' + S.f(fl, 3) + '，值误差 ' + S.f(fin, 2) + '，' + nOpt + ' / 25 个格子取到最优动作（绿框）。经验覆盖了 ' + Object.keys(cover).length + ' / 125 个 (s, a)。' + (it >= ITERS ? (dqT === 1000 ? ' 只用 1000 步经验就学到了最优策略；表格 Q-learning 在图 7.4 里用了 10 万步。' : ' 损失照样降到接近 0，值误差却停在高位：网络记住了这 100 个样本，但它们不够用来估准所有最优动作值。') : '');
+    if (it < ITERS) setTimeout(chunk, 0); else dqBusy = false;
+  }
+  chunk();
+}
+S.seg($('#dqT'), function (v) { dqT = +v; dqRun(); });
+$('#dqGo').addEventListener('click', function () { if (!dqBusy) { dqSeed++; dqRun(); } });
+dqRun();
+S.notes($('#n-dqn'), {
+  c: [
+    ['Sarsa / Q-learning 近似', '把表格更新换成对 w 的梯度更新；策略仍是表格。'],
+    ['DQN 的目标', '最小化贝尔曼最优误差的平方。'],
+    ['目标网络', '冻结目标中的参数 w<sub>T</sub>，每 C 轮同步，梯度才好算。'],
+    ['经验回放', '存入缓冲区、均匀抽小批量：满足均匀分布假设，打破相关性，重复利用样本。'],
+    ['训练方式', '用现成的神经网络工具按小批量训练，而不是直接套更新公式。'],
+    ['效率来源', '函数近似的泛化 + 样本重复利用。']
+  ],
+  p: [
+    ['DQN 损失', '(r + γ max<sub>a</sub>q̂(s′, a, w<sub>T</sub>) − q̂(s, a, w))<sup>2</sup>'],
+    ['梯度（w<sub>T</sub> 固定）', '∇J = −𝔼[(R + γ max q̂(S′, a, w<sub>T</sub>) − q̂(S, A, w))∇q̂(S, A, w)]'],
+    ['图 8.11', '1000 步经验、批量 100：损失和值误差都收敛到 0'],
+    ['图 8.12', '100 步经验：损失收敛，值误差不收敛']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 得与失', '省存储、能泛化，代价是近似误差；平稳分布加权，按策略采样自动满足。'],
+    ['② TD-Linear', 'GD → SGD → 用 r + γv̂ 代替未知真值；收敛到 A<sup>−1</sup>b，最小化投影贝尔曼误差。'],
+    ['③ DQN', '目标网络让梯度可算；均匀经验回放满足分布假设、打破相关、重用样本。']
+  ],
+  p: [
+    ['下一篇', '把策略也换成函数 π(a|s, θ)，直接对一个标量指标做梯度上升：策略梯度。'],
+    ['原书一句话', '理解函数近似方法的关键，是理解它的优化表述：目标函数、梯度、基于梯度的算法。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

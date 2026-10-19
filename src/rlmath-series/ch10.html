@@ -1,0 +1,419 @@
+---
+title: Actor-Critic 方法：QAC、基线与 A2C、重要性采样与 off-policy、确定性策略梯度
+desc: 强化学习的数学原理学习笔记（十）：actor-critic 就是用 TD 估计动作值的策略梯度；最简单的 QAC；策略梯度对基线不变、基线降低方差、最优基线与状态值基线，优势函数与 A2C（TD actor-critic）；重要性采样与 off-policy 策略梯度定理；确定性策略梯度定理为何天然 off-policy；全书回顾。
+kicker: <span>技术学习</span><span>强化学习的数学原理 · 10</span><span>对应原书第 10 章（第 215–236 页）</span><span>约 50 分钟</span>
+h1: 一个负责行动，<em>一个负责打分</em>
+lead: 策略梯度需要动作值 q(s, a)。用蒙特卡罗估计是 REINFORCE；用 TD 估计，就是 actor-critic：actor 是策略更新，critic 是值更新。原书提醒，从一个角度看它是“策略 + 值”的组合结构，从另一个角度看它并不新——它仍在策略梯度的范围内。这一章沿着四步走：最简单的 QAC；加基线降方差得到 A2C；用重要性采样变成 off-policy；最后让策略变成确定性的。全书也在这里收尾。
+nav: qac|QAC;a2c|基线与 A2C;off|off-policy;dpg|确定性策略;review|全书回顾;back|三个问题
+---
+<link rel="stylesheet" href="../study-shared/rlmath.css">
+<script src="../study-shared/rlmath.js"></script>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>actor 和 critic 分别对应哪个更新？actor-critic 和 REINFORCE 差在哪？</li>
+  <li>为什么减去一个基线不改变梯度、却能降低方差？什么基线最好？A2C 里的 TD 误差为什么能当优势用？</li>
+  <li>怎样用别的策略产生的数据学习（重要性采样）？确定性策略梯度为什么天然是 off-policy？</li>
+</ol></div>
+
+<section class="part" id="qac">
+  <div class="part-head"><h2>最简单的 actor-critic：QAC</h2><span class="meta">原书 10.1 节 · 第 216–217 页</span></div>
+  <div class="sec-lede">
+    <p>回到第 9 章的随机梯度上升 θ<sub>t+1</sub> = θ<sub>t</sub> + α∇<sub>θ</sub>ln π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>)q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>)（式 (10.2)）。原书说这个式子清楚地展示了基于策略和基于值的方法如何结合：它直接更新策略参数，是基于策略的；但它需要 q<sub>t</sub>，必须另有一个基于值的算法去估计。q<sub>t</sub> 用 MC 估计，就是 REINFORCE；用 TD 估计，就叫 <strong>actor-critic</strong>。</p>
+    <p>最简单的版本：critic 用第 8 章的函数近似 Sarsa 估计 q(s, a, w)，actor 用式 (10.2) 更新策略，称为 <strong>QAC</strong>（Q actor-critic）。每一步：按 π 选 a<sub>t</sub>，观测 r<sub>t+1</sub>、s<sub>t+1</sub>，再按 π 选 a<sub>t+1</sub>；actor θ ← θ + α<sub>θ</sub>∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ)q(s<sub>t</sub>, a<sub>t</sub>, w)；critic w ← w + α<sub>w</sub>[r<sub>t+1</sub> + γq(s<sub>t+1</sub>, a<sub>t+1</sub>, w) − q(s<sub>t</sub>, a<sub>t</sub>, w)]∇<sub>w</sub>q(s<sub>t</sub>, a<sub>t</sub>, w)。它虽简单，却揭示了 actor-critic 的核心，后面的算法都由它扩展。</p>
+    <p class="go">点“下一步”，看一个时间步里数据在 actor、critic 和环境之间怎么流动。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">QAC 的一步（示意图）</p>
+    <div id="qaS"></div>
+    <div id="qaD"></div>
+    <p class="cap" id="qaW"></p>
+  </div>
+  <div class="algo"><h4>算法 10.1　最简单的 actor-critic（QAC）</h4><ol>
+    <li>策略 π(a|s, θ<sub>0</sub>)，值函数 q(s, a, w<sub>0</sub>)，α<sub>w</sub>, α<sub>θ</sub> &gt; 0。每个回合的每个时间步 t：
+      <ol><li>按 π(a|s<sub>t</sub>, θ<sub>t</sub>) 生成 a<sub>t</sub>，观测 r<sub>t+1</sub>、s<sub>t+1</sub>，再按 π(a|s<sub>t+1</sub>, θ<sub>t</sub>) 生成 a<sub>t+1</sub></li>
+      <li>Actor（策略更新）：<code>θ ← θ + α_θ ∇_θ ln π(a_t|s_t, θ) q(s_t, a_t, w)</code></li>
+      <li>Critic（值更新）：<code>w ← w + α_w [r + γ q(s′, a′, w) − q(s, a, w)] ∇_w q(s, a, w)</code></li></ol></li>
+  </ol></div>
+  <div class="notes" id="n-qac"></div>
+</section>
+
+<section class="part" id="a2c">
+  <div class="part-head"><h2>基线不变性与优势 actor-critic（A2C）</h2><span class="meta">原书 10.2 节 · 第 217–221 页</span></div>
+  <div class="sec-lede">
+    <p>策略梯度有一个有趣的性质：<strong>减去任何只依赖状态的基线 b(S)，梯度不变</strong>：𝔼[∇ln π(A|S)q<sub>π</sub>(S, A)] = 𝔼[∇ln π(A|S)(q<sub>π</sub>(S, A) − b(S))]。因为 𝔼<sub>A∼π</sub>[∇ln π(A|s)b(s)] = b(s)Σ<sub>a</sub>∇π(a|s) = b(s)∇Σ<sub>a</sub>π(a|s) = b(s)∇1 = 0。</p>
+    <p>既然期望不变，基线有什么用？<strong>降方差</strong>。我们要用一个样本 x 去近似 𝔼[X]，X = ∇ln π(A|S)(q(S, A) − b(S))；方差越小，单个样本越可靠。𝔼[X] 不随 b 变，var(X) 却会变。REINFORCE 和 QAC 相当于取 b = 0，并不保证好。<strong>最优基线</strong>（框 10.1，最小化 tr var(X)）是 b*(s) = 𝔼<sub>A∼π</sub>[‖∇ln π‖<sup>2</sup>q(s, A)] / 𝔼<sub>A∼π</sub>[‖∇ln π‖<sup>2</sup>]，太复杂；去掉权重 ‖∇ln π‖<sup>2</sup> 得到次优但简洁的 <strong>b†(s) = 𝔼<sub>A∼π</sub>[q(s, A)] = v<sub>π</sub>(s)</strong>——正好是状态值。</p>
+    <p>取 b = v<sub>π</sub>，梯度里出现 <strong>优势函数</strong> δ<sub>π</sub>(s, a) = q<sub>π</sub>(s, a) − v<sub>π</sub>(s)：v<sub>π</sub> 是各动作值的平均，δ &gt; 0 说明这个动作比平均好。更新依据的是“相对于平均好多少”，而不是 q 的绝对大小——选动作时我们关心的本来就是相对优劣。q、v 用 MC 估计叫“带基线的 REINFORCE”；用 TD 估计叫 <strong>A2C</strong>（优势 actor-critic）。A2C 的实现里，优势用 TD 误差近似：q<sub>t</sub>(s<sub>t</sub>, a<sub>t</sub>) − v<sub>t</sub>(s<sub>t</sub>) ≈ r<sub>t+1</sub> + γv<sub>t</sub>(s<sub>t+1</sub>) − v<sub>t</sub>(s<sub>t</sub>)，理由是 q<sub>π</sub>(s, a) − v<sub>π</sub>(s) = 𝔼[R<sub>t+1</sub> + γv<sub>π</sub>(S<sub>t+1</sub>) − v<sub>π</sub>(S<sub>t</sub>)|s, a]。好处是只要一个网络表示 v，不必同时维护 v 和 q 两个网络。策略本身是随机的，可以直接用来采样，不需要 ε-贪心。</p>
+    <p class="go">左边：一个状态、三个动作，按精确公式算出三种基线下梯度估计量的均值和方差。右边：在网格里比较 REINFORCE、带基线的 REINFORCE 和 A2C 的学习曲线。</p>
+  </div>
+  <div class="algo"><h4>算法 10.2　A2C（TD actor-critic）</h4><ol>
+    <li>策略 π(a|s, θ<sub>0</sub>)，值函数 v(s, w<sub>0</sub>)，α<sub>w</sub>, α<sub>θ</sub> &gt; 0。每个时间步 t：按 π 生成 a<sub>t</sub>，观测 r<sub>t+1</sub>、s<sub>t+1</sub>
+      <ol><li>优势（TD 误差）：<code>δ_t = r_{t+1} + γ v(s_{t+1}, w) − v(s_t, w)</code></li>
+      <li>Actor：<code>θ ← θ + α_θ δ_t ∇_θ ln π(a_t|s_t, θ)</code></li>
+      <li>Critic：<code>w ← w + α_w δ_t ∇_w v(s_t, w)</code></li></ol></li>
+  </ol></div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">基线对方差的影响（单状态，softmax 策略，精确计算）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>q(a<sub>1</sub>) <output id="vbQ1v">10</output></span><input type="range" id="vbQ1" min="-5" max="20" step="1" value="10"></label>
+        <label class="ctl"><span>q(a<sub>2</sub>) <output id="vbQ2v">11</output></span><input type="range" id="vbQ2" min="-5" max="20" step="1" value="11"></label>
+        <label class="ctl"><span>q(a<sub>3</sub>) <output id="vbQ3v">12</output></span><input type="range" id="vbQ3" min="-5" max="20" step="1" value="12"></label>
+        <label class="ctl"><span>偏好 θ<sub>1</sub>（θ<sub>2</sub> = θ<sub>3</sub> = 0） <output id="vbTv">1.0</output></span><input type="range" id="vbT" min="-2" max="3" step="0.5" value="1"></label>
+      </div>
+      <table class="kvt" id="vbK"></table>
+      <p class="cap" id="vbW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">网格中的三种算法：策略真实的平均状态值（3 次运行平均，示意）</p>
+      <div id="acC"></div>
+      <div id="acG"></div>
+      <p class="cap" id="acW"></p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：REINFORCE、带基线的 REINFORCE、QAC、A2C</h4>
+    <p><b>估计方式</b>：前两者用 MC（等回合结束），后两者用 TD（每步更新）。<b>有无基线</b>：REINFORCE、QAC 用 q 本身（b = 0）；带基线的 REINFORCE、A2C 用 q − v（优势）。A2C 进一步用 TD 误差近似优势，只需一个值网络。</p>
+    <p><b>actor-critic 是不是策略梯度？</b>是。原书 Q&amp;A：用 TD（带值函数近似）估计动作值的策略梯度算法就叫 actor-critic，名字强调“策略更新 + 值更新”的结构。</p>
+  </div>
+  <div class="notes" id="n-a2c"></div>
+</section>
+
+<section class="part" id="off">
+  <div class="part-head"><h2>重要性采样与 off-policy actor-critic</h2><span class="meta">原书 10.3 节 · 第 221–227 页</span></div>
+  <div class="sec-lede">
+    <p>到目前为止的策略梯度方法（REINFORCE、QAC、A2C）都是 on-policy：真实梯度里 A ∼ π(θ)，动作必须由当前策略产生。如果手里已有别的<strong>行为策略</strong> β 产生的数据，还能用吗？能，靠<strong>重要性采样</strong>——一种用某个分布的样本估计另一个分布下期望的通用技术，不限于强化学习。</p>
+    <p>想估计 𝔼<sub>X∼p<sub>0</sub></sub>[X]，样本却来自 p<sub>1</sub>。直接平均会收敛到 𝔼<sub>p<sub>1</sub></sub>[X]，不对。改写：𝔼<sub>p<sub>0</sub></sub>[X] = Σ<sub>x</sub>p<sub>1</sub>(x)(p<sub>0</sub>(x)/p<sub>1</sub>(x))x = 𝔼<sub>p<sub>1</sub></sub>[f(X)]，于是用加权平均 (1/n)Σ(p<sub>0</sub>(x<sub>i</sub>)/p<sub>1</sub>(x<sub>i</sub>))x<sub>i</sub> 估计，p<sub>0</sub>/p<sub>1</sub> 叫<strong>重要性权重</strong>：在 p<sub>0</sub> 下常见、在 p<sub>1</sub> 下少见的样本，权重大于 1，被强调。为什么不直接按定义 Σp<sub>0</sub>(x)x 算？因为 p<sub>0</sub> 常由神经网络表示，没有解析式，x 的取值又太多，而加权平均只要知道那几个样本处的 p<sub>0</sub>(x<sub>i</sub>)。前提：p<sub>0</sub>(x) ≠ 0 的地方必须有 p<sub>1</sub>(x) ≠ 0，否则那部分永远采不到。</p>
+    <p><strong>定理 10.1</strong>（off-policy 策略梯度）：目标 J(θ) = Σ<sub>s</sub>d<sub>β</sub>(s)v<sub>π</sub>(s)，梯度 ∇J = 𝔼<sub>S∼ρ, A∼β</sub>[(π(A|S, θ)/β(A|S))∇ln π(A|S, θ)q<sub>π</sub>(S, A)]。与 on-policy 相比多了重要性权重，A 改为服从 β。同样可以减去基线 v<sub>π</sub>，并用 TD 误差近似优势：θ<sub>t+1</sub> = θ<sub>t</sub> + α<sub>θ</sub>(π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>)/β(a<sub>t</sub>|s<sub>t</sub>))∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ<sub>t</sub>)δ<sub>t</sub>。注意不只 actor，<strong>critic 也乘了重要性权重</strong>，同样被改造成 off-policy——重要性采样对基于值和基于策略的算法都适用。</p>
+    <p class="go">复现原书图 10.2：p<sub>0</sub> 是 ±1 各 0.5（均值 0），样本来自 p<sub>1</sub>。拖动 p<sub>1</sub>(+1)，比较普通平均和重要性加权平均；拖到 1 看前提被违反时会怎样。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 10.2：用 p<sub>1</sub> 的样本估计 𝔼<sub>p<sub>0</sub></sub>[X] = 0</p>
+    <label class="ctl"><span>p<sub>1</sub>(X = +1) <output id="isPv">0.80</output></span><input type="range" id="isP" min="0.5" max="1" step="0.05" value="0.8"></label>
+    <div id="isC"></div>
+    <p class="cap" id="isW"></p>
+  </div>
+  <div class="algo"><h4>算法 10.3　基于重要性采样的 off-policy actor-critic</h4><ol>
+    <li>给定行为策略 β(a|s)，目标策略 π(a|s, θ<sub>0</sub>)，值函数 v(s, w<sub>0</sub>)。每个时间步：按 β 生成 a<sub>t</sub>，观测 r<sub>t+1</sub>、s<sub>t+1</sub>
+      <ol><li><code>δ_t = r_{t+1} + γ v(s_{t+1}, w) − v(s_t, w)</code></li>
+      <li>Actor：<code>θ ← θ + α_θ (π(a_t|s_t, θ)/β(a_t|s_t)) δ_t ∇_θ ln π(a_t|s_t, θ)</code></li>
+      <li>Critic：<code>w ← w + α_w (π(a_t|s_t, θ)/β(a_t|s_t)) δ_t ∇_w v(s_t, w)</code></li></ol></li>
+  </ol></div>
+  <div class="notes" id="n-off"></div>
+</section>
+
+<section class="part" id="dpg">
+  <div class="part-head"><h2>确定性 actor-critic</h2><span class="meta">原书 10.4 节 · 第 227–235 页</span></div>
+  <div class="sec-lede">
+    <p>前面的策略都要求 π(a|s, θ) &gt; 0，是随机的。也可以让策略是<strong>确定性</strong>的：a = μ(s, θ)，直接输出动作而不是概率。研究它有两个理由：它天然是 off-policy，并且能有效处理<strong>连续动作空间</strong>。第 9 章的定理只对随机策略成立，需要新的定理。</p>
+    <div class="eq">∇<sub>θ</sub>J(θ) = Σ<sub>s</sub>η(s)∇<sub>θ</sub>μ(s)(∇<sub>a</sub>q<sub>μ</sub>(s, a))|<sub>a=μ(s)</sub> = 𝔼<sub>S∼η</sub>[∇<sub>θ</sub>μ(S)(∇<sub>a</sub>q<sub>μ</sub>(S, a))|<sub>a=μ(S)</sub>]<small>原书定理 10.2（总结了定理 10.3、10.4）</small></div>
+    <p>直观意思：看 critic 的 q 在当前动作处往哪个方向增大（∇<sub>a</sub>q），再通过 ∇<sub>θ</sub>μ 把这个方向传给策略参数。与随机情形最大的不同：<strong>式子里没有动作随机变量 A</strong>，用样本近似时不需要按某个策略采动作，所以<strong>任何行为策略都行</strong>——这就是它天然 off-policy 的原因。critic 也是 off-policy 的，而且不需要重要性采样：它需要的样本是 (s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, ã<sub>t+1</sub>)，a<sub>t</sub> 由行为策略产生（用来和环境交互），ã<sub>t+1</sub> = μ(s<sub>t+1</sub>) 只用来算目标、不用于交互。</p>
+    <p>q(s, a, w) 最早的工作用线性函数，现在流行用神经网络（即 DDPG）。行为策略可以是任何探索性策略，也可以是在 μ 上加噪声——那样的话 μ 也成了行为策略，就是 on-policy 的实现。原书顺带说明：∇<sub>a</sub>q<sub>μ</sub>(S, a)|<sub>a=μ(S)</sub> 不写成 ∇<sub>a</sub>q<sub>μ</sub>(S, μ(S))，是为了避免看不清“对哪个 a 求导”。</p>
+    <p class="go">一个单状态、连续动作的小例子（示意）：真实的 q(a) 未知；行为策略在 μ 附近加噪声采样，critic 用 [1, a, a²] 特征拟合 q，actor 沿 critic 的 ∂q̂/∂a 更新 θ。</p>
+  </div>
+  <div class="algo"><h4>算法 10.4　确定性策略梯度（确定性 actor-critic）</h4><ol>
+    <li>给定行为策略 β，确定性目标策略 μ(s, θ<sub>0</sub>)，值函数 q(s, a, w<sub>0</sub>)。每个时间步：按 β 生成 a<sub>t</sub>，观测 r<sub>t+1</sub>、s<sub>t+1</sub>
+      <ol><li><code>δ_t = r_{t+1} + γ q(s_{t+1}, μ(s_{t+1}, θ), w) − q(s_t, a_t, w)</code></li>
+      <li>Actor：<code>θ ← θ + α_θ ∇_θ μ(s_t, θ) (∇_a q(s_t, a, w))|_{a=μ(s_t)}</code></li>
+      <li>Critic：<code>w ← w + α_w δ_t ∇_w q(s_t, a_t, w)</code></li></ol></li>
+  </ol></div>
+  <div class="lab">
+    <p class="lab-t">确定性 actor-critic 的单状态版本（γ = 0，r = q(a) + 噪声；q(a) = 3 − (a − 2)²，示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>行为噪声标准差 σ <output id="dpSv">0.5</output></span><input type="range" id="dpS" min="0" max="1.5" step="0.1" value="0.5"></label>
+    </div>
+    <div class="btnrow"><button class="btn pri" type="button" id="dpGo">走 20 步</button><button class="btn" type="button" id="dpRs">从 θ = −2 重来</button></div>
+    <div class="lab-split">
+      <div id="dpC"></div>
+      <div><table class="kvt" id="dpT"></table><p class="cap" id="dpW"></p></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：随机策略梯度 vs 确定性策略梯度</h4>
+    <p><b>随机</b>：π(a|s, θ) &gt; 0，梯度 𝔼[∇ln π(A|S)q(S, A)] 含 A ∼ π，是 on-policy（要 off-policy 得加重要性权重）。<b>确定性</b>：a = μ(s, θ)，梯度 𝔼[∇<sub>θ</sub>μ(S)∇<sub>a</sub>q(S, a)|<sub>a=μ(S)</sub>] 不含动作随机变量，天然 off-policy，适合连续动作。</p>
+    <p><b>两种 off-policy</b>：A2C 的 off-policy 版靠重要性权重 π/β 修正分布；确定性 actor-critic 不需要，因为它根本不对动作求期望。</p>
+  </div>
+  <div class="notes" id="n-dpg"></div>
+</section>
+
+<section class="part" id="review">
+  <div class="part-head"><h2>全书回顾：十章是怎么一环扣一环的</h2><span class="meta">原书 10.5–10.6 节与“本书概览” · 第 235–236 页</span></div>
+  <div class="sec-lede">
+    <p>原书开篇的地图把十章分成两部分：<strong>基本工具</strong>（第 1–3 章：概念、贝尔曼方程、贝尔曼最优方程；以及第 6 章随机近似）和<strong>算法</strong>（第 4–10 章）。算法部分有三次关键跳跃：第 4 → 5 章<strong>从有模型到无模型</strong>（策略迭代 → MC）；第 7 → 8 章<strong>从表格到函数</strong>（TD → 值函数近似）；第 8 → 9 章<strong>从基于值到基于策略</strong>（策略梯度），第 10 章再把两者合起来。作者反复强调：这些章节高度相关，要学 MC 先得懂策略迭代，要懂策略迭代先得懂值迭代，值迭代来自贝尔曼最优方程，而它又建立在贝尔曼方程之上。</p>
+    <p>原书最后列出了本书没能覆盖的方向：SAC、TRPO、PPO、TD3 等更先进的策略梯度 / actor-critic 算法，多智能体强化学习，用经验数据拟合模型的有模型强化学习，分布式强化学习，以及强化学习与控制理论的关系。作者希望这本书打下的基础能帮读者去学它们。</p>
+    <p class="go">最后一个练习：把全书的算法归到它们所属的家族里。</p>
+  </div>
+  <div class="lab"><p class="lab-t">分一分：算法属于哪一类</p><div id="rvG"></div></div>
+  <div class="notes" id="n-review"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">QAC：actor θ ← θ + α<sub>θ</sub>∇ln π(a|s, θ)q(s, a, w)；critic w ← w + α<sub>w</sub>[r + γq(s′, a′, w) − q(s, a, w)]∇q</div>
+    <div class="fx">基线不变：𝔼[∇ln π(A|S)(q(S, A) − b(S))] = 𝔼[∇ln π(A|S)q(S, A)]，因为 Σ<sub>a</sub>∇π(a|s) = ∇1 = 0</div>
+    <div class="fx">最优基线 b*(s) = 𝔼[‖∇ln π‖²q(s, A)]/𝔼[‖∇ln π‖²]；次优 b†(s) = v<sub>π</sub>(s)</div>
+    <div class="fx">优势函数 δ<sub>π</sub>(s, a) = q<sub>π</sub>(s, a) − v<sub>π</sub>(s) ≈ r + γv(s′) − v(s)（TD 误差）</div>
+    <div class="fx">A2C：δ<sub>t</sub> = r<sub>t+1</sub> + γv(s<sub>t+1</sub>, w) − v(s<sub>t</sub>, w)；θ ← θ + α<sub>θ</sub>δ<sub>t</sub>∇ln π；w ← w + α<sub>w</sub>δ<sub>t</sub>∇v</div>
+    <div class="fx">重要性采样：𝔼<sub>p<sub>0</sub></sub>[X] = 𝔼<sub>p<sub>1</sub></sub>[(p<sub>0</sub>(X)/p<sub>1</sub>(X))X] ≈ (1/n)Σ(p<sub>0</sub>(x<sub>i</sub>)/p<sub>1</sub>(x<sub>i</sub>))x<sub>i</sub></div>
+    <div class="fx">off-policy 策略梯度：∇J = 𝔼<sub>S∼ρ, A∼β</sub>[(π(A|S, θ)/β(A|S))∇ln π(A|S, θ)q<sub>π</sub>(S, A)]</div>
+    <div class="fx">确定性策略梯度：∇J = 𝔼<sub>S∼η</sub>[∇<sub>θ</sub>μ(S)(∇<sub>a</sub>q<sub>μ</sub>(S, a))|<sub>a=μ(S)</sub>]</div>
+  </div>
+  <div class="ask3"><h3>回扣三问</h3><ol>
+    <li>actor、critic 各是什么？与 REINFORCE 差在哪？
+      <details><summary>先自己答，再点开</summary><p class="ans">actor 是策略参数 θ 的更新（策略梯度上升），critic 是值函数参数 w 的更新（TD）。REINFORCE 用 MC 回报估计 q、要等回合结束；actor-critic 用 TD 估计、每步都能更新。两者都属于策略梯度方法。</p></details></li>
+    <li>基线为什么不改变梯度却能降方差？最好的基线？TD 误差为何能当优势？
+      <details><summary>先自己答，再点开</summary><p class="ans">𝔼<sub>A∼π</sub>[∇ln π(A|s)]b(s) = b(s)∇Σπ = 0，所以期望不变；但单个样本 ∇ln π(q − b) 的方差随 b 变。最优基线是 ‖∇ln π‖² 加权的 q 平均，常用次优的 v<sub>π</sub>(s)，此时得到优势 q − v。因为 q<sub>π</sub>(s, a) − v<sub>π</sub>(s) = 𝔼[R + γv<sub>π</sub>(S′) − v<sub>π</sub>(s)|s, a]，TD 误差是优势的无偏样本（用真值时），只需一个值网络。</p></details></li>
+    <li>怎样用别的策略的数据？确定性策略梯度为何天然 off-policy？
+      <details><summary>先自己答，再点开</summary><p class="ans">用重要性权重 π(a|s, θ)/β(a|s) 修正：样本按 β 采，乘上权重后估计的是 π 下的期望；actor 和 critic 都要乘。确定性策略梯度的表达式里没有动作随机变量，近似它不需要按特定策略采动作，所以任何行为策略都可以。</p></details></li>
+  </ol></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- QAC 示意图 ---------- */
+(function () {
+  var steps = [
+    ['智能体在 s<sub>t</sub>，actor 按 π(·|s<sub>t</sub>, θ) 采样动作 a<sub>t</sub>。', ['actor', 'e1']],
+    ['环境执行 a<sub>t</sub>，返回奖励 r<sub>t+1</sub> 和新状态 s<sub>t+1</sub>；actor 再按 π 采样 a<sub>t+1</sub>（Sarsa 需要它）。', ['env', 'e2']],
+    ['Critic 用 (s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, a<sub>t+1</sub>) 算 TD 误差，更新 w。', ['critic', 'e3']],
+    ['Critic 把对 (s<sub>t</sub>, a<sub>t</sub>) 的评价 q(s<sub>t</sub>, a<sub>t</sub>, w) 交给 actor。', ['critic', 'e4']],
+    ['Actor 沿 ∇ln π(a<sub>t</sub>|s<sub>t</sub>, θ)·q(s<sub>t</sub>, a<sub>t</sub>, w) 更新 θ：评价高的动作概率增大。然后进入下一步。', ['actor', 'e4']]
+  ];
+  var cur = 0;
+  var draw = S.fit($('#qaD'), 220, function (svg, w) {
+    var on = steps[cur][1];
+    function box(x, y, t, sub, id) {
+      var g = S.svg('g', null, svg);
+      S.svg('rect', { x: x - 80, y: y - 30, width: 160, height: 60, rx: 10, class: on.indexOf(id) >= 0 ? 'f-s1s k-s1' : 'f-panel k-rule', 'stroke-width': on.indexOf(id) >= 0 ? 3 : 1.5 }, g);
+      S.svg('text', { x: x, y: y - 4, 'text-anchor': 'middle', class: 'ink b', text: t }, g);
+      S.svg('text', { x: x, y: y + 18, 'text-anchor': 'middle', class: 'c-3', text: sub }, g);
+    }
+    var xa = Math.max(100, w * 0.18), xc = Math.min(w - 100, w * 0.82), xm = w / 2;
+    function arrow(x1, y1, x2, y2, id, label, ly) {
+      var cls = on.indexOf(id) >= 0 ? 'k-s2' : 'k-dim';
+      S.svg('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: cls, 'stroke-width': on.indexOf(id) >= 0 ? 3 : 1.5 }, svg);
+      var ang = Math.atan2(y2 - y1, x2 - x1), hx = x2 - 10 * Math.cos(ang), hy = y2 - 10 * Math.sin(ang);
+      S.svg('path', { d: 'M' + x2 + ' ' + y2 + 'L' + (hx - 6 * Math.sin(ang)) + ' ' + (hy + 6 * Math.cos(ang)) + 'L' + (hx + 6 * Math.sin(ang)) + ' ' + (hy - 6 * Math.cos(ang)) + 'Z', class: on.indexOf(id) >= 0 ? 'f-s2' : 'f-dim' }, svg);
+      S.svg('text', { x: (x1 + x2) / 2, y: ly, 'text-anchor': 'middle', class: on.indexOf(id) >= 0 ? 'c-s2' : 'c-3', text: label }, svg);
+    }
+    box(xa, 50, 'Actor', '策略 π(a|s, θ)', 'actor');
+    box(xc, 50, 'Critic', '值 q(s, a, w)', 'critic');
+    box(xm, 175, '环境', 'p(s′, r|s, a)', 'env');
+    arrow(xa + 10, 82, xm - 70, 148, 'e1', 'a_t', 125);
+    arrow(xm + 70, 148, xc - 10, 82, 'e2', 'r, s′', 125);
+    arrow(xc - 82, 40, xa + 82, 40, 'e4', 'q(s_t, a_t, w)', 28);
+    if (on.indexOf('e3') >= 0) S.svg('text', { x: xc, y: 102, 'text-anchor': 'middle', class: 'c-s2 b', text: 'TD 误差 → 更新 w' }, svg);
+  }, 300);
+  S.stepper($('#qaS'), steps.length, function (i) { cur = i; draw(); $('#qaW').innerHTML = steps[i][0]; }, ['采动作', '环境反馈', 'critic 更新', '传递评价', 'actor 更新']);
+})();
+S.notes($('#n-qac'), {
+  c: [
+    ['actor-critic', '用 TD 估计动作值的策略梯度方法。'],
+    ['actor', '策略更新：θ 沿 ∇ln π · q 上升。'],
+    ['critic', '值更新：用 TD（如 Sarsa）估计 q(s, a, w)。'],
+    ['QAC', '最简单的 actor-critic：critic 是函数近似的 Sarsa。'],
+    ['与 REINFORCE 的区别', 'q 用 TD 估计（每步更新）而不是 MC（等回合结束）。']
+  ],
+  p: [
+    ['actor', 'θ ← θ + α<sub>θ</sub>∇<sub>θ</sub>ln π(a<sub>t</sub>|s<sub>t</sub>, θ)q(s<sub>t</sub>, a<sub>t</sub>, w)'],
+    ['critic', 'w ← w + α<sub>w</sub>[r + γq(s′, a′, w) − q(s, a, w)]∇<sub>w</sub>q'],
+    ['所需样本', '(s<sub>t</sub>, a<sub>t</sub>, r<sub>t+1</sub>, s<sub>t+1</sub>, a<sub>t+1</sub>)，a<sub>t+1</sub> 也由 π 产生']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 基线与方差 ---------- */
+function vb() {
+  var q = [1, 2, 3].map(function (i) { return +$('#vbQ' + i).value; }), t1 = +$('#vbT').value;
+  [1, 2, 3].forEach(function (i) { $('#vbQ' + i + 'v').textContent = q[i - 1]; }); $('#vbTv').textContent = S.f(t1, 1);
+  var pi = S.softmax([t1, 0, 0]);
+  // ∇_θ ln π(a) = e_a − π（对三个偏好参数）
+  var G = [0, 1, 2].map(function (a) { return [0, 1, 2].map(function (b) { return (a === b ? 1 : 0) - pi[b]; }); });
+  var n2 = G.map(function (g) { return g[0] * g[0] + g[1] * g[1] + g[2] * g[2]; });
+  var vpi = pi[0] * q[0] + pi[1] * q[1] + pi[2] * q[2];
+  var bstar = (pi[0] * n2[0] * q[0] + pi[1] * n2[1] * q[1] + pi[2] * n2[2] * q[2]) / (pi[0] * n2[0] + pi[1] * n2[1] + pi[2] * n2[2]);
+  function stats(b) {
+    var mean = [0, 0, 0], ex2 = 0;
+    for (var a = 0; a < 3; a++) { for (var k = 0; k < 3; k++) mean[k] += pi[a] * G[a][k] * (q[a] - b); ex2 += pi[a] * n2[a] * (q[a] - b) * (q[a] - b); }
+    return { mean: mean, tr: ex2 - (mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]) };
+  }
+  var s0 = stats(0), sv = stats(vpi), ss = stats(bstar);
+  var fm = function (m) { return '[' + m.map(function (x) { return S.f(x, 3); }).join(', ') + ']'; };
+  $('#vbK').innerHTML = '<tr><th>基线 b</th><th>𝔼[X]</th><th>tr var(X)</th></tr><tr><td>b = 0（REINFORCE / QAC）</td><td>' + fm(s0.mean) + '</td><td>' + S.f(s0.tr, 3) + '</td></tr><tr class="on"><td>b = v<sub>π</sub> = ' + S.f(vpi, 2) + '</td><td>' + fm(sv.mean) + '</td><td>' + S.f(sv.tr, 3) + '</td></tr><tr><td>b* = ' + S.f(bstar, 2) + '（最优）</td><td>' + fm(ss.mean) + '</td><td>' + S.f(ss.tr, 3) + '</td></tr>';
+  $('#vbW').innerHTML = 'X = ∇ln π(A)(q(A) − b)，A ∼ π = [' + pi.map(function (x) { return S.f(x, 2); }).join(', ') + ']。三种基线下 𝔼[X] 完全相同（基线不变性），方差却差得很远：b = 0 时 ' + S.f(s0.tr, 2) + '，减去 v<sub>π</sub> 后 ' + S.f(sv.tr, 2) + '（约 ' + S.f(s0.tr / Math.max(sv.tr, 1e-9), 0) + ' 倍的差距）；最优的 b* 还能再降到 ' + S.f(ss.tr, 2) + '，但和 b = 0 比起来，这点差别已经不重要——这就是原书说次优基线 v<sub>π</sub> 足够实用的原因。q 都是大正数时差距最明显：不减基线，每次都“鼓励”刚选的动作，信号淹没在噪声里。（本页计算）';
+}
+['vbQ1', 'vbQ2', 'vbQ3', 'vbT'].forEach(function (id) { $('#' + id).addEventListener('input', vb); }); vb();
+
+/* ---------- 网格比较 ---------- */
+(function () {
+  var EPG = RL.book5({ gamma: 0.9, rb: -1, rf: -1, rt: 1, ro: 0, terminal: true }), vSP = RL.vStar(EPG), Jstar = RL.sum(vSP) / 24;
+  function J(th) { var pi = th.map(function (r) { return S.softmax(r); }); return RL.sum(RL.evalExact(EPG, pi)) / 24; }
+  function run(mode, aT, aW, seed) {
+    var rnd = S.rng(seed), th = [], V = new Array(25).fill(0), curve = [[0, J(th0())]];
+    function th0() { var t = []; for (var s = 0; s < 25; s++) t.push([0, 0, 0, 0, 0]); return t; }
+    th = th0();
+    for (var e = 0; e < 3000; e++) {
+      var s = Math.floor(rnd() * 25); while (EPG.isT(s)) s = Math.floor(rnd() * 25);
+      var tr = [];
+      while (!EPG.isT(s) && tr.length < 50) {
+        var p = S.softmax(th[s]), a = RL.sampleA(p, rnd), m = EPG.move(s, a); tr.push([s, a, m[1]]);
+        if (mode === 'a2c') { var vn = EPG.isT(m[0]) ? 0 : V[m[0]], d = m[1] + 0.9 * vn - V[s]; V[s] += aW * d; for (var b = 0; b < 5; b++) th[s][b] += aT * ((b === a ? 1 : 0) - p[b]) * d; }
+        s = m[0];
+      }
+      if (mode !== 'a2c') {
+        var g = 0, G = new Array(tr.length); for (var t = tr.length - 1; t >= 0; t--) { g = tr[t][2] + 0.9 * g; G[t] = g; }
+        for (var t2 = 0; t2 < tr.length; t2++) { var s1 = tr[t2][0], a1 = tr[t2][1], pp = S.softmax(th[s1]), adv = G[t2]; if (mode === 'base') { adv = G[t2] - V[s1]; V[s1] += aW * (G[t2] - V[s1]); } for (var b2 = 0; b2 < 5; b2++) th[s1][b2] += aT * ((b2 === a1 ? 1 : 0) - pp[b2]) * adv; }
+      }
+      if (e % 100 === 99) curve.push([e + 1, J(th)]);
+    }
+    return { curve: curve, th: th };
+  }
+  function avg(mode, aT, aW) { var rs = [1, 2, 3].map(function (sd) { return run(mode, aT, aW, sd); }); return { curve: rs[0].curve.map(function (p, i) { return [p[0], (rs[0].curve[i][1] + rs[1].curve[i][1] + rs[2].curve[i][1]) / 3]; }), th: rs[0].th }; }
+  var A = avg('rf', 0.05, 0), B = avg('base', 0.05, 0.05), C = avg('a2c', 0.1, 0.1);
+  var ch = S.chart($('#acC'), { h: 250, x: [0, 3000], y: [-0.4, 0.7], xt: [0, 1000, 2000, 3000], yt: [-0.4, 0, 0.4], xl: '回合', yl: '策略的平均状态值' });
+  ch({ curves: [{ pts: A.curve, c: 'dim', label: 'REINFORCE' }, { pts: B.curve, c: 'c2', label: 'REINFORCE + 基线' }, { pts: C.curve, c: 'c1', label: 'A2C（TD）' }], hl: [{ y: Jstar, c: 'ok', label: '最优 ' + S.f(Jstar, 2) }] });
+  var E2 = EPG, pi = C.th.map(function (r) { return S.softmax(r); }), v = RL.evalExact(E2, pi);
+  var gd = RL.grid($('#acG'), E2, { cell: 56, minCell: 44 }); gd({ v: v, pi: pi });
+  var last = function (r) { return r.curve[r.curve.length - 1][1]; };
+  $('#acW').innerHTML = '任务同第 9 篇（随机起点、到目标结束、表格 softmax 策略）。纵轴是按模型精确算出的当前随机策略在 24 个非目标格上的平均状态值，比回合长度更不受噪声影响。3000 回合后：REINFORCE ' + S.f(last(A), 3) + '，加基线 ' + S.f(last(B), 3) + '，A2C ' + S.f(last(C), 3) + '（最优 ' + S.f(Jstar, 3) + '）。A2C 每步更新、方差小，可以用更大的步长（这里 0.1，另两种 0.05——它们步长一大就不稳），所以学得最快；下图是 A2C 学到的策略。（本页模拟，示意）';
+})();
+S.notes($('#n-a2c'), {
+  c: [
+    ['基线不变性', '减去只依赖状态的 b(S)，策略梯度的期望不变。'],
+    ['基线的作用', '降低用单个样本估计梯度时的方差。'],
+    ['最优基线', '‖∇ln π‖² 加权的动作值平均，太复杂。'],
+    ['次优基线', 'v<sub>π</sub>(s)：动作值的普通平均。'],
+    ['优势函数', 'q − v：动作比平均好多少。'],
+    ['A2C', '用 TD 误差近似优势；只需一个值网络；策略随机，无需 ε-贪心。']
+  ],
+  p: [
+    ['不变的原因', 'Σ<sub>a</sub>π∇ln π·b = b∇Σ<sub>a</sub>π = b∇1 = 0'],
+    ['b*', '𝔼[‖∇ln π‖²q(s, A)] / 𝔼[‖∇ln π‖²]'],
+    ['TD 误差近似优势', 'q<sub>π</sub>(s, a) − v<sub>π</sub>(s) = 𝔼[R + γv<sub>π</sub>(S′) − v<sub>π</sub>(s)|s, a]'],
+    ['命名', 'MC 估计 → 带基线的 REINFORCE；TD 估计 → A2C'],
+    ['变体', 'A3C：异步的 A2C']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 重要性采样 ---------- */
+var isChart = S.chart($('#isC'), { h: 270, x: [1, 200], y: [-1, 1], xt: [1, 50, 100, 150, 200], yt: [-1, -0.5, 0, 0.5, 1], xl: '样本序号', yl: '估计值' });
+function is() {
+  var p1 = +$('#isP').value; $('#isPv').textContent = S.f(p1, 2);
+  var r = S.rng(42), a = 0, b = 0, A = [], B = [], X = [];
+  for (var i = 1; i <= 200; i++) {
+    var x = r() < p1 ? 1 : -1, w = 0.5 / (x > 0 ? p1 : 1 - p1);
+    a += x; b += w * x; A.push([i, a / i]); B.push([i, b / i]); X.push({ x: i, y: x * 0.95, r: 2, c: 'dim' });
+  }
+  isChart({ curves: [{ pts: A, c: 'c2', label: '普通平均 → 𝔼_{p1}[X]'.replace('_{p1}', '₁') }, { pts: B, c: 'c1', w: 3, label: '重要性加权平均 → 𝔼_{p0}[X]'.replace('_{p0}', '₀') }], dots: X, hl: [{ y: 0, c: 'ok' }, { y: 2 * p1 - 1, c: 'dim', label: '𝔼₁[X] = ' + S.f(2 * p1 - 1, 2) }] });
+  var wPlus = 0.5 / p1, wMinus = p1 < 1 ? 0.5 / (1 - p1) : Infinity;
+  $('#isW').innerHTML = p1 >= 1 ? '<b>前提被违反</b>：p<sub>1</sub>(−1) = 0，样本全是 +1，权重恒为 0.5/1，加权平均永远是 0.5，再多样本也估不出 0（原书举的反例）。p<sub>0</sub>(x) ≠ 0 的地方必须有 p<sub>1</sub>(x) ≠ 0。' : '+1 的权重 p<sub>0</sub>/p<sub>1</sub> = ' + S.f(wPlus, 3) + '（在 p<sub>1</sub> 下太常见，被压低），−1 的权重 = ' + S.f(wMinus, 3) + '（太少见，被放大）。普通平均收敛到 𝔼<sub>p<sub>1</sub></sub>[X] = ' + S.f(2 * p1 - 1, 2) + '，加权平均收敛到 0。p<sub>1</sub> 越偏，稀有样本的权重越大，估计也越抖。（灰点是样本）';
+}
+$('#isP').addEventListener('input', is); is();
+S.notes($('#n-off'), {
+  c: [
+    ['on-policy 的原因', '真实梯度中 A ∼ π(θ)，动作必须由当前策略产生。'],
+    ['重要性采样', '用一个分布的样本估计另一个分布下的期望。'],
+    ['重要性权重', 'p<sub>0</sub>(x)/p<sub>1</sub>(x)：在目标分布下常见、行为分布下少见的样本被放大。'],
+    ['支撑条件', 'p<sub>0</sub>(x) ≠ 0 处必须 p<sub>1</sub>(x) ≠ 0。'],
+    ['off-policy actor-critic', 'actor 和 critic 都乘上 π/β。'],
+    ['适用范围', '重要性采样对基于值、基于策略的算法都适用。']
+  ],
+  p: [
+    ['恒等式', '𝔼<sub>p<sub>0</sub></sub>[X] = 𝔼<sub>p<sub>1</sub></sub>[(p<sub>0</sub>/p<sub>1</sub>)X]'],
+    ['估计', '(1/n)Σ<sub>i</sub>(p<sub>0</sub>(x<sub>i</sub>)/p<sub>1</sub>(x<sub>i</sub>))x<sub>i</sub>'],
+    ['定理 10.1', '∇J = 𝔼<sub>S∼ρ, A∼β</sub>[(π/β)∇ln π·q<sub>π</sub>]，J = Σd<sub>β</sub>(s)v<sub>π</sub>(s)'],
+    ['图 10.2', 'p<sub>0</sub> = (0.5, 0.5)，p<sub>1</sub> = (0.8, 0.2)：普通平均 → 0.6，加权平均 → 0']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 确定性策略梯度 ---------- */
+var dpTh, dpW, dpRng, dpHist, dpN;
+function trueQ(a) { return 3 - (a - 2) * (a - 2); }
+var dpChart = S.chart($('#dpC'), { h: 280, x: [-3, 5], y: [-20, 5], xt: [-3, -1, 1, 3, 5], yt: [-20, -15, -10, -5, 0, 5], xl: '动作 a', yl: 'q(a)' });
+function dpReset() { dpTh = -2; dpW = [0, 0, 0]; dpRng = S.rng(8); dpHist = []; dpN = 0; dpShow(); }
+function dpStep() {
+  var sig = +$('#dpS').value;
+  for (var k = 0; k < 20; k++) {
+    var a = dpTh + sig * S.randn(dpRng), r = trueQ(a) + 0.5 * S.randn(dpRng), f = [1, a, a * a], qh = dpW[0] + dpW[1] * a + dpW[2] * a * a, d = r - qh;
+    var nrm = 1 + a * a + a * a * a * a;
+    for (var i = 0; i < 3; i++) dpW[i] += 0.5 * d * f[i] / nrm;
+    var grad = dpW[1] + 2 * dpW[2] * dpTh;
+    dpTh += 0.1 * S.clamp(grad, -5, 5);
+    dpHist.push(a); dpN++;
+  }
+  dpShow();
+}
+function dpShow() {
+  var sig = +$('#dpS').value; $('#dpSv').textContent = S.f(sig, 1);
+  var qh = function (a) { return dpW[0] + dpW[1] * a + dpW[2] * a * a; }, g = dpW[1] + 2 * dpW[2] * dpTh;
+  dpChart({ curves: [{ f: trueQ, c: 'dim', dash: 1, label: '真实 q(a)（未知）' }, { f: qh, c: 'c1', label: 'critic 拟合 q̂(a, w)' }, { f: function (a) { return qh(dpTh) + g * (a - dpTh); }, c: 'c2', w: 1.5, label: '在 a = μ 处的切线' }], dots: dpHist.slice(-40).map(function (a) { return { x: a, y: -19, r: 3, c: 'dim' }; }).concat([{ x: dpTh, y: qh(dpTh), c: 'c2', r: 6, label: 'μ = θ' }]) });
+  $('#dpT').innerHTML = '<tr><th>量</th><th>值</th></tr><tr><td>已走步数</td><td>' + dpN + '</td></tr><tr class="on"><td>θ（= μ，最优是 2）</td><td>' + S.f(dpTh, 3) + '</td></tr><tr><td>∂q̂/∂a 在 a = μ</td><td>' + S.f(g, 3) + '</td></tr><tr><td>critic w = [w₀, w₁, w₂]</td><td>' + dpW.map(function (x) { return S.f(x, 2); }).join(', ') + '</td></tr>';
+  $('#dpW').innerHTML = '底部灰点是行为策略 β = μ + 𝒩(0, σ²) 实际执行的动作。critic 只从这些样本学 q̂；actor 不需要知道 A 的分布，只用 critic 在 a = μ 处的斜率（橙色切线）更新 θ ← θ + 0.1·∂q̂/∂a（这里 μ(θ) = θ，∇<sub>θ</sub>μ = 1）。' + (sig === 0 ? '<b>σ = 0 时行为策略不探索</b>，所有样本落在同一个 a 上，critic 无法学出斜率（拟合退化），actor 几乎动不了——确定性策略需要靠行为策略来探索。' : '多点几次“走 20 步”，看 μ 怎么被斜率一路推到 2 附近。') + '（示意）';
+}
+$('#dpGo').addEventListener('click', dpStep);
+$('#dpRs').addEventListener('click', dpReset);
+$('#dpS').addEventListener('input', dpShow);
+dpReset();
+S.notes($('#n-dpg'), {
+  c: [
+    ['确定性策略', 'a = μ(s, θ)，直接输出动作。'],
+    ['为何研究它', '天然 off-policy；能处理连续动作空间。'],
+    ['确定性策略梯度', '∇<sub>θ</sub>μ 乘以 critic 在 a = μ(s) 处对动作的梯度。'],
+    ['天然 off-policy', '梯度里没有动作随机变量，任何行为策略都行。'],
+    ['critic 也 off-policy', 'ã<sub>t+1</sub> = μ(s<sub>t+1</sub>) 只用来算目标，不用于交互；无需重要性采样。'],
+    ['DDPG', '用神经网络表示 q(s, a, w) 的确定性 actor-critic。']
+  ],
+  p: [
+    ['定理 10.2', '∇J = 𝔼<sub>S∼η</sub>[∇<sub>θ</sub>μ(S)(∇<sub>a</sub>q<sub>μ</sub>(S, a))|<sub>a=μ(S)</sub>]'],
+    ['actor', 'θ ← θ + α<sub>θ</sub>∇<sub>θ</sub>μ(s<sub>t</sub>)(∇<sub>a</sub>q(s<sub>t</sub>, a, w))|<sub>a=μ(s<sub>t</sub>)</sub>'],
+    ['critic 的 TD 误差', 'δ = r + γq(s′, μ(s′), w) − q(s, a, w)'],
+    ['行为策略', '任何探索性策略；在 μ 上加噪声则变成 on-policy 实现']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 全书回顾 ---------- */
+S.sortGame($('#rvG'), {
+  bins: [{ k: 'dp', t: '有模型（动态规划）' }, { k: 'mc', t: '无模型 · 蒙特卡罗' }, { k: 'td', t: '无模型 · TD（表格或值函数近似）' }, { k: 'pg', t: '基于策略（策略梯度 / AC）' }],
+  items: [
+    { t: '值迭代', k: 'dp', why: '第 4 章，迭代求解 BOE，需要模型。' },
+    { t: '截断策略迭代', k: 'dp', why: '第 4 章，统一值迭代与策略迭代。' },
+    { t: 'MC ε-Greedy', k: 'mc', why: '第 5 章，用回报平均估计动作值。' },
+    { t: 'MC Exploring Starts', k: 'mc', why: '第 5 章，每次访问 + 逐回合改进。' },
+    { t: 'Sarsa', k: 'td', why: '第 7 章，求解动作值贝尔曼方程。' },
+    { t: 'Q-learning', k: 'td', why: '第 7 章，求解贝尔曼最优方程，off-policy。' },
+    { t: 'DQN', k: 'td', why: '第 8 章，神经网络 + 目标网络 + 经验回放。' },
+    { t: 'TD-Linear', k: 'td', why: '第 8 章，线性特征的 TD 状态值估计。' },
+    { t: 'REINFORCE', k: 'pg', why: '第 9 章，MC 估计 q 的策略梯度。' },
+    { t: 'A2C', k: 'pg', why: '第 10 章，TD 误差作优势的 actor-critic。' },
+    { t: '确定性 actor-critic', k: 'pg', why: '第 10 章，确定性策略梯度，天然 off-policy。' }
+  ]
+});
+S.notes($('#n-review'), {
+  c: [
+    ['基本工具', '第 1–3 章（概念、BE、BOE）和第 6 章（随机近似）。'],
+    ['有模型 → 无模型', '第 4 → 5 章：策略迭代的评估步换成采样平均。'],
+    ['表格 → 函数', '第 7 → 8 章：TD 加上值函数近似。'],
+    ['基于值 → 基于策略', '第 8 → 9 章：策略梯度；第 10 章合二为一。'],
+    ['本书未覆盖', 'SAC、TRPO、PPO、TD3、多智能体、有模型 RL、分布式 RL、与控制理论的关系。']
+  ],
+  p: [
+    ['依赖链', 'MC ← 策略迭代 ← 值迭代 ← BOE ← 贝尔曼方程'],
+    ['几乎所有算法', '都是“值更新 + 策略更新”的广义策略迭代'],
+    ['所有 TD 类算法', '都是求解 BE 或 BOE 的随机近似']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① actor / critic', '策略更新 / 值更新；用 TD 估计 q 的策略梯度就是 actor-critic。'],
+    ['② 基线与 A2C', '基线不改期望只降方差；常用 v<sub>π</sub>，得到优势 q − v，用 TD 误差近似。'],
+    ['③ off-policy', '随机策略靠重要性权重 π/β；确定性策略梯度不含动作随机变量，天然 off-policy。']
+  ],
+  p: [
+    ['全书结语', '原书希望这些基础能帮读者继续学 SAC、TRPO、PPO、TD3 等更先进的算法。'],
+    ['原书一句话', 'actor-critic 结构结合了策略更新与值更新，这也是所有强化学习算法的基本结构。']
+  ],
+  ph: '一句话'
+});

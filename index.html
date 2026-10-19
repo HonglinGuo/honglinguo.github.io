@@ -117,7 +117,7 @@
   </section>
 
   <section aria-labelledby="list-h">
-    <div class="list-head"><h2 id="list-h">文章</h2><span id="count">共 9 篇</span></div>
+    <div class="list-head"><h2 id="list-h">文章</h2><span id="count">共 11 篇</span></div>
     <div class="filter" role="group" aria-label="按类型筛选" id="filter">
       <button type="button" aria-pressed="true" data-k="all">全部</button>
       <button type="button" aria-pressed="false" data-k="learn">技术学习</button>
@@ -125,6 +125,28 @@
     </div>
     <ul class="posts">
       <!-- 新文章加在最上面；data-kind：learn 技术学习 / report 报告解读 -->
+      <li class="post" data-kind="learn">
+        <a href="posts/2026-10-19-rlmath/">
+          <time datetime="2026-10-19">2026.10.19</time>
+          <div>
+            <h3>强化学习的数学原理：十篇互动学习笔记</h3>
+            <p>赵世钰《强化学习的数学原理》按章拆成十篇：基本概念、贝尔曼方程与贝尔曼最优方程、值迭代与策略迭代、蒙特卡罗、随机近似、TD / Sarsa / Q-learning、值函数近似与 DQN、策略梯度、Actor-Critic。原书的网格世界搬进浏览器真算，复现原书图中数值；每节可手算对答案、可自测，总览页有算法演化地图、按问题反查、速记卡、易混辨析索引和公式速查。</p>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>强化学习</span><span>教材</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><path class="thin" d="M70 20H190M70 40H190M70 60H190M70 80H190M70 100H190M70 20V100M94 20V100M118 20V100M142 20V100M166 20V100M190 20V100"/><path class="thin" d="M82 30H106V54H130V78H154"/><circle cx="82" cy="30" r="7"/><circle cx="154" cy="78" r="9" class="hi"/><circle cx="34" cy="60" r="9"/><path class="thin" d="M43 60H70"/></svg>
+        </a>
+      </li>
+      <li class="post" data-kind="learn">
+        <a href="posts/2026-10-19-modernrl/">
+          <time datetime="2026-10-19">2026.10.19</time>
+          <div>
+            <h3>动手学现代强化学习：十二篇互动学习笔记</h3>
+            <p>开源课程 Hands-On Modern RL 按章重组为十二篇：CartPole 训练闭环、DQN 家族、策略梯度与 Actor-Critic、PPO 与 GAE、连续控制与基于模型的 RL、离线 / 模仿 / 探索、RLHF、DPO 家族、GRPO 与 RLVR、推理模型与过程奖励、Agentic RL、奖励黑客与评测。CartPole 的 DQN 和 PPO 在浏览器里真实训练，其余公式都能拖动实时计算；总览页有算法演化地图、按问题选算法、算法卡索引、速记卡、易混辨析与公式速查。</p>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>强化学习</span><span>LLM 后训练</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><path d="M30 96H190"/><rect x="88" y="78" width="44" height="18" rx="3"/><path d="M110 78L134 26"/><circle cx="134" cy="26" r="9" class="hi"/><path class="thin" d="M40 40Q70 20 100 40M150 60Q175 45 196 58"/></svg>
+        </a>
+      </li>
       <li class="post" data-kind="learn">
         <a href="posts/2026-10-18-nndl/">
           <time datetime="2026-10-18">2026.10.18</time>

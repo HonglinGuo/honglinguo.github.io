@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>离线 RL、模仿学习与探索：不能试错、没有奖励、奖励太远时怎么办</title>
+<meta name="description" content="动手学现代强化学习笔记（六）：离线 RL 的分布偏移与外推误差；BCQ、CQL、IQL 的三种保守方式，TD3+BC 与 AWAC；Decision Transformer 的 return-to-go；行为克隆的误差累积与 DAgger、逆强化学习与 GAIL；稀疏奖励下的内在动机（ICM、RND、NGU）；多智能体的非平稳性与 CTDE；分层强化学习。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='15' width='18' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 15L16 4' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='4' r='2.2' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+main sub, main sup { font-size: 15px; line-height: 0; }
+.part-head .meta { overflow-wrap: anywhere; }
+.qchip { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.qchip span { font-family: var(--f-num); font-size: 15px; border: 1px solid var(--rule); border-radius: 6px; padding: 2px 8px; background: var(--bg); }
+.chain { display: grid; grid-template-columns: repeat(30, minmax(0, 1fr)); gap: 2px; margin: 6px 0; }
+.chain i { display: block; height: 18px; border-radius: 2px; background: var(--dim-soft); }
+</style>
+</head>
+<body data-series="modernrl-series" data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>动手学现代强化学习 · 06</span><span>对应原教程第 10–12 章（docs/chapter12_offline_rl、chapter13_imitation_meta_rl、chapter14_exploration_marl_hierarchical）</span><span>约 45 分钟</span></p>
+  <h1>当“试错”这条路<em>走不通</em></h1>
+  <p class="lead">前五篇默认智能体可以随便和环境交互、环境会给奖励、奖励来得不算太晚。原教程第三部分把这三个前提逐一拿掉：不能交互，只有一份历史日志（离线 RL）；没有奖励，只有专家示范（模仿学习、逆强化学习）；奖励远在几十步之外，随机探索几乎碰不到（内在动机）。再加上多个智能体同时学习、长时程任务需要分层。这些不是冷门分支——LLM 后训练的 SFT 就是行为克隆，DPO 就是离线偏好优化。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">Hands-On Modern RL（动手学现代强化学习）</a>》（WalkingLabs 社区编写的开源课程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 1 日的仓库版本（docs/ 讲义与 code/ 实验代码））的学习笔记。原教程沿“CartPole → DQN → 策略梯度 → PPO → RLHF / DPO / GRPO → Agentic RL”一条线展开，这里按它的章节重新组织成十二篇，用自己的话重讲，并把关键实验搬进浏览器：CartPole 的 DQN 与 PPO 是用 JavaScript 真实训练的缩小版，其余公式演示的数值都在页面里实时计算。原教程数据（如训练日志 CSV、实验表格）标“原书数据”，为演示设的数值标“示意”，每节标出对应的原文路径。原教程自述“由 AI 协助生成、尚未全面审稿”，本笔记只采信能与原始论文对上的内容，存疑处单独注明。改编内容同样按 CC BY-NC-SA 4.0 分享、仅限非商业用途；数学推导部分可与同站<a href="../2026-10-19-rlmath/">《强化学习的数学原理》系列</a>对照着读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-19-modernrl/"><b>总览</b>算法地图</a>
+  <a href="../2026-10-19-modernrl-1/" data-part="1"><b>01</b>训练闭环</a>
+  <a href="../2026-10-19-modernrl-2/" data-part="2"><b>02</b>DQN 家族</a>
+  <a href="../2026-10-19-modernrl-3/" data-part="3"><b>03</b>策略梯度</a>
+  <a href="../2026-10-19-modernrl-4/" data-part="4"><b>04</b>PPO 与 GAE</a>
+  <a href="../2026-10-19-modernrl-5/" data-part="5"><b>05</b>连续控制</a>
+  <a href="../2026-10-19-modernrl-6/" aria-current="page" data-part="6"><b>06</b>离线与模仿</a>
+  <a href="../2026-10-19-modernrl-7/" data-part="7"><b>07</b>RLHF</a>
+  <a href="../2026-10-19-modernrl-8/" data-part="8"><b>08</b>DPO 家族</a>
+  <a href="../2026-10-19-modernrl-9/" data-part="9"><b>09</b>GRPO 与 RLVR</a>
+  <a href="../2026-10-19-modernrl-10/" data-part="10"><b>10</b>推理与搜索</a>
+  <a href="../2026-10-19-modernrl-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-19-modernrl-12/" data-part="12"><b>12</b>奖励黑客与评测</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#offline">离线 RL</a><a href="#seq">序列建模</a><a href="#imit">模仿学习</a><a href="#explore">探索与多智能体</a><a href="#back">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>离线 RL 为什么不能直接拿 DQN / SAC 在固定数据上跑？外推误差从哪来，CQL 和 IQL 各怎么对付？</li>
+    <li>行为克隆的误差为什么随任务长度平方增长？DAgger 和 GAIL 各补了什么？</li>
+    <li>稀疏奖励下的内在奖励要满足哪两个条件？多智能体的“非平稳”指什么，CTDE 怎样绕开？</li>
+  </ol>
+</div>
+
+<section class="part" id="offline">
+  <div class="part-head"><h2>离线 RL：只有一份日志，不许再试</h2><span class="meta">原文 docs/chapter12_offline_rl/offline-data-distribution-shift.md（10.1 节）</span></div>
+  <div class="sec-lede">
+    <p>自动驾驶不能拿真车撞着学，推荐系统不能随便推垃圾内容做实验，医疗更不能拿病人试错——只能用历史日志。离线 RL 的设定是：数据集 𝒟 由某个<strong>行为策略</strong> π<sub>β</sub> 采好，训练中完全冻结，不许再交互。这看起来只比 off-policy 少了一点，却彻底改变了游戏规则：在线训练时，就算 V(s′) 估高了，策略迟早会去那里试一下，用真实奖励把幻觉打破；离线时永远没有这个机会。</p>
+    <p>原文引用 BCQ（Fujimoto 2019）的诊断：Bellman 目标里的 max<sub>a′</sub>Q(s′,a′) 会挑中<strong>数据里从没出现过的动作</strong>，神经网络在这些分布外（OOD）点上的输出是任意外推，可能恰好很高；这个虚假高值进入目标，再经 Bellman 备份一轮轮累加——每轮 1 单位的 OOD 误差，γ = 0.99 时最终约放大到 1/(1 − γ) = 100 倍。连续动作里不可能靠多收数据覆盖“每一个 a”，所以必须<strong>保守</strong>：在“回报尽量高”和“别离数据太远”之间平衡。</p>
+    <p>三种经典保守方式：<strong>BCQ</strong> 约束动作——先用 VAE 学行为策略、只在采样出的候选动作附近（加小扰动）取 max；<strong>CQL</strong> 约束价值——在 Bellman 误差外加一项，把所有动作的 logsumexp Q 往下压、把数据内动作的 Q 往上拉，学到的 Q 是真实值的下界；<strong>IQL</strong> 干脆不查询 OOD 动作——用 expectile 回归在数据内动作上学一个偏乐观的 V（τ &gt; 0.5 时 V 靠近数据中较高的 Q，相当于“软 max”），备份用 V(s′) 而非 max Q，再用优势加权回归训练策略。另一条工程路线更朴素：<strong>TD3+BC</strong> 在 TD3 的 Actor 损失上加一项 λ‖μ(s) − a‖²，λ 按 Q 的量级自动缩放，一套超参跑通 D4RL——原文的提醒是“永远不要低估简单方法”。</p>
+    <p class="go">先看外推误差：Critic 只在数据覆盖的动作上见过样本，argmax 却在整个动作区间里找；再看 expectile 怎样把 V 从均值推向最大值。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">外推误差：真实 Q(a) = 1 − a²，数据只覆盖 a ∈ [−0.4, 0.4]，用多项式拟合（示意）</p>
+    <div class="ctrls"><div class="seg" id="exM"><button data-v="naive" aria-pressed="true">直接 argmax（朴素离线 Q 学习）</button><button data-v="bcq">只在数据支撑内选（BCQ 思路）</button><button data-v="cql">压低数据外的 Q（CQL 思路）</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>拟合多项式阶数 <output id="exD">5</output></span><input type="range" id="exDs" min="2" max="7" value="5"></label>
+      <label class="ctl"><span>换一份数据（随机种子） <output id="exR">1</output></span><input type="range" id="exRs" min="1" max="12" value="1"></label>
+    </div>
+    <div id="exC"></div>
+    <div class="read"><div class="warn"><div class="v" id="exA">–</div><div class="k">选中的动作</div></div><div><div class="v" id="exQ">–</div><div class="k">拟合的 Q（自以为）</div></div><div class="good"><div class="v" id="exT">–</div><div class="k">真实 Q（实际拿到）</div></div></div>
+    <p class="cap" id="exW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">IQL 的 expectile：同一状态下数据里 8 个动作的 Q 值（示意）</p>
+    <div class="qchip" id="epQ"></div>
+    <label class="ctl"><span>τ <output id="epT">0.70</output></span><input type="range" id="epTs" min="0.5" max="0.99" step="0.01" value="0.7"></label>
+    <div id="epC"></div>
+    <p class="cap" id="epW"></p>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>方法</th><th>保守在哪</th><th>是否评估 OOD 动作</th><th>原文评价</th></tr></thead>
+    <tbody>
+      <tr><td>BCQ</td><td>动作空间：VAE 采候选 + 小扰动</td><td>否</td><td>帮助理解“限制候选动作”，工程中用得较少，超参（扰动幅度）敏感</td></tr>
+      <tr><td>CQL</td><td>价值函数：压 logsumexp Q、拉数据内 Q</td><td>是（被压低）</td><td>需要显式控制保守程度时用；α 可用拉格朗日自动调</td></tr>
+      <tr><td>IQL</td><td>隐式：expectile 学 V + 优势加权回归</td><td>否，全程只用数据内动作</td><td>第一次做离线 RL 的推荐基线：超参少、鲁棒、实现简单</td></tr>
+      <tr><td>TD3+BC</td><td>策略损失加 BC 项，λ 按 Q 量级自适应</td><td>—</td><td>改几行代码，效果接近复杂算法</td></tr>
+      <tr><td>AWAC</td><td>优势加权的 BC，Q 走标准 Bellman</td><td>可能（目标里仍有策略动作）</td><td>离线预训练 → 在线微调过渡平滑</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">整理自原文 10.1 节的两张对比表。原文的结论：“避免对 OOD 动作取 max”比“怎么加 BC 正则”更根本。</p>
+  <div class="card2 algo" data-algo="CQL / IQL">
+    <h3>算法卡 · CQL 与 IQL</h3><p class="en">Conservative Q-Learning（Kumar 2020）/ Implicit Q-Learning（Kostrikov 2022）</p>
+    <dl>
+      <dt>解决什么问题</dt><dd>固定数据上做 Bellman 备份时，max 选中数据外动作，虚高的 Q 被一轮轮放大且无法纠正。</dd>
+      <dt>核心做法</dt><dd>CQL：给 Q 加保守正则，数据外压低、数据内拉高；IQL：用 expectile 在数据内学偏乐观的 V，备份用 V(s′)，策略做优势加权回归。</dd>
+      <dt>关键公式</dt><dd>CQL：α(𝔼<sub>s</sub>[log Σ<sub>a</sub> e<sup>Q(s,a)</sup>] − 𝔼<sub>𝒟</sub>[Q(s,a)]) + L<sub>Bellman</sub>；IQL：L<sub>2</sub><sup>τ</sup>(x) = |τ − 1(x &lt; 0)|x²，L<sub>π</sub> = −𝔼[e<sup>βA</sup> log π(a|s)]</dd>
+      <dt>何时用</dt><dd>只有历史日志、交互昂贵或危险：自动驾驶日志、推荐、医疗；离线预训练再在线微调。</dd>
+      <dt>代价与坑</dt><dd>上限受数据覆盖限制；太保守会退化成模仿数据；CQL 在稀疏数据上偶有不稳定。</dd>
+      <dt>相关</dt><dd>DPO 在固定偏好数据上优化，是 LLM 版的离线设定（第 8 篇）；第 1 篇的四种数据形态。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-offline"></div>
+</section>
+
+<section class="part" id="seq">
+  <div class="part-head"><h2>序列建模：把离线 RL 写成“条件生成”</h2><span class="meta">原文 docs/chapter12_offline_rl/sequence-modeling.md（10.2 节）</span></div>
+  <div class="sec-lede">
+    <p>Decision Transformer（Chen 2021）走了另一条路：不学 Q、不做 Bellman 更新，而是把轨迹改写成 GPT 能读的序列。关键是 <strong>return-to-go</strong> R̂<sub>t</sub> = Σ<sub>t′≥t</sub> r<sub>t′</sub>——“从现在到结束还要拿多少分”。序列按 (R̂₁, s₁, a₁, R̂₂, s₂, a₂, …) 交错排列，用因果注意力预测 a<sub>t</sub>，训练就是纯监督学习，GPT 的整套工具栈直接复用。推理时你给一个想要的目标回报，每拿到一步奖励就从里面扣掉。</p>
+    <p>原文也讲了它的局限：DT 本质上是“有条件的模仿”，很难拼接出数据里没有的、比任何一条轨迹都好的路线；目标回报给得太高（数据里从没达到过）时行为不可预测。同一章还介绍了 Trajectory Transformer（把轨迹离散化后用 beam search 规划）和 Diffuser（用扩散模型生成整条轨迹）。这条“把决策写成序列”的思路，后来自然地连到了上下文强化学习（Algorithm Distillation）和 LLM。</p>
+    <p class="go">输入一串奖励，看每个位置的 return-to-go。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Return-to-go 计算器</p>
+    <div class="btnrow"><input class="field" id="rtgI" value="2, 1, 3" aria-label="奖励序列，逗号分隔" style="max-width:260px"><button class="btn pri" type="button" id="rtgB">计算</button></div>
+    <div class="tape" id="rtgT"></div>
+  </div>
+  <div class="notes" id="n-seq"></div>
+</section>
+
+<section class="part" id="imit">
+  <div class="part-head"><h2>模仿学习：专家会做，但说不清为什么</h2><span class="meta">原文 docs/chapter13_imitation_meta_rl/bc-dagger.md、irl-gail.md、meta-rl.md</span></div>
+  <div class="sec-lede">
+    <p>很多任务有示范、没有奖励函数：司机开了几百万公里、工人熟练地装配、网上有海量好的问答——“好的驾驶 / 好的回答”写不成几行代码。最直接的办法是<strong>行为克隆</strong>（BC）：把 (状态, 专家动作) 当监督样本，最小化 −log π(a|s)。原文点明：LLM 的 SFT 就是行为克隆，只是“动作”换成了下一个 token。</p>
+    <p>BC 的致命问题是<strong>分布偏移</strong>：训练时只见过专家去的状态，部署时一步小错就把自己带进训练集里没有的状态，接下来更容易错。原文的数字：每步错误率只有 1%，100 步任务全程无错的概率只剩 0.37，1000 步是 0.00004；Ross 等人把 BC 的累计代价写成 O(T²ε)。<strong>DAgger</strong> 的补法是“让策略开、让专家标”：用当前策略（早期混合专家）跑出轨迹，请专家给这些<strong>策略真实访问的状态</strong>补标正确动作，聚合进数据集重训——代价降到 O(Tε)，但训练中要反复在线问专家。</p>
+    <p><strong>逆强化学习</strong>（IRL）更进一步：从示范反推奖励函数，再用 RL 优化——学的是“为什么这样做”，泛化潜力更强，但每一轮都要解一个 RL 问题。<strong>GAIL</strong> 把它改成对抗：判别器区分专家和策略的状态—动作对，判别结果当奖励，策略用 RL 去“骗过”判别器，等价于匹配专家的访问分布，不需要专家在线标注。原文把这条线接到 LLM：SFT ≈ BC，偏好对 + 奖励模型 ≈ IRL 的思路，RLHF 三阶段正是“先模仿、再推断偏好、再优化”。同一章的元强化学习（MAML、RL²、PEARL、Algorithm Distillation）则讨论“学会快速适应新任务”。</p>
+    <p class="go">先估一下 BC 的误差累积，再看错误率和任务长度怎样共同决定成功率。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">全程无错的概率 (1 − ε)^T</p>
+      <label class="ctl"><span>每步错误率 ε <output id="bcE">1.0%</output></span><input type="range" id="bcEs" min="0.001" max="0.05" step="0.001" value="0.01"></label>
+      <div id="bcC"></div>
+      <p class="cap" id="bcW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">先估再算</p><div id="bcG"></div></div>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th>方法</th><th>数据</th><th>是否缓解分布偏移</th><th>需要专家在线</th><th>学到什么</th><th>LLM 中的对应</th></tr></thead>
+    <tbody>
+      <tr><td>BC</td><td>离线专家 (s, a)</td><td>否</td><td>否</td><td>动作</td><td>SFT</td></tr>
+      <tr><td>DAgger</td><td>专家 + 策略访问的状态</td><td>是，O(T²ε) → O(Tε)</td><td>是（主要瓶颈）</td><td>动作</td><td>在线纠错式数据飞轮</td></tr>
+      <tr><td>IRL</td><td>专家轨迹</td><td>是</td><td>否</td><td>奖励函数</td><td>奖励模型（第 7 篇）</td></tr>
+      <tr><td>GAIL</td><td>专家 + 策略 rollout</td><td>是（隐式匹配分布）</td><td>否</td><td>判别器当奖励</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">按原文 bc-dagger.md 第 4 节与 meta-rl.md 第 4 节整理。</p>
+  <div class="confuse"><h4>易混辨析：BC、离线 RL 与 DPO</h4>
+    <p><b>BC vs 离线 RL</b>：两者都只用固定数据。BC 不看奖励，数据里的动作照单全收；离线 RL 用奖励在数据支撑范围内<b>改进</b>策略，所以要担心外推误差。数据质量参差时，离线 RL 能挑出更好的动作，BC 只会学到平均水平。</p>
+    <p><b>SFT vs DPO</b>：SFT 是行为克隆，只告诉模型“这样回答可以”；DPO 用偏好对告诉它“这个比那个好”，是离线偏好优化（第 8 篇）。</p>
+    <p><b>DAgger vs GAIL</b>：都想覆盖策略自己会去的状态。DAgger 让专家现场补标，GAIL 只用现成示范、靠判别器把“像不像专家”变成奖励。</p>
+  </div>
+  <div class="notes" id="n-imit"></div>
+</section>
+
+<section class="part" id="explore">
+  <div class="part-head"><h2>探索、多智能体与分层</h2><span class="meta">原文 docs/chapter14_exploration_marl_hierarchical/</span></div>
+  <div class="sec-lede">
+    <p>《蒙特祖玛的复仇》这类游戏，拿到第一个奖励要几十个精确动作。原文的估算是：靠 ε-贪心瞎撞到第一次奖励的概率约 10⁻¹⁸ 量级（宇宙年龄约 10¹⁷ 秒）——可以这样理解这个量级：6 个动作里每步都要选对、连续 23 步，(1/6)²³ ≈ 10⁻¹⁸。这就是 DQN 在这类困难探索游戏上长期零分的原因。办法是加<strong>内在奖励</strong>：r<sup>total</sup> = r<sup>ext</sup> + β·r<sup>int</sup>。它必须<strong>可计算</strong>（只用已观测数据）且<strong>可耗尽</strong>（访问多了要衰减到 0，否则智能体会守着一面“新奇的墙”刷分）。</p>
+    <p><strong>ICM</strong> 用预测误差当好奇心：在特征空间里预测下一状态，预测不准就奖励；逆向模型让特征只关注受动作影响的部分。它怕“噪声电视”——随机画面永远预测不准。<strong>RND</strong> 更简单：固定一个随机网络，训练另一个网络去拟合它的输出，拟合误差就是新颖度——见得多的状态误差小，新状态误差大，而且与动作无关、对噪声电视更鲁棒，首次让智能体在蒙特祖玛上突破零分。<strong>NGU / Agent57</strong> 再区分“这一回合第一次见”和“整个训练第一次见”两个时间尺度，Agent57 成为首个在全部 57 个 Atari 游戏上超过人类基线的算法。</p>
+    <p><strong>多智能体</strong>的核心困难是<strong>非平稳</strong>：P(s′|s, a<sub>i</sub>) 变成 P(s′|s, a<sub>i</sub>, a<sub>−i</sub>)，队友也在学，同样的状态和动作结果却变了；把所有智能体合成一个“超级智能体”又会让联合动作数指数爆炸（10 个智能体各 6 个动作就是 6¹⁰ ≈ 6000 万）。工业界的折中是 <strong>CTDE</strong>：训练时用能看到全局状态和所有动作的集中式 Critic，执行时每个 Actor 只看自己的局部观测（MADDPG、MAPPO；价值分解方法如 VDN / QMIX）。<strong>分层 RL</strong> 让高层决定“做什么”、低层决定“怎么做”（Options、FeUdal、HIRO），缩短长程任务的决策跨度；原文最后把生成式世界模型（Dreamer 到 Genie）当作训练环境来展望。</p>
+    <p class="go">一维走廊长 30 格、奖励只在最右端：比较随机游走与“偏向少去过的格子”的计数探索，看谁先碰到奖励。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">稀疏奖励下的探索：随机游走 vs 计数型内在奖励（各 200 次模拟，示意）</p>
+    <div class="btnrow"><button class="btn pri" type="button" id="exGo">再模拟一次</button></div>
+    <div id="exB"></div>
+    <p class="lab-s" style="margin-top:10px">某一次模拟里两种策略各自访问过的格子（颜色越深去得越多，最右边是奖励）：</p>
+    <p class="note" style="margin:4px 0 0">随机游走</p><div class="chain" id="exR1"></div>
+    <p class="note" style="margin:4px 0 0">计数探索（偏向访问次数少的一侧，r_int = 1/√N(s)）</p><div class="chain" id="exR2"></div>
+    <p class="cap" id="exW2"></p>
+  </div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <thead><tr><th></th><th>ICM</th><th>RND</th></tr></thead>
+    <tbody>
+      <tr><td>新颖度来自</td><td>前向模型的预测误差</td><td>拟合固定随机网络的误差</td></tr>
+      <tr><td>依赖动作</td><td>是</td><td>否</td></tr>
+      <tr><td>要训练的模块</td><td>编码器 + 逆向 + 前向模型</td><td>只有预测器</td></tr>
+      <tr><td>噪声电视鲁棒性</td><td>弱</td><td>强（误差有上界，会被拟合掉）</td></tr>
+      <tr><td>代表应用</td><td>视觉探索（Mario、DMLab）</td><td>Atari 困难探索（蒙特祖玛）</td></tr>
+    </tbody>
+  </table></div>
+  <p class="book-ref">原文 intrinsic-motivation-exploration.md 3.1 节对比表。</p>
+  <div class="notes" id="n-explore"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="fxc">
+    <h3>本篇公式卡</h3>
+    <div class="fx">离线目标：max_θ 𝔼_{s~𝒟}[Q(s, π_θ(s))]  s.t.  D(π_θ ‖ π_β) ≤ ε；OOD 误差约放大 1/(1 − γ) 倍</div>
+    <div class="fx">CQL：α(𝔼_s[log Σ_a exp Q(s,a)] − 𝔼_{(s,a)~𝒟}[Q(s,a)]) + L_Bellman</div>
+    <div class="fx">IQL：L_V = 𝔼[|τ − 1(x&lt;0)|·x²]，x = Q(s,a) − V(s)；L_π = −𝔼[exp(βA) log π(a|s)]</div>
+    <div class="fx">TD3+BC：L = −𝔼[Q(s, μ(s))] + λ𝔼[(μ(s) − a)²]，λ = α / mean|Q|，α = 2.5</div>
+    <div class="fx">Return-to-go：R̂_t = Σ_{t′≥t} r_{t′}；DT 输入序列 (R̂₁, s₁, a₁, R̂₂, …)</div>
+    <div class="fx">BC：L = −𝔼[log π(a|s)]；全程无错 (1 − ε)^T；累计代价 BC O(T²ε)，DAgger O(Tε)</div>
+    <div class="fx">内在奖励：r_total = r_ext + β r_int；RND：r_int(s) = ‖f_ψ(s) − f̂(s)‖²</div>
+  </div>
+  <div class="ask3" style="margin-top:22px">
+    <details><summary>1. 为什么不能直接在固定数据上跑 DQN / SAC？CQL 和 IQL 怎样对付外推误差？</summary><p class="ans">Bellman 目标的 max 会挑中数据里没出现过的动作，网络在那里的输出是任意外推、可能虚高，而离线时永远没机会去试一下纠正；误差经备份累加，约放大 1/(1 − γ) 倍。CQL 加正则压低所有动作（尤其数据外）的 Q、拉高数据内的 Q，得到保守下界；IQL 用 expectile 回归只在数据内动作上学偏乐观的 V，备份用 V(s′)，从头到尾不查询数据外动作。</p></details>
+    <details><summary>2. BC 的误差为什么随任务长度平方增长？DAgger 和 GAIL 各补了什么？</summary><p class="ans">训练只见过专家状态，一步犯错就进入陌生状态，之后错误率更高、错误相互叠加，累计代价 O(T²ε)。DAgger 让当前策略去跑、请专家给策略真实访问的状态补标，覆盖策略自己的分布，降到 O(Tε)，代价是专家要在线标注；GAIL 用判别器把“像不像专家”变成奖励、用 RL 匹配专家的访问分布，不需要在线专家。</p></details>
+    <details><summary>3. 内在奖励要满足哪两个条件？非平稳指什么，CTDE 怎样绕开？</summary><p class="ans">可计算（只依赖已观测数据）和可耗尽（访问多了衰减到 0，防止守着一处刷分）。非平稳：其他智能体也在学，从单个智能体看，同一状态同一动作的结果分布一直在变。CTDE 训练时用看得到全局状态和联合动作的集中式 Critic，把队友行为纳入评估；执行时每个 Actor 只用局部观测，无需通信。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-19-modernrl-5/"><small>上一篇</small><span>05 · 连续控制与基于模型的 RL</span></a><a class="nx" href="../2026-10-19-modernrl-7/"><small>下一篇</small><span>07 · RLHF：SFT、奖励模型与 PPO</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/walkinglabs/hands-on-modern-rl" rel="noopener">walkinglabs/hands-on-modern-rl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 外推误差 ---------- */
+var exMode = 'naive';
+function lsq(xs, ys, d) {
+  var n = d + 1, A = [], b = [], i, j, k;
+  for (i = 0; i < n; i++) { A.push(new Array(n).fill(0)); b.push(0); }
+  xs.forEach(function (x, t) { var p = []; for (i = 0; i < n; i++) p.push(Math.pow(x, i)); for (i = 0; i < n; i++) { b[i] += p[i] * ys[t]; for (j = 0; j < n; j++) A[i][j] += p[i] * p[j]; } });
+  for (i = 0; i < n; i++) A[i][i] += 1e-9;
+  for (i = 0; i < n; i++) { var piv = i; for (k = i + 1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[piv][i])) piv = k; var tmp = A[i]; A[i] = A[piv]; A[piv] = tmp; var tb = b[i]; b[i] = b[piv]; b[piv] = tb;
+    for (k = i + 1; k < n; k++) { var f = A[k][i] / A[i][i]; for (j = i; j < n; j++) A[k][j] -= f * A[i][j]; b[k] -= f * b[i]; } }
+  var w = new Array(n).fill(0); for (i = n - 1; i >= 0; i--) { var s = b[i]; for (j = i + 1; j < n; j++) s -= A[i][j] * w[j]; w[i] = s / A[i][i]; }
+  return function (x) { var s = 0; for (var i = 0; i < n; i++) s += w[i] * Math.pow(x, i); return s; };
+}
+var exChart = S.chart($('#exC'), { h: 260, x: [-1, 1], y: [-1.5, 2.5], xt: [-1, -0.4, 0, 0.4, 1], yt: [-1, 0, 1, 2], xl: '动作 a', yl: 'Q(s, a)' });
+function exU() {
+  var d = +$('#exDs').value, sd = +$('#exRs').value; $('#exD').textContent = d; $('#exR').textContent = sd;
+  var r = S.rng(sd * 97 + 5), xs = [], ys = [];
+  for (var i = 0; i < 24; i++) { var a = -0.4 + 0.8 * r(); xs.push(a); ys.push(1 - a * a + 0.12 * S.randn(r)); }
+  var Qf = lsq(xs, ys, d), Qc = function (a) { var out = Math.max(0, Math.abs(a) - 0.4); return Qf(a) - 4 * out; };
+  var Quse = exMode === 'cql' ? Qc : Qf, lo = exMode === 'bcq' ? -0.4 : -1, hi = exMode === 'bcq' ? 0.4 : 1, best = lo, bv = -1e9;
+  for (var k = 0; k <= 400; k++) { var aa = lo + (hi - lo) * k / 400, q = Quse(aa); if (q > bv) { bv = q; best = aa; } }
+  var curves = [{ f: function (a) { return 1 - a * a; }, c: 'ok', dash: 1, label: '真实 Q' }, { f: Qf, c: 'c1', label: '拟合的 Q' }];
+  if (exMode === 'cql') curves.push({ f: Qc, c: 'c3', label: '保守 Q（数据外被压低）' });
+  exChart({ curves: curves, area: [], dots: xs.map(function (x, i) { return { x: x, y: ys[i], r: 3, c: 'dim' }; }).concat([{ x: best, y: S.clamp(Quse(best), -1.5, 2.5), c: Math.abs(best) > 0.4 ? 'c2' : 'ok', r: 7, label: 'argmax' }]), vl: [{ x: -0.4, c: 'dim' }, { x: 0.4, c: 'dim', label: '数据边界' }] });
+  $('#exA').textContent = S.f(best, 2); $('#exQ').textContent = S.f(Quse(best), 2); $('#exT').textContent = S.f(1 - best * best, 2);
+  var ood = Math.abs(best) > 0.41;
+  $('#exW').innerHTML = ood ? '拟合曲线在数据外的形状完全由多项式自己“发挥”，argmax 选中了 a = ' + S.f(best, 2) + '：自以为能拿 ' + S.f(Quse(best), 2) + '，实际只有 ' + S.f(1 - best * best, 2) + '。在线时智能体去试一次就知道了；离线时这个虚高值会进入 Bellman 目标，被一轮轮放大。换几份数据、改阶数，看外推有多随意。' :
+    (exMode === 'naive' ? '这份数据下拟合恰好在数据外向下弯，argmax 没跑出去——但这只是运气，换几个种子或提高阶数试试。' : exMode === 'bcq' ? '只在数据覆盖的动作里挑：放弃了数据外“可能更好”的动作，换来不被外推误差骗。真实最优 a = 0 就在数据内，所以几乎没有损失。' : '数据外的 Q 被系统性压低，argmax 回到数据支撑内。CQL 的代价是可能把数据外真正好的动作也压掉——保守的含义就是如此。') + '（多项式拟合模拟函数逼近器的外推，示意。）';
+}
+S.seg($('#exM'), function (v) { exMode = v; exU(); });
+['exDs', 'exRs'].forEach(function (id) { $('#' + id).addEventListener('input', exU); }); exU();
+
+var EQ = [0.2, 0.5, 0.6, 0.8, 0.9, 1.1, 1.6, 2.4];
+$('#epQ').innerHTML = EQ.map(function (q) { return '<span>' + q + '</span>'; }).join('');
+var epChart = S.chart($('#epC'), { h: 120, x: [0, 2.6], y: [0, 1], xt: [0, 0.5, 1, 1.5, 2, 2.5], yt: [], xl: 'Q 值', ml: 14 });
+function ep() {
+  var tau = +$('#epTs').value; $('#epT').textContent = S.f(tau, 2);
+  var v = 1; for (var it = 0; it < 200; it++) { var num = 0, den = 0; EQ.forEach(function (q) { var w = q >= v ? tau : 1 - tau; num += w * q; den += w; }); v = num / den; }
+  var mean = EQ.reduce(function (a, b) { return a + b; }, 0) / EQ.length;
+  epChart({ dots: EQ.map(function (q) { return { x: q, y: 0.35, c: 'dim', r: 5 }; }).concat([{ x: v, y: 0.7, c: 'c1', r: 7, label: 'V = ' + S.f(v, 2) }]), vl: [{ x: mean, c: 'dim', label: '均值' }, { x: Math.max.apply(null, EQ), c: 'ok', label: '最大' }] });
+  $('#epW').innerHTML = 'τ = 0.5 时 expectile 就是均值 ' + S.f(mean, 2) + '；τ 越接近 1，正残差（Q &gt; V）的权重越大，V 越往数据里较好的那几个动作靠，τ → 1 时逼近最大值 2.4。IQL 就是用这个“只在数据内动作上计算的软 max”替代 Bellman 目标里的 max<sub>a′</sub>Q——从头到尾不需要查询数据外的动作。原文的例子取 τ = 0.7。';
+}
+$('#epTs').addEventListener('input', ep); ep();
+S.notes($('#n-offline'), {
+  c: [
+    ['离线 RL', '数据由行为策略采好、训练中冻结，不许再交互。'],
+    ['分布偏移', '新策略选动作的分布与行为策略不同。'],
+    ['外推误差', 'max 选中数据外动作，网络在那里的输出任意且可能虚高。'],
+    ['保守主义', '对数据外动作宁可低估，把策略留在数据支撑内。'],
+    ['expectile', '非对称平方损失的“分位数”；τ > 0.5 偏向较大的值。'],
+    ['优势加权回归', '按 exp(βA) 加权模仿数据中的动作：好动作多学，差动作少学。']
+  ],
+  p: [
+    ['放大倍数', 'γ = 0.99 时每轮 OOD 误差约累积成 100 倍'],
+    ['数据堆不满', '连续动作不可能覆盖每个 a，需要保守 + 覆盖双管齐下'],
+    ['原文选型', '先用 IQL 建基线；要控制保守程度用 CQL；TD3+BC 是强基线'],
+    ['CQL 的 α', '拉格朗日自动调，目标 gap ξ ≈ 5'],
+    ['AWAC 的亮点', '离线预训练 → 在线微调过渡平滑']
+  ]
+});
+
+/* ---------- RTG ---------- */
+function rtg() {
+  var rs = $('#rtgI').value.split(/[,，\s]+/).filter(function (x) { return x !== ''; }).map(Number).filter(function (x) { return isFinite(x); }).slice(0, 20);
+  if (!rs.length) { $('#rtgT').textContent = '请输入用逗号分隔的数字。'; return; }
+  var out = [], acc = 0; for (var i = rs.length - 1; i >= 0; i--) { acc += rs[i]; out.unshift(acc); }
+  $('#rtgT').innerHTML = rs.map(function (r, i) { return '第 ' + (i + 1) + ' 步：R̂ = <span class="fresh">' + S.f(out[i], 2) + '</span>   （拿到奖励 ' + r + ' 之后剩 ' + S.f(out[i] - r, 2) + '）'; }).join('\n') + '\n\n输入 Transformer 的序列：' + out.map(function (v, i) { return '(R̂=' + S.f(v, 1) + ', s' + (i + 1) + ', a' + (i + 1) + ')'; }).join(' ');
+}
+$('#rtgB').addEventListener('click', rtg); $('#rtgI').addEventListener('keydown', function (e) { if (e.key === 'Enter') rtg(); }); rtg();
+S.notes($('#n-seq'), {
+  c: [
+    ['Decision Transformer', '把 (RTG, 状态, 动作) 序列交给 GPT 式模型，监督地预测动作。'],
+    ['Return-to-go', '从当前时刻到结束还剩多少回报；每拿到奖励就扣掉。'],
+    ['条件模仿', '给定“想要的回报”，模仿数据中达到这个回报时的动作。']
+  ],
+  p: [
+    ['不做 Bellman', '纯监督学习，复用 Transformer 工具栈'],
+    ['推理用法', '设定目标回报 → 每步扣除已得奖励'],
+    ['局限', '难以拼接出比数据更好的轨迹；目标设太高行为不可预测'],
+    ['同族', 'Trajectory Transformer（beam search）、Diffuser（扩散生成轨迹）']
+  ]
+});
+
+/* ---------- BC 误差 ---------- */
+var bcChart = S.chart($('#bcC'), { h: 220, x: [0, 1000], y: [0, 1], xt: [0, 250, 500, 750, 1000], yt: [0, 0.25, 0.5, 0.75, 1], xl: '任务步数 T', yl: '全程无错概率' });
+function bc() {
+  var e = +$('#bcEs').value; $('#bcE').textContent = S.pct(e, 1);
+  bcChart({ curves: [{ f: function (T) { return Math.pow(1 - e, T); }, c: 'c1', w: 3 }], dots: [10, 100, 1000].map(function (T) { return { x: T, y: Math.pow(1 - e, T), c: 'c2', r: 5, label: 'T=' + T + '：' + S.f(Math.pow(1 - e, T), 3) }; }) });
+  $('#bcW').innerHTML = '每步错误率 ' + S.pct(e, 1) + '：10 步 ' + S.f(Math.pow(1 - e, 10), 2) + '，100 步 ' + S.f(Math.pow(1 - e, 100), 2) + '，1000 步 ' + S.sci(Math.pow(1 - e, 1000), 1) + '。这还是乐观估计：它假设偏离专家轨迹后错误率不变，而实际上进入陌生状态后错误率会急剧上升——这就是 O(T²ε) 里多出来的那个 T。';
+}
+$('#bcEs').addEventListener('input', bc); bc();
+S.guess($('#bcG'), { q: '行为克隆每步错误率 1%，一个 100 步的任务，全程不出错的概率是百分之多少？', unit: '%', ans: Math.pow(0.99, 100) * 100, fmt: function (x) { return S.f(x, 0); }, why: '0.99¹⁰⁰ ≈ 0.366。三局里两局会在中途至少犯一次错——“99% 的时候和专家一致”听起来很好，放到长任务上却远远不够。' });
+S.notes($('#n-imit'), {
+  c: [
+    ['行为克隆 BC', '把示范当监督数据，最大化专家动作的对数概率。'],
+    ['复合误差', '一步错 → 进陌生状态 → 更容易错，误差叠加。'],
+    ['DAgger', '策略跑、专家标：补上策略真实会访问的状态。'],
+    ['逆强化学习', '从示范反推奖励，再用 RL 优化。'],
+    ['GAIL', '判别器区分专家与策略，判别结果当奖励。'],
+    ['元强化学习', '学会快速适应新任务（MAML、RL²、PEARL）。']
+  ],
+  p: [
+    ['数字', 'ε = 1%：100 步 0.37，1000 步 0.00004'],
+    ['累计代价', 'BC O(T²ε) → DAgger O(Tε)'],
+    ['DAgger 的 β', '早期多用专家驾驶保安全，后期交给策略暴露错误'],
+    ['LLM 对应', 'SFT = BC；奖励模型 ≈ IRL 思路；RLHF = 模仿 → 推断偏好 → 优化']
+  ]
+});
+
+/* ---------- 探索 ---------- */
+function walk(mode, r, N, maxT) {
+  var pos = 0, cnt = new Array(N).fill(0); cnt[0] = 1;
+  for (var t = 1; t <= maxT; t++) {
+    var a;
+    if (mode === 'rand') a = r() < 0.5 ? -1 : 1;
+    else { var L = pos > 0 ? 1 / Math.sqrt(cnt[pos - 1] + 1) : -1, R = 1 / Math.sqrt(cnt[pos + 1] + 1); a = R > L + 1e-9 ? 1 : L > R + 1e-9 ? -1 : (r() < 0.5 ? -1 : 1); if (r() < 0.1) a = r() < 0.5 ? -1 : 1; }
+    pos = S.clamp(pos + a, 0, N - 1); cnt[pos]++;
+    if (pos === N - 1) return { t: t, cnt: cnt };
+  }
+  return { t: maxT, cnt: cnt, fail: true };
+}
+var exSeed = 0;
+function exS() {
+  exSeed++; var N = 30, res = { rand: [], cnt: [] }, r = S.rng(100 + exSeed * 13), one = {};
+  ['rand', 'cnt'].forEach(function (m) { for (var k = 0; k < 200; k++) { var o = walk(m, r, N, 5000); res[m].push(o.t); if (k === 0) one[m] = o; } });
+  function med(a) { var b = a.slice().sort(function (x, y) { return x - y; }); return b[100]; }
+  var mr = med(res.rand), mc = med(res.cnt), fail = res.rand.filter(function (t) { return t >= 5000; }).length;
+  S.magbars($('#exB'), [{ label: '随机游走', v: mr, text: '中位数 ' + mr + ' 步', cls: 'dim' }, { label: '计数探索', v: mc, text: '中位数 ' + mc + ' 步', cls: 'ok' }]);
+  [['rand', '#exR1'], ['cnt', '#exR2']].forEach(function (z) {
+    var c = one[z[0]].cnt, mx = Math.max.apply(null, c);
+    $(z[1]).innerHTML = c.map(function (v, i) { var a = v ? 0.15 + 0.85 * Math.sqrt(v / mx) : 0; return '<i style="background:' + (i === N - 1 ? 'var(--ok)' : v ? 'color-mix(in srgb, var(--s1) ' + Math.round(a * 100) + '%, var(--dim-soft))' : 'var(--dim-soft)') + '"></i>'; }).join('');
+  });
+  $('#exW2').innerHTML = '随机游走从最左端走到第 30 格，期望步数随长度平方增长（约 N² ≈ 900 步量级），反复在走过的地方打转；偏向“去得少”的一侧，几乎是一路向右扫过去，步数约等于长度。' + (fail ? '（有 ' + fail + ' 次随机游走 5000 步都没到。）' : '') + ' 内在奖励 1/√N(s) 满足原文的两个条件：只用已观测的计数（可计算），访问多了自动变小（可耗尽）。高维状态里没法逐格计数，ICM、RND 就是“用网络误差近似计数”。（示意。）';
+}
+$('#exGo').addEventListener('click', exS); exS();
+S.notes($('#n-explore'), {
+  c: [
+    ['困难探索', '第一个奖励在几十个精确动作之后，随机探索几乎碰不到。'],
+    ['内在奖励', '给新颖 / 难预测的状态额外奖励：r_ext + β r_int。'],
+    ['ICM', '前向模型预测误差当好奇心；怕噪声电视。'],
+    ['RND', '拟合固定随机网络的误差当新颖度；不依赖动作。'],
+    ['非平稳', '其他智能体也在学，同一 (s, a) 的结果分布在变。'],
+    ['CTDE', '集中训练（全局 Critic）、分散执行（局部 Actor）。'],
+    ['分层 RL', '高层定子目标，低层执行；缩短决策跨度。']
+  ],
+  p: [
+    ['原文量级', '瞎撞到第一个奖励 ~10⁻¹⁸（≈ 6 选 1 连续 23 次）'],
+    ['两个条件', '可计算、可耗尽'],
+    ['Agent57', '首个在 57 个 Atari 上全面超过人类基线（NGU 双时间尺度 + 自适应探索）'],
+    ['联合动作爆炸', '10 个智能体 × 6 动作 = 6¹⁰ ≈ 6000 万'],
+    ['MARL 代表', 'MADDPG、MAPPO（CTDE）；VDN / QMIX（价值分解）']
+  ]
+});
+})();
+</script>
+</body>
+</html>
