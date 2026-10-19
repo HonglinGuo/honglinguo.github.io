@@ -1,0 +1,499 @@
+---
+title: 大语言模型与智能体：预训练、规模法则、对齐、推理增强与 Agent
+desc: 神经网络与深度学习（第二版）学习笔记（十三）：自回归语言模型、困惑度、教师强制与暴露偏差；贪心、束搜索、Top-k、Top-p 与温度；三种预训练范式、BPE 分词、Kaplan 与 Chinchilla 规模法则；涌现能力、上下文学习、思维链与自一致性；SFT、LoRA、Bradley-Terry、奖励模型、RLHF、DPO 推导与 GRPO；过程奖励、测试时扩展；智能体的感知、规划、行动、记忆，ReAct、反思、工具、RAG、多智能体与流程治理。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 13</span><span>对应原书第 13 章（第 362–389 页）</span><span>约 60 分钟</span>
+h1: 从续写文本，<em>到在环境里行动</em>
+lead: 把第 8 章的 Transformer 放到海量文本上训练、不断加大规模，会发生什么？原书第 13 章沿两条线展开：一条是模型自身能力的演进——预训练 → 对齐 → 推理增强；另一条是从“生成文本”到“在环境里行动”——感知 → 规划 → 行动 → 反思。本站已有更细的《大语言模型》《Agent》两个系列，这一篇按原书的脉络梳理，重点放在几处推导和几个可以动手算的数字上。
+nav: lm|语言模型与解码;pre|预训练与规模;emg|涌现与推理;align|SFT 与对齐;reason|推理增强;agent|智能体;back|三个问题
+---
+<style>
+.bpe { font: 15px/1.6 var(--f-num); }
+.bpe .w { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0; }
+.bpe .w > span:first-child { min-width: 110px; color: var(--ink-3); font-family: var(--f-sans); }
+.bpe .tk { padding: 1px 7px; border: 1px solid var(--hair); border-radius: 4px; background: var(--panel); }
+.bpe .tk.new { border-color: var(--s2); background: var(--s2-soft); }
+.tree { width: 100%; max-width: 520px; height: auto; display: block; }
+.tree text { font-size: 15px; fill: var(--ink); }
+.tree path { fill: none; stroke: var(--ink-3); stroke-width: 1.5; }
+.tree path.g { stroke: var(--s1); stroke-width: 4; }
+.tree path.b { stroke: var(--s2); stroke-width: 4; }
+.trace { font-size: 15px; line-height: 1.7; }
+.trace p { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--hair); }
+.trace p.t { border-color: var(--s1); }
+.trace p.a { border-color: var(--s2); }
+.trace p.o { border-color: var(--ok); background: var(--panel); }
+.trace p.off { opacity: .25; }
+.gr8 { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.gr8 button { min-width: 64px; }
+.gr8 button[aria-pressed="true"] { background: var(--ok-soft); border-color: var(--ok); }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>大语言模型是怎么训练出来的？规模法则告诉我们参数和数据该怎么配？</li>
+  <li>预训练之后，SFT、RLHF、DPO、GRPO 各解决什么问题？DPO 是怎么把强化学习“消掉”的？</li>
+  <li>从语言模型到智能体，多了哪些组件？为什么智能体的评估要看整个流程？</li>
+</ol></div>
+
+<section class="part" id="lm">
+  <div class="part-head"><h2>语言模型回顾与解码策略</h2><span class="meta">原书 13.1 节 · 第 362–365 页</span></div>
+  <div class="sec-lede">
+    <p>语言模型对文本序列的概率建模。由链式法则 p(x₁, …, x<sub>T</sub>) = Π p(x<sub>t</sub>|x<sub>&lt;t</sub>) 精确分解，从左到右逐个预测，叫<strong>自回归语言模型</strong>。评价指标<strong>困惑度</strong> PPL = exp(−(1/T)Σ log p(x<sub>t</sub>|x<sub>&lt;t</sub>))，可以理解为模型在每个位置上平均“在几个词之间犹豫”。参数化经历了 N 元模型 → 前馈网络 → RNN → Transformer 的演进；生成式大模型多用<strong>仅解码器</strong> Transformer 加因果掩码。</p>
+    <p>训练最小化负对数似然。朴素做法要对每个位置各前向一次，但<strong>教师强制</strong>（用真实前缀做输入）配合<strong>因果掩码</strong>，一次前向就能并行算出所有位置的损失。代价是<strong>暴露偏差</strong>：训练时看到的前缀是真实数据，推断时是模型自己生成的，一旦出错后面就建立在错误前缀上。对大规模预训练模型这个问题相对温和，后续的指令微调、偏好对齐也有缓解作用。</p>
+    <p>推断时从 p(x<sub>t</sub>|x<sub>&lt;t</sub>) 里怎么选，由<strong>解码策略</strong>决定。确定性解码适合翻译、代码：<strong>贪心</strong>每步取最大，只顾单步最优；<strong>束搜索</strong>每步保留累计对数概率最高的 k 个候选（k = 1 就是贪心），但在开放式生成上容易单调、重复。随机采样适合对话、创作：<strong>Top-k</strong> 只在前 k 个里采，但固定 k 适应不了分布形状；<strong>Top-p（核采样）</strong>取累积概率刚达到 p 的最小集合，分布尖时集合小、平时集合大，典型 p ∈ [0.9, 0.95]；<strong>温度</strong> τ 调 softmax 的锐利程度。常见组合是温度 + Top-p。（温度和 Top-k 的交互演示见本系列第 8 篇和本站<a href="../2026-10-15-llm-5/">《Transformer 拆开看》</a>。）</p>
+    <p class="go">左边：一棵两步的小解码树（概率为示意），看贪心为什么会错过更好的序列；右边：同一个 p 在尖锐和平坦两种分布上保留的候选数。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">贪心 vs 束搜索（k = 2）</p>
+      <svg class="tree" id="bmG" viewBox="0 0 520 262" role="img" aria-label="解码树"></svg>
+      <div id="bmS"></div>
+      <p class="cap" id="bmW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">Top-k 与 Top-p 保留哪些词元</p>
+      <div class="seg" id="tpS"><button data-v="sharp" aria-pressed="true">尖锐分布</button><button data-v="flat">平坦分布</button></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>Top-p 的 p <output id="tpP">0.90</output></span><input type="range" id="tpPs" min="0.5" max="0.99" step="0.01" value="0.9"></label>
+        <label class="ctl"><span>Top-k 的 k <output id="tpK">5</output></span><input type="range" id="tpKs" min="1" max="10" value="5"></label>
+      </div>
+      <div id="tpB"></div>
+      <p class="cap" id="tpW"></p>
+    </div>
+  </div>
+  <div class="lab"><p class="lab-t">困惑度</p><div id="pplG"></div></div>
+  <div class="notes" id="n-lm"></div>
+</section>
+
+<section class="part" id="pre">
+  <div class="part-head"><h2>预训练、分词与规模法则</h2><span class="meta">原书 13.2 节 · 第 365–368 页</span></div>
+  <div class="sec-lede">
+    <p>预训练在大规模无标注语料上做自监督学习。它的合理性可以从信息论理解：要准确预测下一个词，不仅要懂语法，还要懂事实和常识——<strong>预测即压缩</strong>，好的语言模型隐含地压缩、存储了大量世界知识。三种范式：<strong>自回归</strong>（仅解码器，GPT 系列；GPT-3 175B 发现了上下文学习）、<strong>掩码语言模型</strong>（仅编码器，BERT；双向上下文，适合理解任务，但训练—推断不一致，生成不如自回归）、<strong>编码器—解码器</strong>（T5，“文本到文本”，适合条件生成）。大规模生成模型多选自回归：架构简单、易扩展，所有任务都能统一成“给定前缀、预测后续”。</p>
+    <p>数据来自网页、书籍、论文、代码、百科，要去重、质量过滤、去隐私、去有害内容；混合比例是重要的设计决策。<strong>分词</strong>：词级会有未登录词，字符级序列太长，现代模型用<strong>子词</strong>折中。<strong>BPE</strong> 从字符出发，反复合并频次最高的相邻对，直到词表达到预设大小；<strong>字节级 BPE</strong>（GPT-2）在 UTF-8 字节上做，初始词表只有 256，任何输入都能无损表示；WordPiece 的合并准则是最大化语料似然；SentencePiece 把空格也当普通字符，可直接处理中文。典型词表 32K–128K。</p>
+    <p><strong>规模法则</strong>：Kaplan 等发现交叉熵损失与参数量 N、数据量 D、计算量 C 分别呈幂律，L(N) ≈ (N<sub>c</sub>/N)<sup>α<sub>N</sub></sup>，α<sub>N</sub> ≈ 0.076、α<sub>D</sub> ≈ 0.095、α<sub>C</sub> ≈ 0.050，在对数—对数坐标下近似直线。<strong>Chinchilla</strong> 进一步回答固定算力怎么分：训练计算量 C ≈ 6ND，拟合 400 多个实验后发现 N* ∝ C<sup>0.5</sup>、D* ∝ C<sup>0.5</sup>，<strong>最优训练词元数约为参数量的 20 倍</strong>。但推理成本也要考虑，LLaMA 等模型选择“过度训练”：LLaMA-7B 用了 1T 词元，远超 Chinchilla 建议的约 140B。架构上已明显趋同：仅解码器、RoPE、RMSNorm（Pre-Norm）、SwiGLU、GQA、BPE；MoE 用路由实现高容量低计算，如 DeepSeek-V3 总参数 671B、每词元激活约 37B。</p>
+    <p class="go">在原书的小语料“low low low lower lower newer”上一步步跑 BPE；再用 Chinchilla 比例算一笔账。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">BPE：每步合并频次最高的相邻对</p>
+    <div class="lab-split">
+      <div class="bpe" id="bpV"></div>
+      <div><div id="bpS"></div><table class="calc" id="bpT"></table></div>
+    </div>
+    <p class="cap">每个词末尾加了结束符 _。频次相同时取先出现的那一对，原书例子的前两步“l o → lo”“lo w → low”与此一致；之后的合并顺序取决于并列时的取法。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">Chinchilla：给定算力 C，N* 与 D* 怎么配</p>
+      <label class="ctl"><span>训练算力 C（FLOPs） <output id="chC">1e22</output></span><input type="range" id="chCs" min="20" max="26" step="0.1" value="22"></label>
+      <div class="read"><div class="hl"><div class="v" id="chN">0</div><div class="k">最优参数量 N*</div></div><div class="hl"><div class="v" id="chD">0</div><div class="k">最优训练词元 D*</div></div></div>
+      <p class="cap">由 C ≈ 6ND 和 D* ≈ 20N* 解出 N* = √(C/120)。</p>
+    </div>
+    <div class="lab"><p class="lab-t">原书习题 13-4</p><div id="chG"></div></div>
+  </div>
+  <div class="notes" id="n-pre"></div>
+</section>
+
+<section class="part" id="emg">
+  <div class="part-head"><h2>涌现能力、上下文学习与思维链</h2><span class="meta">原书 13.3 节 · 第 369–371 页</span></div>
+  <div class="sec-lede">
+    <p><strong>涌现能力</strong>：某项能力在规模低于阈值时接近随机，超过阈值后快速提升。例子有少样本学习、多步推理、指令遵循、代码生成、跨语言迁移、工具使用。解释有两种：类似物理相变；或者复杂任务需要多种基础能力同时达标。也有研究指出，部分“涌现”可能是<strong>评估指标非线性造成的统计假象</strong>——用精确匹配时只有完全正确才得分，曲线就呈阶跃式。原书的稳妥说法是：复杂能力的评估结果同时受模型规模、任务构造和评价指标影响。</p>
+    <p><strong>上下文学习</strong>（ICL）：在提示里给 K 个示例，不更新参数就能做新任务（K = 0、1、&gt;1 对应零样本、单样本、少样本）。它对示例的选择、顺序、格式很敏感；即使把示例标签随机换成错的，性能下降也有限——示例还在传递输入分布、标签空间和格式。它和元学习的联系见第 11 篇：预训练语料里混着大量隐含“任务”，自回归预训练近似是在任务分布上优化。</p>
+    <p><strong>思维链</strong>（CoT）在示例里加入中间步骤：p(y|x) = Σ<sub>c</sub> p(c|x)p(y|x, c)。它把难题拆成小步，并给模型更多“计算空间”（输出越长，可用的计算步骤越多），效果有明显的规模依赖。“Let's think step by step”就能激发<strong>零样本 CoT</strong>。扩展有：<strong>自一致性</strong>（采样多条推理路径、多数投票——正确路径往往收敛到同一答案，错误路径各错各的）、<strong>思维树</strong>（树形搜索、可回溯）、<strong>测试时扩展</strong>（推断时投入更多计算）。</p>
+    <p class="go">左边：如果每个词元的正确率随规模平滑上升，用“整个答案都对才算对”的精确匹配来看会是什么样（示意）；右边：自一致性的多数投票能把单条路径的正确率提高多少（模拟）。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">“涌现”与评价指标</p>
+      <label class="ctl"><span>答案长度 L（个词元） <output id="emL">10</output></span><input type="range" id="emLs" min="1" max="30" value="10"></label>
+      <div id="emC"></div>
+      <p class="cap" id="emW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">自一致性：N 条路径多数投票</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>单条路径正确率 <output id="scP">0.40</output></span><input type="range" id="scPs" min="0.1" max="0.8" step="0.05" value="0.4"></label>
+        <label class="ctl"><span>错误答案的种类数 <output id="scM">5</output></span><input type="range" id="scMs" min="1" max="10" value="5"></label>
+      </div>
+      <div id="scC"></div>
+      <p class="cap" id="scW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-emg"></div>
+</section>
+
+<section class="part" id="align">
+  <div class="part-head"><h2>指令微调与基于人类反馈的对齐</h2><span class="meta">原书 13.4–13.5 节 · 第 371–379 页</span></div>
+  <div class="sec-lede">
+    <p>预训练模型只是“文本续写器”：问“中国的首都是哪里？”，它可能续写成“这是一道常见的地理题……”。<strong>指令微调</strong>（SFT）在“指令—回答”数据上继续训练，损失只算回答部分（只训练补全）。和预训练相比：数据少（数千到数十万条）、质量要求高、轮数少（1–3 个 epoch）。参数太多时用 <strong>LoRA</strong>（h′ = Wx + BAx，A 高斯初始化、B 初始化为零，保证起点 ΔW = 0；算法见第 11 篇）。数据可以人工标注，也可以模型合成（Self-Instruct）；LIMA 用约 1000 条精选数据就达到相当效果——<strong>少而精</strong>。原书的判断：SFT 主要是<strong>激活和对齐</strong>已有能力、提供一个“接口”，而不是注入新知识。但 SFT 只会模仿，解决了“怎么做”，没解决“做到什么程度才算好”。</p>
+    <p>对齐需要<strong>偏好数据</strong>：同一指令下两个回答，标注哪个更好（y<sub>w</sub> ≻ y<sub>l</sub>）——比较比直接打分更容易一致。<strong>Bradley-Terry 模型</strong>假设 p(y<sub>w</sub> ≻ y<sub>l</sub>|x) = σ(r(x, y<sub>w</sub>) − r(x, y<sub>l</sub>))，奖励只确定到相差一个只依赖 x 的常数。用它训练<strong>奖励模型</strong> r<sub>φ</sub>（取最后一个词元的隐状态接线性层），损失 −log σ(r<sub>φ</sub>(y<sub>w</sub>) − r<sub>φ</sub>(y<sub>l</sub>))。<strong>RLHF</strong> 把语言模型当策略，最大化 𝔼[r<sub>φ</sub>] − β KL(π<sub>θ</sub> ‖ π<sub>ref</sub>)，KL 项防止<strong>奖励过度优化</strong>（Goodhart 定律：度量一旦成了目标就不再是好度量）。用 PPO 训练要同时维护策略、参考、奖励、价值四个模型。</p>
+    <p><strong>DPO</strong> 分三步消掉强化学习：① 带 KL 约束的目标有解析解 π*(y|x) = π<sub>ref</sub>(y|x) exp(r/β)/Z(x)；② 反解出 r = β log(π*/π<sub>ref</sub>) + β log Z(x)；③ 代入 Bradley-Terry，两个回答相减时只依赖 x 的 <strong>β log Z(x) 正好消掉</strong>——这是最关键的一步，Z(x) 在指数级大的回答空间里根本算不出来。得到 ℒ<sub>DPO</sub> = −log σ(β log(π<sub>θ</sub>(y<sub>w</sub>)/π<sub>ref</sub>(y<sub>w</sub>)) − β log(π<sub>θ</sub>(y<sub>l</sub>)/π<sub>ref</sub>(y<sub>l</sub>)))：一个二分类损失，隐式奖励就是 β 乘对数概率比。不需要奖励模型、不需要在线采样、不需要价值网络；局限是只用离线偏好数据，有分布漂移，对数据质量敏感。<strong>GRPO</strong> 走另一条路：保留在线 RL，但对每条指令采 G 个回答（通常 8–64），用组内标准化 Â<sub>i</sub> = (r<sub>i</sub> − mean)/std 代替价值网络，配合 PPO 裁剪和 KL 正则；特别适合数学、代码这类<strong>可验证奖励</strong>。此外还有宪法 AI、RLAIF、SimPO、KTO，以及防越狱、防提示注入、红队测试等安全对齐工作。<strong>幻觉</strong>的根源是下一个词元预测并不直接惩罚事实错误，缓解手段有 RAG、事实性奖励、在不确定时表达不确定。</p>
+    <p class="go">先展开 DPO 推导；再看 DPO 梯度的自适应权重；最后点一点 GRPO 的组相对优势。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">DPO 推导三步</p>
+    <ol class="derive" id="dpD">
+      <li>RLHF 目标：max<sub>π</sub> 𝔼<sub>y~π</sub>[r(x, y)] − β KL(π ‖ π<sub>ref</sub>) = Σ<sub>y</sub> π(y|x)[r(x, y) − β log(π(y|x)/π<sub>ref</sub>(y|x))]。关于 π 严格凹，有唯一最大值。</li>
+      <li>在 Σπ = 1 约束下用拉格朗日乘子求导：r − β log(π/π<sub>ref</sub>) − β = λ ⇒ <b>π*(y|x) = π<sub>ref</sub>(y|x) exp(r(x, y)/β) / Z(x)</b>：奖励加权后的“玻尔兹曼分布”。</li>
+      <li>取对数反解奖励：<b>r(x, y) = β log(π*(y|x)/π<sub>ref</sub>(y|x)) + β log Z(x)</b>。奖励完全由策略的对数概率比表示，Z(x) 只依赖 x。</li>
+      <li>代入 Bradley-Terry：r(y<sub>w</sub>) − r(y<sub>l</sub>) 中 <b>β log Z(x) − β log Z(x) = 0</b>，算不出来的配分函数被消去。</li>
+      <li>把 π* 换成 π<sub>θ</sub>，最大化偏好数据的对数似然：<b>ℒ<sub>DPO</sub> = −𝔼 log σ(r̂<sub>θ</sub>(y<sub>w</sub>) − r̂<sub>θ</sub>(y<sub>l</sub>))，r̂<sub>θ</sub> = β log(π<sub>θ</sub>/π<sub>ref</sub>)</b>。形式和奖励模型损失一样，只是奖励由策略本身参数化。</li>
+    </ol>
+    <div id="dpS"></div>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">DPO 梯度权重 σ(r̂(y<sub>l</sub>) − r̂(y<sub>w</sub>))</p>
+      <label class="ctl"><span>β <output id="dwB">0.1</output></span><input type="range" id="dwBs" min="0.05" max="1" step="0.05" value="0.1"></label>
+      <div id="dwC"></div>
+      <p class="cap" id="dwW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">GRPO：一组 8 个回答（点击切换对 / 错，奖励 1 / 0）</p>
+      <div class="gr8" id="grB"></div>
+      <div id="grA"></div>
+      <p class="cap" id="grW"></p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>SFT vs 偏好对齐</b>：模仿参考回答（解决“怎么做”）vs 学“哪个更好”（解决“做到什么程度”）。</p>
+    <p><b>RLHF-PPO vs DPO vs GRPO</b>：在线 RL + 奖励模型 + 价值网络（四个模型）vs 离线二分类、不要奖励模型和采样 vs 在线 RL、用组内相对奖励代替价值网络（三个模型，规则奖励时两个）。三者常在不同阶段组合使用。</p>
+    <p><b>β 的作用</b>：在 RLHF 和 DPO 里都控制偏离参考策略的程度；DPO 实践中常取 0.1–0.5。</p>
+    <p><b>奖励模型的绝对值</b>：Bradley-Terry 只能确定相对值，加一个只依赖 x 的常数不改变偏好概率——这正是 DPO 能消掉 Z(x) 的原因。</p>
+  </div>
+  <div class="notes" id="n-align"></div>
+</section>
+
+<section class="part" id="reason">
+  <div class="part-head"><h2>推理增强：过程奖励、测试时扩展与 RL</h2><span class="meta">原书 13.6 节 · 第 379–381 页</span></div>
+  <div class="sec-lede">
+    <p><strong>结果奖励模型</strong>（ORM）给整个回答一个分数，标注简单，但分不清“过程错了答案碰巧对”和“只错一步”。<strong>过程奖励模型</strong>（PRM）给每个推理步骤打分，提供稠密信号、精确定位错误，整条路径常取各步的最小值；标注成本高，可以用蒙特卡罗估计自动化。实践中 ORM 粗筛、PRM 精评。</p>
+    <p><strong>测试时扩展</strong>：在推断时投入更多计算。一种是<strong>长程推理</strong>——回答前生成更长的中间过程，提出假设、验证、回溯、修正；另一种是<strong>搜索与验证</strong>——生成 N 条路径，用多数投票、奖励模型打分（Best-of-N）或 PRM 引导的树搜索选出最好的。研究表明同等预算下“多路径 + 验证”往往优于单条更长的路径，一个充分搜索验证的小模型有时能超过只生成一次的大模型。但原书提醒：<strong>更长推理不自动等于更可靠</strong>，验证器不可靠时，额外计算也可能放大错误。</p>
+    <p><strong>RL 提升推理</strong>：以 DeepSeek-R1 为例，在 SFT 模型上做大规模 GRPO，数学答案匹配就给 1、否则 0，代码跑测试用例，另加格式奖励。训练中出现了推理长度自然增长、自我反思、换思路、阶段性跃迁等现象。纯 RL 也有初期拿不到正奖励、推理链可读性差、开放任务难定义奖励等问题，所以实际是多阶段：<strong>SFT 冷启动 → 大规模 RL → 拒绝采样与蒸馏</strong>。SFT 给“格式”和“起点”，RL 给“质量”和“深度”。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析：ORM vs PRM</h4>
+    <p><b>ORM</b>：对整个回答一个标量。便宜，但信用分配粗——过程有错而答案对、或只差一步而答案错，它都分不清。</p>
+    <p><b>PRM</b>：每步一个分数，路径分常取最小值 min<sub>k</sub> r(x, s₁, …, s<sub>k</sub>)。贵，但能定位错误，还能在推理时引导束搜索 / 树搜索。</p>
+  </div>
+  <div class="lab"><p class="lab-t">分一分：属于哪个阶段</p><div id="stG"></div></div>
+  <div class="notes" id="n-reason"></div>
+</section>
+
+<section class="part" id="agent">
+  <div class="part-head"><h2>智能体：框架、工具、协作与治理</h2><span class="meta">原书 13.7–13.9 节 · 第 382–387 页</span></div>
+  <div class="sec-lede">
+    <p><strong>基于大语言模型的智能体</strong>以 LLM 为“大脑”，通过感知环境、调用工具、执行操作、根据反馈修正计划来完成复杂任务。四个核心组件：<strong>感知</strong>（用户指令、工具返回、检索结果、网页、多模态信号，还要筛选压缩以适应上下文窗口）、<strong>规划</strong>（分解子任务、定顺序、考虑工具能力边界和失败预案）、<strong>行动</strong>（按 JSON 等格式生成动作，由外部执行器执行并返回结果）、<strong>记忆</strong>（短期 = 上下文窗口；长期 = 向量库等外部存储）。合起来是“感知—思考—行动”的闭环。</p>
+    <p><strong>ReAct</strong> 让“思考 → 行动 → 观察”交替进行：比纯思维链多了外部信息，能减少幻觉；比直接调工具多了显式思考，更透明；只靠提示模板就能实现。<strong>任务分解</strong>有自顶向下（Least-to-Most）、逐步展开、规划—执行—再规划。<strong>反思</strong>：Reflexion 失败后写一段自然语言“经验总结”存进记忆，下次作为上下文——不更新参数的学习；Self-Refine 是单次生成里的“生成—批评—修改”。还可以用思维树做搜索，用编译器、单元测试、符号计算等<strong>外部验证器</strong>给出比自我评估更可靠的反馈。</p>
+    <p><strong>工具调用</strong>：函数调用、API、代码执行（Toolformer 是早期代表）；工具多时要做工具检索；工程上用 JSON Schema 等结构化输出约束格式，把多步工作流表示成状态机或图，便于错误回放、权限审计、失败恢复。<strong>RAG</strong>：索引（切片、编码成向量）→ 检索（Top-k 相似度）→ 生成（拼进上下文），能用上可更新的外部知识而无需重训；检索本身就是一种工具。<strong>多模态</strong>智能体可以直接看截图操作界面；架构分模块拼接式（如 LLaVA）和原生多模态。<strong>多智能体</strong>有分工、讨论、辩论三种模式，通信拓扑有链式、星形、全连接，还可共享记忆；挑战是协调开销和“群体思维”。</p>
+    <p>当模型能调工具、读写外部状态时，评估对象就成了<strong>整个流程</strong>：不只看答案对不对，还看证据覆盖、参数合规、是否越权、能否回滚、记忆是否引入错误或隐私风险。RAG 要分开评检索质量和生成忠实性；高风险步骤前要人工确认、留可重放日志。原书的结论：智能体工程更像把语言模型嵌入一个受约束的软件系统，而不是简单地给模型加几个工具。（本站<a href="../2026-10-16-agent-1/">《Agent》系列</a>有更细的展开。）</p>
+    <p class="go">一步步看一个 ReAct 轨迹（示意：天气数值和工具名都是虚构的）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">ReAct：思考 → 行动 → 观察</p>
+    <div class="trace" id="raT"></div>
+    <div id="raS"></div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>维度</th><th>关注问题</th><th>常见做法</th></tr></thead>
+    <tbody>
+      <tr><td>任务效果</td><td>是否完成目标，答案是否正确、完整、可验证</td><td>任务成功率、人工评价、基准集、回归测试、引用一致性检查</td></tr>
+      <tr><td>工具执行</td><td>工具选对没有，参数是否有效，结果是否被正确解释</td><td>工具模式校验、参数类型检查、执行日志、失败重试与超时控制</td></tr>
+      <tr><td>权限边界</td><td>是否越权，是否触及高风险操作或敏感数据</td><td>最小权限、沙箱执行、人工确认、读写隔离、危险操作白名单</td></tr>
+      <tr><td>记忆管理</td><td>长期记忆是否准确、可追溯、不过度暴露隐私</td><td>写入审核、来源记录、过期策略、冲突消解、用户可删除</td></tr>
+      <tr><td>过程安全</td><td>是否受提示注入、工具返回污染或错误级联影响</td><td>输入隔离、指令优先级、来源标注、异常检测、回滚和审计</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 13.1：智能体系统评估与治理的几个维度。</p>
+  <div class="notes" id="n-agent"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">p(x) = Π_t p(x_t|x_{&lt;t})；PPL = exp(−(1/T) Σ log p(x_t|x_{&lt;t}))</div>
+    <div class="fx">Top-p：V_p = 累积概率 ≥ p 的最小集合；温度 p_τ ∝ exp(z/τ)</div>
+    <div class="fx">Kaplan：L(N) ≈ (N_c/N)^{0.076}；Chinchilla：C ≈ 6ND，N*, D* ∝ C^{0.5}，D* ≈ 20N*</div>
+    <div class="fx">CoT：p(y|x) = Σ_c p(c|x) p(y|x,c)</div>
+    <div class="fx">Bradley-Terry：p(y_w ≻ y_l|x) = σ(r(x,y_w) − r(x,y_l))；ℒ_RM = −log σ(r_φ(y_w) − r_φ(y_l))</div>
+    <div class="fx">RLHF：max 𝔼[r_φ(x,y)] − β KL(π_θ ‖ π_ref)；π* = π_ref exp(r/β)/Z(x)</div>
+    <div class="fx">DPO：ℒ = −log σ(β log(π_θ(y_w)/π_ref(y_w)) − β log(π_θ(y_l)/π_ref(y_l)))</div>
+    <div class="fx">GRPO：Â_i = (r_i − mean(r)) / std(r)，配 PPO 裁剪 + β KL</div>
+    <div class="fx">PRM：R(x,y) = min_k r_PRM(x, s₁…s_k)；RAG：𝒟_k = Top-k sim(q, d_i)，y = LLM(q, 𝒟_k)</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 束搜索 ---------- */
+var BM = { A: [0.5, { x: 0.4, y: 0.3, z: 0.3 }], B: [0.4, { x: 0.9, y: 0.05, z: 0.05 }], C: [0.1, { x: 0.5, y: 0.3, z: 0.2 }] };
+function bmDraw(k) {
+  var g = $('#bmG'); g.innerHTML = '';
+  var Y1 = { A: 45, B: 150, C: 232 };
+  S.svg('text', { x: 10, y: 155, text: '起点' }, g);
+  Object.keys(BM).forEach(function (a) {
+    var cls = (k >= 1 && a === 'A') ? 'g' : (k >= 2 && a === 'B') ? 'b' : '';
+    S.svg('path', { d: 'M48 150 L150 ' + Y1[a], class: cls }, g);
+    S.svg('text', { x: 158, y: Y1[a] + 5, text: a + ' ' + BM[a][0] }, g);
+    if (a === 'C') return;
+    var ks = ['x', 'y', 'z'];
+    ks.forEach(function (t, j) {
+      var y2 = Y1[a] - 32 + 32 * j, p = BM[a][1][t], cls2 = (k >= 1 && a === 'A' && t === 'x') ? 'g' : (k >= 2 && a === 'B' && t === 'x') ? 'b' : '';
+      S.svg('path', { d: 'M215 ' + Y1[a] + ' L320 ' + y2, class: cls2 }, g);
+      S.svg('text', { x: 328, y: y2 + 5, text: a + t + '  ' + p + '  → ' + S.f(BM[a][0] * p, 3) }, g);
+    });
+  });
+}
+S.stepper($('#bmS'), 3, function (i) {
+  bmDraw(i);
+  $('#bmW').innerHTML = ['第一步三个候选 A 0.5、B 0.4、C 0.1，每条边上是条件概率，右端是整条序列的概率。',
+    '<b style="color:var(--s1)">贪心</b>：第一步选最大的 A，第二步再选 A 后面最大的 x，得到 Ax，概率 0.5 × 0.4 = <b>0.20</b>。',
+    '<b style="color:var(--s2)">束搜索 k = 2</b>：第一步保留 A、B 两个候选，第二步从 2 × 3 个扩展里留累计概率最高的——Bx = 0.4 × 0.9 = <b>0.36</b>，比贪心好得多。原因是 A 后面的分布很平，B 后面很尖。束搜索仍是确定性的，开放式生成时容易单调重复。'][i];
+}, ['候选', '贪心', '束搜索']);
+
+/* ---------- Top-p ---------- */
+var TP = { sharp: [5, 3.2, 2.1, 1.0, 0.6, 0.2, 0, -0.4, -0.8, -1], flat: [1.2, 1.1, 1.0, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5] }, tpMode = 'sharp';
+function tp() {
+  var p = +$('#tpPs').value, k = +$('#tpKs').value; $('#tpP').textContent = S.f(p, 2); $('#tpK').textContent = k;
+  var pr = S.softmax(TP[tpMode], 1), acc = 0, np = 0;
+  for (var i = 0; i < pr.length; i++) { np++; acc += pr[i]; if (acc >= p - 1e-12) break; }
+  S.bars($('#tpB'), pr.map(function (v, i) { var inP = i < np, inK = i < k; return { label: '词元 ' + (i + 1) + (inP && inK ? '（p、k）' : inP ? '（p）' : inK ? '（k）' : ''), value: v / pr[0], text: S.f(v, 3), cls: inP && inK ? 'ok' : inP || inK ? 'c2' : 'dim' }; }));
+  $('#tpW').innerHTML = 'Top-p 保留 <b>' + np + '</b> 个词元（累积 ' + S.f(acc, 3) + '），Top-k 固定保留 <b>' + k + '</b> 个。' + (tpMode === 'sharp' ? '分布尖锐时，核采样只留下少数几个，接近贪心；固定的 k 却可能把低概率的尾巴也纳进来。' : '分布平坦时，很多词都合理，核采样自动放宽候选集；固定的 k 可能太小、砍掉了合理选项。');
+}
+S.seg($('#tpS'), function (v) { tpMode = v; tp(); });
+['tpPs', 'tpKs'].forEach(function (id) { $('#' + id).addEventListener('input', tp); }); tp();
+S.guess($('#pplG'), { q: '一个模型在测试集每个位置上给正确词元的概率都是 0.25，困惑度是多少？', ans: 4, fmt: function (x) { return S.f(x, 2); }, why: 'PPL = exp(−log 0.25) = 1/0.25 = 4：相当于每一步都在 4 个等可能的词之间犹豫。困惑度是“平均每个位置的等效选择数”；如果各位置概率不同，它是逐位置概率的几何平均的倒数。更多关于交叉熵、比特和困惑度的内容见本站《惊讶有几个 bit》。' });
+S.notes($('#n-lm'), {
+  c: [
+    ['自回归语言模型', '链式分解，从左到右逐个预测下一个词元。'],
+    ['困惑度', '每个位置的平均等效选择数，越低越好。'],
+    ['教师强制', '训练时用真实前缀做输入，配合因果掩码一次前向并行算全部损失。'],
+    ['暴露偏差', '训练看真实前缀、推断看自己生成的前缀，分布不一致。'],
+    ['束搜索', '保留 k 个累计概率最高的候选；k = 1 即贪心。'],
+    ['核采样', '保留累积概率刚到 p 的最小集合，随分布形状自适应。']
+  ],
+  p: [
+    ['语言模型的演进', 'N 元 → 前馈 → RNN → Transformer'],
+    ['仅解码器', '因果掩码保证自回归性质'],
+    ['确定性 vs 随机', '翻译 / 代码用贪心或束搜索；对话 / 创作用采样'],
+    ['Top-k 的问题', '固定 k 适应不了分布形状'],
+    ['常见组合', '温度 + Top-p，p 常取 0.9–0.95']
+  ]
+});
+
+/* ---------- BPE ---------- */
+var BPW = [['low', 3], ['lower', 2], ['newer', 1]];
+var bpStates = (function () {
+  var seg = BPW.map(function (w) { return w[0].split('').concat(['_']); }), out = [{ seg: seg.map(function (s) { return s.slice(); }), m: null, cnt: null, newTok: null }];
+  for (var step = 0; step < 6; step++) {
+    var counts = {}, order = [];
+    seg.forEach(function (s, wi) { for (var i = 0; i < s.length - 1; i++) { var k = s[i] + '\u0001' + s[i + 1]; if (!(k in counts)) { counts[k] = 0; order.push(k); } counts[k] += BPW[wi][1]; } });
+    if (!order.length) break;
+    var best = order[0]; order.forEach(function (k) { if (counts[k] > counts[best]) best = k; });
+    var ab = best.split('\u0001'), nt = ab[0] + ab[1];
+    seg = seg.map(function (s) { var r = [], i = 0; while (i < s.length) { if (i < s.length - 1 && s[i] === ab[0] && s[i + 1] === ab[1]) { r.push(nt); i += 2; } else { r.push(s[i]); i++; } } return r; });
+    var top = order.slice().sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 4).map(function (k) { return [k.replace('\u0001', ' '), counts[k]]; });
+    out.push({ seg: seg.map(function (s) { return s.slice(); }), m: ab, cnt: counts[best], top: top, newTok: nt });
+  }
+  return out;
+})();
+S.stepper($('#bpS'), bpStates.length, function (i) {
+  var st = bpStates[i];
+  $('#bpV').innerHTML = BPW.map(function (w, wi) { return '<div class="w"><span>' + w[0] + ' ×' + w[1] + '</span>' + st.seg[wi].map(function (t) { return '<span class="tk' + (t === st.newTok ? ' new' : '') + '">' + t + '</span>'; }).join('') + '</div>'; }).join('');
+  $('#bpT').innerHTML = i === 0 ? '<tr><td>初始词表</td><td class="n">l o w e r n _</td></tr><tr><td>说明</td><td class="n">每个词拆成字符 + 结束符</td></tr>' :
+    '<tr><td>本步合并</td><td class="n">' + st.m[0] + ' ' + st.m[1] + ' → ' + st.newTok + '（' + st.cnt + ' 次）</td></tr>' + st.top.map(function (t) { return '<tr><td>相邻对</td><td class="n">' + t[0] + '：' + t[1] + '</td></tr>'; }).join('');
+}, bpStates.map(function (s, i) { return i ? '第 ' + i + ' 次合并' : '初始'; }));
+
+/* ---------- Chinchilla ---------- */
+function ch() {
+  var C = Math.pow(10, +$('#chCs').value); $('#chC').textContent = S.sci(C, 1);
+  var N = Math.sqrt(C / 120), D = 20 * N;
+  $('#chN').textContent = N >= 1e9 ? S.f(N / 1e9, 1) + 'B' : S.f(N / 1e6, 0) + 'M';
+  $('#chD').textContent = D >= 1e12 ? S.f(D / 1e12, 2) + 'T' : S.f(D / 1e9, 0) + 'B';
+}
+$('#chCs').addEventListener('input', ch); ch();
+S.guess($('#chG'), { q: '按 Chinchilla 比例，一个 10B 参数的模型大约需要多少训练词元？（单位：十亿，B）', unit: 'B', ans: 200, fmt: function (x) { return S.f(x, 0); }, why: 'D* ≈ 20N* = 200B 词元，算力 C ≈ 6 × 10¹⁰ × 2 × 10¹¹ = 1.2 × 10²² FLOPs。LLaMA 等模型远超这个比例（LLaMA-7B 用了 1T 词元），因为 Chinchilla 只优化“训练算力”，而模型部署后要被调用无数次，小模型多训一些数据，推理成本更低。' });
+S.notes($('#n-pre'), {
+  c: [
+    ['预训练', '海量无标注文本上的自监督学习；预测即压缩。'],
+    ['三种范式', '自回归（GPT）、掩码（BERT）、编码器—解码器（T5）。'],
+    ['子词分词', '高频词整体保留，低频词拆成子词，覆盖任意字符串。'],
+    ['BPE', '从字符出发，反复合并频次最高的相邻对。'],
+    ['字节级 BPE', '在 UTF-8 字节上做 BPE，初始词表 256，无 OOV。'],
+    ['规模法则', '损失与 N、D、C 呈幂律，对数坐标下近似直线。']
+  ],
+  p: [
+    ['Kaplan 指数', 'α_N ≈ 0.076，α_D ≈ 0.095，α_C ≈ 0.050'],
+    ['训练算力', 'C ≈ 6ND'],
+    ['Chinchilla', 'N*, D* ∝ C^{0.5}，D* ≈ 20N*'],
+    ['过度训练', '考虑推理成本，小模型用远超 20 倍的数据'],
+    ['架构趋同', '仅解码器、RoPE、RMSNorm、SwiGLU、GQA、BPE'],
+    ['词表大小', '常见 32K–128K；太小序列长，太大嵌入膨胀']
+  ]
+});
+
+/* ---------- 涌现 ---------- */
+var emChart = S.chart($('#emC'), { h: 240, x: [7, 12], y: [0, 1], xt: [7, 8, 9, 10, 11, 12], yt: [0, 0.5, 1], xl: 'log₁₀ 参数量' });
+function em() {
+  var L = +$('#emLs').value; $('#emL').textContent = L;
+  function tok(x) { return 0.3 + 0.69 * S.sigmoid(1.6 * (x - 9.5)); }
+  emChart({ curves: [{ f: tok, c: 'dim', label: '单个词元正确率（平滑）' }, { f: function (x) { return Math.pow(tok(x), L); }, c: 'c2', label: '精确匹配 = 正确率^L' }] });
+  $('#emW').innerHTML = '单个词元的正确率随规模<b>平滑</b>上升（示意曲线）。但要求 ' + L + ' 个词元全对时，精确匹配 = p<sup>' + L + '</sup>：p 不够高时几乎为 0，跨过某个区间后陡然上升——看上去像“突然涌现”。L 越大越像阶跃。这就是部分“涌现”可能是评价指标非线性造成的统计假象的论点；原书也强调这只是解释之一。';
+}
+$('#emLs').addEventListener('input', em); em();
+var scChart = S.chart($('#scC'), { h: 240, x: [1, 41], y: [0, 1], xt: [1, 11, 21, 31, 41], yt: [0, 0.5, 1], xl: '采样路径数 N' });
+function sc() {
+  var p = +$('#scPs').value, m = +$('#scMs').value; $('#scP').textContent = S.f(p, 2); $('#scM').textContent = m;
+  var r = S.rng(77), pts = [];
+  for (var N = 1; N <= 41; N += 2) {
+    var ok = 0, T = 1500;
+    for (var t = 0; t < T; t++) {
+      var c = new Array(m + 1).fill(0);
+      for (var k = 0; k < N; k++) { if (r() < p) c[0]++; else c[1 + Math.floor(r() * m)]++; }
+      var mx = Math.max.apply(null, c), ties = c.filter(function (v) { return v === mx; }).length;
+      if (c[0] === mx) ok += 1 / ties;
+    }
+    pts.push([N, ok / T]);
+  }
+  scChart({ curves: [{ pts: pts, c: 'c2', label: '多数投票正确率' }], hl: [{ y: p, c: 'dim', label: '单条路径 ' + S.f(p, 2) }] });
+  var last = pts[pts.length - 1][1];
+  $('#scW').innerHTML = '41 条路径投票后正确率约 <b>' + S.pct(last, 0) + '</b>（本页模拟）。只要正确答案比任何<b>一种</b>错误答案更常见，投票就会把它放大。错误答案越分散（种类越多），自一致性越有效；若错误集中在同一个答案上（种类 = 1）且单条正确率低于一半，投票反而会放大错误。';
+}
+['scPs', 'scMs'].forEach(function (id) { $('#' + id).addEventListener('input', sc); }); sc();
+S.notes($('#n-emg'), {
+  c: [
+    ['涌现能力', '小模型接近随机、超过阈值后快速提升的能力。'],
+    ['上下文学习', '提示里给示例，不更新参数就做新任务。'],
+    ['思维链', '示例中加入中间推理步骤，逐步推导。'],
+    ['零样本 CoT', '“Let\'s think step by step”即可激发。'],
+    ['自一致性', '多条推理路径多数投票。'],
+    ['思维树', '树形探索推理分支，可回溯。']
+  ],
+  p: [
+    ['涌现的两种解释', '类相变；多种基础能力同时达标'],
+    ['统计假象之说', '精确匹配等非线性指标让平滑提升看起来像阶跃'],
+    ['ICL 的敏感性', '示例选择、顺序、格式；错标签影响有限'],
+    ['CoT 为何有效', '分解问题、增加计算空间、可解释可验证'],
+    ['CoT 的规模依赖', '只在足够大的模型上稳定有效']
+  ]
+});
+
+/* ---------- DPO / GRPO ---------- */
+S.stepper($('#dpS'), 5, function (i) { S.$$('#dpD li').forEach(function (li, k) { li.classList.toggle('hide', k > i); li.classList.toggle('on', k === i); }); }, ['RLHF 目标', '最优策略', '反解奖励', 'Z(x) 消去', 'DPO 损失']);
+var dwChart = S.chart($('#dwC'), { h: 240, x: [-20, 20], y: [0, 3], xt: [-20, -10, 0, 10, 20], yt: [0, 1, 2, 3], xl: '对数概率比之差 Δ = log(π_θ/π_ref)(y_w) − log(π_θ/π_ref)(y_l)' });
+function dw() {
+  var b = +$('#dwBs').value; $('#dwB').textContent = S.f(b, 2);
+  dwChart({ curves: [{ f: function (d) { return S.sigmoid(-b * d); }, c: 'c2', label: '梯度权重 σ(−βΔ)' }, { f: function (d) { return -Math.log(S.sigmoid(b * d)); }, c: 'c1', label: '损失 −log σ(βΔ)' }], vl: [{ x: 0, c: 'dim' }] });
+  $('#dwW').innerHTML = 'Δ &lt; 0：模型错误地更偏向落败回答，权重 &gt; 0.5，<b>更新幅度大</b>；Δ &gt; 0：已经排对了，权重 &lt; 0.5，更新变小——类似在线难例挖掘。β = ' + S.f(b, 2) + ' 时，Δ 要到 ' + S.f(Math.log(9) / b, 1) + ' 左右权重才降到 0.1。β 越小，越需要把对数概率比拉得很开才算“学好了”，也就允许离参考模型更远（习题 13-9）。';
+}
+$('#dwBs').addEventListener('input', dw); dw();
+var grR = [1, 0, 0, 1, 0, 0, 0, 0];
+function gr() {
+  var box = $('#grB'); box.innerHTML = '';
+  grR.forEach(function (v, i) { var b = S.h('button', { class: 'btn', type: 'button', 'aria-pressed': v ? 'true' : 'false', text: 'y' + (i + 1) + (v ? ' 对' : ' 错') }, box); b.addEventListener('click', function () { grR[i] = 1 - grR[i]; gr(); }); });
+  var m = grR.reduce(function (a, b) { return a + b; }, 0) / 8, sd = Math.sqrt(grR.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / 8);
+  if (sd < 1e-9) { S.bars($('#grA'), grR.map(function (v, i) { return { label: 'Â' + (i + 1), value: 0, text: '0 / 0', cls: 'dim' }; })); $('#grW').innerHTML = '组内奖励<b>全部相同</b>（std = 0）：归一化变成 0/0，这组数据没有任何相对信号。常见处理是给分母加一个小常数，或干脆跳过这样的组——它也提示题目对当前模型太难（全错）或太容易（全对）（习题 13-13）。'; return; }
+  var A = grR.map(function (v) { return (v - m) / sd; }), mx = Math.max.apply(null, A.map(Math.abs));
+  S.bars($('#grA'), A.map(function (a, i) { return { label: 'Â' + (i + 1), value: Math.abs(a) / mx, text: (a > 0 ? '+' : '') + S.f(a, 2), cls: a > 0 ? 'ok' : 'alt' }; }));
+  $('#grW').innerHTML = '组均值 ' + S.f(m, 3) + '、标准差 ' + S.f(sd, 3) + '。对的回答得正优势、错的得负优势，均值天然为 0。组里对的越少，每个“对”的优势越大——难题上的偶然成功被重点强化。组均值充当的就是 REINFORCE 的基准线（习题 13-14），不需要训练价值网络。';
+}
+gr();
+S.notes($('#n-align'), {
+  c: [
+    ['SFT', '指令—回答数据上继续训练，只对回答算损失。'],
+    ['偏好数据', '同一指令两个回答，标注哪个更好。'],
+    ['Bradley-Terry', 'p(y_w ≻ y_l) = σ(r_w − r_l)，只确定相对奖励。'],
+    ['奖励模型', 'LM 骨干 + 最后词元隐状态接线性层输出标量。'],
+    ['RLHF', '最大化奖励减 β·KL，常用 PPO，四个模型。'],
+    ['DPO', '用策略的对数概率比当隐式奖励，变成二分类损失。'],
+    ['GRPO', '组内标准化奖励作优势，省掉价值网络。'],
+    ['幻觉', '流畅但与事实不符；下一个词元预测不直接惩罚事实错误。']
+  ],
+  p: [
+    ['SFT 的本质', '激活和对齐已有能力，提供“接口”，少而精'],
+    ['SFT 的不足', '只能模仿，不知道“什么样更好”'],
+    ['KL 约束的作用', '防止奖励过度优化（Goodhart 定律）'],
+    ['DPO 关键一步', '只依赖 x 的 β log Z(x) 在相减时消去'],
+    ['DPO 的局限', '离线数据、分布漂移、对数据质量敏感'],
+    ['GRPO 的适用', '数学、代码等可验证奖励；G 常取 8–64']
+  ]
+});
+
+/* ---------- 阶段分类 ---------- */
+S.sortGame($('#stG'), {
+  bins: [{ k: 'pt', t: '预训练' }, { k: 'sft', t: '指令微调' }, { k: 'al', t: '偏好对齐' }, { k: 'rs', t: '推理增强' }],
+  items: [
+    { t: '下一个词元预测', k: 'pt', why: '自回归预训练的目标。' },
+    { t: 'BPE 分词', k: 'pt', why: '预训练前的数据处理环节。' },
+    { t: 'Self-Instruct', k: 'sft', why: '用模型合成指令数据。' },
+    { t: '只对回答部分算损失', k: 'sft', why: 'SFT 的“只训练补全”策略。' },
+    { t: 'Bradley-Terry 奖励模型', k: 'al', why: '从偏好对学奖励。' },
+    { t: 'DPO', k: 'al', why: '直接从偏好数据优化策略。' },
+    { t: '宪法 AI', k: 'al', why: '按预设原则自我批评修改，减少人工偏好标注。' },
+    { t: '过程奖励模型', k: 'rs', why: '对每个推理步骤打分。' },
+    { t: 'Best-of-N', k: 'rs', why: '测试时扩展：生成 N 条，用奖励模型选最好的。' },
+    { t: '数学答案对给 1、错给 0', k: 'rs', why: 'DeepSeek-R1 式可验证奖励的 RL。' }
+  ]
+});
+S.notes($('#n-reason'), {
+  c: [
+    ['ORM', '对整个回答给一个分数。'],
+    ['PRM', '对每个推理步骤打分，路径分取最小值。'],
+    ['测试时扩展', '推断时投入更多计算：长程推理、搜索与验证。'],
+    ['Best-of-N', '生成 N 条，用奖励模型挑最好的。'],
+    ['可验证奖励', '答案匹配、单元测试等规则直接判对错。']
+  ],
+  p: [
+    ['同预算下', '多路径 + 验证往往优于单条更长路径'],
+    ['更长 ≠ 更可靠', '验证器不可靠时额外计算会放大错误'],
+    ['R1 式训练中的现象', '推理变长、自我反思、换思路、阶段性跃迁'],
+    ['多阶段训练', 'SFT 冷启动 → 大规模 RL → 拒绝采样与蒸馏'],
+    ['SFT 与 RL', 'SFT 给格式和起点，RL 给质量和深度']
+  ]
+});
+
+/* ---------- ReAct ---------- */
+var RA = [
+  ['t', '思考 1：用户问明早 7 点适不适合在海淀公园跑步。我需要明早的天气和空气质量，先查天气。'],
+  ['a', '行动 1：weather.get(city="北京", district="海淀", time="明天 07:00")'],
+  ['o', '观察 1：{"temp": 12, "rain_prob": 0.1, "wind": "2 级"}（示意数据）'],
+  ['t', '思考 2：气温和降水都合适。跑步还要看空气质量，再查 AQI。'],
+  ['a', '行动 2：air.get(city="北京", district="海淀", time="明天 07:00")'],
+  ['o', '观察 2：{"aqi": 168, "level": "中度污染"}（示意数据）'],
+  ['t', '思考 3：AQI 168 属于中度污染，不建议剧烈户外运动。给出结论并提供替代方案。'],
+  ['a', '回答：明早气温 12 °C、降水概率低，但空气中度污染，不建议户外跑步，可以改为室内运动或等空气好转。']
+];
+S.stepper($('#raS'), RA.length, function (i) {
+  $('#raT').innerHTML = RA.map(function (r, k) { return '<p class="' + r[0] + (k > i ? ' off' : '') + '">' + r[1] + '</p>'; }).join('');
+}, RA.map(function (r) { return { t: '思考', a: '行动', o: '观察' }[r[0]]; }));
+S.notes($('#n-agent'), {
+  c: [
+    ['LLM 智能体', '以 LLM 为大脑，感知、调工具、执行、根据反馈修正计划。'],
+    ['四个组件', '感知、规划、行动、记忆（短期 + 长期）。'],
+    ['ReAct', '思考 → 行动 → 观察交替循环。'],
+    ['Reflexion', '失败后写经验总结存入记忆，不更新参数的学习。'],
+    ['Self-Refine', '生成 → 自我批评 → 修改，迭代多轮。'],
+    ['RAG', '索引 → 检索 Top-k → 拼进上下文生成。'],
+    ['多智能体', '分工、讨论、辩论；链式、星形、全连接。']
+  ],
+  p: [
+    ['ReAct vs CoT', '能引入外部信息，减少幻觉'],
+    ['ReAct vs 纯行动', '显式思考更透明可解释'],
+    ['任务分解', '自顶向下、逐步展开、规划—执行—再规划'],
+    ['外部验证器', '编译器、单元测试、符号计算比自评更可靠'],
+    ['RAG 评估', '检索质量和生成忠实性分开评'],
+    ['多智能体的挑战', '协调开销、群体思维'],
+    ['智能体工程', '把 LLM 嵌入受约束的软件系统：接口、权限、日志、回滚、人工监督']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 怎么训练', '仅解码器 Transformer 在海量文本上做下一个词元预测（教师强制 + 因果掩码并行），BPE 分词。规模法则：损失随 N、D、C 幂律下降；Chinchilla 说固定算力下参数和数据同比例增长，D* ≈ 20N*，但考虑推理成本常会多训数据。'],
+    ['② 对齐各管什么', 'SFT 激活能力、学会“接口”；偏好对齐学“哪个更好”。RLHF 用奖励模型 + PPO + KL；DPO 用最优策略的解析解反解奖励，β log Z(x) 在偏好对相减时消去，变成二分类；GRPO 用组内相对奖励代替价值网络，适合可验证奖励。'],
+    ['③ 智能体多了什么', '感知、规划、行动、记忆，加上 ReAct、反思、工具、RAG、多智能体协作。能调工具、读写状态后，风险来自整个流程：越权、提示注入、错误级联、记忆污染，所以要评估和治理整个流程。']
+  ],
+  p: [
+    ['原书一句话', '定义一个好的目标函数，然后用合适的优化方法去逼近它。'],
+    ['下一篇', '回到概率建模的基础：概率图模型。']
+  ],
+  ph: '一句话'
+});

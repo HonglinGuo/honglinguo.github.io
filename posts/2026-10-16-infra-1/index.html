@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>初识 AI Infra：用几个数字估算一次模型执行</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（一）：六层分工、一次生成请求的处理过程、Jeff Dean 数字表与 Amdahl 定律、容量 / 算力 / 带宽 / 延迟四类关键数字、70B 模型单步生成的读取下界与 batch 转折点、实测为何达不到极限、TPU / SmartNIC / UB 三个需求推动架构的案例。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.lat { list-style: none; margin: 8px 0 0; padding: 0; }
+.lat li { display: grid; grid-template-columns: minmax(0, 13em) minmax(0, 1fr) 6.5em; gap: 10px; align-items: center; padding: 5px 0; border-top: 1px solid var(--hair); font-size: 15px; }
+.lat .tr { height: 10px; background: var(--dim-soft); border-radius: 3px; position: relative; }
+.lat .fl { position: absolute; left: 0; top: 0; bottom: 0; background: var(--s1); border-radius: 3px; }
+.lat .n { font-family: var(--f-num); text-align: right; color: var(--ink); }
+@media (max-width: 560px) { .lat li { grid-template-columns: minmax(0, 1fr) 6em; } .lat .tr { grid-column: 1 / -1; grid-row: 2; } }
+.flow3 { list-style: none; margin: 8px 0; padding: 0; counter-reset: f; }
+.flow3 li { position: relative; padding: 8px 10px 8px 40px; border: 1px solid var(--hair); border-radius: 6px; margin-bottom: 6px; font-size: 16px; color: var(--ink-3); background: var(--bg); }
+.flow3 li::before { counter-increment: f; content: counter(f); position: absolute; left: 10px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: var(--hair); color: var(--ink-2); font-size: 13px; text-align: center; line-height: 22px; font-family: var(--f-num); }
+.flow3 li.on { color: var(--ink); border-color: var(--s1); background: var(--s1-soft); }
+.flow3 li.on::before { background: var(--s1); color: #fff; }
+.flow3 li small { display: block; font-size: 15px; color: var(--ink-2); margin-top: 4px; }
+.flow3 li:not(.on) small { display: none; }
+</style>
+</head>
+<body data-series="infra-series" data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 01</span><span>对应原书第 1 章</span><span>约 25 分钟</span></p>
+  <h1>先算一遍：<em>放得下吗，要多久</em></h1>
+  <p class="lead">原书第一章做的事很朴素：给一张 H100、一个 70B 模型，问能不能在 10 ms 内生成一个 token。答案不需要跑实验，几行除法就够：先查显存放不放得下，再分别算计算和读取要多久，较慢的那一项就是下界。这一篇把这套方法拆开，每一步都配一个能自己改数字的计算器。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" aria-current="page" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#layers">六层分工</a><a href="#req">一次请求</a><a href="#dean">数量级与 Amdahl</a><a href="#cap">放得下吗</a><a href="#step">要多久</a><a href="#meas">实测与下界</a><a href="#arch">需求推动架构</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>一张 H100 放得下 70B 模型吗？放不下要几张卡，或者怎么办？</li>
+  <li>70B 模型单请求生成一个 token 至少要多久？把算力翻倍有用吗？</li>
+  <li>实测比按硬件算出的下界慢三倍，差距从哪里来，怎么查？</li>
+</ol></div>
+
+<section class="part" id="layers">
+  <div class="part-head"><h2>从任务到硬件的六层分工</h2><span class="meta">原书 1.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书开篇的判断是：<strong>编程抽象正在从操作系统上移到模型上下文</strong>。传统应用用代码表达行为，编译器和操作系统负责把它落到硬件；模型驱动的应用多了一个入口，通过选模型、组织上下文、提供工具来表达任务。同一个模型、同一组参数为所有应用服务，于是可以把多条请求合并成一个 batch 共用一次读入的参数；同时，长文档、长回答和多轮工具调用又让同一套硬件的性能相差很远。</p>
+    <p>为了看清“一次请求要经过哪些层”，原书借鉴华为廖恒博士的“十八层宝塔”，把全书内容分成六层：<strong>应用与任务</strong>（要完成什么、多快、成本多少）、<strong>模型与负载</strong>（要做哪些计算、保留哪些数据、工作何时到来）、<strong>训练与推理系统</strong>（组织 batch、管理状态、分配加速器）、<strong>算子与编译运行时</strong>（矩阵乘法怎样分块、用临时存储、何时提交）、<strong>处理器与存储</strong>（CPU、GPU、NPU，主存、显存、片上存储）、<strong>互联与数据中心</strong>（设备互联、网络、供电散热）。层与层之间的接口，就是跨层联合优化的切入点。</p>
+    <p class="go">把下面这些事情放到它所在的层。</p>
+  </div>
+  <div class="lab"><div id="laySort"></div></div>
+  <div class="notes" id="n-layers"></div>
+</section>
+
+<section class="part" id="req">
+  <div class="part-head"><h2>一次生成请求经过了什么</h2><span class="meta">原书 1.1.3 节</span></div>
+  <div class="sec-lede">
+    <p><strong>推理实例</strong>是能独立完成请求的一组执行资源，可以是一张卡，也可以是多张卡。请求先由路由器选实例，再由实例内部的调度器排队、编入 batch、分配状态空间，CPU 上的运行时向 GPU 提交算子。模型先处理全部输入，这叫 <strong>prefill</strong>；随后逐个生成新 token，这叫 <strong>decode</strong>。decode 复用之前保存的 <strong>KV 缓存</strong>（上下文 token 的键、值向量）。</p>
+    <p>原书强调同一份权重经历两种频率完全不同的搬移：实例启动时<strong>加载一次</strong>到显存（驻留），而执行时<strong>每一步都要</strong>把需要的权重从显存送到计算单元。外部请求可能只是一小段文字，内部搬移的却是大得多的权重、状态和中间张量。</p>
+    <p>硬件上，超节点内部的高带宽互联叫 <strong>scale-up</strong>，多个超节点经网卡和交换网络相连叫 <strong>scale-out</strong>。原书的例子是 GB200 NVL72：36 个 Grace CPU 和 72 个 Blackwell GPU 装在一个机柜，72 个 GPU 通过 NVLink 形成同一个互联域。</p>
+    <p class="go">按步走一遍请求路径。</p>
+  </div>
+  <div class="lab">
+    <div id="reqStep"></div>
+    <ol class="flow3" id="reqFlow"></ol>
+  </div>
+  <div class="notes" id="n-req"></div>
+</section>
+
+<section class="part" id="dean">
+  <div class="part-head"><h2>数量级直觉和 Amdahl 定律</h2><span class="meta">原书 1.2.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书从 Jeff Dean 2009 年的“Numbers Everyone Should Know”讲起：访问一级缓存 0.5 ns，访问主存 100 ns，数据中心内往返 0.5 ms，磁盘寻道 10 ms。一次寻道约是一次主存访问的十万倍。这组数字是 2009 年的设备环境，用来建立数量级关系，不是今天的精确值。</p>
+    <p>原书的例子：一个请求串行做 20 次寻道（每次 10 ms）加 1 ms 计算，共 201 ms。把计算加速一倍只省 0.5 ms；把数据连续放置、寻道减到 10 次，省 100 ms。推广出来就是 <strong>Amdahl 定律</strong>：比例 f 的部分加速 s 倍，总加速比 = 1 / ((1−f) + f/s)，上限 1/(1−f)。原书还拿 AI 编程工具举例：编码提速 5 倍，在编码只占 20%–30% 的大公司团队里，整体只快 1.19–1.32 倍；在编码占 70%–80% 的创业团队里，能快 2.27–2.78 倍。</p>
+    <p class="go">左边看数量级（对数刻度），右边自己代入 f 和 s。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">Jeff Dean 2009 年表（原书完整列出 12 项）</p>
+      <ul class="lat" id="latList"></ul>
+    </div>
+    <div class="lab">
+      <p class="lab-t">Amdahl 计算器</p>
+      <label class="ctl"><span>被加速部分占比 f <output id="amF">20%</output></span><input type="range" id="amFs" min="1" max="99" value="20"></label>
+      <label class="ctl"><span>该部分加速倍数 s <output id="amS">5</output></span><input type="range" id="amSs" min="1" max="100" value="5"></label>
+      <div class="read"><div class="hl"><div class="v" id="amR">0</div><div class="k">总加速比</div></div><div><div class="v" id="amM">0</div><div class="k">s → ∞ 的上限</div></div></div>
+      <div class="ctrls"><button class="btn" type="button" data-f="20" data-s="5">大公司团队</button><button class="btn" type="button" data-f="80" data-s="5">创业团队</button><button class="btn" type="button" data-f="0.5" data-s="2">寻道例子：计算加速</button></div>
+    </div>
+  </div>
+  <div class="notes" id="n-dean"></div>
+</section>
+
+<section class="part" id="cap">
+  <div class="part-head"><h2>放得下吗：参数字节、KV 和工作区</h2><span class="meta">原书 1.2.2–1.2.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书把一项任务的需求拆成三类，分别和加速器比：要<strong>同时保存</strong> M 字节（对比容量 M<sub>cap</sub>）、要做 F 次浮点运算（对比算力 Π）、要通过某接口读写 R 字节（对比带宽 β）。M 和 R 要分开算，因为一份数据可以保存一次、读取多次。用峰值算出来的是<strong>硬件的物理极限</strong>，它和实测时间之比就是 <strong>MFU</strong>（F / ΠT）和 <strong>MBU</strong>（R / βT）。</p>
+    <p>容量检查要写全：<strong>M<sub>W</sub> + M<sub>state</sub> + M<sub>work</sub> ≤ M<sub>cap</sub></strong>。原书算例 DeepSeek-R1-Distill-Llama-70B 有 705.54 亿参数，BF16 权重 141.11 GB，超过一张 H100 的 80 GB；两卡均分每卡约 70.55 GB；或用每 128 个权重共享一个 scale 的分组 8 比特量化，连同附加数据共 73.73 GB，一张卡放得下。再加 8192 token 的 BF16 KV（约 2.68 GB）和 2 GiB 工作区（约 2.15 GB），合计 78.56 GB。换成 24 GB 的 RTX 4090，光放权重就至少要 4 张。</p>
+    <p>网络带宽也要换单位：400 Gbit/s 的网卡 = 50 GB/s，传 1 GB 至少 20 ms。原书注意区分十进制 GB 和二进制 GiB：141.11 GB ≈ 131.42 GiB，两者相减前要换成同一单位。</p>
+    <p class="go">选精度和卡型，逐项核算容量。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">70B 模型的容量预算（原书数字）</p>
+      <div class="selrow">
+        <span>权重</span><div class="seg" id="capW"><button data-v="141.11" aria-pressed="true">BF16 · 141.11 GB</button><button data-v="73.73">分组 8 比特 · 73.73 GB</button></div>
+      </div>
+      <div class="selrow">
+        <span>加速器</span><div class="seg" id="capG"><button data-v="80" aria-pressed="true">H100 SXM · 80 GB</button><button data-v="24">RTX 4090 · 24 GB</button></div>
+      </div>
+      <label class="ctl"><span>卡数（权重均分） <output id="capN">1</output></span><input type="range" id="capNs" min="1" max="8" value="1"></label>
+      <label class="ctl"><span>上下文长度（token） <output id="capL">8192</output></span><input type="range" id="capLs" min="0" max="32768" step="1024" value="8192"></label>
+      <div id="capG1"></div>
+      <table class="calc" id="capT"></table>
+      <p class="verdict3" id="capV"></p>
+      <p class="note">KV 按原书数字线性换算：8192 token ≈ 2.68 GB（2.5 GiB），即每 token 约 0.327 MB；KV 和工作区按单请求、简化为每卡各算一份（原书第 2、6 章会细化多卡切分）。工作区固定 2.15 GB。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">网络单位换算</p>
+      <label class="ctl"><span>链路速率（Gbit/s） <output id="nwG">400</output></span><input type="range" id="nwGs" min="25" max="1600" step="25" value="400"></label>
+      <label class="ctl"><span>传输数据量（GB） <output id="nwD">1</output></span><input type="range" id="nwDs" min="0.1" max="150" step="0.1" value="1"></label>
+      <div class="read"><div><div class="v" id="nwB">0</div><div class="k">GB/s（÷ 8）</div></div><div class="hl"><div class="v" id="nwT">0</div><div class="k">按线速的理想时间</div></div></div>
+      <p class="note">原书：每次传输还有启动时间，协议开销和共用链路的其他流量也会降低实际带宽。这里只算线速下界。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-cap"></div>
+</section>
+
+<section class="part" id="step">
+  <div class="part-head"><h2>要多久：读取下界、计算下界和 batch 转折点</h2><span class="meta">原书 1.3.1–1.3.2 节</span></div>
+  <div class="sec-lede">
+    <p>例题 1-1：一张 H100 SXM，能不能让 70B 模型在 10 ms 内生成一个 token？按每参数 1 字节估算，单请求每步要把约 70 GB 权重读一遍，矩阵运算约 2N = 140 GFLOPs。读取下界 70 GB ÷ 3350 GB/s ≈ <strong>20.90 ms</strong>，计算下界 140 GFLOPs ÷ 989.4 TFLOP/s ≈ <strong>0.1415 ms</strong>，前者约是后者的 148 倍。读取和计算可以分块重叠，所以单步下界取较大的一项：<strong>T<sub>step</sub> ≥ max(F/Π, R<sub>W</sub>/β)</strong>。</p>
+    <p>于是：算力翻倍几乎没用；带宽翻倍或权重减半，读取下界都降到约 10.45 ms。另一条路是 batch：B 个请求共用一次权重读取，运算量变成 2BN，读取量不变。8 个请求时，每输出分摊约 2.61 ms，吞吐从约 47.9 提到约 383 token/s，<strong>但每个请求仍要等整批执行完</strong>。令 2BN/Π = b<sub>W</sub>N/β，得到转折点 <strong>B* = b<sub>W</sub>Π / (2β)</strong>，本例约 148。也可以用算术强度 I = 2B / b<sub>W</sub> 和 Π/β 比较，这是第 4 篇 Roofline 的出发点。原书特别提醒：这个转折点没计 KV，一张 H100 放下 73.73 GB 权重后只剩约 6.27 GB，根本装不下 148 条请求的 KV。</p>
+    <p class="go">换卡、换精度、换 batch，看哪一项决定下界。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">单步生成下界计算器（只计主要矩阵运算与一次权重读取）</p>
+    <div id="stG1"></div>
+    <div class="selrow"><span>加速器</span><div class="seg" id="stG"><button data-v="h100" aria-pressed="true">H100 SXM</button><button data-v="a100">A100 80GB SXM</button><button data-v="4090">RTX 4090</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>参数量 N（十亿） <output id="stN">70</output></span><input type="range" id="stNs" min="1" max="700" value="70"></label>
+      <label class="ctl"><span>每参数字节数 <output id="stB">1</output></span><input type="range" id="stBs" min="0.5" max="2" step="0.5" value="1"></label>
+      <label class="ctl"><span>batch B <output id="stBt">1</output></span><input type="range" id="stBts" min="0" max="10" value="0"></label>
+    </div>
+    <div class="read">
+      <div class="warn"><div class="v" id="stR">0</div><div class="k">权重读取下界 R<sub>W</sub>/β</div></div>
+      <div><div class="v" id="stC">0</div><div class="k">矩阵计算下界 F/Π</div></div>
+      <div class="hl"><div class="v" id="stT">0</div><div class="k">单步下界（取大）</div></div>
+      <div class="good"><div class="v" id="stTp">0</div><div class="k">吞吐上界 token/s</div></div>
+    </div>
+    <div id="stBars" class="wide"></div>
+    <p class="cap" id="stW"></p>
+    <p class="note">硬件参数取原书 GPU 速查表（BF16 输入、FP32 累加、稠密峰值）：RTX 4090 165.2 TFLOP/s、1.008 TB/s；A100 312 TFLOP/s、2.039 TB/s；H100 989.4 TFLOP/s、3.35 TB/s。batch 滑块取 1, 2, 4 … 1024。</p>
+  </div>
+  <div class="notes" id="n-step"></div>
+</section>
+
+<section class="part" id="meas">
+  <div class="part-head"><h2>实测为什么达不到下界</h2><span class="meta">原书 1.3.3–1.3.4 节</span></div>
+  <div class="sec-lede">
+    <p>原书用 Qwen3-8B（BF16）在 RTX PRO 6000 Blackwell（96 GB、1.792 TB/s、503.8 TFLOP/s）上实测，vLLM 0.23 eager 模式，每请求输入 2048、输出 256 token。从 1 个请求增到 64 个，整批吞吐约提高 31 倍，单请求输出间隔（TPOT）却从约 26.5 ms 增到 40.5 ms。权重被更多请求共享，但每个请求各自的上下文状态读写也随请求数增加，所以一步耗时要写成 max(BF<sub>1</sub>/Π, (R<sub>W</sub> + BR<sub>state,1</sub>)/β)。</p>
+    <p>更重要的是方法：按 1.792 TB/s，一步 decode 读权重和旧 KV 至少 <strong>8.62 ms</strong>，而 batch=1 实测 26.5 ms，MBU 只有约 33%。差距有两种来源，处理方式完全不同：<strong>模型漏项</strong>（没算向量运算和采样，补上后下界上移）和<strong>系统开销</strong>（eager 模式逐个提交 kernel，每次都过 Python、驱动和 PCIe；客户端逐步写日志）。关掉逐步日志补测，降到 12.1 ms；只按加速器事件计时，一步模型执行 10.7 ms，与下界只差两成。结论：三倍差距大部分是主机侧开销。原书要求后续凡是实测与下界不符，都按这个顺序查：<strong>先问模型漏了什么，再问实现有什么开销</strong>。</p>
+    <p class="go">逐级看差距是怎样被解释掉的。</p>
+  </div>
+  <div class="lab">
+    <div id="msStep"></div>
+    <div id="msBars" class="wide"></div>
+    <p class="cap" id="msW"></p>
+  </div>
+  <div class="notes" id="n-meas"></div>
+</section>
+
+<section class="part" id="arch">
+  <div class="part-head"><h2>需求如何推动架构：TPU、SmartNIC、UB</h2><span class="meta">原书 1.4 节</span></div>
+  <div class="sec-lede">
+    <p>原书说推动架构变化的是<strong>比例的改变</strong>。<strong>TPU</strong>：2013 年 Google 预测，若每位用户每天用三分钟语音搜索，数据中心规模可能要翻倍，于是做专用推理芯片，TPU v1 于 2015 年部署。<strong>SmartNIC</strong>：Azure 设计 40 Gbit/s 服务器时，最小帧下每秒约六千万个包，单核每秒处理一千万到两千万个包，需要 3–6 个核专做转发，于是把重复的包处理规则交给 FPGA 网卡（2015 年末部署，2016 年提供加速网络服务）。<strong>UB（统一互联）</strong>：算力需求增长远快于单芯片能力，协作的加速器只能越来越多；UB 让设备直接访问其他设备内存，去掉消息接口、协议栈等抽象层，让一次远程访问逼近线路时延下限。原书作者 2020–2023 年参与了这个项目。</p>
+    <p>原书列了一张“变化的逐级传递”表：每一项变化都让某个旧假设不再成立，例如“decode 每读一遍权重只做少量计算”让“峰值算力决定执行速度”失效（第 8 章），“上下文变长、KV 接近甚至超过权重”让“状态小、可以随时重算”失效（第 9 章）。它还指出，AI 系统相比通用平台有个有利条件：<strong>负载种类少且事先已知</strong>，可以据此打破原有抽象边界；很多单项技术并不新（KV 分页借用操作系统分页，沙箱放置用 2001 年的 power-of-k-choices），只是比例变了，旧方法又变得合算。</p>
+    <p class="go">先算 SmartNIC 那笔账，再把变化和失效的假设配对。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">包处理要占几个 CPU 核</p>
+      <label class="ctl"><span>链路速率（Gbit/s） <output id="nicL">40</output></span><input type="range" id="nicLs" min="10" max="400" step="10" value="40"></label>
+      <label class="ctl"><span>单核处理率（百万包/秒） <output id="nicC">10</output></span><input type="range" id="nicCs" min="5" max="40" value="10"></label>
+      <div class="read"><div><div class="v" id="nicP">0</div><div class="k">最小帧包率（每帧占 84 字节线时）</div></div><div class="warn"><div class="v" id="nicN">0</div><div class="k">所需核数 n = λ / μ</div></div></div>
+      <p class="note">原书：40 Gbit/s、单核 10–20 Mpps 时约需 3–6 核。链路变快时 λ 跟着涨，μ 没有同步提高，核数随比例上升。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">这个变化让哪个假设失效</p>
+      <div id="chainQ"></div>
+    </div>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">Speedup = 1 / ((1 − f) + f / s)　　上限 1 / (1 − f)</div>
+    <div class="fx">M ≤ M_cap，　T_compute = F / Π，　T_memory = R / β</div>
+    <div class="fx">MFU = F / (Π·T)，　MBU = R / (β·T)</div>
+    <div class="fx">M_W + M_state + M_work ≤ M_cap，　M_W = N·b_W</div>
+    <div class="fx">M_W = R_W = b_W·N，　F ≈ 2BN，　T_step ≥ max(F/Π, R_W/β)</div>
+    <div class="fx">B* = b_W·Π / (2β)，　I = F / R_W = 2B / b_W（对比 Π/β）</div>
+    <div class="fx">T_step ≈ max(B·F₁/Π, (R_W + B·R_state,1)/β)</div>
+    <div class="fx">n_core = λ_packet / μ_core</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>989.4 TFLOP/s</b><span>H100 SXM BF16 稠密峰值；3.35 TB/s，80 GB</span></div>
+      <div><b>312 / 2.039</b><span>A100 80GB SXM：TFLOP/s / TB/s</span></div>
+      <div><b>165.2 / 1.008</b><span>RTX 4090：TFLOP/s / TB/s，24 GB</span></div>
+      <div><b>141.11 GB</b><span>70B 模型 BF16 权重；分组 8 比特 73.73 GB</span></div>
+      <div><b>20.90 ms</b><span>H100 上读一遍 70 GB 的下界</span></div>
+      <div><b>B* ≈ 148</b><span>H100、1 字节权重的计算 / 读取转折</span></div>
+      <div><b>144 KiB</b><span>Qwen3-8B 每 token 全模型 KV（BF16）</span></div>
+      <div><b>16.38 GB</b><span>Qwen3-8B 完整 BF16 权重</span></div>
+      <div><b>8.62 → 26.5 ms</b><span>Qwen3-8B decode 读取下界 vs batch=1 实测</span></div>
+      <div><b>400 Gbit/s = 50 GB/s</b><span>传 1 GB 至少 20 ms</span></div>
+    </div>
+    <p class="lab-s" style="margin-top:14px">带宽放在一起看（对数刻度）：</p>
+    <div id="bwBars" class="wide"></div>
+    <p class="src">数字均取自原书第 1 章正文与“本章数字速查”。</p>
+  </div>
+  <div class="notes" id="n-arch"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-16-infra-2/"><small>下一篇</small><span>02 · 模型架构</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 六层 ---------- */
+S.sortGame($('#laySort'), {
+  bins: [{ k: 'a', t: '应用与任务' }, { k: 'm', t: '模型与负载' }, { k: 's', t: '训练与推理系统' }, { k: 'o', t: '算子与编译运行时' }, { k: 'p', t: '处理器与存储' }, { k: 'n', t: '互联与数据中心' }],
+  items: [
+    { t: '要求回答在 2 秒内返回、每次成本不超过某个上限', k: 'a', why: '应用层提出任务、时间和成本要求。' },
+    { t: '长文档和短提问形成不同的计算与存储需求', k: 'm', why: '模型结构 + 实际负载决定工作量和到达时间。' },
+    { t: '把新请求编入正在生成的 batch，管理运行状态', k: 's', why: '训练与推理系统组织请求和状态（第 8–10 章）。' },
+    { t: '决定矩阵乘法怎样分块、何时提交到加速器', k: 'o', why: '算子库、编译器、运行时（第 5 章）。' },
+    { t: 'HBM 显存为计算单元持续提供数据', k: 'p', why: '处理器与存储（第 4 章）。' },
+    { t: '72 个 GPU 通过 NVLink 组成同一个互联域', k: 'n', why: '互联与数据中心（第 6、7 章）。' }
+  ]
+});
+S.notes($('#n-layers'), {
+  c: [
+    ['编程抽象上移', '从操作系统到模型上下文：选模型、组织上下文、提供工具来表达任务。'],
+    ['六层', '应用与任务 / 模型与负载 / 训练推理系统 / 算子与编译运行时 / 处理器与存储 / 互联与数据中心。'],
+    ['batch', '多条请求合并计算，共用一次读入的参数；batch size 是每批请求数。']
+  ],
+  p: [
+    ['跨层优化的切入点', '层与层之间的接口：改状态表示、融合算子、加速器直接交接。'],
+    ['原书判断', '模型成了 LLM 时代的操作系统，AI Infra 成了 LLM 时代的体系结构。']
+  ]
+});
+
+/* ---------- 一次请求 ---------- */
+var rq = [
+  ['服务入口', '核验权限、检查配额和请求内容。'],
+  ['路由器选实例', '按目标模型、实例负载选一个推理实例（一张或多张卡）。'],
+  ['分词', '文本转换成 token 序列，可在实例内或共享前端完成。'],
+  ['实例调度器', '放入队列、编入 batch、为请求的状态分配空间。'],
+  ['运行时提交算子', 'CPU 上的运行时向 GPU 提交计算任务。'],
+  ['prefill', '一次处理全部输入，建立 KV 缓存，得到首个输出。'],
+  ['decode 循环', '每步读一遍权重和已有 KV，生成一个新 token，前一步输出成为下一步输入。'],
+  ['流式返回 / 工具调用', '输出转成文本流式返回；若要调用工具，应用运行工具后把结果加入上下文，再发起下一次调用。']
+];
+var rf = $('#reqFlow');
+rq.forEach(function (r) { h('li', { html: r[0] + '<small>' + r[1] + '</small>' }, rf); });
+S.stepper($('#reqStep'), rq.length, function (i) { S.$$('li', rf).forEach(function (li, k) { li.className = k === i ? 'on' : ''; }); }, rq.map(function (r) { return r[0]; }));
+S.notes($('#n-req'), {
+  c: [
+    ['推理实例', '能独立完成请求的一组执行资源，可由一个或多个加速器组成。'],
+    ['prefill / decode', '一次处理输入 / 逐个生成新 token。'],
+    ['KV 缓存', '上下文 token 产生的键、值向量，供后续位置的注意力复用。'],
+    ['scale-up / scale-out', '超节点内高带宽互联 / 超节点之间经网卡和交换网络。']
+  ],
+  p: [
+    ['两种搬移频率', '权重加载一次驻留显存；执行时每步都从显存读到计算单元。'],
+    ['三种流量', '服务入口传请求、共享存储提供模型文件、加速器互联传中间结果；后者必须及时到达。'],
+    ['GB200 NVL72', '一个机柜 36 Grace CPU + 72 Blackwell GPU，同一 NVLink 互联域。']
+  ]
+});
+
+/* ---------- Dean + Amdahl ---------- */
+var lat = [['访问一级缓存', 0.5], ['分支预测错误后的恢复', 5], ['访问二级缓存', 7], ['互斥锁加锁或解锁', 25], ['访问主存', 100], ['Zippy 压缩 1K 字节', 3000], ['1 Gbit/s 网络发送 2K 字节', 20000], ['从主存连续读取 1 MB', 250000], ['同一数据中心内往返', 500000], ['磁盘寻道', 1e7], ['从磁盘连续读取 1 MB', 2e7], ['加州到荷兰往返', 1.5e8]];
+function fmtNs(x) { return x >= 1e6 ? S.f(x / 1e6, x >= 1e7 ? 0 : 1) + ' ms' : x >= 1e3 ? S.f(x / 1e3, 0) + ' μs' : x + ' ns'; }
+var ll = $('#latList'), lmin = Math.log10(0.5), lmax = Math.log10(1.5e8);
+lat.forEach(function (r) {
+  var li = h('li', null, ll); h('span', { text: r[0] }, li);
+  var tr = h('span', { class: 'tr' }, li); h('span', { class: 'fl', style: 'width:' + ((Math.log10(r[1]) - lmin) / (lmax - lmin) * 96 + 4) + '%' }, tr);
+  h('span', { class: 'n', text: fmtNs(r[1]) }, li);
+});
+function amd() {
+  var f = +$('#amFs').value / 100, s = +$('#amSs').value;
+  $('#amF').textContent = S.f(f * 100, f < 0.01 ? 1 : 0) + '%'; $('#amS').textContent = s;
+  $('#amR').textContent = S.f(1 / ((1 - f) + f / s), 2) + '×';
+  $('#amM').textContent = S.f(1 / (1 - f), 2) + '×';
+}
+['amFs', 'amSs'].forEach(function (id) { $('#' + id).addEventListener('input', amd); });
+S.$$('#dean .ctrls .btn').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var f = +b.getAttribute('data-f');
+    $('#amFs').value = Math.max(1, f); $('#amSs').value = b.getAttribute('data-s'); amd();
+    if (f < 1) { var s = 2, ff = 1 / 201; $('#amF').textContent = '0.5%（1/201）'; $('#amR').textContent = S.f(1 / ((1 - ff) + ff / s), 4) + '×'; $('#amM').textContent = S.f(1 / (1 - ff), 4) + '×'; }
+  });
+});
+amd();
+S.notes($('#n-dean'), {
+  c: [
+    ['Numbers Everyone Should Know', 'Jeff Dean 2009：主存 100 ns，数据中心往返 0.5 ms，磁盘寻道 10 ms。'],
+    ['Amdahl 定律', '比例 f 的部分加速 s 倍，总加速比 1/((1−f)+f/s)，上限 1/(1−f)。']
+  ],
+  p: [
+    ['先看占比', '某部分在原总时间中占比越大，缩短它的收益越大。'],
+    ['AI 编程例子', '编码提速 5 倍：占 20%–30% 时整体 1.19–1.32 倍；占 70%–80% 时 2.27–2.78 倍。'],
+    ['串行等待', '必须先拿到一块数据才知道下一次访问哪里时，延迟逐次累加。']
+  ]
+});
+
+/* ---------- 容量 ---------- */
+var cap = { w: 141.11, g: 80 };
+function capCalc() {
+  var n = +$('#capNs').value, L = +$('#capLs').value;
+  $('#capN').textContent = n; $('#capL').textContent = L;
+  var wPer = cap.w / n, kv = L / 8192 * 2.68, work = 2.15, tot = wPer + kv + work, ok = tot <= cap.g;
+  $('#capT').innerHTML = '<tr><td>每卡权重 ' + S.f(cap.w, 2) + ' ÷ ' + n + '</td><td class="n">' + S.f(wPer, 2) + ' GB</td></tr>' +
+    '<tr><td>KV（' + L + ' token，BF16）</td><td class="n">' + S.f(kv, 2) + ' GB</td></tr>' +
+    '<tr><td>工作区</td><td class="n">' + S.f(work, 2) + ' GB</td></tr>' +
+    '<tr class="tot' + (ok ? '' : ' over') + '"><td>合计 / 每卡容量</td><td class="n">' + S.f(tot, 2) + ' / ' + cap.g + ' GB</td></tr>';
+  var v = $('#capV');
+  v.className = 'verdict3' + (ok ? '' : ' bad');
+  var minCards = Math.ceil(cap.w / cap.g);
+  v.innerHTML = ok ? '放得下，每卡剩 ' + S.f(cap.g - tot, 2) + ' GB。' : '放不下，超出 ' + S.f(tot - cap.g, 2) + ' GB。仅按权重算至少需要 ' + minCards + ' 张卡（还要逐卡检查 KV 和工作区）。';
+}
+S.seg($('#capW'), function (v) { cap.w = +v; capCalc(); });
+S.seg($('#capG'), function (v) { cap.g = +v; capCalc(); });
+['capNs', 'capLs'].forEach(function (id) { $('#' + id).addEventListener('input', capCalc); });
+capCalc();
+function nw() {
+  var g = +$('#nwGs').value, d = +$('#nwDs').value;
+  $('#nwG').textContent = g; $('#nwD').textContent = d;
+  $('#nwB').textContent = S.f(g / 8, g % 8 ? 1 : 0); $('#nwT').textContent = S.f(d / (g / 8) * 1000, 1) + ' ms';
+}
+['nwGs', 'nwDs'].forEach(function (id) { $('#' + id).addEventListener('input', nw); });
+nw();
+S.notes($('#n-cap'), {
+  c: [
+    ['三类需求', '保存 M 字节、运算 F 次、读写 R 字节；分别对比容量、算力、带宽。'],
+    ['MFU / MBU', '下界 ÷ 实测：F/(ΠT)、R/(βT)，都不超过 1。'],
+    ['容量检查', 'M_W + M_state + M_work ≤ M_cap，多卡要逐卡核算。'],
+    ['分组量化', '每 128 个权重共享一个 scale，8 比特方案 70B 共 73.73 GB。']
+  ],
+  p: [
+    ['GB vs GiB', '1 GB = 10⁹ 字节，1 GiB = 2³⁰ 字节；141.11 GB ≈ 131.42 GiB。'],
+    ['bit vs byte', '400 Gbit/s = 50 GB/s，传 1 GB 至少 20 ms。'],
+    ['显存放得下 ≠ 并发够', '权重之外还有 KV、工作区、运行时预留。']
+  ]
+});
+
+S.guess($('#capG1'), { q: '70B 模型 BF16 权重 141.11 GB，只算权重，最少要几张 80 GB 的 H100？', unit: '张', ans: 2, fmt: function (x) { return S.f(x, 0); }, why: '原书：141.11 ÷ 80 向上取整得 2，每卡约 70.55 GB、剩 9.45 GB；或者分组 8 比特量化到 73.73 GB 放进一张卡。换成 24 GB 的 RTX 4090，8 比特也至少要 4 张。' });
+
+/* ---------- 单步下界 ---------- */
+var GPU = { h100: { n: 'H100 SXM', p: 989.4e12, b: 3.35e12, m: 80 }, a100: { n: 'A100 80GB SXM', p: 312e12, b: 2.039e12, m: 80 }, '4090': { n: 'RTX 4090', p: 165.2e12, b: 1.008e12, m: 24 } };
+var stg = 'h100';
+function ms(x) { return x >= 1 ? S.f(x, 2) + ' ms' : S.f(x, 4) + ' ms'; }
+function step() {
+  var N = +$('#stNs').value * 1e9, bw = +$('#stBs').value, B = Math.pow(2, +$('#stBts').value), g = GPU[stg];
+  $('#stN').textContent = +$('#stNs').value; $('#stB').textContent = bw; $('#stBt').textContent = B;
+  var tr = bw * N / g.b * 1e3, tc = 2 * B * N / g.p * 1e3, t = Math.max(tr, tc);
+  $('#stR').textContent = ms(tr); $('#stC').textContent = ms(tc); $('#stT').textContent = ms(t);
+  $('#stTp').textContent = S.f(B / t * 1e3, 1);
+  var mx = Math.max(tr, tc);
+  S.bars($('#stBars'), [{ label: '读取 R/β', value: tr / mx, text: ms(tr), cls: tr >= tc ? 'alt' : 'dim' }, { label: '计算 F/Π', value: tc / mx, text: ms(tc), cls: tc > tr ? '' : 'dim' }]);
+  var Bs = bw * g.p / (2 * g.b), I = 2 * B / bw, ratio = g.p / g.b;
+  $('#stW').innerHTML = (tr >= tc ? '<b>读取决定下界</b>' : '<b>计算决定下界</b>') + '。算术强度 I = 2B/b<sub>W</sub> = ' + S.f(I, 1) + ' FLOP/字节，' + g.n + ' 的 Π/β = ' + S.f(ratio, 0) + '；转折点 B* = ' + S.f(Bs, 1) + '。' +
+    (B > 1 ? '每输出分摊 ' + ms(t / B) + '，但每个请求仍要等整批 ' + ms(t) + '。' : '') +
+    (bw * N / 1e9 > g.m ? ' 注意：权重 ' + S.f(bw * N / 1e9, 0) + ' GB 已超过单卡 ' + g.m + ' GB，需要切分或量化。' : '');
+}
+S.guess($('#stG1'), { q: 'H100 上，70B 模型每参数 1 字节，单请求生成一个 token 的读取下界是多少毫秒？', unit: 'ms', ans: 70e9 / 3.35e12 * 1e3, why: '原书：70 GB ÷ 3350 GB/s ≈ 20.90 ms，已经超过 10 ms 目标；矩阵计算只要约 0.14 ms。决定下界的是读取，不是算力。' });
+S.seg($('#stG'), function (v) { stg = v; step(); });
+['stNs', 'stBs', 'stBts'].forEach(function (id) { $('#' + id).addEventListener('input', step); });
+step();
+S.notes($('#n-step'), {
+  c: [
+    ['教学模型', 'M_W = R_W = b_W·N，F ≈ 2BN（一次乘加计两次运算）。'],
+    ['单步下界', '读取和计算充分重叠时，T_step ≥ max(F/Π, R_W/β)。'],
+    ['转折点 B*', 'b_W·Π/(2β)：H100、1 字节权重约 148。'],
+    ['算术强度', 'I = F/R_W，每读一字节做多少运算；小于 Π/β 时受带宽限制。']
+  ],
+  p: [
+    ['算力翻倍没用', '70B 单请求读取 20.90 ms，计算 0.14 ms，提高算力不改变下界。'],
+    ['带宽翻倍 = 权重减半', '两者都把读取下界降到约 10.45 ms。'],
+    ['吞吐 ≠ 延迟', 'batch 8 时吞吐 47.9 → 383 token/s，但每个请求要等整批。'],
+    ['B* 没算 KV', '一张 H100 放下 73.73 GB 权重后只剩 6.27 GB，装不下 148 条请求的 KV。']
+  ]
+});
+
+/* ---------- 实测 ---------- */
+S.magbars($('#bwBars'), [
+  { label: 'H100 HBM', v: 3350, text: '3.35 TB/s' }, { label: 'A100 HBM', v: 2039, text: '2.039 TB/s' },
+  { label: 'RTX PRO 6000', v: 1792, text: '1.792 TB/s' }, { label: 'RTX 4090', v: 1008, text: '1.008 TB/s' },
+  { label: '400G 网卡', v: 50, text: '50 GB/s', cls: 'alt' }
+], { log: true });
+var mst = [
+  ['读取下界', [['读权重 + 旧 KV 下界', 8.62, 'ok']], '按 1.792 TB/s 读 15.14 GB 权重 + 0.302 GB KV，至少 8.62 ms。'],
+  ['初次实测', [['读取下界', 8.62, 'ok'], ['batch=1 实测 TPOT', 26.5, 'alt']], 'MBU ≈ 8.62 / 26.5 ≈ 33%。约三倍差距：是模型漏项，还是系统开销？'],
+  ['关闭逐步日志', [['读取下界', 8.62, 'ok'], ['batch=1 实测 TPOT', 26.5, 'dim'], ['关闭日志补测', 12.1, 'alt']], '客户端逐步记录日志占用主机时间；去掉后降到 12.1 ms。（原书注：补测同时关了前缀缓存、重构了输入，日志影响无法完全分开。）'],
+  ['只计加速器事件', [['读取下界', 8.62, 'ok'], ['关闭日志补测', 12.1, 'dim'], ['加速器上一步模型执行', 10.7, '']], '只按加速器事件计时，一步 10.7 ms，与下界只差约两成。剩下的差距再去查模型漏项（向量运算、采样等）。']
+];
+S.stepper($('#msStep'), mst.length, function (i) {
+  S.bars($('#msBars'), mst[i][1].map(function (r) { return { label: r[0], value: r[1] / 26.5, text: r[1] + ' ms', cls: r[2] }; }));
+  $('#msW').textContent = mst[i][2];
+}, mst.map(function (m) { return m[0]; }));
+S.notes($('#n-meas'), {
+  c: [
+    ['TPOT', 'time per output token：客户端看到的平均输出间隔。'],
+    ['吞吐 vs TPOT', '1 → 64 请求：吞吐约 ×31，TPOT 26.5 → 40.5 ms。'],
+    ['两种差距来源', '模型漏项（补上后下界上移）vs 系统开销（与硬件无关，可以去掉）。']
+  ],
+  p: [
+    ['先算极限', '“比旧实现快三成”说明不了离上限还有多远。'],
+    ['排查顺序', '先问模型漏了什么，再问实现有什么开销；每次只改一个条件。'],
+    ['eager 模式', '逐个提交 kernel，每次经过 Python、驱动、PCIe，加速器在间隙空转。']
+  ]
+});
+
+/* ---------- 架构 ---------- */
+function nic() {
+  var L = +$('#nicLs').value, c = +$('#nicCs').value;
+  $('#nicL').textContent = L; $('#nicC').textContent = c;
+  var pps = L * 1e9 / (84 * 8);
+  $('#nicP').textContent = S.f(pps / 1e6, 1) + ' M';
+  $('#nicN').textContent = S.f(pps / (c * 1e6), 1);
+}
+['nicLs', 'nicCs'].forEach(function (id) { $('#' + id).addEventListener('input', nic); });
+nic();
+S.quiz($('#chainQ'), [
+  { q: 'decode 每读一遍权重只完成少量计算', o: ['峰值算力决定执行速度', '一个模型可以放在一张卡上', '故障是偶发事件'], a: 0, why: '原书表：对应第 8 章。' },
+  { q: '上下文变长，KV 的规模接近甚至超过权重', o: ['上下文状态较小，可以随时重算', '网络流量可以统计复用', '计算集中到云端总能缩短完成时间'], a: 0, why: '原书表：对应第 9 章。' },
+  { q: '训练规模达到上千张卡', o: ['故障是偶发事件', '峰值算力决定执行速度', '一个模型可以放在一张卡上'], a: 0, why: '原书表：对应第 10 章。' },
+  { q: 'Agent 与 RL 负载成批创建工具环境', o: ['容器中的程序相互独立，各自决定运行节奏', '上下文状态较小，可以随时重算'], a: 0, why: '原书表：对应第 11 章。' },
+  { q: '端侧设备能够运行模型', o: ['计算集中到云端总能缩短完成时间', '故障是偶发事件'], a: 0, why: '原书表：对应第 12 章。' }
+]);
+S.notes($('#n-arch'), {
+  c: [
+    ['比例的改变', '计算 / 读取、带宽 / 处理能力、需求增长 / 单芯片能力，一变就可能改写分工。'],
+    ['TPU v1', '2013 年语音搜索预测（每人每天 3 分钟可能要数据中心翻倍），2015 年部署。'],
+    ['SmartNIC', '40 Gbit/s 最小帧约 6000 万包/秒，需 3–6 核转发；交给 FPGA 网卡。'],
+    ['UB', '设备直接访问其他设备内存，去掉抽象层，逼近线路时延下限。']
+  ],
+  p: [
+    ['AI 系统的有利条件', '负载种类少、事先已知，可以打破原有抽象边界。'],
+    ['旧技术新用', 'KV 分页借自 OS 分页；沙箱放置用 power-of-k-choices（2001）；balloon（2002）。'],
+    ['全书主线', '数据搬移塑造了 AI Infra 的架构：搬什么、搬多少、搬几次、经过哪里、谁在等。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 70B 放得下吗', 'BF16 141.11 GB 放不下一张 80 GB H100：两卡均分各约 70.55 GB，或分组 8 比特量化到 73.73 GB 单卡放下；还要加 KV 和工作区逐卡核算。'],
+    ['② 一个 token 多久', '每参数 1 字节读 70 GB，H100 至少 20.90 ms，计算只要 0.14 ms；算力翻倍无效，带宽翻倍或权重减半才有效；batch 提吞吐不降单请求延迟。'],
+    ['③ 实测差距从哪来', '先查模型漏项，再查系统开销：Qwen3-8B 下界 8.62 ms、实测 26.5 ms，去掉日志 12.1 ms，加速器事件 10.7 ms，主要是主机侧开销。']
+  ],
+  p: [
+    ['方法', '先查容量，再分别算计算与读取时间，最后按依赖看重叠与等待。'],
+    ['五个问题', '搬什么、搬多少、搬几次、经过哪里、谁在等。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

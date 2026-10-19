@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>机器学习概述：模型、准则、优化与泛化</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（二）：训练集、验证集、测试集与数据泄露；线性与非线性模型；0-1、平方、交叉熵、Hinge 损失；经验风险与结构风险、过拟合与正则化；批量、随机、小批量梯度下降；精确率、召回率、F1 与宏微平均；线性回归的四种参数估计；偏差—方差分解；学习范式与特征表示；PAC、没有免费午餐、奥卡姆剃刀与归纳偏置。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.cmx { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+.cmx .lbs { display: grid; grid-template-columns: 4.5em repeat(9, 2.6em); gap: 4px; align-items: center; font-size: 15px; }
+.cmx .lbs span { text-align: center; font-family: var(--f-num); }
+.cmx .lbs b { font-weight: 600; color: var(--ink-3); font-size: 15px; }
+.cmx .lbs button { font: inherit; font-family: var(--f-num); border: 1px solid var(--hair); background: var(--bg); border-radius: 4px; padding: 4px 0; cursor: pointer; color: var(--ink); }
+.cmx .lbs button.err { border-color: var(--s2); background: var(--s2-soft); }
+.dart { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+@media (max-width: 680px) { .dart { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dart figure { margin: 0; text-align: center; }
+.dart svg { width: 100%; max-width: 150px; height: auto; }
+.dart figcaption { font-size: 15px; color: var(--ink-2); }
+.bowin { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+@media (max-width: 600px) { .bowin { grid-template-columns: minmax(0, 1fr); } }
+.bowin input { font: inherit; width: 100%; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); box-sizing: border-box; }
+.problist { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="2">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 02</span><span>对应原书第 2 章（第 27–59 页）</span><span>约 50 分钟</span></p>
+  <h1>不是记住训练集，<em>而是猜中没见过的</em></h1>
+  <p class="lead">第 2 章搭起了全书的方法框架：几乎所有机器学习方法都能放进“模型—学习准则—优化算法”三件套里理解，而这三件套最终都服务于一个目标——泛化。这一篇用线性回归和多项式拟合把这些概念串起来：在浏览器里亲手把一条曲线拟合到过拟合，再用正则化、更多数据把它拉回来，最后看偏差和方差是怎么此消彼长的。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" aria-current="page" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#basic">基本概念</a><a href="#loss">模型与损失</a><a href="#risk">风险与过拟合</a><a href="#opt">梯度下降</a><a href="#eval">评价指标</a><a href="#lr">线性回归</a><a href="#bv">偏差与方差</a><a href="#kind">范式与特征</a><a href="#theory">理论</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>机器学习的“三要素”是什么？训练集、验证集、测试集各管什么，为什么测试集不能拿来调参？</li>
+  <li>训练误差很低、验证误差很高，说明什么？该怎么办？偏差和方差分别对应什么？</li>
+  <li>最小二乘、岭回归、最大似然、最大后验，这四种估计之间是什么关系？</li>
+</ol></div>
+
+<section class="part" id="basic">
+  <div class="part-head"><h2>基本概念：样本、特征、标签与三份数据</h2><span class="meta">原书 2.1–2.2.1 节 · 第 27–30 页</span></div>
+  <div class="sec-lede">
+    <p>Tom Mitchell 的定义：机器学习是研究<strong>能通过经验自动改进的计算机算法</strong>。原书用挑芒果举例：记录每个芒果的颜色、大小、产地等<strong>特征</strong>（组成 D 维特征向量 x），再给出关心的<strong>标签</strong> y（连续的甜度打分，或离散的“好/坏”），特征加标签就是一个<strong>样本</strong>。给定训练集 𝒟，学习算法要从函数集合 ℱ 中找出一个最优的 f*，用来预测新样本的标签 ŷ = f*(x) 或条件概率 p(y|x)。手写数字识别这类任务人做起来很容易，却说不清自己是怎么做到的，所以只能让机器看大量样本自己学。</p>
+    <p>数据通常分三份：<strong>训练集</strong>学参数；<strong>验证集</strong>做模型选择、调超参数、决定何时提前停止；<strong>测试集只用于最终评估，不参与任何设计</strong>。如果反复用测试集调参，就造成<strong>数据泄露</strong>，测出来的结果会过于乐观。经典监督学习还假设样本<strong>独立同分布</strong>（IID），但时间序列、领域迁移、分布漂移这些场景并不满足。</p>
+    <p>原书把机器学习方法拆成五个要素：<strong>数据、模型、学习准则、优化算法、评价指标</strong>。后面每一节对应其中一个。</p>
+    <p class="go">先做个分类：下面每件事该用哪份数据？</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这件事该用哪份数据？</p>
+    <div id="splitG"></div>
+  </div>
+  <div class="notes" id="n-basic"></div>
+</section>
+
+<section class="part" id="loss">
+  <div class="part-head"><h2>模型与损失函数</h2><span class="meta">原书 2.2.2–2.2.3.1 节 · 第 30–33 页</span></div>
+  <div class="sec-lede">
+    <p>不同任务的主要区别在<strong>输出空间</strong>：二分类 𝒴 = {+1, −1}，C 分类 𝒴 = {1, …, C}，回归 𝒴 = ℝ。我们不知道真实映射 g(x) 或真实条件分布 p<sub>r</sub>(y|x) 长什么样，只能凭经验假设一个函数集合，叫<strong>假设空间</strong>，通常是参数化的函数族 ℱ = {f(x; θ)}。线性模型是 f = wᵀx + b；非线性模型可写成 <strong>f = wᵀφ(x) + b</strong>，φ 是 K 个非线性基函数。原书在这里埋了一个伏笔：<strong>如果基函数 φ 本身也是可学习的（φ<sub>k</sub> = h(w<sub>k</sub>ᵀφ′(x) + b<sub>k</sub>)），这个模型就等价于神经网络。</strong></p>
+    <p>模型好不好，理想的衡量是<strong>期望风险</strong> ℛ(θ) = 𝔼[ℒ(y, f(x; θ))]——在真实分布上的平均损失。损失函数常用四种：</p>
+    <p><strong>0-1 损失</strong>就是错误率，直观但不连续、导数为 0，没法优化；<strong>平方损失</strong> ½(y − f)² 用于回归，一般不适合分类；<strong>交叉熵损失</strong> −Σ y<sub>c</sub> log f<sub>c</sub> 用于分类，标签是 one-hot 时简化成 <strong>−log f<sub>y</sub></strong>，也就是负对数似然；<strong>Hinge 损失</strong> max(0, 1 − yf) 用于二分类，是支持向量机的损失（第 3 篇）。交叉熵可以分解成 H(p) + KL(p‖q)，所以最小化交叉熵就是让预测分布 q 接近真实分布 p。</p>
+    <p class="go">拖动模型对三个类别的打分，看交叉熵怎么变。原书的例子是标签为第 3 类、预测 [0.3, 0.3, 0.4]。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">交叉熵 = −log（真实类别的预测概率）</p>
+    <div class="lab-split">
+      <div>
+        <div class="selrow"><span>真实类别</span><div class="seg" id="ceY"><button data-v="0">1</button><button data-v="1">2</button><button data-v="2" aria-pressed="true">3</button></div></div>
+        <label class="ctl"><span>类别 1 的预测概率 <output id="ceA">0.30</output></span><input type="range" id="ceAs" min="0.01" max="0.98" step="0.01" value="0.3"></label>
+        <label class="ctl"><span>类别 2 的预测概率 <output id="ceB">0.30</output></span><input type="range" id="ceBs" min="0.01" max="0.98" step="0.01" value="0.3"></label>
+        <div id="ceBars" class="wide"></div>
+        <div class="read"><div class="hl"><div class="v" id="ceL">0</div><div class="k">交叉熵 −log f_y</div></div><div><div class="v" id="ceQ">0</div><div class="k">平方损失 ½‖y − f‖²</div></div></div>
+      </div>
+      <div><div id="ceC"></div><p class="cap" id="ceW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-loss"></div>
+</section>
+
+<section class="part" id="risk">
+  <div class="part-head"><h2>经验风险、过拟合与正则化</h2><span class="meta">原书 2.2.3.2 节 · 第 33–34 页</span></div>
+  <div class="sec-lede">
+    <p>真实分布不知道，期望风险算不出来，只能在训练集上算平均损失，叫<strong>经验风险</strong>。找让经验风险最小的参数，就是<strong>经验风险最小化</strong>（ERM）准则。问题是：模型太复杂时，训练误差可以压得很低，在没见过的样本上却很差——这就是<strong>过拟合</strong>。原书的定义很严谨：如果存在另一个假设 f′，在训练集上损失比 f 大、在整个样本空间上损失却比 f 小，就说 f 过拟合了。反过来，模型能力不足、连训练数据都拟合不好，叫<strong>欠拟合</strong>。</p>
+    <p>为了在拟合与复杂度之间取得平衡，在经验风险上加一个复杂度惩罚，就是<strong>结构风险最小化</strong>（SRM）：<strong>θ* = argmin ℛ<sub>emp</sub>(θ) + λΩ(θ)</strong>。最常见的是 ℓ2 正则化，ℓ1 会让参数稀疏。从贝叶斯角度看，正则化相当于给参数加了先验，不完全依赖训练数据。</p>
+    <p>ERM / SRM 在训练阶段用；正则化强度等超参数要在验证集上选。数据少时可以用 <strong>K 折交叉验证</strong>：分成 K 份互不重叠的子集，轮流拿一份做验证、其余训练，K 次结果取平均（K 一般大于 3）。</p>
+    <p class="go">用多项式拟合一条带噪声的正弦曲线（数据为示意）。先把阶数调到 1、3、9，对应原书图 2.3 的欠拟合、正常、过拟合；再在 9 阶时加一点 λ，或者多给些数据。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多项式拟合：阶数、正则化、数据量</p>
+    <div class="lab-split">
+      <div><div id="pfC"></div><p class="legend2"><span><i class="a"></i>训练样本</span><span style="color:var(--ok)">— 真实函数 sin(πx)</span><span style="color:var(--s2)">— 拟合结果</span></p></div>
+      <div>
+        <label class="ctl"><span>多项式阶数 M <output id="pfM">3</output></span><input type="range" id="pfMs" min="0" max="11" value="3"></label>
+        <label class="ctl"><span>正则化系数 log₁₀λ <output id="pfL">关</output></span><input type="range" id="pfLs" min="-9" max="1" step="0.5" value="-9"></label>
+        <label class="ctl"><span>训练样本数 N <output id="pfN">12</output></span><input type="range" id="pfNs" min="6" max="100" value="12"></label>
+        <div class="read"><div><div class="v" id="pfTr">0</div><div class="k">训练误差（RMSE）</div></div><div class="hl"><div class="v" id="pfTe">0</div><div class="k">测试误差（200 个新点）</div></div><div class="warn"><div class="v" id="pfW">0</div><div class="k">最大系数 |w|</div></div></div>
+        <p class="verdict3" id="pfV"></p>
+        <div class="ctrls"><button class="btn" type="button" id="pfR">换一批数据</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-risk"></div>
+</section>
+
+<section class="part" id="opt">
+  <div class="part-head"><h2>优化：批量、随机、小批量梯度下降</h2><span class="meta">原书 2.2.4 节 · 第 34–37 页</span></div>
+  <div class="sec-lede">
+    <p>定好训练集、假设空间和学习准则，训练就变成了<strong>最优化问题</strong>。这里先分清两类参数：θ 是<strong>模型参数</strong>，由优化算法直接学；正则化系数、学习率、层数、聚类数这类定义模型结构或优化策略的叫<strong>超参数</strong>，要结合验证集来选（人工、网格搜索、随机搜索、贝叶斯优化）。凸目标往往能稳定求到全局最优；神经网络这种非凸模型通常只能求到局部最优或足够好的解。</p>
+    <p>最常用的是<strong>梯度下降</strong>：θ<sub>t+1</sub> = θ<sub>t</sub> − α ∂ℛ/∂θ，α 叫学习率。每步用全部训练样本算梯度，叫<strong>批量梯度下降</strong>（BGD），数据大时又慢又占内存；每步只用一个样本，叫<strong>随机梯度下降</strong>（SGD），单步便宜，在非凸问题里还更容易跳出较差的局部区域；折中的<strong>小批量梯度下降</strong>每步随机取 K 个样本（K 一般 1~100，常取 2 的幂），兼顾效率、稳定性和并行，是深度学习的主流做法。</p>
+    <p>还有一种不加正则项也能缓解过拟合的办法：<strong>提前停止</strong>。训练误差会一直下降，验证误差往往先降后升，在验证集性能不再提升时停下来。算法 2.1 的 SGD 就是以“验证集性能不再提升”作为循环终止条件的。</p>
+    <p class="go">在线性回归 y = wx + b 的损失面上跑三种方法（数据为示意，真值取原书图 2.7 的 w = 0.60、b = 0.52）。颜色越深损失越小。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三种梯度下降在 (w, b) 平面上的轨迹</p>
+    <div class="lab-split">
+      <div id="gdF"></div>
+      <div>
+        <div class="selrow"><span>方法</span><div class="seg" id="gdM"><button data-v="1">SGD（K = 1）</button><button data-v="4" aria-pressed="true">小批量 K = 4</button><button data-v="20">批量（K = 20）</button></div></div>
+        <label class="ctl"><span>学习率 α <output id="gdA">0.10</output></span><input type="range" id="gdAs" min="0.01" max="0.5" step="0.01" value="0.1"></label>
+        <label class="ctl"><span>迭代步数 <output id="gdT">60</output></span><input type="range" id="gdTs" min="5" max="200" step="5" value="60"></label>
+        <div class="read"><div class="hl"><div class="v" id="gdW">0</div><div class="k">最终 (w, b)</div></div><div><div class="v" id="gdS">0</div><div class="k">共看过的样本数</div></div></div>
+        <div id="gdC"></div>
+        <div class="ctrls"><button class="btn" type="button" id="gdR">换随机种子再跑</button></div>
+      </div>
+    </div>
+    <p class="cap" id="gdCap"></p>
+  </div>
+  <div class="notes" id="n-opt"></div>
+</section>
+
+<section class="part" id="eval">
+  <div class="part-head"><h2>评价指标：准确率不够用的时候</h2><span class="meta">原书 2.2.5 节 · 第 37–40 页</span></div>
+  <div class="sec-lede">
+    <p>准确率是所有类别的平均，想对每一类单独评估，就要看混淆矩阵里的四种情况：真正例 TP、假负例 FN、假正例 FP、真负例 TN。<strong>精确率</strong> P = TP/(TP + FP)：预测为 c 的里面有多少是对的（查准）；<strong>召回率</strong> R = TP/(TP + FN)：真正属于 c 的有多少被找出来了（查全）。<strong>F 值</strong>是两者的加权调和平均，β = 1 时叫 F1。原书特别提醒：中文里“准确率”和“精确率”在有些文献里定义正好相反，要看上下文。</p>
+    <p>多个类别怎么汇总？<strong>宏平均</strong>先算每一类的指标再平均，更能反映小类别；<strong>微平均</strong>先把所有类别的 TP、FP、FN 加起来再算，更受大类别影响——单标签多分类时微平均的 P、R、F1 都等于准确率。宏平均 F1 在文献里有两种写法（用宏 P、宏 R 算，或直接平均各类 F1），比较结果时要留意。</p>
+    <p>还有一类问题准确率根本看不出来：<strong>概率校准</strong>。模型经常给出 0.9 的概率，那这些预测里应该有大约 90% 是对的；如果实际只有 60%，说明它过于自信。不确定性分两种：数据本身的噪声或边界模糊（<strong>数据不确定性</strong>，有无限数据也消不掉），训练数据有限或分布变化造成的（<strong>模型不确定性</strong>）。</p>
+    <p class="go">下面是原书习题 2-6 的 9 个样本。点预测标签可以改，看各项指标怎么变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三分类的混淆矩阵与宏 / 微平均（原书习题 2-6）</p>
+    <div class="cmx"><div class="lbs" id="cmL"></div></div>
+    <div class="lab-split">
+      <div><div id="cmM"></div><p class="cap">行：真实类别；列：预测类别。</p></div>
+      <div><table class="calc" id="cmT"></table></div>
+    </div>
+    <div class="ctrls"><button class="btn" type="button" id="cmR">恢复原题</button></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书习题 2-7：正负样本 1 : 99</p>
+    <div id="imG"></div>
+  </div>
+  <div class="notes" id="n-eval"></div>
+</section>
+
+<section class="part" id="lr">
+  <div class="part-head"><h2>线性回归：四种估计，两两相等</h2><span class="meta">原书 2.3 节 · 第 40–45 页</span></div>
+  <div class="sec-lede">
+    <p>线性回归 f(x; w) = wᵀx（把 1 拼到 x 末尾、把 b 拼到 w 末尾，得到增广向量，偏置就不用单独写了）。原书用它演示四种参数估计，结论可以压缩成两个等号：</p>
+    <p><strong>① 经验风险最小化 = 最大似然估计。</strong>平方损失的经验风险 ½‖y − Xᵀw‖² 对 w 求导令其为 0，得到 <strong>w* = (XXᵀ)⁻¹Xy</strong>，这就是最小二乘法（古汉语里“平方”叫“二乘”）。换一个角度：假设 y = wᵀx + ε，ε 服从 𝒩(0, σ²)，最大化对数似然，得到的解完全一样。XXᵀ 不可逆时（比如样本数 N 小于特征数 D + 1），可以先用 PCA 去相关，或者用梯度下降迭代 w ← w + αX(y − Xᵀw)，后者叫 LMS 算法。</p>
+    <p><strong>② 结构风险最小化 = 最大后验估计。</strong>特征之间有多重共线性时，(XXᵀ)⁻¹ 数值上很不稳定，岭回归给对角线加 λ：<strong>w* = (XXᵀ + λI)⁻¹Xy</strong>，等价于目标 ½‖y − Xᵀw‖² + ½λ‖w‖²。另一边，给 w 一个高斯先验 𝒩(0, ν²I)，最大化后验，对数后验正好是 −(1/2σ²)‖y − Xᵀw‖² − (1/2ν²)wᵀw——<strong>就是岭回归，λ = σ²/ν²</strong>。当 ν → ∞，先验退化成均匀分布（无信息先验），MAP 就退化成 MLE。</p>
+    <p>最大似然和贝叶斯估计分别对应频率学派和贝叶斯学派对参数的不同理解：前者认为 w 是一个固定的未知数，后者认为 w 是随机变量。贝叶斯估计给出的是参数的分布（区间估计），MAP 取其中密度最高的点（点估计）。</p>
+    <p class="go">拖动先验的标准差 ν，看 λ 和拟合直线怎么变（8 个样本为示意，噪声 σ = 0.3）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">先验越窄，直线越被拉向 0</p>
+    <div class="lab-split">
+      <div><div id="mpC"></div><p class="legend2"><span style="color:var(--ink-3)">--- 最大似然（最小二乘）</span><span style="color:var(--s2)">— 最大后验（岭回归）</span></p></div>
+      <div>
+        <label class="ctl"><span>先验标准差 ν <output id="mpV">0.30</output></span><input type="range" id="mpVs" min="-2" max="1.5" step="0.05" value="-0.52"></label>
+        <div class="read"><div class="hl"><div class="v" id="mpL">0</div><div class="k">λ = σ²/ν²</div></div><div><div class="v" id="mpW">0</div><div class="k">MAP 的 (w, b)</div></div><div><div class="v" id="mpM">0</div><div class="k">MLE 的 (w, b)</div></div></div>
+        <p class="cap" id="mpCap"></p>
+      </div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一步步推：最大后验为什么就是岭回归</p>
+    <div id="dvS"></div>
+    <ol class="derive" id="dvL">
+      <li>贝叶斯公式：后验 ∝ 似然 × 先验<div class="fx">p(w | X, y) ∝ p(y | X, w; σ) · p(w; ν)</div></li>
+      <li>取对数，乘法变加法<div class="fx">log p(w | X, y) = log p(y | X, w) + log p(w) + 常数</div></li>
+      <li>似然是 N 个高斯密度的乘积，取对数后只剩平方项<div class="fx">log p(y | X, w) = −(1/2σ²) Σ (y⁽ⁿ⁾ − wᵀx⁽ⁿ⁾)² + 常数</div></li>
+      <li>先验 𝒩(0, ν²I) 取对数<div class="fx">log p(w) = −(1/2ν²) wᵀw + 常数</div></li>
+      <li>两项相加，整体乘以 −σ²，最大化变成最小化<div class="fx">argmin ½‖y − Xᵀw‖² + ½(σ²/ν²)‖w‖²</div></li>
+      <li>和岭回归的目标逐项对上，<strong>λ = σ²/ν²</strong>。先验越窄（ν 越小），惩罚越重；ν → ∞ 时惩罚消失，回到最大似然。</li>
+    </ol>
+  </div>
+  <div class="notes" id="n-lr"></div>
+</section>
+
+<section class="part" id="bv">
+  <div class="part-head"><h2>偏差—方差分解</h2><span class="meta">原书 2.4 节 · 第 45–48 页</span></div>
+  <div class="sec-lede">
+    <p>拟合能力强的模型容易过拟合，限制复杂度又可能欠拟合。<strong>偏差—方差分解</strong>给了分析这个权衡的工具。以平方损失的回归为例，最优模型是 f*(x) = 𝔼[y|x]，它仍有一份由噪声造成的损失 ε，任何模型都消不掉。</p>
+    <p>关键一步是：<strong>训练集本身是随机抽出来的，换一个训练集就会得到不同的模型 f<sub>𝒟</sub></strong>。于是对一个学习算法，可以问两件事：这些模型的平均和最优模型差多远（<strong>偏差</strong>，衡量拟合能力），这些模型彼此之间差多大（<strong>方差</strong>，衡量是否容易过拟合）。期望错误 = <strong>偏差² + 方差 + ε</strong>。</p>
+    <p>原书的几条结论：方差一般随样本增加而减少；复杂度增加时偏差降、方差升；调大 λ 降方差、升偏差，λ 过大总误差反而上升；<strong>最优模型不一定在偏差曲线和方差曲线的交点</strong>。实际诊断：训练误差高 → 偏差高（加特征、加复杂度、减小 λ）；训练误差低但验证误差高 → 方差高（降复杂度、加大 λ、引入先验，或者用<strong>集成</strong>把多个高方差模型平均起来，见第 11 篇）。</p>
+    <p class="go">从同一个分布里抽 40 个训练集（每个 12 个点，示意），各拟合一次，叠在一起看。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">40 个训练集上的 40 个模型</p>
+    <div class="lab-split">
+      <div><div id="bvC"></div><p class="legend2"><span style="color:var(--ok)">— 最优模型 f*</span><span style="color:var(--s1)">— 各训练集上的 f_𝒟（显示 20 条）</span><span style="color:var(--s2)">— 平均 𝔼[f_𝒟]</span></p></div>
+      <div>
+        <label class="ctl"><span>多项式阶数 <output id="bvM">9</output></span><input type="range" id="bvMs" min="0" max="11" value="9"></label>
+        <label class="ctl"><span>正则化 log₁₀λ <output id="bvL">−3</output></span><input type="range" id="bvLs" min="-8" max="1" step="0.5" value="-3"></label>
+        <div id="bvBars" class="wide"></div>
+        <p class="cap" id="bvW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">误差随 λ 的变化（9 阶，模拟值，对应原书图 2.9 横轴反过来）</p>
+    <div id="bvCurve"></div>
+    <p class="cap">λ 越大模型越简单（图中往右）。总误差的最低点不在偏差²与方差两条曲线的交点上。每个点是 40 个训练集的模拟平均，λ 很小时方差极大，偏差的估计也会跟着抖。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 2.8：四种组合（靶心是 f*，点是不同训练集上的 f_𝒟）</p>
+    <div class="dart" id="dart"></div>
+  </div>
+  <div class="notes" id="n-bv"></div>
+</section>
+
+<section class="part" id="kind">
+  <div class="part-head"><h2>学习范式与特征表示</h2><span class="meta">原书 2.5–2.6 节 · 第 47–53 页</span></div>
+  <div class="sec-lede">
+    <p>按训练样本里提供什么信息、学习过程得到什么反馈，原书列了六种范式。<strong>监督学习</strong>每个样本都有标签，又分回归、分类和<strong>结构化学习</strong>（输出是序列、树、图，靠 argmax 解码）；<strong>无监督学习</strong>没有标签，做聚类、密度估计、降维、表示学习；<strong>强化学习</strong>在交互中试错，最大化期望总回报；<strong>半监督学习</strong>用少量标注加大量无标注；<strong>自监督学习</strong>从数据自身构造监督信号（预测被遮蔽的词、预测下一个词），是大规模预训练的范式；<strong>迁移学习</strong>把一个任务学到的知识用到另一个任务，“预训练—微调”就属于它。</p>
+    <p>特征表示上，原书沿用第 1 章的线索：文本最简单的表示是<strong>词袋</strong>（BoW），向量第 i 维表示词表第 i 个词是否出现。但词袋不管词序——“我 帮了 张三”和“张三 帮了 我”的词袋完全一样。改进是 <strong>N 元特征</strong>：每 N 个连续词作为一个单元（$ 和 # 标记开头结尾），代价是特征数会快速上升，上限 |𝒱|<sup>N</sup>。传统特征学习分<strong>特征选择</strong>（保留有用的子集：子集搜索、ℓ1 正则化、决策树）和<strong>特征抽取</strong>（投影到新空间：LDA 有监督，PCA、自编码器无监督），统称降维，可以缓解维度灾难。</p>
+    <p class="go">先把几种做法分到对应的范式里，再看词袋和二元特征的区别。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分类：属于哪种学习范式</p>
+    <div id="kindG"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">词袋与 N 元特征</p>
+    <div class="bowin"><input id="bw1" value="我 喜欢 读书" aria-label="句子 1"><input id="bw2" value="我 讨厌 读书" aria-label="句子 2"></div>
+    <div class="ctrls"><div class="seg" id="bwN"><button data-v="1" aria-pressed="true">一元（词袋）</button><button data-v="2">二元</button><button data-v="3">三元</button></div><button class="btn" type="button" id="bwEx">换成习题 2-4 的例子</button></div>
+    <div class="tblw" id="bwT"></div>
+    <p class="cap" id="bwW"></p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>阶段</th><th>代表方法</th><th>核心特点</th><th>局限或优势</th></tr></thead>
+    <tbody>
+      <tr><td>人工设计特征</td><td>BoW、N-Gram、SIFT、HOG</td><td>靠人工经验构造</td><td>高维稀疏，依赖领域知识，迁移弱</td></tr>
+      <tr><td>浅层可学习表示</td><td>PCA、词向量</td><td>从数据学低维稠密表示</td><td>更紧凑、能表达部分相似性，但能力有限</td></tr>
+      <tr><td>深度学习</td><td>CNN、RNN、Transformer</td><td>多层网络端到端学任务相关表示</td><td>表示能力强，但依赖较多数据与算力</td></tr>
+      <tr class="on"><td>预训练表示</td><td>预训练 + 微调</td><td>先学通用表示，再迁移</td><td>迁移能力强，大模型的重要范式</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 2.2：特征表示方法的演化。深度模型里越靠近输入的表示越偏局部和通用，越靠近输出越与任务相关。</p>
+  <div class="notes" id="n-kind"></div>
+</section>
+
+<section class="part" id="theory">
+  <div class="part-head"><h2>几个定理：PAC、没有免费午餐、奥卡姆剃刀、丑小鸭</h2><span class="meta">原书 2.7 节 · 第 53–56 页</span></div>
+  <div class="sec-lede">
+    <p>期望错误和经验错误之差叫<strong>泛化错误</strong>。训练集无穷大时它趋于 0，但现实里样本有限，所以只能降低要求：<strong>以较高概率（1 − δ）学到一个近似正确（泛化错误 ≤ ε）的假设</strong>，这就是 PAC（Probably Approximately Correct）学习。固定 ε、δ，可以反推需要的样本数：<strong>N ≥ (1/2ε²)(log|ℱ| + log(2/δ))</strong>。假设空间越大，需要的样本越多——这也是要用正则化限制模型复杂度的原因。</p>
+    <p><strong>没有免费午餐定理</strong>（Wolpert 和 Macready，1997）：不存在对所有问题都有效的算法，在某些问题上有效，必然在另一些问题上比随机搜索还差。所以“我的模型在所有问题上都更好”这种说法违背了这个定理。</p>
+    <p><strong>奥卡姆剃刀</strong>：“如无必要，勿增实体”，和正则化的思想一致——性能相近时选更简单的模型。它的一种形式化是<strong>最小描述长度</strong>（MDL）：最好的模型让“模型本身的编码长度 + 用它编码数据的长度”最小，正好对应 −log p(f) − log p(𝒟|f)。<strong>丑小鸭定理</strong>（渡边慧，1969）：丑小鸭和白天鹅的区别，与两只白天鹅之间的区别一样大——相似性没有客观标准，取决于你看哪些特征（体型还是基因）。</p>
+    <p>最后是贯穿全书的<strong>归纳偏置</strong>：算法对问题所做的假设，在贝叶斯学习里也叫先验。最近邻假设局部区域同属一类，朴素贝叶斯假设特征条件独立；深度网络的结构本身就是归纳偏置。</p>
+    <p class="go">先估一下 PAC 界要多少样本，再调参数看看。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">PAC 学习需要的样本数</p>
+      <div id="pacG"></div>
+      <label class="ctl"><span>假设空间大小 |ℱ| = 10^<output id="pcF">6</output></span><input type="range" id="pcFs" min="1" max="30" value="6"></label>
+      <label class="ctl"><span>允许的泛化错误 ε <output id="pcE">0.05</output></span><input type="range" id="pcEs" min="0.01" max="0.3" step="0.01" value="0.05"></label>
+      <label class="ctl"><span>失败概率 δ <output id="pcD">0.05</output></span><input type="range" id="pcDs" min="0.01" max="0.49" step="0.01" value="0.05"></label>
+      <div class="read"><div class="hl"><div class="v" id="pcN">0</div><div class="k">至少需要的样本数 N</div></div></div>
+      <p class="cap" id="pcW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">不同网络结构的归纳偏置</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th>模型</th><th>假设数据……</th><th>篇</th></tr></thead>
+        <tbody>
+          <tr><td>最近邻</td><td>小的局部区域里大部分样本同属一类</td><td>—</td></tr>
+          <tr><td>朴素贝叶斯</td><td>各特征的条件概率互相独立</td><td>—</td></tr>
+          <tr><td>卷积网络</td><td>局部性、平移不变性</td><td>05</td></tr>
+          <tr><td>循环网络</td><td>序列依赖性</td><td>06</td></tr>
+          <tr><td>Transformer</td><td>任意位置之间都可能有依赖</td><td>08</td></tr>
+          <tr><td>图神经网络</td><td>节点表示受邻居影响</td><td>09</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>期望风险 vs 经验风险 vs 泛化错误</b>：期望风险是真实分布上的平均损失（算不出）；经验风险是训练集上的平均损失（能算）；泛化错误是两者之差。</p>
+    <p><b>参数 vs 超参数</b>：参数由优化算法直接学；超参数定义模型结构或优化策略（λ、学习率、层数），靠验证集选。在贝叶斯方法里，超参数可以理解为“参数的参数”（控制参数分布的参数）。</p>
+    <p><b>验证集 vs 测试集</b>：验证集参与模型选择，测试集只做最终评估。用测试集调参就是数据泄露。</p>
+    <p><b>特征选择 vs 特征抽取</b>：前者在原特征里挑子集，后者构造新的特征空间（x′ = Wx）。</p>
+  </div>
+  <div class="notes" id="n-theory"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">期望风险 ℛ(θ) = 𝔼<sub>(x,y)∼p_r</sub>[ℒ(y, f(x; θ))]　　经验风险 ℛ_emp = (1/N) Σ ℒ(y⁽ⁿ⁾, f(x⁽ⁿ⁾; θ))</div>
+    <div class="fx">ERM：θ* = argmin ℛ_emp　　SRM：θ* = argmin ℛ_emp + λΩ(θ)</div>
+    <div class="fx">交叉熵 ℒ = −Σ y_c log f_c = −log f_y　　Hinge ℒ = max(0, 1 − yf)</div>
+    <div class="fx">GD：θ ← θ − α ∂ℛ/∂θ　　小批量：θ ← θ − (α/K) Σ_{(x,y)∈S_t} ∂ℒ/∂θ</div>
+    <div class="fx">P = TP/(TP+FP)　R = TP/(TP+FN)　F_β = (1+β²)PR/(β²P + R)</div>
+    <div class="fx">最小二乘 = MLE：w* = (XXᵀ)⁻¹Xy　　岭回归 = MAP：w* = (XXᵀ + λI)⁻¹Xy，λ = σ²/ν²</div>
+    <div class="fx">ℛ(f) = (bias)² + variance + ε</div>
+    <div class="fx">PAC：N(ε, δ) ≥ (1/2ε²)(log|ℱ| + log(2/δ))</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-1/"><small>上一篇</small><span>01 · 绪论</span></a><a class="nx" href="../2026-10-18-nndl-3/"><small>下一篇</small><span>03 · 线性模型</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 小工具：线性方程组与多项式拟合 ---------- */
+function solve(A, b) {
+  var n = b.length, M = A.map(function (r, i) { return r.concat([b[i]]); });
+  for (var c = 0; c < n; c++) {
+    var p = c;
+    for (var r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    var t = M[c]; M[c] = M[p]; M[p] = t;
+    if (Math.abs(M[c][c]) < 1e-14) M[c][c] = 1e-14;
+    for (var r2 = c + 1; r2 < n; r2++) {
+      var f = M[r2][c] / M[c][c];
+      for (var k = c; k <= n; k++) M[r2][k] -= f * M[c][k];
+    }
+  }
+  var x = new Array(n);
+  for (var i = n - 1; i >= 0; i--) {
+    var s = M[i][n];
+    for (var j = i + 1; j < n; j++) s -= M[i][j] * x[j];
+    x[i] = s / M[i][i];
+  }
+  return x;
+}
+function polyFit(xs, ys, m, lam) {
+  var n = m + 1, A = [], b = [];
+  for (var i = 0; i < n; i++) { A.push(new Array(n).fill(0)); b.push(0); }
+  xs.forEach(function (x, k) {
+    var ph = []; for (var i = 0; i < n; i++) ph.push(Math.pow(x, i));
+    for (var i2 = 0; i2 < n; i2++) { b[i2] += ph[i2] * ys[k]; for (var j = 0; j < n; j++) A[i2][j] += ph[i2] * ph[j]; }
+  });
+  for (var d = 0; d < n; d++) A[d][d] += lam + 1e-12;
+  return solve(A, b);
+}
+function polyVal(w, x) { var s = 0, p = 1; for (var i = 0; i < w.length; i++) { s += w[i] * p; p *= x; } return s; }
+function fTrue(x) { return Math.sin(Math.PI * x); }
+
+/* ---------- 基本概念 ---------- */
+S.sortGame($('#splitG'), {
+  bins: [{ k: 'tr', t: '训练集' }, { k: 'va', t: '验证集' }, { k: 'te', t: '测试集' }, { k: 'no', t: '哪个都不该用（数据泄露）' }],
+  items: [
+    { t: '用梯度下降更新权重 w', k: 'tr', why: '模型参数在训练集上学。' },
+    { t: '在 λ = 0.01 和 λ = 0.1 之间二选一', k: 'va', why: '超参数调整靠验证集。' },
+    { t: '决定第几轮提前停止', k: 'va', why: '提前停止看验证集性能是否还在提升。' },
+    { t: '写进论文的最终准确率', k: 'te', why: '测试集只用于最终评估。' },
+    { t: '看测试集结果不好，回头改网络层数再测', k: 'no', why: '测试集参与了模型设计，结果会过于乐观——这是数据泄露。' },
+    { t: '比较 3 层和 5 层网络哪个好', k: 'va', why: '模型选择也是验证集的工作。' },
+    { t: '计算经验风险并求梯度', k: 'tr', why: '经验风险就是训练集上的平均损失。' }
+  ]
+});
+S.notes($('#n-basic'), {
+  c: [
+    ['样本', '特征 + 标签；特征写成 D 维特征向量 x。'],
+    ['假设空间', '凭经验假设的函数集合 ℱ = {f(x; θ)}，学习就是从中挑一个。'],
+    ['数据泄露', '测试集被反复用于调参，测试结果过于乐观。'],
+    ['IID', '样本独立地从同一分布抽取；时间序列、分布漂移时不成立。']
+  ],
+  p: [
+    ['三份数据', '训练集学参数；验证集选模型、调超参、提前停止；测试集只做最终评估。'],
+    ['五要素', '数据、模型、学习准则、优化算法、评价指标。'],
+    ['预测形式', 'ŷ = f*(x)，或条件概率 p(y|x) = f*_y(x)。']
+  ]
+});
+
+/* ---------- 损失函数 ---------- */
+var ceY = 2;
+var ceChart = S.chart($('#ceC'), { h: 240, x: [0, 1], y: [0, 4.5], xt: [0, 0.25, 0.5, 0.75, 1], yt: [0, 1, 2, 3, 4], xl: '真实类别的预测概率 f_y', curves: [{ f: function (p) { return -Math.log(p); }, c: 'c1', label: '−log f_y' }] });
+function ce() {
+  var a = +$('#ceAs').value, b = +$('#ceBs').value;
+  if (a + b > 0.99) { b = Math.max(0.01, 0.99 - a); $('#ceBs').value = b; }
+  var p = [a, b, 1 - a - b];
+  $('#ceA').textContent = S.f(a, 2); $('#ceB').textContent = S.f(b, 2);
+  S.bars($('#ceBars'), p.map(function (v, i) { return { label: '类别 ' + (i + 1), value: v, text: S.f(v, 2), cls: i === ceY ? 'alt' : 'dim' }; }));
+  var L = -Math.log(p[ceY]);
+  var q = 0.5 * p.reduce(function (s, v, i) { return s + Math.pow((i === ceY ? 1 : 0) - v, 2); }, 0);
+  $('#ceL').textContent = S.f(L, 3); $('#ceQ').textContent = S.f(q, 3);
+  ceChart({ dots: [{ x: p[ceY], y: L, c: 'c2', r: 6 }] });
+  $('#ceW').innerHTML = '交叉熵只看真实类别那一项：f<sub>y</sub> = ' + S.f(p[ceY], 2) + '，损失 −log ' + S.f(p[ceY], 2) + ' = <b>' + S.f(L, 3) + '</b>。' + (Math.abs(p[ceY] - 0.4) < 0.005 && ceY === 2 ? '这正是原书的例子 −log 0.4。' : '') + ' 概率越接近 0，损失增长越陡（趋向无穷），所以模型“自信地答错”会被重罚；平方损失最大也只有 1，惩罚温和得多。';
+}
+S.seg($('#ceY'), function (v) { ceY = +v; ce(); });
+['ceAs', 'ceBs'].forEach(function (id) { $('#' + id).addEventListener('input', ce); });
+ce();
+S.notes($('#n-loss'), {
+  c: [
+    ['线性模型', 'f(x; θ) = wᵀx + b。'],
+    ['非线性模型', 'f = wᵀφ(x) + b；基函数 φ 也可学时就是神经网络。'],
+    ['期望风险', '真实分布上的平均损失，衡量模型好坏的理想标准。'],
+    ['负对数似然', '标签 one-hot 时交叉熵 = −log f_y，就是真实类别的负对数似然。']
+  ],
+  p: [
+    ['0-1 损失', 'I(y ≠ f)：直观，但不连续、导数为 0，难优化。'],
+    ['平方损失', '½(y − f)²，用于回归，一般不适合分类（习题 2-3）。'],
+    ['交叉熵', '−Σ y_c log f_c；H(p, q) = H(p) + KL(p‖q)。'],
+    ['Hinge', 'max(0, 1 − yf)，y ∈ {−1, +1}，SVM 用它。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 多项式拟合 ---------- */
+var pfSeed = 7, pfX, pfY, teX = [], teY = [];
+(function () { var r = S.rng(99); for (var i = 0; i < 200; i++) { var x = -1 + 2 * r(); teX.push(x); teY.push(fTrue(x) + 0.25 * S.randn(r)); } })();
+function pfData() {
+  var r = S.rng(pfSeed), N = +$('#pfNs').value;
+  pfX = []; pfY = [];
+  for (var i = 0; i < N; i++) { var x = -1 + 2 * r(); pfX.push(x); pfY.push(fTrue(x) + 0.25 * S.randn(r)); }
+}
+var pfChart = S.chart($('#pfC'), { h: 280, x: [-1.05, 1.05], y: [-2, 2], xt: [-1, -0.5, 0, 0.5, 1], yt: [-2, -1, 0, 1, 2] });
+function rmse(w, xs, ys) { var s = 0; xs.forEach(function (x, i) { s += Math.pow(polyVal(w, x) - ys[i], 2); }); return Math.sqrt(s / xs.length); }
+function pf() {
+  var m = +$('#pfMs').value, ll = +$('#pfLs').value, lam = ll <= -9 ? 0 : Math.pow(10, ll);
+  $('#pfM').textContent = m; $('#pfL').textContent = ll <= -9 ? '关' : S.f(ll, 1); $('#pfN').textContent = pfX.length;
+  var w = polyFit(pfX, pfY, m, lam);
+  var tr = rmse(w, pfX, pfY), te = rmse(w, teX, teY);
+  var mx = Math.max.apply(null, w.map(Math.abs));
+  $('#pfTr').textContent = S.f(tr, 3); $('#pfTe').textContent = S.f(te, 3); $('#pfW').textContent = mx > 1e4 ? S.sci(mx, 1) : S.f(mx, mx > 100 ? 0 : 2);
+  pfChart({ curves: [{ f: fTrue, c: 'ok', w: 2 }, { f: function (x) { return polyVal(w, x); }, c: 'c2', w: 2.5 }], dots: pfX.map(function (x, i) { return { x: x, y: pfY[i], c: 'c1', r: 4.5 }; }) });
+  var v = $('#pfV'), msg;
+  if (tr > 0.3) { msg = '<b>欠拟合</b>：训练误差都下不去，模型能力不足（偏差高）。'; v.className = 'verdict3 bad'; }
+  else if (te > 0.45) { msg = '<b>过拟合</b>：训练误差 ' + S.f(tr, 2) + '，测试误差 ' + S.f(te, 2) + '——曲线在样本之间剧烈摆动去穿过每个噪声点，系数也大得离谱。试试加 λ 或加数据。'; v.className = 'verdict3 bad'; }
+  else { msg = '<b>拟合得不错</b>：训练和测试误差接近，都在噪声水平（σ = 0.25）附近。'; v.className = 'verdict3'; }
+  v.innerHTML = msg;
+}
+$('#pfNs').addEventListener('input', function () { pfData(); pf(); });
+['pfMs', 'pfLs'].forEach(function (id) { $('#' + id).addEventListener('input', pf); });
+$('#pfR').addEventListener('click', function () { pfSeed++; pfData(); pf(); });
+pfData(); pf();
+S.notes($('#n-risk'), {
+  c: [
+    ['经验风险最小化', 'ERM：让训练集上的平均损失最小。'],
+    ['过拟合', '训练集上比 f′ 好、整个样本空间上比 f′ 差。'],
+    ['欠拟合', '训练数据都拟合不好，一般是模型能力不足。'],
+    ['结构风险最小化', 'SRM：经验风险 + λ × 复杂度。']
+  ],
+  p: [
+    ['ℓ2 vs ℓ1', 'ℓ2 最常见；ℓ1 让参数稀疏，也可用来做特征选择。'],
+    ['正则化的贝叶斯解释', '给参数引入先验分布。'],
+    ['K 折交叉验证', '分 K 份轮流做验证，K 次取平均；有独立测试集时最终结果仍在测试集上报。'],
+    ['过拟合的解药', '加正则、加数据、降复杂度、提前停止。']
+  ]
+});
+
+/* ---------- 梯度下降 ---------- */
+var gdK = 4, gdSeed = 3, gdData = (function () {
+  var r = S.rng(11), xs = [], ys = [];
+  for (var i = 0; i < 20; i++) { var x = -1.5 + 3 * r(); xs.push(x); ys.push(0.6 * x + 0.52 + 0.35 * S.randn(r)); }
+  return { x: xs, y: ys };
+})();
+var gdOpt = polyFit(gdData.x, gdData.y, 1, 0);
+function gdLoss(w, b) { var s = 0; for (var i = 0; i < 20; i++) s += Math.pow(gdData.y[i] - w * gdData.x[i] - b, 2); return s / 40; }
+var gdMax = gdLoss(-1, 2.5);
+var gdPath = [];
+var gdField = S.field($('#gdF'), {
+  xr: [-1, 2], yr: [-1, 2.5], res: 70, size: 360,
+  f: function (w, b) { var L = gdLoss(w, b); return [0, S.clamp(1 - Math.sqrt(L / gdMax), 0, 1)]; },
+  overlay: function (ctx, X, Y) {
+    ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 2; ctx.beginPath();
+    gdPath.forEach(function (p, i) { if (i) ctx.lineTo(X(p[0]), Y(p[1])); else ctx.moveTo(X(p[0]), Y(p[1])); });
+    ctx.stroke();
+    gdPath.forEach(function (p, i) { if (i % 5 === 0 || i === gdPath.length - 1) { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 3, 0, 7); ctx.fillStyle = S.css('--s2'); ctx.fill(); } });
+    ctx.beginPath(); ctx.arc(X(gdOpt[1]), Y(gdOpt[0]), 6, 0, 7); ctx.strokeStyle = S.css('--ink'); ctx.lineWidth = 2; ctx.stroke();
+    ctx.font = '15px ' + S.css('--f-sans'); ctx.fillStyle = S.css('--ink'); ctx.fillText('最优解', X(gdOpt[1]) + 9, Y(gdOpt[0]) - 8);
+    ctx.fillText('w →', X(1.6), Y(-0.85)); ctx.fillText('b ↑', X(-0.92), Y(2.3));
+  }
+});
+var gdChart = S.chart($('#gdC'), { h: 170, x: [0, 60], y: [0, 1], xt: [0, 30, 60], yt: [0, 0.5, 1], xl: '迭代步数', yl: '训练损失' });
+function gd() {
+  var a = +$('#gdAs').value, T = +$('#gdTs').value;
+  $('#gdA').textContent = S.f(a, 2); $('#gdT').textContent = T;
+  var r = S.rng(gdSeed * 17 + gdK), w = -0.8, b = 2.2, order = [], ptr = 20;
+  gdPath = [[w, b]];
+  var losses = [[0, gdLoss(w, b)]], seen = 0;
+  for (var t = 1; t <= T; t++) {
+    var gw = 0, gb = 0;
+    for (var k = 0; k < gdK; k++) {
+      if (ptr >= 20) { order = []; for (var i = 0; i < 20; i++) order.push(i); for (var i2 = 19; i2 > 0; i2--) { var j = Math.floor(r() * (i2 + 1)); var tt = order[i2]; order[i2] = order[j]; order[j] = tt; } ptr = 0; }
+      var n = gdK === 20 ? k : order[ptr++];
+      var e = gdData.y[n] - w * gdData.x[n] - b;
+      gw -= e * gdData.x[n]; gb -= e;
+    }
+    seen += gdK;
+    w -= a * gw / gdK; b -= a * gb / gdK;
+    if (!isFinite(w) || Math.abs(w) > 50) break;
+    gdPath.push([w, b]); losses.push([t, gdLoss(w, b)]);
+  }
+  gdField({});
+  var mL = Math.max(1, gdLoss(-0.8, 2.2));
+  gdChart({ x: [0, T], xt: [0, Math.round(T / 2), T], y: [0, mL * 1.05], yt: [0, Math.round(mL * 50) / 100, Math.round(mL * 100) / 100], curves: [{ pts: losses, c: 'c2' }], hl: [{ y: gdLoss(gdOpt[1], gdOpt[0]), c: 'ok', label: '最优' }] });
+  $('#gdW').textContent = '(' + S.f(w, 2) + ', ' + S.f(b, 2) + ')';
+  $('#gdS').textContent = seen;
+  var div = Math.abs(w) > 50 || !isFinite(w);
+  $('#gdCap').innerHTML = div ? '<b>发散了</b>：学习率太大，每一步都越过谷底、越跳越远。' :
+    (gdK === 20 ? '批量梯度下降每步用全部 20 个样本，轨迹平滑地沿着最陡方向走，但每步代价最高。' : gdK === 1 ? 'SGD 每步只看 1 个样本，梯度是真实梯度的有噪估计，轨迹弯弯曲曲，到了谷底附近也一直在抖；同样看过的样本数下，它走的步数是批量的 20 倍。' : '小批量 K = 4：比 SGD 平稳，单步只有批量的 1/5 代价。') + ' 最小二乘闭式解是 (w, b) = (' + S.f(gdOpt[1], 2) + ', ' + S.f(gdOpt[0], 2) + ')（数据有噪声，所以不正好是 0.60、0.52）。';
+}
+S.seg($('#gdM'), function (v) { gdK = +v; gd(); });
+['gdAs', 'gdTs'].forEach(function (id) { $('#' + id).addEventListener('input', gd); });
+$('#gdR').addEventListener('click', function () { gdSeed++; gd(); });
+gd();
+S.notes($('#n-opt'), {
+  c: [
+    ['超参数', '定义模型结构或优化策略的参数（λ、学习率、层数），不能直接由训练学到。'],
+    ['学习率', '梯度下降的步长 α。'],
+    ['提前停止', '验证集性能不再提升时终止训练。'],
+    ['LMS 算法', '用梯度下降求解线性回归：w ← w + αX(y − Xᵀw)。']
+  ],
+  p: [
+    ['BGD', '每步全部样本：平稳，但大数据时慢、占内存。'],
+    ['SGD', '每步 1 个样本：便宜、有噪声，非凸时更容易跳出较差区域。'],
+    ['小批量', '每步 K 个（1~100，常取 2 的幂）：深度学习主流。'],
+    ['凸 vs 非凸', '凸目标可稳定求全局最优；神经网络只能求局部最优或足够好的解。']
+  ]
+});
+
+/* ---------- 评价指标 ---------- */
+var CM_TRUE = [1, 1, 2, 2, 2, 3, 3, 3, 3], CM_P0 = [1, 2, 2, 2, 3, 3, 3, 1, 2], cmP = CM_P0.slice();
+function cm() {
+  var L = $('#cmL'); L.innerHTML = '';
+  h('b', { text: '真实' }, L); CM_TRUE.forEach(function (t) { h('span', { text: t }, L); });
+  h('b', { text: '预测' }, L);
+  cmP.forEach(function (p, i) {
+    var b = h('button', { type: 'button', text: p, class: p === CM_TRUE[i] ? '' : 'err', 'aria-label': '第 ' + (i + 1) + ' 个样本的预测，点击修改' }, L);
+    b.addEventListener('click', function () { cmP[i] = cmP[i] % 3 + 1; cm(); });
+  });
+  var M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  CM_TRUE.forEach(function (t, i) { M[t - 1][cmP[i] - 1]++; });
+  S.grid($('#cmM'), M, { rl: ['真 1', '真 2', '真 3'], cl: ['预 1', '预 2', '预 3'], fmt: function (v) { return v; }, heat: [0, 4], cls: function (i, j) { return i === j ? 'on' : ''; } });
+  var rows = [], Ps = [], Rs = [], F1s = [], TP = 0, FP = 0, FN = 0;
+  for (var c = 0; c < 3; c++) {
+    var tp = M[c][c], fp = M[0][c] + M[1][c] + M[2][c] - tp, fn = M[c][0] + M[c][1] + M[c][2] - tp;
+    var P = tp + fp ? tp / (tp + fp) : 0, R = tp + fn ? tp / (tp + fn) : 0, F = P + R ? 2 * P * R / (P + R) : 0;
+    Ps.push(P); Rs.push(R); F1s.push(F); TP += tp; FP += fp; FN += fn;
+    rows.push('<tr><td>类别 ' + (c + 1) + '（TP ' + tp + '，FP ' + fp + '，FN ' + fn + '）</td><td class="n">' + S.f(P, 3) + '</td><td class="n">' + S.f(R, 3) + '</td><td class="n">' + S.f(F, 3) + '</td></tr>');
+  }
+  function avg(a) { return (a[0] + a[1] + a[2]) / 3; }
+  var mP = avg(Ps), mR = avg(Rs), mF = mP + mR ? 2 * mP * mR / (mP + mR) : 0;
+  var uP = TP / (TP + FP), uR = TP / (TP + FN), uF = 2 * uP * uR / (uP + uR);
+  var acc = TP / 9;
+  $('#cmT').innerHTML = '<tr><td></td><td class="n">精确率</td><td class="n">召回率</td><td class="n">F1</td></tr>' + rows.join('') +
+    '<tr class="tot"><td>宏平均（F1 用宏 P、宏 R 算）</td><td class="n">' + S.f(mP, 3) + '</td><td class="n">' + S.f(mR, 3) + '</td><td class="n">' + S.f(mF, 3) + '</td></tr>' +
+    '<tr><td>宏平均 F1 的另一种写法：各类 F1 取平均</td><td class="n"></td><td class="n"></td><td class="n">' + S.f(avg(F1s), 3) + '</td></tr>' +
+    '<tr class="tot"><td>微平均（= 准确率 ' + S.f(acc, 3) + '）</td><td class="n">' + S.f(uP, 3) + '</td><td class="n">' + S.f(uR, 3) + '</td><td class="n">' + S.f(uF, 3) + '</td></tr>';
+}
+$('#cmR').addEventListener('click', function () { cmP = CM_P0.slice(); cm(); });
+cm();
+S.guess($('#imG'), { q: '正负样本 1 : 99 的二分类任务，模型把<strong>所有样本都预测为负类</strong>。它的准确率是多少？', unit: '%', ans: 99, fmt: function (x) { return S.f(x, 0); }, why: '准确率 99%，但它一个正例都没找出来：正类的召回率是 0，精确率无定义（没有预测为正的样本），F1 也是 0。类别不均衡时要看每一类的精确率、召回率、F1，以及宏平均（更反映小类），或者 PR 曲线、ROC/AUC。' });
+S.notes($('#n-eval'), {
+  c: [
+    ['精确率（查准率）', '预测为 c 的样本里，真正是 c 的比例。'],
+    ['召回率（查全率）', '真正是 c 的样本里，被预测为 c 的比例。'],
+    ['宏平均 vs 微平均', '先分类算再平均（照顾小类）vs 先汇总再算（偏向大类）。'],
+    ['概率校准', '预测概率 0.9 的样本里，应有约 90% 是对的。']
+  ],
+  p: [
+    ['公式', 'P = TP/(TP+FP)，R = TP/(TP+FN)，F1 = 2PR/(P+R)。'],
+    ['单标签多分类', '微平均的 P、R、F1 都等于准确率。'],
+    ['两种不确定性', '数据不确定性（噪声，消不掉）；模型不确定性（数据少或分布变化）。'],
+    ['阈值相关指标', 'ROC、AUC、PR 曲线；Top-N 准确率。']
+  ]
+});
+
+/* ---------- 线性回归 MAP ---------- */
+var mpX = [-1.4, -1.0, -0.6, -0.2, 0.3, 0.7, 1.1, 1.5], mpY;
+(function () { var r = S.rng(5); mpY = mpX.map(function (x) { return 0.6 * x + 0.52 + 0.3 * S.randn(r); }); })();
+var mpMle = polyFit(mpX, mpY, 1, 0);
+var mpChart = S.chart($('#mpC'), { h: 260, x: [-1.8, 1.8], y: [-1.2, 2], xt: [-1.5, -1, -0.5, 0, 0.5, 1, 1.5], yt: [-1, 0, 1, 2] });
+function mp() {
+  var nu = Math.pow(10, +$('#mpVs').value), sig = 0.3, lam = sig * sig / (nu * nu);
+  $('#mpV').textContent = nu >= 10 ? S.f(nu, 0) : S.f(nu, 2);
+  var w = polyFit(mpX, mpY, 1, lam);
+  $('#mpL').textContent = lam < 0.001 ? S.sci(lam, 1) : S.f(lam, lam < 1 ? 3 : 1);
+  $('#mpW').textContent = '(' + S.f(w[1], 2) + ', ' + S.f(w[0], 2) + ')';
+  $('#mpM').textContent = '(' + S.f(mpMle[1], 2) + ', ' + S.f(mpMle[0], 2) + ')';
+  mpChart({ curves: [{ f: function (x) { return mpMle[0] + mpMle[1] * x; }, c: 'dim', dash: 1, w: 2 }, { f: function (x) { return w[0] + w[1] * x; }, c: 'c2' }], dots: mpX.map(function (x, i) { return { x: x, y: mpY[i], c: 'c1', r: 5 }; }) });
+  $('#mpCap').innerHTML = nu > 3 ? '先验很宽（ν 大），几乎不约束 w，<b>MAP ≈ MLE</b>，两条线重合。' : nu < 0.1 ? '先验很窄：你坚信 w 接近 0，λ = ' + S.f(lam, 0) + '，数据几乎说服不了你，直线被压平。' : '先验有一定作用：w 和 b 都被往 0 拉了一些。数据越多，似然越占主导，先验的影响越小（习题 2-16：N → ∞ 时 MAP → MLE）。';
+}
+$('#mpVs').addEventListener('input', mp); mp();
+var dvItems = S.$$('#dvL li');
+S.stepper($('#dvS'), dvItems.length, function (i) {
+  dvItems.forEach(function (li, k) { li.classList.toggle('hide', k > i); li.classList.toggle('on', k === i); });
+});
+S.notes($('#n-lr'), {
+  c: [
+    ['增广向量', 'x 末尾拼 1、w 末尾拼 b，模型写成 wᵀx。'],
+    ['最小二乘法', 'w* = (XXᵀ)⁻¹Xy；要求 XXᵀ 满秩。'],
+    ['岭回归', 'w* = (XXᵀ + λI)⁻¹Xy，治多重共线性。'],
+    ['无信息先验', 'ν → ∞ 时先验退化为均匀分布，MAP → MLE。']
+  ],
+  p: [
+    ['两个等号', 'ERM（平方损失）= MLE（高斯噪声）；SRM（ℓ2）= MAP（高斯先验）。'],
+    ['λ 与先验', 'λ = σ²/ν²：噪声越大或先验越窄，正则越强。'],
+    ['XXᵀ 不可逆', 'N < D + 1 时秩最多为 N；可先 PCA，或用梯度下降（LMS）。'],
+    ['两大学派', '频率学派：w 是固定未知数；贝叶斯学派：w 是随机变量。']
+  ]
+});
+
+/* ---------- 偏差—方差 ---------- */
+var BV_GRID = []; for (var gi = 0; gi <= 60; gi++) BV_GRID.push(-1 + 2 * gi / 60);
+var BV_SETS = (function () {
+  var r = S.rng(2024), sets = [];
+  for (var s = 0; s < 40; s++) { var xs = [], ys = []; for (var i = 0; i < 12; i++) { var x = -1 + 2 * r(); xs.push(x); ys.push(fTrue(x) + 0.25 * S.randn(r)); } sets.push([xs, ys]); }
+  return sets;
+})();
+function bvStats(m, lam) {
+  var preds = BV_SETS.map(function (s) { var w = polyFit(s[0], s[1], m, lam); return BV_GRID.map(function (x) { return S.clamp(polyVal(w, x), -6, 6); }); });
+  var mean = BV_GRID.map(function (x, j) { return preds.reduce(function (a, p) { return a + p[j]; }, 0) / preds.length; });
+  var b2 = 0, v = 0;
+  BV_GRID.forEach(function (x, j) { b2 += Math.pow(mean[j] - fTrue(x), 2); v += preds.reduce(function (a, p) { return a + Math.pow(p[j] - mean[j], 2); }, 0) / preds.length; });
+  return { preds: preds, mean: mean, b2: b2 / BV_GRID.length, v: v / BV_GRID.length };
+}
+var bvChart = S.chart($('#bvC'), { h: 280, x: [-1, 1], y: [-2, 2], xt: [-1, -0.5, 0, 0.5, 1], yt: [-2, -1, 0, 1, 2] });
+function bv() {
+  var m = +$('#bvMs').value, ll = +$('#bvLs').value, lam = Math.pow(10, ll);
+  $('#bvM').textContent = m; $('#bvL').textContent = S.f(ll, 1);
+  var st = bvStats(m, lam);
+  var cv = st.preds.slice(0, 20).map(function (p) { return { pts: BV_GRID.map(function (x, j) { return [x, p[j]]; }), c: 'c1', w: 1 }; });
+  cv.push({ f: fTrue, c: 'ok', w: 2.5 });
+  cv.push({ pts: BV_GRID.map(function (x, j) { return [x, st.mean[j]]; }), c: 'c2', w: 3 });
+  bvChart({ curves: cv });
+  var eps = 0.0625, tot = st.b2 + st.v + eps, mx = Math.max(tot, 0.3);
+  S.bars($('#bvBars'), [
+    { label: '偏差²', value: st.b2 / mx, text: S.f(st.b2, 3), cls: st.b2 > st.v ? 'alt' : 'dim' },
+    { label: '方差', value: st.v / mx, text: S.f(st.v, 3), cls: st.v >= st.b2 ? 'alt' : 'dim' },
+    { label: '噪声 ε', value: eps / mx, text: S.f(eps, 3), cls: 'dim' },
+    { label: '期望错误', value: tot / mx, text: S.f(tot, 3), cls: 'ok' }
+  ]);
+  $('#bvW').innerHTML = st.b2 > 2 * st.v ? '<b>高偏差</b>：各条曲线很一致，但一起偏离真实函数——模型太简单（或 λ 太大）。' : st.v > 2 * st.b2 ? '<b>高方差</b>：平均曲线不错，但每个训练集上的模型差别很大——换一批数据结论就变了。' : '偏差和方差比较均衡。噪声 ε = σ² = 0.0625 是谁都消不掉的下限。';
+}
+['bvMs', 'bvLs'].forEach(function (id) { $('#' + id).addEventListener('input', bv); }); bv();
+(function () {
+  var pts = [];
+  for (var ll = -6; ll <= 1.01; ll += 0.5) { var st = bvStats(9, Math.pow(10, ll)); pts.push([ll, st.b2, st.v, st.b2 + st.v + 0.0625]); }
+  var mx = Math.max.apply(null, pts.map(function (p) { return p[3]; }));
+  var best = pts.reduce(function (a, p) { return p[3] < a[3] ? p : a; });
+  var draw = S.chart($('#bvCurve'), { h: 240, x: [-6, 1], y: [0, Math.min(mx * 1.05, 0.8)], xt: [-6, -4, -2, 0, 1], yt: [0, 0.2, 0.4, 0.6, 0.8].filter(function (t) { return t <= Math.min(mx * 1.05, 0.8); }), xl: 'log₁₀λ（越往右模型越简单）',
+    curves: [{ pts: pts.map(function (p) { return [p[0], p[1]]; }), c: 'c1', label: '偏差²' }, { pts: pts.map(function (p) { return [p[0], p[2]]; }), c: 'c3', label: '方差' }, { pts: pts.map(function (p) { return [p[0], p[3]]; }), c: 'c2', w: 3, label: '期望错误' }],
+    vl: [{ x: best[0], c: 'c2', label: '最优 λ' }] });
+  draw();
+})();
+(function () {
+  var cases = [['低偏差 低方差', 0, 0.12], ['高偏差 低方差', 0.45, 0.12], ['低偏差 高方差', 0, 0.42], ['高偏差 高方差', 0.45, 0.42]];
+  var box = $('#dart'), r = S.rng(8);
+  cases.forEach(function (c) {
+    var fig = h('figure', null, box);
+    var s = S.svg('svg', { viewBox: '0 0 120 120' }, fig);
+    [50, 34, 18].forEach(function (rr, i) { S.svg('circle', { cx: 60, cy: 60, r: rr, fill: i === 2 ? 'var(--s2-soft)' : 'none', stroke: 'var(--rule)', 'stroke-width': 1.5 }, s); });
+    S.svg('circle', { cx: 60, cy: 60, r: 3, fill: 'var(--s2)' }, s);
+    for (var i = 0; i < 12; i++) S.svg('circle', { cx: 60 + 50 * c[1] + 50 * c[2] * S.randn(r) * 0.7, cy: 60 - 50 * c[1] * 0.6 + 50 * c[2] * S.randn(r) * 0.7, r: 3.2, fill: 'var(--s1)' }, s);
+    h('figcaption', { text: c[0] }, fig);
+  });
+})();
+S.notes($('#n-bv'), {
+  c: [
+    ['偏差', '不同训练集上模型的平均和最优模型的差距，衡量拟合能力。'],
+    ['方差', '不同训练集上模型之间的差异，衡量是否易过拟合。'],
+    ['噪声 ε', '最优模型 f* = 𝔼[y|x] 也消不掉的损失。'],
+    ['集成', '把多个高方差模型平均，降方差（第 11 篇）。']
+  ],
+  p: [
+    ['分解', '期望错误 = 偏差² + 方差 + ε。'],
+    ['训练误差高', '偏差高 → 加特征、加复杂度、减小 λ。'],
+    ['训练低、验证高', '方差高 → 降复杂度、加大 λ、引入先验、加数据、集成。'],
+    ['最优点', '不一定在偏差曲线与方差曲线的交点。']
+  ]
+});
+
+/* ---------- 范式与特征 ---------- */
+S.sortGame($('#kindG'), {
+  bins: [{ k: 'sl', t: '监督' }, { k: 'ul', t: '无监督' }, { k: 'rl', t: '强化' }, { k: 'semi', t: '半监督' }, { k: 'ssl', t: '自监督' }, { k: 'tl', t: '迁移' }],
+  items: [
+    { t: '用标注好的病例学习诊断', k: 'sl', why: '每个样本都有标签。' },
+    { t: '把用户按购买行为分群', k: 'ul', why: '聚类，没有标签。' },
+    { t: '机器人在试错中学会走路', k: 'rl', why: '与环境交互、根据奖励学习策略。' },
+    { t: '100 张标注图 + 10 万张未标注图', k: 'semi', why: '少量标注 + 大量无标注。' },
+    { t: '预测句子中被遮住的词', k: 'ssl', why: '监督信号来自数据本身。' },
+    { t: '先在通用语料预训练，再在法律问答上微调', k: 'tl', why: '“预训练—微调”是迁移学习的典型流程。' },
+    { t: '机器翻译输出整句（结构化）', k: 'sl', why: '结构化学习属于监督学习，输出是序列。' },
+    { t: '估计数据的概率密度', k: 'ul', why: '密度估计是典型的无监督任务。' }
+  ]
+});
+var bwN = 1;
+function grams(s, n) {
+  var t = s.trim().split(/\s+/).filter(Boolean);
+  if (n === 1) return t;
+  t = ['$'].concat(t, ['#']);
+  var g = [];
+  for (var i = 0; i + n <= t.length; i++) g.push(t.slice(i, i + n).join(''));
+  return g;
+}
+function bw() {
+  var a = grams($('#bw1').value, bwN), b = grams($('#bw2').value, bwN);
+  var V = []; a.concat(b).forEach(function (x) { if (V.indexOf(x) < 0) V.push(x); });
+  var va = V.map(function (x) { return a.indexOf(x) >= 0 ? 1 : 0; }), vb = V.map(function (x) { return b.indexOf(x) >= 0 ? 1 : 0; });
+  S.grid($('#bwT'), [va, vb], { cl: V, rl: ['句子 1', '句子 2'], fmt: function (v) { return v; }, cls: function (i, j, v) { return va[j] !== vb[j] ? 'on' : (v ? '' : 'dimc'); } });
+  var same = va.join() === vb.join();
+  $('#bwW').innerHTML = '特征维数 ' + V.length + '。' + (same ? '<b>两个句子的表示完全相同</b>——词袋不看词序，“谁帮了谁”被丢掉了。换成二元特征试试。' : '红框是两句不同的维度。') + (bwN > 1 ? ' N 越大，单元越长、能捕捉的词序越多，但特征数上限 |𝒱|<sup>N</sup> 增长很快，向量也越稀疏。' : '');
+}
+S.seg($('#bwN'), function (v) { bwN = +v; bw(); });
+['bw1', 'bw2'].forEach(function (id) { $('#' + id).addEventListener('input', bw); });
+$('#bwEx').addEventListener('click', function () { $('#bw1').value = '我 帮 了 张三'; $('#bw2').value = '张三 帮 了 我'; bw(); });
+bw();
+S.notes($('#n-kind'), {
+  c: [
+    ['结构化学习', '输出是序列、树、图；ŷ = argmax f(φ(x, y))，求 argmax 叫解码。'],
+    ['自监督学习', '从数据自身构造监督信号，是大规模预训练的范式。'],
+    ['词袋（BoW）', '第 i 维表示词表第 i 个词是否出现；不考虑词序。'],
+    ['降维', '特征选择 + 特征抽取的统称，缓解维度灾难。']
+  ],
+  p: [
+    ['六种范式', '监督、无监督、强化、半监督、自监督、迁移。'],
+    ['N 元特征', '每 N 个连续词一个单元，上限 |𝒱|ᴺ。'],
+    ['特征选择', '子集搜索（前向 / 反向；过滤式 / 包裹式）、ℓ1、决策树。'],
+    ['特征抽取', '有监督 LDA；无监督 PCA、ICA、流形学习、自编码器。']
+  ]
+});
+
+/* ---------- 理论 ---------- */
+function pac() {
+  var lf = +$('#pcFs').value, e = +$('#pcEs').value, d = +$('#pcDs').value;
+  $('#pcF').textContent = lf; $('#pcE').textContent = S.f(e, 2); $('#pcD').textContent = S.f(d, 2);
+  var N = (1 / (2 * e * e)) * (lf * Math.LN10 + Math.log(2 / d));
+  $('#pcN').textContent = S.big(Math.ceil(N));
+  $('#pcW').innerHTML = '1/(2ε²) = ' + S.f(1 / (2 * e * e), 0) + '，log|ℱ| = ' + S.f(lf * Math.LN10, 1) + '，log(2/δ) = ' + S.f(Math.log(2 / d), 2) + '。<b>ε 减半，样本数变 4 倍；|ℱ| 大 10 倍只多加 ' + S.f(Math.LN10 / (2 * e * e), 0) + ' 个</b>——样本数对 ε 是平方关系，对假设空间大小只是对数关系。';
+}
+['pcFs', 'pcEs', 'pcDs'].forEach(function (id) { $('#' + id).addEventListener('input', pac); }); pac();
+S.guess($('#pacG'), { q: '假设空间有 10⁶ 个假设，要求泛化错误 ≤ 0.05、成功概率 ≥ 95%（δ = 0.05），PAC 界要求至少多少个样本？', unit: '个', ans: Math.ceil(200 * (6 * Math.LN10 + Math.log(40))), fmt: function (x) { return S.f(x, 0); }, why: 'N ≥ (1/2ε²)(log|ℱ| + log(2/δ)) = 200 × (13.82 + 3.69) ≈ 3501。注意这里的 log 是自然对数。' });
+S.notes($('#n-theory'), {
+  c: [
+    ['泛化错误', '期望风险 − 经验风险。'],
+    ['PAC 学习', '以 ≥ 1 − δ 的概率学到泛化错误 ≤ ε 的假设。'],
+    ['没有免费午餐', '不存在对所有问题都有效的算法。'],
+    ['奥卡姆剃刀 / MDL', '如无必要勿增实体；最好的模型让模型编码长度 + 数据编码长度最小。'],
+    ['丑小鸭定理', '相似性没有客观标准，取决于看哪些特征。'],
+    ['归纳偏置', '算法对问题做的假设；贝叶斯学习里叫先验。']
+  ],
+  p: [
+    ['PAC 样本界', 'N ≥ (1/2ε²)(log|ℱ| + log(2/δ))。'],
+    ['MDL 的贝叶斯形式', 'min −log p(𝒟|f) − log p(f)。'],
+    ['网络结构即偏置', 'CNN 局部 + 平移不变；RNN 序列依赖；Transformer 任意位置依赖；GNN 邻居影响。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 三要素与三份数据', '模型（假设空间）、学习准则（ERM / SRM）、优化算法（梯度下降）。训练集学参数，验证集选模型和超参数，测试集只做最终评估——拿测试集调参就是数据泄露，结果过于乐观。'],
+    ['② 训练低、验证高', '过拟合，方差高：降复杂度、加 λ、引入先验、加数据、提前停止、集成。训练误差本身就高则是偏差高：加特征、加复杂度、减 λ。期望错误 = 偏差² + 方差 + ε。'],
+    ['③ 四种估计', '平方损失的 ERM（最小二乘）= 高斯噪声下的 MLE；ℓ2 正则的 SRM（岭回归）= 高斯先验下的 MAP，λ = σ²/ν²；ν → ∞ 时 MAP 退化为 MLE。']
+  ],
+  p: [
+    ['原书一句话', '模型决定表达能力，学习准则定义优化目标，优化算法负责求解参数；它们都围绕“如何提升泛化能力”展开。'],
+    ['下一篇', '线性分类：Logistic 回归、Softmax 回归、感知器、支持向量机，以及它们的损失函数对比。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

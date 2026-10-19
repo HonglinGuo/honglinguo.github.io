@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多智能体、资源感知与优先级</title>
+<meta name="description" content="智能体设计模式学习笔记（六）：多智能体协作的六种形式与六种关系结构、ADK 的层次 / 循环 / 顺序 / 并行 / 智能体即工具；资源感知优化（路由器 + 批评者、回退、九种优化技术）；优先级排序（标准、评估、调度、动态重排）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5' fill='%232340D6'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.topo { width: 100%; max-width: 440px; display: block; margin: 8px auto; }
+.topo circle { fill: var(--panel); stroke: var(--ink-3); stroke-width: 1.5; }
+.topo circle.sup { fill: var(--s1-soft); stroke: var(--s1); }
+.topo circle.tl { fill: var(--s3-soft); stroke: var(--s3); }
+.topo line { stroke: var(--ink-3); stroke-width: 1.4; }
+.topo text { font-size: 13px; fill: var(--ink-2); text-anchor: middle; }
+.prio-t { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 8px; }
+.prio-t th, .prio-t td { padding: 7px 6px; border-top: 1px solid var(--hair); text-align: left; }
+.prio-t td.n { font-family: var(--f-num); text-align: right; }
+.prio-t tr.top td { background: var(--s1-soft); font-weight: 600; }
+.prio-t tr.new td { color: var(--alert); }
+</style>
+</head>
+<body data-series="adp-series" data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>智能体设计模式 · 06</span><span>对应原书第 7、16、20 章</span><span>约 20 分钟</span></p>
+  <h1>一群智能体，<em>谁干什么、花多少、先干哪个</em></h1>
+  <p class="lead">单个智能体能力有限，于是有了多智能体协作；协作起来要花钱、要占算力，于是要做资源感知优化；事情一多、目标冲突，就要排优先级。这三章讲的都是“组织和调度”，放在一起读最顺。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">Agentic Design Patterns 智能体设计模式</a>》（Antonio Gulli 著，xindoo 等中文翻译）的学习笔记。21 个模式按主题重新分成 7 篇。每个模式先讲它要解决的问题，再用一张统一格式的模式卡收住，最后配一个小实验；原书的 LangChain / ADK / CrewAI 代码不复述，建议对照原书阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-adp/"><b>总览</b>模式地图</a>
+  <a href="../2026-10-16-adp-1/" data-part="1"><b>01</b>流程编排</a>
+  <a href="../2026-10-16-adp-2/" data-part="2"><b>02</b>反思与规划</a>
+  <a href="../2026-10-16-adp-3/" data-part="3"><b>03</b>连接外部</a>
+  <a href="../2026-10-16-adp-4/" data-part="4"><b>04</b>记忆与成长</a>
+  <a href="../2026-10-16-adp-5/" data-part="5"><b>05</b>稳健可信</a>
+  <a href="../2026-10-16-adp-6/" aria-current="page" data-part="6"><b>06</b>协作与调度</a>
+  <a href="../2026-10-16-adp-7/" data-part="7"><b>07</b>附录速览</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#forms">协作形式</a><a href="#topo">关系结构</a><a href="#adk">ADK 积木</a><a href="#res">资源感知</a><a href="#prio">优先级</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>“监督者”和“网络”两种结构各自的风险是什么？</li>
+    <li>资源感知优化里，路由器智能体和批评智能体各管什么？</li>
+    <li>优先级排序的四个核心要素是什么？为什么需要“动态重排”？</li>
+  </ol>
+</div>
+
+<section class="part" id="forms">
+  <div class="part-head"><h2>多智能体协作：六种合作形式</h2><span class="meta">原书第 7 章</span></div>
+  <div class="sec-lede">
+    <p>单体智能体在复杂多领域任务上会遇到瓶颈：缺少多样的专业技能或工具。多智能体协作把高级目标拆成子问题，分给拥有最合适工具、数据或推理能力的专门智能体。原书强调，效能不只来自分工，更依赖<strong>智能体间的通信</strong>：标准化协议和共享本体。好处是模块化、可扩展、稳健（单个智能体故障不一定拖垮整个系统），以及“整体大于部分之和”。</p>
+    <p>六种合作形式：<strong>顺序交接</strong>（像规划，但明确由不同智能体完成）、<strong>并行处理</strong>、<strong>辩论与共识</strong>、<strong>层次结构</strong>（管理者按工具能力动态委托给工作智能体）、<strong>专家团队</strong>（研究员、作家、编辑）、<strong>批评者—审查者</strong>（一组智能体按政策、安全、合规、正确性、质量评估初稿）。用例包括研究分析、软件开发、营销内容、金融分析、客服升级、供应链，以及<strong>网络分析与修复</strong>：多个智能体协作做故障定位与修复，还能和传统机器学习模型、工具集成。</p>
+    <p class="go">这些场景主要是哪种合作形式？</p>
+  </div>
+  <div class="lab"><div id="formSort"></div></div>
+  <div class="card2">
+    <h3>模式卡 · 多智能体协作</h3><p class="en">Multi-Agent Collaboration</p>
+    <dl>
+      <dt>问题</dt><dd>复杂多领域任务超出单个智能体的技能和工具范围，形成瓶颈。</dd>
+      <dt>做法</dt><dd>分解问题，分给专门智能体；通过通信协议和交互模型（交接、并行、层次委托等）协同。</dd>
+      <dt>何时用</dt><dd>任务可拆成需要不同专业技能或工具的子任务；需要并行处理或多阶段结构化流程。</dd>
+      <dt>三要素</dt><dd>界定角色与职责、建立通信渠道、制定任务流或交互协议。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-forms"></div>
+</section>
+
+<section class="part" id="topo">
+  <div class="part-head"><h2>六种关系结构：从单智能体到自定义</h2><span class="meta">原书第 7 章</span></div>
+  <div class="sec-lede">
+    <p>原书给了一张从简单到复杂的关系谱。<strong>单智能体</strong>：易实现，能力受限于自身。<strong>网络</strong>：去中心化、点对点，有弹性，但大型非结构化网络里通信开销和决策一致性难管。<strong>监督者</strong>：中心枢纽负责分配任务和解决冲突，权限清晰，但有单点故障，下属多了会成为瓶颈。<strong>监督者作为工具</strong>：监督者更多是提供资源、数据、分析支持，而不是逐步发号施令。<strong>层次化</strong>：多层监督者，适合可逐层分解的复杂问题。<strong>自定义</strong>：按具体问题混合或全新设计，需要对通信协议、协调机制和涌现行为有深入理解。</p>
+    <p class="go">切换结构，并改变智能体数量，看看通信链路有多少（按图中连线计数）。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="tpS"><button data-v="single">单智能体</button><button data-v="net">网络</button><button data-v="sup" aria-pressed="true">监督者</button><button data-v="tool">监督者作为工具</button><button data-v="hier">层次化</button></div>
+    <label class="ctl" style="margin-top:10px"><span>工作智能体数量 <output id="tpN">6</output></span><input type="range" id="tpNs" min="2" max="12" value="6"></label>
+    <svg class="topo" id="tpSvg" viewBox="0 0 440 260" role="img" aria-label="多智能体关系结构"></svg>
+    <p class="cap" id="tpOut"></p>
+    <p class="note">链路数：网络按全连接算 n(n−1)/2；监督者为 n；层次化按每个中层监督者管约 3 个工作智能体计算。这是为直观对比做的简化，原书没有给出具体数字。</p>
+  </div>
+  <div class="notes" id="n-topo"></div>
+</section>
+
+<section class="part" id="adk">
+  <div class="part-head"><h2>ADK 里的五块多智能体积木</h2><span class="meta">原书第 7 章代码部分</span></div>
+  <div class="sec-lede">
+    <p>原书用 Google ADK 演示了五种构造，正好把前几篇的模式落到了多智能体上：<strong>父子层次</strong>（coordinator 带 sub_agents，把欢迎交给 greeter、把任务交给非 LLM 的 TaskExecutor）；<strong>LoopAgent</strong>（ProcessingStep + ConditionChecker，最多 10 轮，状态为 completed 时升级退出）；<strong>SequentialAgent</strong>（Step1 把结果存进 <code>state["data"]</code>，Step2 读它做摘要）；<strong>ParallelAgent</strong>（天气和新闻两个子智能体并发，各写一个 state 键）；<strong>AgentTool</strong>（artist_agent 把 image_generator_agent 当工具调用）。</p>
+    <p class="go">每个需求对应哪块积木，又对应前几篇的哪个模式？</p>
+  </div>
+  <div class="lab"><div id="adkQ"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：多智能体协作 vs A2A</h4>
+    <p><b>多智能体协作</b>是架构模式：怎么分工、怎么组织关系。<b>A2A</b>（第 3 篇）是通信协议：不同框架、不同部署的智能体之间怎么发现彼此、怎么委托任务。同一个框架内部的多智能体（如 ADK 的 sub_agents）不一定需要 A2A；跨框架、跨服务时，A2A 才是这些协作形式的“网线”。</p>
+  </div>
+  <div class="notes" id="n-adk"></div>
+</section>
+
+<section class="part" id="res">
+  <div class="part-head"><h2>资源感知优化：不是每个问题都配用最贵的模型</h2><span class="meta">原书第 16 章</span></div>
+  <div class="sec-lede">
+    <p>原书先把它和规划区分开：规划关心动作的顺序，资源感知优化关心<strong>在计算、时间、金钱预算内怎么执行</strong>，比如用贵而准的模型还是快而省的模型，要不要多花算力换更精细的答案。典型结构是：<strong>路由器智能体</strong>先判断请求复杂度，简单查询给 Gemini Flash，复杂推理给 Gemini Pro；路由可以按查询长度这类简单指标，也可以用 LLM 或 ML 模型，还可以用提示词调优或在“查询—最优模型”数据集上微调。<strong>批评智能体</strong>评估回答质量，用于自我纠正、性能监控，并能发现“简单问题送进了 Pro”或“复杂问题送进了 Flash”这类次优路由，从而间接管理预算、改进路由逻辑。</p>
+    <p>原书还举了分层旅行规划的例子：理解复杂需求、拆成多步行程的“规划器”用 Pro；查航班、查酒店、找餐厅评论这些简单重复的网络查询用 Flash。OpenAI 示例把查询分成 simple、reasoning、internet_search 三类。另一个关键策略是<strong>回退</strong>：首选模型过载或限流时自动切到更经济的模型，保持服务连续。OpenRouter 提供“自动模型选择”和“顺序模型回退”两种方式。</p>
+    <p>原书还列了动态模型切换之外的九种技术：自适应工具选择、上下文修剪和摘要、主动资源预测、成本敏感探索（多智能体里把<strong>通信成本</strong>也算进去）、节能部署、并行和分布式计算感知、学习型资源分配、优雅降级和回退，以及对关键任务排优先级。</p>
+    <p class="go">算一笔路由的账。价格比和比例都由你设定。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">路由器能省多少（示意计算）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>简单查询占比 <output id="rsF">70%</output></span><input type="range" id="rsFs" min="0" max="1" step="0.05" value="0.7"></label>
+        <label class="ctl"><span>大模型单价 / 小模型单价 <output id="rsR">10×</output></span><input type="range" id="rsRs" min="2" max="30" value="10"></label>
+        <label class="ctl"><span>路由判对率 <output id="rsA">90%</output></span><input type="range" id="rsAs" min="0.5" max="1" step="0.05" value="0.9"></label>
+      </div>
+      <div class="read"><div class="good"><div class="v" id="rsC">0</div><div class="k">相对“全用大模型”的成本</div></div><div class="warn"><div class="v" id="rsBad">0</div><div class="k">复杂问题被错送小模型的比例</div></div></div>
+      <p class="note">每次请求成本以小模型为 1，路由器本身的开销忽略不计。第二个数字就是批评智能体要抓的“次优路由”：省下的钱可能以质量为代价。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">顺序模型回退（OpenRouter 方式）</p>
+      <div id="fbStep"></div>
+      <ol class="flow2" id="fbFlow"></ol>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 资源感知优化</h3><p class="en">Resource-Aware Optimization</p>
+    <dl>
+      <dt>问题</dt><dd>LLM 应用又贵又慢；每个任务都用同一个模型或工具，质量与资源之间的权衡失控。</dd>
+      <dt>做法</dt><dd>路由器按复杂度分流到合适的模型或工具；批评者评估质量并反馈改进路由；首选不可用时回退。</dd>
+      <dt>何时用</dt><dd>严格预算、延迟敏感、边缘设备电量有限、要平衡质量与成本、多步工作流各步需求不同。</dd>
+      <dt>相关</dt><dd>本质是<strong>路由</strong>（第 1 篇）+ <strong>反思</strong>（批评者）+ <strong>异常处理</strong>（回退、降级）的组合。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-res"></div>
+</section>
+
+<section class="part" id="prio">
+  <div class="part-head"><h2>优先级排序：先做最要紧的，并随时重排</h2><span class="meta">原书第 20 章</span></div>
+  <div class="sec-lede">
+    <p>任务多、目标冲突、资源有限时，智能体需要决定先做什么。原书给出四个核心要素：<strong>标准定义</strong>（紧急性、重要性、依赖关系、资源可用性、成本 / 收益，以及个性化智能体的用户偏好）、<strong>任务评估</strong>（从简单规则到 LLM 打分推理）、<strong>调度或选择逻辑</strong>（队列或更高级的规划组件）、<strong>动态重新排序</strong>（出现新的关键事件或截止日期临近时调整）。排序可以发生在三个层面：总体目标、计划内的子任务、下一个即时行动。</p>
+    <p>原书的用例：客服里系统停机报告优先于密码重置，高价值客户也可能优先；云计算在高峰期把资源给关键应用、把批处理推迟到低峰；自动驾驶中避撞刹车优先于保持车道和省油；安全监控按威胁严重性和资产关键性排告警。代码示例是一个 LangChain 项目管理智能体：创建任务、给 P0 / P1 / P2 优先级、分配给人，信息缺失时默认 P1 和“Worker A”。</p>
+    <p class="go">用加权打分给四个客服任务排序，再插入一个突发事件，看动态重排（权重和分数都是示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="ctl-grid">
+      <label class="ctl"><span>紧急性权重 <output id="pwU">3</output></span><input type="range" id="pwUs" min="0" max="5" value="3"></label>
+      <label class="ctl"><span>重要性权重 <output id="pwI">2</output></span><input type="range" id="pwIs" min="0" max="5" value="2"></label>
+      <label class="ctl"><span>依赖权重（是别人的前提） <output id="pwD">1</output></span><input type="range" id="pwDs" min="0" max="5" value="1"></label>
+    </div>
+    <div class="ctrls"><button class="btn pri" type="button" id="pEv">插入：核心服务全面中断</button><button class="btn" type="button" id="pRs">重置</button></div>
+    <div class="tblw"><table class="prio-t"><thead><tr><th>任务</th><th>紧急</th><th>重要</th><th>依赖</th><th>得分</th></tr></thead><tbody id="pT"></tbody></table></div>
+    <p class="cap" id="pOut"></p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：路由 vs 资源感知 vs 优先级</h4>
+    <p><b>路由</b>决定“交给谁”，<b>资源感知优化</b>决定“花多大代价做”（用哪个档位的模型、要不要回退），<b>优先级排序</b>决定“先做哪个”。原书第 16 章把“对关键任务排优先级”也列为资源优化技术之一，三者在调度器里常常是同一段逻辑的三个维度。</p>
+  </div>
+  <div class="notes" id="n-prio"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. “监督者”和“网络”各自的风险？</summary><p class="ans">监督者：单点故障，下属多或任务复杂时成为瓶颈。网络：去中心化有弹性，但大型非结构化网络的通信开销和决策一致性难管理。</p></details>
+    <details><summary>2. 路由器智能体和批评智能体各管什么？</summary><p class="ans">路由器按查询复杂度和预算把请求送到合适的模型或工具（简单给 Flash、复杂给 Pro）。批评者评估回答质量，用于自我纠正、性能监控，并发现次优路由，反过来改进路由逻辑、间接管理预算。</p></details>
+    <details><summary>3. 优先级排序的四个要素？为什么要动态重排？</summary><p class="ans">标准定义、任务评估、调度 / 选择逻辑、动态重新排序。因为环境在变：新的关键事件出现、截止日期临近，原来的排序会过时。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-adp-5/"><small>上一篇</small><span>05 · 异常、人机协同、护栏与评估</span></a><a class="nx" href="../2026-10-16-adp-7/"><small>下一篇</small><span>07 · 附录速览</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">xindoo/agentic-design-patterns</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 协作形式 ---------- */
+S.sortGame($('#formSort'), {
+  bins: [{ k: 'seq', t: '顺序交接' }, { k: 'par', t: '并行处理' }, { k: 'deb', t: '辩论与共识' }, { k: 'hier', t: '层次结构' }, { k: 'crit', t: '批评者—审查者' }],
+  items: [
+    { t: '前线客服处理不了，转给计费专家智能体', k: 'seq', why: '原书：客服升级是基于复杂度的顺序交接。' },
+    { t: '同时抓股价、分析新闻情绪、做技术分析', k: 'par', why: '多个智能体同时处理问题的不同部分，再组合。' },
+    { t: '持不同信息来源的智能体讨论后达成一致', k: 'deb', why: '辩论与共识。' },
+    { t: '管理者按工具能力把子任务委托给工作智能体', k: 'hier', why: '每个智能体管一组相关工具。' },
+    { t: '另一组智能体按合规、安全、正确性审查草稿', k: 'crit', why: '对代码生成、研究写作、道德一致性特别有效。' }
+  ]
+});
+S.notes($('#n-forms'), {
+  c: [
+    ['多智能体协作', '把目标分解给专门智能体，靠通信协议协同，整体大于部分之和。'],
+    ['六种形式', '顺序交接、并行、辩论与共识、层次、专家团队、批评者—审查者。'],
+    ['三要素', '角色与职责、通信渠道、任务流 / 交互协议。']
+  ],
+  p: [
+    ['好处', '模块化、可扩展、稳健（局部故障不致命）。'],
+    ['网络运维用例', '多智能体协作做故障定位与修复，可与传统 ML 模型集成。']
+  ]
+});
+
+/* ---------- 拓扑 ---------- */
+var tpK = 'sup';
+var tpInfo = {
+  single: ['单智能体', '易实现易管理，但能力受限于单个智能体的技能和资源。'],
+  net: ['网络', '去中心化、点对点；弹性好，但通信开销和一致决策在大型网络中难以管理。'],
+  sup: ['监督者', '中心枢纽，权限清晰；单点故障，可能成为瓶颈。'],
+  tool: ['监督者作为工具', '监督者提供工具、数据、分析支持，而不规定每个动作；不施加严格的自上而下控制。'],
+  hier: ['层次化', '多层监督者；结构化地管理规模和复杂度，在边界内分布式决策。']
+};
+function topo() {
+  var n = +$('#tpNs').value; $('#tpN').textContent = n;
+  var g = $('#tpSvg'); g.innerHTML = '';
+  var cx = 220, cy = 135, R = 100, pts = [], links = 0;
+  function node(x, y, cls, lab) { S.svg('circle', { cx: x, cy: y, r: 14, class: cls || '' }, g); if (lab) { var t = S.svg('text', { x: x, y: y + 4 }, g); t.textContent = lab; } }
+  function ln(a, b) { S.svg('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, g); links++; }
+  if (tpK === 'single') { node(cx, cy, '', 'A'); }
+  else if (tpK === 'net') {
+    for (var i = 0; i < n; i++) { var a = Math.PI * 2 * i / n - Math.PI / 2; pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]); }
+    for (i = 0; i < n; i++) for (var j = i + 1; j < n; j++) ln(pts[i], pts[j]);
+    pts.forEach(function (p) { node(p[0], p[1]); });
+  } else if (tpK === 'sup' || tpK === 'tool') {
+    for (i = 0; i < n; i++) { a = Math.PI * 2 * i / n - Math.PI / 2; pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]); }
+    pts.forEach(function (p) { ln([cx, cy], p); });
+    pts.forEach(function (p) { node(p[0], p[1]); });
+    node(cx, cy, tpK === 'sup' ? 'sup' : 'tl', tpK === 'sup' ? '监' : '工');
+  } else {
+    var m = Math.ceil(n / 3), top = [cx, 30];
+    var mids = [];
+    for (i = 0; i < m; i++) mids.push([40 + (360) * (m === 1 ? 0.5 : i / (m - 1)), 120]);
+    var leaves = [];
+    for (i = 0; i < n; i++) leaves.push([30 + 380 * (n === 1 ? 0.5 : i / (n - 1)), 220]);
+    mids.forEach(function (p) { ln(top, p); });
+    leaves.forEach(function (p, k) { ln(mids[Math.min(m - 1, Math.floor(k / 3))], p); });
+    leaves.forEach(function (p) { node(p[0], p[1]); });
+    mids.forEach(function (p) { node(p[0], p[1], 'sup'); });
+    node(top[0], top[1], 'sup', '总');
+  }
+  $('#tpOut').innerHTML = '<b>' + tpInfo[tpK][0] + '</b>：' + tpInfo[tpK][1] + ' 当前链路 <b>' + links + '</b> 条。';
+}
+S.seg($('#tpS'), function (v) { tpK = v; topo(); });
+$('#tpNs').addEventListener('input', topo);
+topo();
+S.notes($('#n-topo'), {
+  c: [
+    ['六种关系结构', '单智能体、网络、监督者、监督者作为工具、层次化、自定义。'],
+    ['监督者作为工具', '监督者提供资源和支持，而不是逐步命令。'],
+    ['自定义', '按问题混合或全新设计，需要深入理解协议、协调与涌现行为。']
+  ],
+  p: [
+    ['选择依据', '任务复杂度、智能体数量、自主程度、稳健性需求、可接受的通信开销。'],
+    ['网络的代价', '链路随数量平方增长，一致决策难。'],
+    ['监督者的代价', '单点故障、瓶颈。']
+  ]
+});
+
+/* ---------- ADK ---------- */
+S.quiz($('#adkQ'), [
+  { q: '协调者把欢迎交给 greeter，把任务执行交给一个非 LLM 的执行器。', o: ['父子层次（sub_agents）', 'LoopAgent', 'ParallelAgent'], a: 0, why: '原书示例：coordinator 带两个 sub_agents，对应“层次结构 / 路由”。' },
+  { q: '反复处理直到状态变成 completed，最多 10 轮。', o: ['SequentialAgent', 'LoopAgent', 'AgentTool'], a: 1, why: 'LoopAgent + ConditionChecker，对应“反思 / 目标监控”的循环结构。' },
+  { q: '第一步抓数据存进 state，第二步读出来做摘要。', o: ['SequentialAgent', 'ParallelAgent', 'AgentTool'], a: 0, why: '对应第 1 篇的提示词链。' },
+  { q: '天气和新闻同时获取，各写一个 state 键。', o: ['LoopAgent', 'ParallelAgent', 'SequentialAgent'], a: 1, why: '对应第 1 篇的并行化。' },
+  { q: '画家智能体构思提示词后，把图像生成智能体当成一个工具来调用。', o: ['AgentTool', '父子层次', 'LoopAgent'], a: 0, why: '智能体即工具，对应第 3 篇“工具可以是另一个智能体”。' }
+]);
+S.notes($('#n-adk'), {
+  c: [
+    ['sub_agents', '父子层次，协调者委托子智能体。'],
+    ['LoopAgent / SequentialAgent / ParallelAgent', '循环 / 顺序 / 并行的工作流智能体。'],
+    ['AgentTool', '把一个智能体包装成另一个智能体的工具。']
+  ],
+  p: [
+    ['state 传值', '子智能体通过 session.state 的键交换结果。'],
+    ['非 LLM 智能体', '继承 BaseAgent 的自定义执行器也能做子智能体。']
+  ]
+});
+
+/* ---------- 资源 ---------- */
+function res() {
+  var f = +$('#rsFs').value, r = +$('#rsRs').value, a = +$('#rsAs').value;
+  $('#rsF').textContent = Math.round(f * 100) + '%'; $('#rsR').textContent = r + '×'; $('#rsA').textContent = Math.round(a * 100) + '%';
+  var toSmall = f * a + (1 - f) * (1 - a), toBig = 1 - toSmall;
+  var cost = toSmall * 1 + toBig * r;
+  $('#rsC').textContent = S.pct(cost / r, 0);
+  $('#rsBad').textContent = S.pct((1 - f) * (1 - a), 1);
+}
+['rsFs', 'rsRs', 'rsAs'].forEach(function (id) { $('#' + id).addEventListener('input', res); });
+res();
+var fb = [['请求首选模型 A', '按列表顺序先试主要模型。'], ['A 返回错误（不可用、限流或内容过滤）', '原书列出的触发条件。'], ['自动转给列表里的模型 B', '无需客户端重发。'], ['B 成功', '计费和返回的模型标识以 B 为准。']];
+var ff = $('#fbFlow');
+fb.forEach(function (d) { h('li', { html: d[0] + '<small>' + d[1] + '</small>' }, ff); });
+S.stepper($('#fbStep'), fb.length, function (i) { S.$$('li', ff).forEach(function (li, k) { li.className = k === i ? 'on' : (k < i ? 'done' : ''); }); }, ['首选', '失败', '回退', '成功']);
+S.notes($('#n-res'), {
+  c: [
+    ['资源感知优化', '在计算、时间、金钱预算内决定怎么执行。'],
+    ['路由器智能体', '按复杂度分流：简单给 Flash，复杂给 Pro；可微调。'],
+    ['批评智能体', '评估质量，用于自我纠正、监控，并发现次优路由。'],
+    ['回退', '首选不可用时切换到默认或更经济的模型，保持服务连续。']
+  ],
+  p: [
+    ['和规划的区别', '规划管顺序；资源优化管执行代价。'],
+    ['分层用模型', '规划器用强模型，重复的工具调用用快模型。'],
+    ['九种技术', '工具选择、上下文修剪、资源预测、成本敏感探索、节能、分布式感知、学习型分配、降级回退、优先级。'],
+    ['OpenRouter', '自动模型选择 + 顺序模型回退。']
+  ]
+});
+
+/* ---------- 优先级 ---------- */
+var base = [
+  { t: '系统停机报告', u: 5, i: 5, d: 3 },
+  { t: '高价值客户咨询', u: 3, i: 4, d: 0 },
+  { t: '密码重置', u: 2, i: 1, d: 0 },
+  { t: '夜间批处理作业', u: 1, i: 2, d: 2 }
+];
+var tasks = base.slice(), added = false;
+function prio() {
+  var wu = +$('#pwUs').value, wi = +$('#pwIs').value, wd = +$('#pwDs').value;
+  $('#pwU').textContent = wu; $('#pwI').textContent = wi; $('#pwD').textContent = wd;
+  var rows = tasks.map(function (x) { return { x: x, s: x.u * wu + x.i * wi + x.d * wd }; }).sort(function (a, b) { return b.s - a.s; });
+  $('#pT').innerHTML = rows.map(function (r, k) {
+    return '<tr class="' + (k === 0 ? 'top' : '') + (r.x.ev ? ' new' : '') + '"><td>' + (k + 1) + '. ' + r.x.t + '</td><td class="n">' + r.x.u + '</td><td class="n">' + r.x.i + '</td><td class="n">' + r.x.d + '</td><td class="n">' + r.s + '</td></tr>';
+  }).join('');
+  $('#pOut').innerHTML = added ? '新事件进来后重新评估、重新排序，这就是“动态重新优先级排序”。' : '把紧急性权重调到 0 试试：排序会变，说明“标准定义”本身就是设计决策。';
+}
+['pwUs', 'pwIs', 'pwDs'].forEach(function (id) { $('#' + id).addEventListener('input', prio); });
+$('#pEv').addEventListener('click', function () { if (!added) { tasks = base.concat([{ t: '核心服务全面中断', u: 5, i: 5, d: 5, ev: true }]); added = true; prio(); } });
+$('#pRs').addEventListener('click', function () { tasks = base.slice(); added = false; prio(); });
+prio();
+S.notes($('#n-prio'), {
+  c: [
+    ['四要素', '标准定义、任务评估、调度 / 选择逻辑、动态重新排序。'],
+    ['常用标准', '紧急性、重要性、依赖关系、资源可用性、成本 / 收益、用户偏好。'],
+    ['三个层面', '总体目标、计划内子任务、下一个即时行动。']
+  ],
+  p: [
+    ['评估方式', '从简单规则到 LLM 打分推理。'],
+    ['典型例子', '停机报告先于密码重置；避撞先于省油；批处理推迟到低峰。'],
+    ['示例默认值', '项目管理智能体缺信息时默认 P1、分给 Worker A。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

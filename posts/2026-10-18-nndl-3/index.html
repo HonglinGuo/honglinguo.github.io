@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>线性模型：Logistic、Softmax、感知器与支持向量机</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（三）：线性判别函数与决策边界、有向距离；一对其余、一对一与 argmax 三种多分类方式；Logistic 回归与对数几率、交叉熵梯度；Softmax 回归与参数冗余；感知器的错误驱动更新、收敛上界 R²/γ² 与平均感知器；支持向量机的最大间隔、支持向量、软间隔与核函数；五种损失函数对比。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.wvec { font-family: var(--f-num); font-size: 16px; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="3">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 03</span><span>对应原书第 3 章（第 60–88 页）</span><span>约 50 分钟</span></p>
+  <h1>同一条直线，<em>四种学法</em></h1>
+  <p class="lead">第 3 章的四个模型——Logistic 回归、Softmax 回归、感知器、支持向量机——用的都是同一个线性打分 wᵀx + b，决策边界都是超平面。它们的差别只在一处：用什么损失函数、按什么准则去找这条线。概率建模、错误驱动、间隔最大化，三种思路分别对应交叉熵、感知器损失和 Hinge 损失。这一篇在同一批二维数据上把它们都训练一遍，最后把损失函数画在一张图上比较。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" aria-current="page" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#bound">决策边界</a><a href="#multi">多分类</a><a href="#lr">Logistic</a><a href="#sm">Softmax</a><a href="#pc">感知器</a><a href="#svm">支持向量机</a><a href="#kernel">核函数</a><a href="#loss">损失对比</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>“线性分类器”的“线性”指什么？Logistic 回归输出了一个非线性的概率，为什么还叫线性模型？</li>
+  <li>感知器和支持向量机都能把线性可分的数据分开，它们找到的直线有什么不同？</li>
+  <li>Logistic、感知器、Hinge、平方损失放在一起比，各自在“分对了但不够自信”和“分错了”时怎么罚？</li>
+</ol></div>
+
+<section class="part" id="bound">
+  <div class="part-head"><h2>线性判别函数与决策边界</h2><span class="meta">原书 3.1.1 节 · 第 60–63 页</span></div>
+  <div class="sec-lede">
+    <p>线性模型 f(x; w) = wᵀx + b 的值域是实数，做分类还需要一个非线性的<strong>决策函数</strong> g(·)：y = g(f(x; w))，这时 f 叫<strong>判别函数</strong>。二分类最简单的 g 是符号函数 sgn。<strong>所谓“线性分类模型”，指的是决策边界是线性超平面</strong>——而不是说整个模型没有非线性。</p>
+    <p>所有满足 f(x; w) = 0 的点构成<strong>决策边界</strong>（D 维空间里是 D − 1 维的超平面），它把空间一分为二，并且<strong>与权重向量 w 正交</strong>。一个点到边界的<strong>有向距离</strong>是 <strong>γ = f(x; w)/‖w‖</strong>，也可以看成 x 在 w 方向上的投影。学习的目标是让每个样本都满足 <strong>y⁽ⁿ⁾f(x⁽ⁿ⁾; w) &gt; 0</strong>；存在这样的 w，就说训练集<strong>线性可分</strong>。</p>
+    <p>最直接的损失是 0-1 损失 I(yf &lt; 0)，但它几乎处处梯度为 0、在边界处不可导，没法用梯度方法优化。所以实际都用连续、凸的<strong>替代损失</strong>（交叉熵、Hinge 等），它们通常是 0-1 损失的连续上界——这就是本章四个模型分化的起点。</p>
+    <p class="go">拖动 w 和 b，看边界怎么转、怎么平移；点画布任意位置看那一点的有向距离。默认值是原书习题 3-3 的 w = [2, −1]ᵀ、b = 1。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">决策边界与有向距离</p>
+    <div class="lab-split">
+      <div id="bdF"></div>
+      <div>
+        <div class="ctl-grid">
+          <label class="ctl"><span>w₁ <output id="bdW1">2.0</output></span><input type="range" id="bdW1s" min="-3" max="3" step="0.1" value="2"></label>
+          <label class="ctl"><span>w₂ <output id="bdW2">−1.0</output></span><input type="range" id="bdW2s" min="-3" max="3" step="0.1" value="-1"></label>
+          <label class="ctl"><span>b <output id="bdB">1.0</output></span><input type="range" id="bdBs" min="-3" max="3" step="0.1" value="1"></label>
+        </div>
+        <table class="calc" id="bdT"></table>
+        <p class="cap" id="bdW"></p>
+        <div id="bdG"></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-bound"></div>
+</section>
+
+<section class="part" id="multi">
+  <div class="part-head"><h2>多分类：一对其余、一对一、argmax</h2><span class="meta">原书 3.1.2 节 · 第 63–64 页</span></div>
+  <div class="sec-lede">
+    <p>类别数 C &gt; 2 时需要多个判别函数，原书介绍三种组织方式。<strong>一对其余</strong>：C 个二分类器，第 c 个把类别 c 和其余所有类分开。<strong>一对一</strong>：C(C − 1)/2 个二分类器，每个只分开一对类别，最后投票。<strong>argmax</strong>：也是 C 个判别函数 f<sub>c</sub> = w<sub>c</sub>ᵀx + b<sub>c</sub>，但不再各自判断正负，而是<strong>取得分最高的那一类</strong>。</p>
+    <p>前两种本质上都是把多分类拆成多个二分类，问题是特征空间里会出现<strong>谁都不认领、或者好几个都认领</strong>的区域（原书图 3.3 的“?”）。argmax 方式给每个点都恰好一个答案，相邻两类 i、j 的边界由 f<sub>i</sub> − f<sub>j</sub> = 0 决定，法向量是 w<sub>i</sub> − w<sub>j</sub>。原书的结论：数据集多类线性可分，就一定存在一个 argmax 方式的线性分类器把它分开。后面的 Softmax 回归用的就是 argmax。</p>
+    <p class="go">切换三种方式，看灰色的“难以确定”区域在哪里（判别函数为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三种多分类方式（灰色 = 难以确定类别）</p>
+    <div class="lab-split">
+      <div id="mcF"></div>
+      <div>
+        <div class="seg" id="mcS"><button data-v="ovr" aria-pressed="true">一对其余（3 个）</button><button data-v="ovo">一对一（3 个）</button><button data-v="arg">argmax（3 个）</button></div>
+        <p class="legend2"><span><i class="a"></i>类别 ω₁</span><span><i class="b"></i>类别 ω₂</span><span><i class="c"></i>类别 ω₃</span></p>
+        <div class="read"><div class="warn"><div class="v" id="mcQ">0</div><div class="k">灰色区域占画面比例</div></div></div>
+        <p class="cap" id="mcW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-multi"></div>
+</section>
+
+<section class="part" id="lr">
+  <div class="part-head"><h2>Logistic 回归：把打分变成概率</h2><span class="meta">原书 3.2 节 · 第 65–67 页</span></div>
+  <div class="sec-lede">
+    <p>Logistic 回归用激活函数 σ 把线性打分“挤压”到 (0, 1)：<strong>p(y = 1|x) = σ(wᵀx) = 1/(1 + exp(−wᵀx))</strong>（这里 y ∈ {0, 1}，x、w 是增广向量）。虽然输出是非线性的概率，但决策边界仍是 wᵀx = 0，所以它<strong>仍然是线性分类模型</strong>。统计里把 g 的逆函数叫联系函数。</p>
+    <p>把式子反解：<strong>wᵀx = log [p(y=1|x) / p(y=0|x)]</strong>。右边概率之比叫<strong>几率</strong>（odds），取对数叫<strong>对数几率</strong>（logit）。所以 Logistic 回归就是“用线性回归去拟合对数几率”，也叫对数几率回归。打分每增加 1，几率乘以 e ≈ 2.72。</p>
+    <p>训练用交叉熵损失。借助 σ′(z) = σ(z)(1 − σ(z))，梯度化简成一个非常干净的形式：<strong>∂ℛ/∂w = −(1/N) Σ x⁽ⁿ⁾(y⁽ⁿ⁾ − ŷ⁽ⁿ⁾)</strong>——预测值和真实值之差乘以输入。风险函数是连续可微的凸函数，所以梯度下降能找到全局最优，也可以用牛顿法这类高阶方法。原书特别提示：<strong>这个“误差 × 输入”的梯度形式，和后面多层神经网络输出层的处理完全一致</strong>。</p>
+    <p class="go">左边先感受 w、b 对 σ 曲线的影响（原书图 3.4 用的是 w = 6, b = 9 和 w = 10, b = 15）；右边在二维数据上真的训练一次。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一维：σ(wx + b) 与对数几率</p>
+      <div id="l1C"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>w <output id="l1W">6</output></span><input type="range" id="l1Ws" min="0.5" max="15" step="0.5" value="6"></label>
+        <label class="ctl"><span>b <output id="l1B">9</output></span><input type="range" id="l1Bs" min="-5" max="25" step="0.5" value="9"></label>
+        <label class="ctl"><span>查看点 x <output id="l1X">−1.2</output></span><input type="range" id="l1Xs" min="-3" max="1" step="0.05" value="-1.2"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="l1P">0</div><div class="k">p(y=1|x)</div></div><div><div class="v" id="l1O">0</div><div class="k">几率 p/(1−p)</div></div><div><div class="v" id="l1L">0</div><div class="k">对数几率 = wx + b</div></div></div>
+      <p class="cap" id="l1Cap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">二维：梯度下降训练 Logistic 回归（数据为示意）</p>
+      <div id="l2F"></div>
+      <div class="btnrow"><button class="btn pri" type="button" id="l2Go">训练 20 步</button><button class="btn" type="button" id="l2One">训练 1 步</button><button class="btn" type="button" id="l2R">重置</button></div>
+      <label class="ctl"><span>学习率 α <output id="l2A">0.5</output></span><input type="range" id="l2As" min="0.05" max="3" step="0.05" value="0.5"></label>
+      <div class="read"><div class="hl"><div class="v" id="l2L">0</div><div class="k">交叉熵风险</div></div><div><div class="v" id="l2Acc">0</div><div class="k">训练准确率</div></div><div><div class="v" id="l2T">0</div><div class="k">已训练步数</div></div></div>
+      <p class="wvec" id="l2Wv"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-lr"></div>
+</section>
+
+<section class="part" id="sm">
+  <div class="part-head"><h2>Softmax 回归：多类的 Logistic</h2><span class="meta">原书 3.3 节 · 第 67–72 页</span></div>
+  <div class="sec-lede">
+    <p>Softmax 函数把任意实数向量 z 映射成概率分布：softmax(z)<sub>c</sub> = exp(z<sub>c</sub>)/Σ exp(z<sub>c′</sub>)。指数放大了分量之间的差异，最大分量的概率最大；实际计算时先减去 max z 防止溢出；<strong>C = 2 时退化为 Logistic 函数</strong>。</p>
+    <p><strong>Softmax 回归</strong>（多项 / 多类 Logistic 回归）预测 ŷ = softmax(Wᵀx)，决策取 argmax w<sub>c</sub>ᵀx——正是上一节的 argmax 方式。C = 2 时决策变成 I((w₁ − w₀)ᵀx &gt; 0)，对应二分类里的 w = w₁ − w₀。用交叉熵训练，梯度和 Logistic 回归同一个形状：<strong>∂ℛ/∂W = −(1/N) Σ x⁽ⁿ⁾(y⁽ⁿ⁾ − ŷ⁽ⁿ⁾)ᵀ</strong>，y 是 one-hot 向量。</p>
+    <p>原书点出一个容易忽略的性质：<strong>参数冗余</strong>。所有 w<sub>c</sub> 同时减去同一个向量 v，输出概率一点不变——真正起作用的是类别之间的打分差，不是各自的绝对位置。所以 Softmax 回归通常要加正则化约束参数，这个性质也正是“减去最大值防溢出”的依据。</p>
+    <p class="go">训练一个三分类 Softmax 回归，然后点“所有 w_c 同减一个 v”，看预测有没有变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Softmax 回归三分类（数据为示意）</p>
+    <div class="lab-split">
+      <div id="smF"></div>
+      <div>
+        <div class="btnrow"><button class="btn pri" type="button" id="smGo">训练 30 步</button><button class="btn" type="button" id="smV">所有 w_c 同减一个随机 v</button><button class="btn" type="button" id="smR">重置</button></div>
+        <div class="read"><div class="hl"><div class="v" id="smL">0</div><div class="k">交叉熵风险</div></div><div><div class="v" id="smAcc">0</div><div class="k">训练准确率</div></div></div>
+        <p class="lab-s" style="margin-top:10px">参数矩阵 W（每列一个类别，最后一行是偏置）</p>
+        <div id="smW"></div>
+        <p class="cap" id="smCap"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-sm"></div>
+</section>
+
+<section class="part" id="pc">
+  <div class="part-head"><h2>感知器：错了才改</h2><span class="meta">原书 3.4 节 · 第 72–79 页</span></div>
+  <div class="sec-lede">
+    <p>感知器由 Rosenblatt 于 1957 年提出，是只有一个神经元的最简单神经网络——最早还是一台机器，后来才变成 IBM 704 上的程序。它的学习规则是<strong>错误驱动的在线学习</strong>：w 从 0 开始，每遇到一个分错（或正好在边界上，ywᵀx ≤ 0）的样本，就 <strong>w ← w + yx</strong>。这等价于对损失 max(0, −ywᵀx) 做随机（次）梯度下降。</p>
+    <p><strong>收敛性</strong>（Novikoff，1963）：如果训练集线性可分，存在单位向量 w* 使所有样本 w*ᵀ(yx) ≥ γ，令 R 为最大样本模长，那么权重更新次数<strong>不超过 R²/γ²</strong>。证明很漂亮：‖w<sub>K</sub>‖² 的上界随 K 线性增长（KR²），下界随 K 平方增长（K²γ²），两者一夹，K ≤ R²/γ²。间隔越大，收敛越快。</p>
+    <p>感知器的三个不足：能分开但<strong>不保证泛化能力</strong>；<strong>对样本顺序敏感</strong>，顺序不同找到的超平面也不同；线性不可分时不保证收敛。改进之一是<strong>投票感知器</strong>：保存所有 K 个权重，每个按“存活了多少步”加权投票；它的简化版<strong>平均感知器</strong>直接用所有步权重的平均 w̄。感知器还能通过联合特征 φ(x, y) 推广到多分类和结构化学习（广义感知器）。</p>
+    <p class="go">先手推原书习题 3-10 的一轮更新；再在一组线性可分的数据上逐样本训练，对照收敛上界。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">手推一轮：原书习题 3-10</p>
+      <div id="p0S"></div>
+      <div id="p0F"></div>
+      <p class="stepinfo" id="p0W"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">逐样本训练与收敛上界（数据为示意）</p>
+      <div id="pcF"></div>
+      <div class="btnrow"><button class="btn" type="button" id="pcOne">下一个样本</button><button class="btn pri" type="button" id="pcEp">跑完一轮</button><button class="btn" type="button" id="pcR">换个顺序重来</button></div>
+      <div class="read"><div class="hl"><div class="v" id="pcK">0</div><div class="k">已更新次数 K</div></div><div class="warn"><div class="v" id="pcB">0</div><div class="k">上界 R²/γ²</div></div><div><div class="v" id="pcE">0</div><div class="k">本轮 / 总步数</div></div></div>
+      <p class="cap" id="pcCap"></p>
+      <p class="legend2"><span>— 当前感知器</span><span style="color:var(--s3)">--- 平均感知器 w̄</span></p>
+    </div>
+  </div>
+  <div class="notes" id="n-pc"></div>
+</section>
+
+<section class="part" id="svm">
+  <div class="part-head"><h2>支持向量机：离两边都尽量远</h2><span class="meta">原书 3.5.1、3.5.3 节 · 第 79–83 页</span></div>
+  <div class="sec-lede">
+    <p>线性可分的数据，能分开它的直线有无数条，感知器随便找到一条就停了。<strong>支持向量机</strong>要找的是最“稳”的那条：定义<strong>间隔</strong> γ 为所有样本到超平面的最短距离，目标是让 γ 最大。间隔越大，划分越不容易受噪声影响。由于同时缩放 w 和 b 不改变距离，可以规定 ‖w‖·γ = 1，问题变成 <strong>min ½‖w‖²，s.t. y⁽ⁿ⁾(wᵀx⁽ⁿ⁾ + b) ≥ 1</strong>。线性可分时<strong>间隔最大的超平面是唯一的</strong>。</p>
+    <p>用拉格朗日乘数法转到对偶问题，得到 w = Σ λ<sub>n</sub>y⁽ⁿ⁾x⁽ⁿ⁾。KKT 互补松弛条件告诉我们：不在约束边界上的样本 λ<sub>n</sub> = 0；只有正好落在 y(wᵀx + b) = 1 上的样本 λ<sub>n</sub> &gt; 0，它们叫<strong>支持向量</strong>。<strong>决策函数只依赖支持向量</strong>，删掉其他样本，结果不变。实际求解常用 SMO 算法。</p>
+    <p>数据不可分时，引入松弛变量 ξ<sub>n</sub> 允许部分样本违反约束，目标变成 ½‖w‖² + CΣξ<sub>n</sub>，叫<strong>软间隔</strong>。把最优的 ξ 代回去，就得到 <strong>Σ max(0, 1 − y(wᵀx + b)) + (1/2C)‖w‖²</strong>——Hinge 损失加 ℓ2 正则。C 越大越不容忍违规，间隔越窄。</p>
+    <p class="go">先自己转动一条分界线，看它的间隔；再点“最大间隔”看 SVM 的答案。下面加一个离群点，用软间隔调 C。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">硬间隔：哪条线的间隔最大</p>
+      <div id="svF"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>法向角度 θ <output id="svA">60°</output></span><input type="range" id="svAs" min="0" max="179" value="60"></label>
+        <label class="ctl"><span>平移 <output id="svO">0.0</output></span><input type="range" id="svOs" min="-1.5" max="1.5" step="0.05" value="0"></label>
+      </div>
+      <div class="btnrow"><button class="btn pri" type="button" id="svBest">最大间隔</button></div>
+      <div class="read"><div class="hl"><div class="v" id="svM">0</div><div class="k">你的直线的间隔 γ</div></div><div class="good"><div class="v" id="svMb">0</div><div class="k">最大间隔</div></div></div>
+      <p class="cap" id="svCap"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">软间隔：容忍几个违规</p>
+      <div id="ssF"></div>
+      <label class="ctl"><span>C（越大越不容忍违规） <output id="ssC">1</output></span><input type="range" id="ssCs" min="-2" max="2" step="0.25" value="0"></label>
+      <div class="btnrow"><button class="btn" type="button" id="ssOut" aria-pressed="true">离群点：开</button></div>
+      <div class="read"><div class="hl"><div class="v" id="ssM">0</div><div class="k">间隔 1/‖w‖</div></div><div><div class="v" id="ssS">0</div><div class="k">支持向量数（y·f ≤ 1）</div></div><div class="warn"><div class="v" id="ssV">0</div><div class="k">违规样本（y·f &lt; 1）</div></div></div>
+      <p class="cap" id="ssCap"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-svm"></div>
+</section>
+
+<section class="part" id="kernel">
+  <div class="part-head"><h2>核函数：换个空间就线性可分了</h2><span class="meta">原书 3.5.2 节 · 第 82–83 页</span></div>
+  <div class="sec-lede">
+    <p>SVM 的对偶形式里，样本只以内积 x⁽ᵐ⁾ᵀx⁽ⁿ⁾ 的形式出现。把内积换成<strong>核函数</strong> k(x, z) = φ(x)ᵀφ(z)，就等于先把样本映射到更高维的特征空间 φ 再做线性分类，决策函数变成 sgn(Σ λ<sub>n</sub>y⁽ⁿ⁾k(x⁽ⁿ⁾, x) + b)。<strong>在特征空间里是超平面，回到原始空间就是曲线。</strong></p>
+    <p>妙处在于不必写出 φ。原书的例子：k(x, z) = (1 + xᵀz)² 恰好等于 φ(x)ᵀφ(z)，其中 φ(x) = [1, √2x₁, √2x₂, √2x₁x₂, x₁², x₂²]ᵀ——算一次二维内积，就等于在六维空间里算内积，这叫<strong>核技巧</strong>。高斯核 k(x, z) = exp(−γ‖x − z‖²) 对应的 φ 甚至是无穷维的。</p>
+    <p class="go">同心圆数据在原始空间里找不到一条直线分开；切到 (x₁², x₂²) 空间看看（原书图 3.8）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同心圆：原始空间 vs 特征空间</p>
+    <div class="lab-split">
+      <div id="kfF"></div>
+      <div>
+        <div class="seg" id="kfS"><button data-v="raw" aria-pressed="true">原始空间 (x₁, x₂)</button><button data-v="phi">特征空间 (x₁², x₂²)</button></div>
+        <p class="cap" id="kfW" style="margin-top:12px"></p>
+        <div id="kfG"></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-kernel"></div>
+</section>
+
+<section class="part" id="loss">
+  <div class="part-head"><h2>损失函数对比</h2><span class="meta">原书 3.6–3.7 节 · 第 83–86 页</span></div>
+  <div class="sec-lede">
+    <p>统一用 y ∈ {+1, −1}、f = wᵀx + b，所有损失都能写成 <strong>yf</strong>（可以叫“带符号的打分”）的函数：yf &gt; 0 分对，越大越有把握；yf &lt; 0 分错，越小错得越离谱。好的分类损失应该<strong>随 yf 增大而减小</strong>。</p>
+    <p>Logistic 回归的交叉熵改写后是 <strong>log(1 + exp(−yf))</strong>：平滑、有概率解释，分对了也还有一点点损失。感知器损失 <strong>max(0, −yf)</strong>：只关心是否分错，分对就是 0。Hinge 损失 <strong>max(0, 1 − yf)</strong>：不仅要分对，还要留出间隔，0 &lt; yf &lt; 1 也会被罚。平方损失 (y − f)² 可以写成 <strong>(1 − yf)²</strong>——问题在于 yf &gt; 1（分得非常对）时它反而会上升，惩罚“太正确”，所以不适合分类。</p>
+    <p class="go">先估一个值，再拖动 yf 看五种损失。原书习题 3-7：y = 1，f 分别取 2、0.5、−1。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五种损失随 yf 的变化（原书图 3.9）</p>
+    <div id="lsG"></div>
+    <div class="lab-split">
+      <div id="lsC"></div>
+      <div>
+        <label class="ctl"><span>yf <output id="lsZ">0.5</output></span><input type="range" id="lsZs" min="-3" max="3" step="0.05" value="0.5"></label>
+        <table class="calc" id="lsT"></table>
+        <p class="cap" id="lsCap"></p>
+      </div>
+    </div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>线性模型</th><th>激活函数</th><th>损失函数</th><th>优化方法</th><th>思路</th></tr></thead>
+    <tbody>
+      <tr><td>线性回归</td><td>—</td><td>平方损失</td><td>最小二乘、梯度下降</td><td>回归</td></tr>
+      <tr><td>Logistic 回归</td><td>σ(wᵀx)</td><td>二分类交叉熵</td><td>梯度下降</td><td>概率建模</td></tr>
+      <tr><td>Softmax 回归</td><td>softmax(Wᵀx)</td><td>多类交叉熵</td><td>梯度下降</td><td>概率建模</td></tr>
+      <tr><td>感知器</td><td>sgn(wᵀx)</td><td>感知器损失</td><td>随机梯度下降</td><td>错误驱动</td></tr>
+      <tr><td>支持向量机</td><td>sgn(wᵀx)</td><td>Hinge 损失</td><td>二次规划、SMO</td><td>间隔最大化</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 3.1。Logistic、Softmax 中 y 用 one-hot 或 {0, 1}；感知器和 SVM 中 y ∈ {+1, −1}。用正态分布的累积分布函数代替 σ 的模型叫 probit 回归。</p>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>判别函数 vs 决策函数</b>：判别函数是线性打分 f = wᵀx + b；决策函数 g 把打分变成类别（sgn、argmax）或概率（σ、softmax）。</p>
+    <p><b>激活函数 vs 联系函数</b>：Logistic 回归里 σ 叫激活函数，它的逆函数（logit）在统计文献里叫联系函数。</p>
+    <p><b>投票感知器 vs 平均感知器</b>：前者保存全部 K 个权重、加权投票；后者只保存平均权重 w̄，用一次内积预测，是前者的近似简化。</p>
+    <p><b>硬间隔 vs 软间隔</b>：硬间隔要求所有样本 y(wᵀx + b) ≥ 1，只适用于线性可分；软间隔允许违规但按 C 罚，等价于 Hinge 损失 + ℓ2 正则。</p>
+  </div>
+  <div class="notes" id="n-loss"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">有向距离 γ = f(x; w)/‖w‖　　线性可分：∃w，y⁽ⁿ⁾f(x⁽ⁿ⁾; w) &gt; 0 ∀n</div>
+    <div class="fx">Logistic：p(y=1|x) = σ(wᵀx)，wᵀx = log [p/(1−p)]，∂ℛ/∂w = −(1/N) Σ x(y − ŷ)</div>
+    <div class="fx">Softmax：ŷ = softmax(Wᵀx)，∂ℛ/∂W = −(1/N) Σ x(y − ŷ)ᵀ</div>
+    <div class="fx">感知器：ywᵀx ≤ 0 时 w ← w + yx；更新次数 K ≤ R²/γ²</div>
+    <div class="fx">SVM：min ½‖w‖² s.t. y(wᵀx + b) ≥ 1；w = Σ λ_n y⁽ⁿ⁾x⁽ⁿ⁾；软间隔 = Hinge + (1/2C)‖w‖²</div>
+    <div class="fx">核：k(x, z) = φ(x)ᵀφ(z)；(1 + xᵀz)²；exp(−γ‖x − z‖²)</div>
+    <div class="fx">损失（关于 yf）：LR log(1+e^{−yf})　感知器 max(0, −yf)　Hinge max(0, 1−yf)　平方 (1−yf)²</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-2/"><small>上一篇</small><span>02 · 机器学习概述</span></a><a class="nx" href="../2026-10-18-nndl-4/"><small>下一篇</small><span>04 · 前馈神经网络</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 公共数据 ---------- */
+function blobs(seed, centers, n, sd) {
+  var r = S.rng(seed), pts = [];
+  centers.forEach(function (c, k) { for (var i = 0; i < n; i++) pts.push([c[0] + sd * S.randn(r), c[1] + sd * S.randn(r), k]); });
+  return pts;
+}
+
+/* ---------- 决策边界 ---------- */
+var bdProbe = null;
+var EX33 = [[1, 1, 'x₁'], [0, 2, 'x₂'], [-1, 0, 'x₃']];
+var bdField = S.field($('#bdF'), {
+  xr: [-3, 3], yr: [-3, 3], res: 60, size: 360,
+  f: function (x, y) { var w1 = +$('#bdW1s').value, w2 = +$('#bdW2s').value, b = +$('#bdBs').value; return S.sigmoid(1.5 * (w1 * x + w2 * y + b)); },
+  onClick: function (x, y) { bdProbe = [x, y]; bd(); },
+  overlay: function (ctx, X, Y) {
+    var w1 = +$('#bdW1s').value, w2 = +$('#bdW2s').value, b = +$('#bdBs').value, n2 = w1 * w1 + w2 * w2;
+    if (n2 < 1e-9) return;
+    var p0 = [-b * w1 / n2, -b * w2 / n2], n = Math.sqrt(n2);
+    ctx.strokeStyle = S.css('--s3'); ctx.fillStyle = S.css('--s3'); ctx.lineWidth = 2.5;
+    var p1 = [p0[0] + w1 / n, p0[1] + w2 / n];
+    ctx.beginPath(); ctx.moveTo(X(p0[0]), Y(p0[1])); ctx.lineTo(X(p1[0]), Y(p1[1])); ctx.stroke();
+    var ang = Math.atan2(-(Y(p1[1]) - Y(p0[1])), X(p1[0]) - X(p0[0]));
+    ctx.beginPath(); ctx.moveTo(X(p1[0]), Y(p1[1]));
+    ctx.lineTo(X(p1[0]) - 10 * Math.cos(ang - 0.4), Y(p1[1]) + 10 * Math.sin(ang - 0.4));
+    ctx.lineTo(X(p1[0]) - 10 * Math.cos(ang + 0.4), Y(p1[1]) + 10 * Math.sin(ang + 0.4)); ctx.fill();
+    ctx.font = '15px ' + S.css('--f-sans'); ctx.fillText('w', X(p1[0]) + 6, Y(p1[1]) - 6);
+    ctx.fillStyle = S.css('--ink');
+    EX33.concat(bdProbe ? [[bdProbe[0], bdProbe[1], '你点的']] : []).forEach(function (p) {
+      ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 5, 0, 7); ctx.fill();
+      ctx.fillText(p[2], X(p[0]) + 8, Y(p[1]) - 6);
+      var f = w1 * p[0] + w2 * p[1] + b, q = [p[0] - f * w1 / n2, p[1] - f * w2 / n2];
+      ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2; ctx.strokeStyle = S.css('--ink-3');
+      ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1])); ctx.lineTo(X(q[0]), Y(q[1])); ctx.stroke(); ctx.setLineDash([]);
+    });
+  }
+});
+function bd() {
+  var w1 = +$('#bdW1s').value, w2 = +$('#bdW2s').value, b = +$('#bdBs').value, n = Math.hypot(w1, w2);
+  $('#bdW1').textContent = S.f(w1, 1); $('#bdW2').textContent = S.f(w2, 1); $('#bdB').textContent = S.f(b, 1);
+  bdField({ lines: [[w1, w2, b, '--ink', 2.5]] });
+  var rows = '<tr><td>点</td><td class="n">f = wᵀx + b</td><td class="n">γ = f/‖w‖</td><td class="n">预测</td></tr>';
+  EX33.concat(bdProbe ? [[bdProbe[0], bdProbe[1], '你点的']] : []).forEach(function (p) {
+    var f = w1 * p[0] + w2 * p[1] + b;
+    rows += '<tr><td>' + p[2] + ' [' + S.f(p[0], 1) + ', ' + S.f(p[1], 1) + ']</td><td class="n">' + S.f(f, 2) + '</td><td class="n">' + (n > 1e-9 ? S.f(f / n, 3) : '—') + '</td><td class="n">' + (f > 0 ? '+1' : f < 0 ? '−1' : '0（边界上）') + '</td></tr>';
+  });
+  $('#bdT').innerHTML = rows;
+  $('#bdW').innerHTML = '紫色箭头是 w，它始终<b>垂直于</b>决策边界、指向正类一侧（橙色）。‖w‖ = ' + S.f(n, 2) + '：把 w 和 b 同时放大 2 倍，边界不动、f 翻倍，但 γ 不变——距离只取决于方向。';
+}
+['bdW1s', 'bdW2s', 'bdBs'].forEach(function (id) { $('#' + id).addEventListener('input', bd); }); bd();
+S.guess($('#bdG'), { q: '原书习题 3-3：w = [2, −1]ᵀ、b = 1 时，点 x₁ = [1, 1]ᵀ 到超平面的有向距离是多少？', ans: 2 / Math.sqrt(5), fmt: function (x) { return S.f(x, 3); }, why: 'f = 2×1 − 1×1 + 1 = 2，‖w‖ = √5，γ = 2/√5 ≈ 0.894，预测为正类。x₂、x₃ 的 f 都是 −1，γ ≈ −0.447，预测为负类（见上表）。' });
+S.notes($('#n-bound'), {
+  c: [
+    ['判别函数', 'f(x; w) = wᵀx + b，线性打分。'],
+    ['决策函数', 'g(·)：把打分变成类别，如 sgn。'],
+    ['决策边界', 'f = 0 的点构成的超平面，与 w 正交。'],
+    ['线性可分', '存在 w 使所有样本 yf(x; w) > 0。'],
+    ['替代损失', '连续、凸的 0-1 损失上界：Hinge、交叉熵等。']
+  ],
+  p: [
+    ['有向距离', 'γ = f(x; w)/‖w‖，即 x 在 w 方向上的投影。'],
+    ['“线性”的含义', '决策边界是超平面，而不是整个模型无非线性。'],
+    ['0-1 损失的问题', '几乎处处梯度为 0、边界处不可导。']
+  ]
+});
+
+/* ---------- 多分类 ---------- */
+var MC_C = [[-1.2, -0.8], [1.3, -0.7], [0.1, 1.4]];
+var MC_PTS = blobs(31, MC_C, 8, 0.35);
+var mcMode = 'ovr';
+function mcClass(x, y) {
+  var f;
+  if (mcMode === 'arg') {
+    f = MC_C.map(function (c) { return c[0] * x + c[1] * y - (c[0] * c[0] + c[1] * c[1]) / 2; });
+    var k = f.indexOf(Math.max.apply(null, f));
+    return [k, 0.5];
+  }
+  if (mcMode === 'ovr') {
+    f = MC_C.map(function (c) { return c[0] * x + c[1] * y - 0.9; });
+    var pos = []; f.forEach(function (v, i) { if (v > 0) pos.push(i); });
+    return pos.length === 1 ? [pos[0], 0.5] : [3, 0.6];
+  }
+  var votes = [0, 0, 0], P = [[0, 1, 0.35], [0, 2, -0.3], [1, 2, 0.3]];
+  P.forEach(function (p) {
+    var a = MC_C[p[0]], b = MC_C[p[1]], v = (a[0] - b[0]) * x + (a[1] - b[1]) * y - ((a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1])) / 2 + p[2];
+    votes[v > 0 ? p[0] : p[1]]++;
+  });
+  var m = votes.indexOf(2);
+  return m >= 0 ? [m, 0.5] : [3, 0.6];
+}
+function mcLines() {
+  if (mcMode === 'ovr') return MC_C.map(function (c) { return [c[0], c[1], -0.9, '--ink', 1.5, [6, 4]]; });
+  if (mcMode === 'ovo') return [[0, 1, 0.35], [0, 2, -0.3], [1, 2, 0.3]].map(function (p) {
+    var a = MC_C[p[0]], b = MC_C[p[1]];
+    return [a[0] - b[0], a[1] - b[1], -((a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1])) / 2 + p[2], '--ink', 1.5, [6, 4]];
+  });
+  return [];
+}
+var mcField = S.field($('#mcF'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 90, size: 360, smooth: false, f: mcClass, pts: MC_PTS });
+function mc() {
+  mcField({ lines: mcLines() });
+  var q = 0, n = 0;
+  for (var i = 0; i < 80; i++) for (var j = 0; j < 80; j++) { n++; if (mcClass(-2.5 + 5 * (i + 0.5) / 80, -2.5 + 5 * (j + 0.5) / 80)[0] === 3) q++; }
+  $('#mcQ').textContent = S.pct(q / n, 0);
+  $('#mcW').innerHTML = mcMode === 'ovr' ? '虚线是 3 个“c vs 其余”分类器的边界 f<sub>c</sub> = 0。中间三个都说“不是我”，外面角落里两个都说“是我”——都成了灰色。' :
+    mcMode === 'ovo' ? '虚线是 3 个“i vs j”分类器的边界。中间小三角形里三个分类器各投一票给不同类别（1 : 1 : 1），无法决定。C 类需要 C(C−1)/2 个分类器，C 大时数量平方增长。' :
+    'argmax：哪个 f<sub>c</sub> 最大就归哪类，<b>每个点都有唯一答案</b>，没有灰色。相邻两类的边界是 f<sub>i</sub> − f<sub>j</sub> = 0。';
+}
+S.seg($('#mcS'), function (v) { mcMode = v; mc(); }); mc();
+S.notes($('#n-multi'), {
+  c: [
+    ['一对其余', 'C 个二分类器，第 c 个分开“c”和“非 c”。'],
+    ['一对一', 'C(C−1)/2 个二分类器，每对类别一个，投票。'],
+    ['argmax', 'C 个判别函数，取得分最大的类：y = argmax f_c(x)。'],
+    ['多类线性可分', '存在 C 个 w_c，使每个样本的真实类得分都最高。']
+  ],
+  p: [
+    ['前两种的缺陷', '会出现难以确定类别的区域（图 3.3 的“?”）。'],
+    ['argmax 边界', '相邻类 i、j 的边界 f_i − f_j = 0，法向量 w_i − w_j。'],
+    ['结论', '多类线性可分 ⇒ 存在 argmax 线性分类器把它分开。']
+  ]
+});
+
+/* ---------- Logistic 回归：一维 ---------- */
+var L1D = [[-2.6, 0], [-2.3, 0], [-2.0, 0], [-1.8, 0], [-1.6, 0], [-1.35, 1], [-1.0, 1], [-0.6, 1], [-0.2, 1], [0.3, 1], [0.7, 1]];
+var l1Chart = S.chart($('#l1C'), { h: 220, x: [-3, 1], y: [-0.1, 1.1], xt: [-3, -2, -1, 0, 1], yt: [0, 0.5, 1], xl: 'x' });
+function l1() {
+  var w = +$('#l1Ws').value, b = +$('#l1Bs').value, x = +$('#l1Xs').value;
+  $('#l1W').textContent = S.f(w, 1); $('#l1B').textContent = S.f(b, 1); $('#l1X').textContent = S.f(x, 2);
+  var z = w * x + b, p = S.sigmoid(z);
+  l1Chart({ curves: [{ f: function (t) { return S.sigmoid(w * t + b); }, c: 'c1' }], vl: [{ x: -b / w, c: 'dim', label: '边界 x = −b/w' }], hl: [{ y: 0.5, c: 'dim' }],
+    dots: L1D.map(function (d) { return { x: d[0], y: d[1], c: d[1] ? 'c2' : 'c1', r: 5 }; }).concat([{ x: x, y: p, c: 'ink', r: 6 }]) });
+  $('#l1P').textContent = S.f(p, 3);
+  $('#l1O').textContent = p > 0.9999 ? '≈ ' + S.sci(Math.exp(z), 1) : S.f(p / (1 - p), 2);
+  $('#l1L').textContent = S.f(z, 2);
+  $('#l1Cap').innerHTML = '决策边界在 x = −b/w = ' + S.f(-b / w, 2) + '。w 越大曲线越陡（越“自信”），b 决定边界位置。对数几率正好等于线性打分：x 每增加 1，对数几率加 w = ' + S.f(w, 1) + '，几率乘以 e<sup>w</sup>。';
+}
+['l1Ws', 'l1Bs', 'l1Xs'].forEach(function (id) { $('#' + id).addEventListener('input', l1); }); l1();
+
+/* ---------- Logistic 回归：二维训练 ---------- */
+var L2 = blobs(5, [[-0.8, -0.6], [0.7, 0.6]], 25, 0.55);
+var lw, lt;
+function lrInit() { lw = [0, 0, 0]; lt = 0; }
+function lrStats() {
+  var L = 0, acc = 0;
+  L2.forEach(function (p) { var yh = S.sigmoid(lw[0] * p[0] + lw[1] * p[1] + lw[2]); L -= p[2] ? Math.log(yh + 1e-12) : Math.log(1 - yh + 1e-12); if ((yh > 0.5) === (p[2] === 1)) acc++; });
+  return [L / L2.length, acc / L2.length];
+}
+function lrStep(k) {
+  var a = +$('#l2As').value;
+  for (var s = 0; s < k; s++) {
+    var g = [0, 0, 0];
+    L2.forEach(function (p) { var e = p[2] - S.sigmoid(lw[0] * p[0] + lw[1] * p[1] + lw[2]); g[0] -= e * p[0]; g[1] -= e * p[1]; g[2] -= e; });
+    for (var i = 0; i < 3; i++) lw[i] -= a * g[i] / L2.length;
+    lt++;
+  }
+}
+var l2Field = S.field($('#l2F'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 60, size: 360, pts: L2, f: function (x, y) { return S.sigmoid(lw[0] * x + lw[1] * y + lw[2]); } });
+function l2() {
+  $('#l2A').textContent = S.f(+$('#l2As').value, 2);
+  var st = lrStats();
+  l2Field({ lines: Math.hypot(lw[0], lw[1]) > 1e-9 ? [[lw[0], lw[1], lw[2], '--ink', 2.5]] : [] });
+  $('#l2L').textContent = S.f(st[0], 3); $('#l2Acc').textContent = S.pct(st[1], 0); $('#l2T').textContent = lt;
+  $('#l2Wv').textContent = 'w = [' + lw.map(function (v) { return S.f(v, 2); }).join(', ') + ']（最后一维是偏置）' + (lt === 0 ? '。w = 0 时所有点的概率都是 0.5，风险 = log 2 ≈ 0.693。' : '');
+}
+$('#l2Go').addEventListener('click', function () { lrStep(20); l2(); });
+$('#l2One').addEventListener('click', function () { lrStep(1); l2(); });
+$('#l2R').addEventListener('click', function () { lrInit(); l2(); });
+$('#l2As').addEventListener('input', l2);
+lrInit(); l2();
+S.notes($('#n-lr'), {
+  c: [
+    ['Logistic 回归', 'p(y=1|x) = σ(wᵀx)；决策边界 wᵀx = 0 仍是线性的。'],
+    ['几率 / 对数几率', 'odds = p/(1−p)；logit = log odds = wᵀx。'],
+    ['激活函数', '把线性值域挤压到 (0, 1) 的 g(·)；其逆叫联系函数。']
+  ],
+  p: [
+    ['交叉熵风险', '−(1/N) Σ [y log ŷ + (1−y) log(1−ŷ)]'],
+    ['梯度', '−(1/N) Σ x(y − ŷ)：误差 × 输入'],
+    ['σ 的导数', 'σ′(z) = σ(z)(1 − σ(z))'],
+    ['优化', '凸函数：梯度下降找全局最优，也可用牛顿法。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- Softmax 回归 ---------- */
+var SMD = blobs(12, [[-1.1, -0.7], [1.1, -0.6], [0, 1.2]], 18, 0.5);
+var SW;
+function smInit() { SW = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; }
+function smProb(x, y) { return S.softmax(SW.map(function (w) { return w[0] * x + w[1] * y + w[2]; })); }
+function smStats() {
+  var L = 0, acc = 0;
+  SMD.forEach(function (p) { var q = smProb(p[0], p[1]); L -= Math.log(q[p[2]] + 1e-12); if (q.indexOf(Math.max.apply(null, q)) === p[2]) acc++; });
+  return [L / SMD.length, acc / SMD.length];
+}
+var smField = S.field($('#smF'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 60, size: 360, pts: SMD, f: function (x, y) { var q = smProb(x, y), m = Math.max.apply(null, q); return [q.indexOf(m), (m - 1 / 3) * 1.5]; } });
+var smNote = '';
+function sm() {
+  var st = smStats();
+  smField({});
+  $('#smL').textContent = S.f(st[0], 3); $('#smAcc').textContent = S.pct(st[1], 0);
+  S.grid($('#smW'), [[SW[0][0], SW[1][0], SW[2][0]], [SW[0][1], SW[1][1], SW[2][1]], [SW[0][2], SW[1][2], SW[2][2]]], { cl: ['w₁', 'w₂', 'w₃'], rl: ['x₁', 'x₂', '偏置'], fmt: function (v) { return S.f(v, 2); } });
+  $('#smCap').innerHTML = smNote || '颜色深浅表示最大类别概率。训练前 W = 0，三类概率都是 1/3，风险 = log 3 ≈ 1.099。';
+}
+$('#smGo').addEventListener('click', function () {
+  for (var s = 0; s < 30; s++) {
+    var G = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    SMD.forEach(function (p) { var q = smProb(p[0], p[1]); for (var c = 0; c < 3; c++) { var e = (p[2] === c ? 1 : 0) - q[c]; G[c][0] -= e * p[0]; G[c][1] -= e * p[1]; G[c][2] -= e; } });
+    for (var c = 0; c < 3; c++) for (var k = 0; k < 3; k++) SW[c][k] -= 0.6 * G[c][k] / SMD.length;
+  }
+  smNote = ''; sm();
+});
+$('#smV').addEventListener('click', function () {
+  var before = smStats(), r = Math.random, v = [(r() - 0.5) * 6, (r() - 0.5) * 6, (r() - 0.5) * 6];
+  SW = SW.map(function (w) { return [w[0] - v[0], w[1] - v[1], w[2] - v[2]]; });
+  var after = smStats();
+  smNote = '刚才所有 w<sub>c</sub> 都减去了 v = [' + v.map(function (x) { return S.f(x, 2); }).join(', ') + ']，矩阵里每个数都变了，但风险 ' + S.f(before[0], 4) + ' → ' + S.f(after[0], 4) + '、准确率不变，画面也一模一样——<b>只有类别之间的打分差才重要</b>。';
+  sm();
+});
+$('#smR').addEventListener('click', function () { smInit(); smNote = ''; sm(); });
+smInit(); sm();
+S.notes($('#n-sm'), {
+  c: [
+    ['Softmax 函数', 'softmax(z)_c = exp(z_c)/Σ exp(z_c′)；C = 2 时退化为 Logistic。'],
+    ['Softmax 回归', 'ŷ = softmax(Wᵀx)，决策 argmax w_cᵀx。'],
+    ['参数冗余', '所有 w_c 同减 v，输出不变；需正则约束。']
+  ],
+  p: [
+    ['梯度', '∂ℛ/∂W = −(1/N) Σ x(y − ŷ)ᵀ'],
+    ['与 Logistic 的关系', 'C = 2 时 w = w₁ − w₀。'],
+    ['数值稳定', '先减 max z 再取指数——正是参数冗余的应用。'],
+    ['softmax 的导数', '∂y/∂z = diag(y) − yyᵀ。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 感知器：习题 3-10 ---------- */
+var P310 = [[1, 1, 1], [2, -1, -1], [-1, 1, 1]];
+var p0Field = S.field($('#p0F'), { xr: [-3, 3], yr: [-3, 3], res: 50, size: 320 });
+var p0States = (function () {
+  var w = [0, 0], st = [{ w: w.slice(), msg: '初始化 w₀ = [0, 0]ᵀ。下面依次处理三个样本，规则：若 y·wᵀx ≤ 0 就 w ← w + yx。', cur: -1 }];
+  P310.forEach(function (p, i) {
+    var s = p[2] * (w[0] * p[0] + w[1] * p[1]), upd = s <= 0, old = w.slice();
+    if (upd) { w = [w[0] + p[2] * p[0], w[1] + p[2] * p[1]]; }
+    st.push({ w: w.slice(), cur: i, msg: '样本 ' + (i + 1) + '：x = [' + p[0] + ', ' + p[1] + ']ᵀ，y = ' + (p[2] > 0 ? '+1' : '−1') + '。y·wᵀx = ' + (p[2] > 0 ? '' : '−') + '(' + old[0] + '×' + p[0] + ' + ' + old[1] + '×' + p[1] + ') = <b>' + s + '</b>' + (upd ? ' ≤ 0，<b>分错（或在边界上）→ 更新</b>：w = [' + old.join(', ') + '] + (' + (p[2] > 0 ? '+1' : '−1') + ')×[' + p[0] + ', ' + p[1] + '] = <b>[' + w.join(', ') + ']ᵀ</b>' : ' &gt; 0，分对了，<b>不更新</b>。') });
+  });
+  st[st.length - 1].msg += ' 一轮结束，w = [−1, 2]ᵀ，三个样本都已分对。';
+  return st;
+})();
+S.stepper($('#p0S'), p0States.length, function (i) {
+  var s = p0States[i];
+  p0Field({
+    pts: P310.map(function (p, k) { return [p[0], p[1], p[2] > 0 ? 1 : 0, k === s.cur]; }),
+    f: (s.w[0] || s.w[1]) ? function (x, y) { return S.sigmoid(1.2 * (s.w[0] * x + s.w[1] * y)); } : null,
+    lines: (s.w[0] || s.w[1]) ? [[s.w[0], s.w[1], 0, '--ink', 2.5]] : []
+  });
+  $('#p0W').innerHTML = s.msg;
+});
+
+/* ---------- 感知器：训练与上界 ---------- */
+var PU = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)];
+var PD = (function () {
+  var r = S.rng(77), pts = [];
+  while (pts.length < 30) {
+    var x = -2.4 + 4.8 * r(), y = -2.4 + 4.8 * r(), m = PU[0] * x + PU[1] * y;
+    if (Math.abs(m) < 0.3) continue;
+    pts.push([x, y, m > 0 ? 1 : 0]);
+  }
+  return pts;
+})();
+var PR = Math.max.apply(null, PD.map(function (p) { return Math.hypot(p[0], p[1]); }));
+var PG = Math.min.apply(null, PD.map(function (p) { return Math.abs(PU[0] * p[0] + PU[1] * p[1]); }));
+var pw, pK, pT, pOrder, pPtr, pSum, pSeed = 1, pCur = -1, pEpochUpd;
+function pcInit() {
+  pw = [0, 0]; pK = 0; pT = 0; pPtr = 0; pSum = [0, 0]; pCur = -1; pEpochUpd = 0;
+  var r = S.rng(pSeed * 31 + 5); pOrder = PD.map(function (_, i) { return i; });
+  for (var i = pOrder.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = pOrder[i]; pOrder[i] = pOrder[j]; pOrder[j] = t; }
+}
+function pcStep() {
+  if (pPtr >= PD.length) { pPtr = 0; pEpochUpd = 0; }
+  var n = pOrder[pPtr++], p = PD[n], y = p[2] ? 1 : -1;
+  pCur = n;
+  if (y * (pw[0] * p[0] + pw[1] * p[1]) <= 0) { pw = [pw[0] + y * p[0], pw[1] + y * p[1]]; pK++; pEpochUpd++; }
+  pT++; pSum = [pSum[0] + pw[0], pSum[1] + pw[1]];
+}
+var pcField = S.field($('#pcF'), { xr: [-2.6, 2.6], yr: [-2.6, 2.6], res: 50, size: 340 });
+function pc() {
+  var has = pw[0] || pw[1];
+  var lines = has ? [[pw[0], pw[1], 0, '--ink', 2.5]] : [];
+  if (pT) lines.push([pSum[0], pSum[1], 0, '--s3', 2, [6, 4]]);
+  pcField({ pts: PD.map(function (p, i) { return [p[0], p[1], p[2], i === pCur]; }), lines: lines, f: has ? function (x, y) { return S.sigmoid(0.8 * (pw[0] * x + pw[1] * y)); } : null });
+  var err = PD.filter(function (p) { return (p[2] ? 1 : -1) * (pw[0] * p[0] + pw[1] * p[1]) <= 0; }).length;
+  $('#pcK').textContent = pK; $('#pcB').textContent = S.f(PR * PR / (PG * PG), 0);
+  $('#pcE').textContent = (pPtr) + ' / ' + pT;
+  $('#pcCap').innerHTML = '当前有 <b>' + err + '</b> 个样本分错。R = ' + S.f(PR, 2) + '，γ = ' + S.f(PG, 2) + '（用生成数据的那条线算的间隔，所以上界偏松）。' + (err === 0 && pT ? ' <b>已经全部分对，之后不会再更新。</b>换个顺序重来，最终的直线往往不一样——这就是“对样本顺序敏感”。' : '');
+}
+$('#pcOne').addEventListener('click', function () { pcStep(); pc(); });
+$('#pcEp').addEventListener('click', function () { var left = PD.length - (pPtr >= PD.length ? 0 : pPtr); for (var i = 0; i < left; i++) pcStep(); pc(); });
+$('#pcR').addEventListener('click', function () { pSeed++; pcInit(); pc(); });
+pcInit(); pc();
+S.notes($('#n-pc'), {
+  c: [
+    ['感知器', '只有一个神经元的最简单神经网络：ŷ = sgn(wᵀx)。'],
+    ['错误驱动', '只在 ywᵀx ≤ 0 时更新：w ← w + yx。'],
+    ['投票感知器', '保存全部 K 个权重，按存活步数 c_k 加权投票。'],
+    ['平均感知器', '用所有步权重的平均 w̄ 预测，是投票感知器的简化。'],
+    ['广义感知器', '用联合特征 φ(x, y) 处理多分类和结构化输出。']
+  ],
+  p: [
+    ['感知器损失', 'max(0, −ywᵀx)'],
+    ['收敛上界', 'K ≤ R²/γ²（线性可分时）'],
+    ['证明思路', 'KR² ≥ ‖w_K‖² ≥ K²γ²'],
+    ['三个不足', '不保证泛化；对顺序敏感；不可分时不收敛。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- SVM 硬间隔 ---------- */
+var SVD = [[-1.6, -0.4, 0], [-1.1, -1.3, 0], [-0.4, -1.6, 0], [-1.7, 0.6, 0], [-0.7, -0.6, 0], [0.4, 1.2, 1], [1.4, 0.4, 1], [0.9, 1.8, 1], [1.8, 1.4, 1], [-0.2, 1.7, 1]];
+function marginOf(u, b, data) {
+  var m = Infinity;
+  data.forEach(function (p) { var y = p[2] ? 1 : -1; m = Math.min(m, y * (u[0] * p[0] + u[1] * p[1] + b)); });
+  return m;
+}
+var SVBEST = (function () {
+  var best = { m: -Infinity };
+  for (var k = 0; k < 3600; k++) {
+    var th = Math.PI * 2 * k / 3600, u = [Math.cos(th), Math.sin(th)], minP = Infinity, maxN = -Infinity;
+    SVD.forEach(function (p) { var s = u[0] * p[0] + u[1] * p[1]; if (p[2]) minP = Math.min(minP, s); else maxN = Math.max(maxN, s); });
+    var m = (minP - maxN) / 2;
+    if (m > best.m) best = { m: m, u: u, b: -(minP + maxN) / 2, th: th };
+  }
+  return best;
+})();
+var svShow = false;
+var svField = S.field($('#svF'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 50, size: 340 });
+function sv() {
+  var th = +$('#svAs').value * Math.PI / 180, u = [Math.cos(th), Math.sin(th)], b = +$('#svOs').value;
+  $('#svA').textContent = $('#svAs').value + '°'; $('#svO').textContent = S.f(b, 2);
+  var m = marginOf(u, b, SVD);
+  var lines = [[u[0], u[1], b, '--ink', 2.5]];
+  if (m > 0) { lines.push([u[0], u[1], b - m, '--ink-3', 1.2, [4, 4]]); lines.push([u[0], u[1], b + m, '--ink-3', 1.2, [4, 4]]); }
+  var sv = [];
+  if (svShow) {
+    var B = SVBEST;
+    lines.push([B.u[0], B.u[1], B.b, '--ok', 3]);
+    lines.push([B.u[0], B.u[1], B.b - B.m, '--ok', 1.5, [6, 4]]); lines.push([B.u[0], B.u[1], B.b + B.m, '--ok', 1.5, [6, 4]]);
+    SVD.forEach(function (p, i) { var y = p[2] ? 1 : -1; if (Math.abs(y * (B.u[0] * p[0] + B.u[1] * p[1] + B.b) - B.m) < 0.02) sv.push(i); });
+  }
+  svField({ lines: lines, pts: SVD.map(function (p, i) { return [p[0], p[1], p[2], sv.indexOf(i) >= 0]; }) });
+  $('#svM').textContent = m > 0 ? S.f(m, 3) : '没分开';
+  $('#svMb').textContent = svShow ? S.f(SVBEST.m, 3) : '?';
+  $('#svCap').innerHTML = (m > 0 ? '黑线两侧的灰虚线是它的间隔带，宽度由<b>离它最近</b>的样本决定。' : '<b>有样本被分错了</b>，间隔无从谈起。') +
+    (svShow ? ' 绿线是最大间隔超平面（γ = ' + S.f(SVBEST.m, 3) + '），粗边框的 ' + sv.length + ' 个点是<b>支持向量</b>：恰好压在间隔边界上。移动其他任何一个点（只要不越过间隔带），绿线都不会动。' : ' 试着转动角度、平移，把间隔调到最大，再点按钮对答案。');
+}
+['svAs', 'svOs'].forEach(function (id) { $('#' + id).addEventListener('input', sv); });
+$('#svBest').addEventListener('click', function () { svShow = true; sv(); });
+sv();
+
+/* ---------- SVM 软间隔 ---------- */
+var ssOut = true;
+function ssData() { return ssOut ? SVD.concat([[0.9, 0.2, 0]]) : SVD; }
+function softSVM(data, C) {
+  var w = [0, 0], b = 0, best = null, N = data.length;
+  function obj(w, b) { var s = 0.5 * (w[0] * w[0] + w[1] * w[1]); data.forEach(function (p) { var y = p[2] ? 1 : -1; s += C * Math.max(0, 1 - y * (w[0] * p[0] + w[1] * p[1] + b)); }); return s; }
+  for (var t = 1; t <= 6000; t++) {
+    var gw = [w[0], w[1]], gb = 0;
+    data.forEach(function (p) { var y = p[2] ? 1 : -1; if (y * (w[0] * p[0] + w[1] * p[1] + b) < 1) { gw[0] -= C * y * p[0]; gw[1] -= C * y * p[1]; gb -= C * y; } });
+    var eta = 1 / (1 + C * N) / Math.sqrt(t) * 2;
+    w = [w[0] - eta * gw[0], w[1] - eta * gw[1]]; b -= eta * gb;
+    if (t % 20 === 0) { var o = obj(w, b); if (!best || o < best.o) best = { o: o, w: w.slice(), b: b }; }
+  }
+  return best;
+}
+var ssField = S.field($('#ssF'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 50, size: 340 });
+function ss() {
+  var C = Math.pow(10, +$('#ssCs').value), data = ssData();
+  $('#ssC').textContent = C >= 1 ? S.f(C, C >= 10 ? 0 : 1) : S.f(C, 2);
+  var r = softSVM(data, C), w = r.w, b = r.b, nw = Math.hypot(w[0], w[1]);
+  var svs = 0, vio = 0;
+  var pts = data.map(function (p) { var y = p[2] ? 1 : -1, m = y * (w[0] * p[0] + w[1] * p[1] + b); if (m <= 1.02) svs++; if (m < 0.98) vio++; return [p[0], p[1], p[2], m <= 1.02]; });
+  ssField({ pts: pts, f: function (x, y) { return S.sigmoid(1.5 * (w[0] * x + w[1] * y + b)); }, lines: [[w[0], w[1], b, '--ink', 2.5], [w[0], w[1], b - 1, '--ink-3', 1.2, [4, 4]], [w[0], w[1], b + 1, '--ink-3', 1.2, [4, 4]]] });
+  $('#ssM').textContent = S.f(1 / nw, 3); $('#ssS').textContent = svs; $('#ssV').textContent = vio;
+  $('#ssCap').innerHTML = (ssOut ? '那个混进正类区域的蓝点让数据<b>线性不可分</b>，硬间隔无解。' : '没有离群点时数据线性可分。') + ' C = ' + S.f(C, 2) + '：' + (C < 0.3 ? '惩罚很轻，间隔很宽，宁可让好几个点违规（ξ > 0）。' : C > 20 ? '惩罚很重，间隔被压窄，尽量不让任何点违规——接近硬间隔。' : '在间隔宽度和违规代价之间折中。') + ' 粗边框是支持向量（y·f ≤ 1，含违规点）。';
+}
+$('#ssCs').addEventListener('input', ss);
+$('#ssOut').addEventListener('click', function () { ssOut = !ssOut; this.textContent = '离群点：' + (ssOut ? '开' : '关'); this.setAttribute('aria-pressed', String(ssOut)); ss(); });
+ss();
+S.notes($('#n-svm'), {
+  c: [
+    ['间隔', '所有样本到超平面的最短距离 γ = min y(wᵀx+b)/‖w‖。'],
+    ['支持向量', '满足 y(wᵀx + b) = 1 的样本，λ_n > 0；决策只依赖它们。'],
+    ['软间隔', '引入松弛变量 ξ_n，允许违规，按 C 惩罚。'],
+    ['SMO', '序列最小优化，求解 SVM 对偶问题的高效算法。']
+  ],
+  p: [
+    ['硬间隔', 'min ½‖w‖²，s.t. y(wᵀx + b) ≥ 1'],
+    ['对偶解', 'w = Σ λ_n y⁽ⁿ⁾x⁽ⁿ⁾；b* = ỹ − w*ᵀx̃（任一支持向量）'],
+    ['软间隔 = Hinge', 'Σ max(0, 1 − y(wᵀx+b)) + (1/2C)‖w‖²'],
+    ['唯一性', '线性可分时最大间隔超平面唯一（习题 3-12）。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 核函数 ---------- */
+var KD = (function () {
+  var r = S.rng(41), pts = [];
+  for (var i = 0; i < 26; i++) { var a = 2 * Math.PI * r(), rr = 0.75 * Math.sqrt(r()); pts.push([rr * Math.cos(a), rr * Math.sin(a), 0]); }
+  for (var j = 0; j < 30; j++) { var a2 = 2 * Math.PI * r(), r2 = 1.3 + 0.55 * r(); pts.push([r2 * Math.cos(a2), r2 * Math.sin(a2), 1]); }
+  return pts;
+})();
+var kfMode = 'raw';
+var kfField = S.field($('#kfF'), { xr: [-2.2, 2.2], yr: [-2.2, 2.2], res: 60, size: 340 });
+function kf() {
+  if (kfMode === 'raw') {
+    kfField({ xr: [-2.2, 2.2], yr: [-2.2, 2.2], pts: KD, lines: [], f: function (x, y) { return S.sigmoid(4 * (x * x + y * y - 1.1)); } });
+    $('#kfW').innerHTML = '在原始平面上，任何一条直线都会把内圈或外圈切开。但背景的颜色——按 x₁² + x₂² 是否大于 1.1 着色——显示正确的边界是一个<b>圆</b>。';
+  } else {
+    kfField({ xr: [-0.1, 4], yr: [-0.1, 4], pts: KD.map(function (p) { return [p[0] * p[0], p[1] * p[1], p[2]]; }), lines: [[1, 1, -1.1, '--ink', 2.5]], f: function (x, y) { return S.sigmoid(4 * (x + y - 1.1)); } });
+    $('#kfW').innerHTML = '映射 φ(x) = (x₁², x₂²) 后，内圈的点都挤在左下角，外圈在右上方，<b>一条直线 φ₁ + φ₂ = 1.1 就分开了</b>。这条直线回到原始空间正是圆 x₁² + x₂² = 1.1。核方法让 SVM 不必显式计算 φ，只要能算 k(x, z) = φ(x)ᵀφ(z)。';
+  }
+}
+S.seg($('#kfS'), function (v) { kfMode = v; kf(); }); kf();
+S.guess($('#kfG'), { q: '多项式核 (1 + xᵀz)² 对应的特征映射 φ(x)（x ∈ ℝ²）有几维？', unit: '维', ans: 6, fmt: function (x) { return S.f(x, 0); }, why: 'φ(x) = [1, √2x₁, √2x₂, √2x₁x₂, x₁², x₂²]ᵀ，共 6 维（原书式 3.108）。展开 (1 + x₁z₁ + x₂z₂)² 逐项对上就能验证（习题 3-13）。算核只需一次二维内积，比先映射到 6 维再内积便宜；高斯核对应无穷维，只能用核技巧。' });
+S.notes($('#n-kernel'), {
+  c: [
+    ['核函数', 'k(x, z) = φ(x)ᵀφ(z)，隐式计算高维内积。'],
+    ['核技巧', '不写出 φ，直接在对偶形式里把内积换成核。'],
+    ['特征空间的超平面', '回到原始空间通常是非线性边界。']
+  ],
+  p: [
+    ['核化决策函数', 'sgn(Σ λ_n y⁽ⁿ⁾ k(x⁽ⁿ⁾, x) + b*)'],
+    ['多项式核', '(1 + xᵀz)²，对应 6 维 φ。'],
+    ['高斯核', 'exp(−γ‖x − z‖²)，γ 为超参数。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 损失对比 ---------- */
+var LOSSES = [
+  ['0-1', 'dim', function (z) { return z < 0 ? 1 : 0; }],
+  ['平方 (1−yf)²', 'c3', function (z) { return (1 - z) * (1 - z); }],
+  ['Hinge max(0,1−yf)', 'c2', function (z) { return Math.max(0, 1 - z); }],
+  ['交叉熵 log(1+e^−yf)', 'c1', function (z) { return Math.log(1 + Math.exp(-z)); }],
+  ['感知器 max(0,−yf)', 'ok', function (z) { return Math.max(0, -z); }]
+];
+var lsChart = S.chart($('#lsC'), { h: 280, x: [-3, 3], y: [0, 4], xt: [-3, -2, -1, 0, 1, 2, 3], yt: [0, 1, 2, 3, 4], xl: 'yf（> 0 分对，越大越有把握）',
+  curves: LOSSES.map(function (L, i) { return i === 0 ? { pts: [[-3, 1], [0, 1], [0, 0], [3, 0]], c: L[1], w: 2, label: L[0] } : { f: L[2], c: L[1], label: L[0] }; }) });
+function ls() {
+  var z = +$('#lsZs').value;
+  $('#lsZ').textContent = S.f(z, 2);
+  lsChart({ vl: [{ x: z, c: 'ink' }], dots: LOSSES.map(function (L) { return { x: z, y: Math.min(L[2](z), 4), c: L[1], r: 5 }; }) });
+  $('#lsT').innerHTML = LOSSES.map(function (L) { return '<tr><td>' + L[0] + '</td><td class="n">' + S.f(L[2](z), 3) + '</td></tr>'; }).join('');
+  $('#lsCap').innerHTML = z > 1 ? '分得很对：Hinge、感知器都是 0，交叉熵接近 0 但不为 0；<b>平方损失却在上升</b>，它在惩罚“太正确”。' : z > 0 ? '分对了但不够自信（0 &lt; yf &lt; 1）：感知器认为没问题（0），<b>Hinge 仍然要罚</b>（要求留出间隔），交叉熵也罚。' : '分错了：所有损失都在罚，Hinge 和感知器线性增长，交叉熵近似线性，平方损失按平方增长。';
+}
+$('#lsZs').addEventListener('input', ls); ls();
+S.guess($('#lsG'), { q: '原书习题 3-7：y = 1、f = 0.5（分对但不自信）时，Hinge 损失是多少？', ans: 0.5, fmt: function (x) { return S.f(x, 2); }, why: 'max(0, 1 − 0.5) = 0.5；同一点感知器损失为 0，Logistic 损失 log(1 + e^−0.5) ≈ 0.474。f = 2 时三者为 0.127 / 0 / 0；f = −1 时为 1.313 / 1 / 2。' });
+S.notes($('#n-loss'), {
+  c: [
+    ['yf', '带符号的打分：> 0 分对，越大越有把握。'],
+    ['交叉熵（Logistic）', '平滑、有概率解释，分对也有微小损失。'],
+    ['感知器损失', '只管是否分错。'],
+    ['Hinge 损失', '分对还不够，要 yf ≥ 1 才不罚。']
+  ],
+  p: [
+    ['好损失的标准', '随 yf 增大而减小。'],
+    ['平方损失的问题', '(1 − yf)² 在 yf > 1 时上升，惩罚“太正确”。'],
+    ['三种思路', '概率建模（LR / Softmax）、错误驱动（感知器）、间隔最大化（SVM）。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① “线性”指什么', '决策边界由一个或多个超平面组成。Logistic 回归用 σ 输出概率，但边界仍是 wᵀx = 0；它本质上是在用线性函数拟合对数几率。'],
+    ['② 感知器 vs SVM', '感知器错了才改，找到任意一条能分开的线就停，结果依赖样本顺序、不保证泛化；SVM 找间隔最大的那条（唯一），决策只依赖支持向量；软间隔 = Hinge + ℓ2。'],
+    ['③ 损失怎么罚', '分对但不自信（0 < yf < 1）：感知器不罚，Hinge 罚，交叉熵罚一点。分错：都罚。分得很对：只有平方损失反而上升，所以不适合分类。']
+  ],
+  p: [
+    ['原书提示', 'Logistic 回归的交叉熵与梯度形式，和多层网络输出层完全一致——是理解反向传播的基础。'],
+    ['下一篇', '把线性模型叠起来、中间加非线性：前馈神经网络、反向传播与自动微分。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

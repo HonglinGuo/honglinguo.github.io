@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>无监督学习：特征、密度、聚类与自监督</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（十）：主成分分析、稀疏编码、自编码器 / 稀疏 / 堆叠 / 降噪自编码器；参数密度估计（正态、多项分布的最大似然）与非参数密度估计（直方图、核密度、K 近邻）；K-Means 聚类与聚类评价；自监督学习的四类任务——下一个词元预测、掩码建模、对比学习、联合嵌入预测与多模态对齐。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.toks3 { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.toks3 span { padding: 6px 10px; border-radius: 5px; border: 1px solid var(--hair); background: var(--bg); font-size: 16px; }
+.toks3 span.ctx { background: var(--s1-soft); border-color: var(--s1); }
+.toks3 span.tgt { background: var(--s2-soft); border-color: var(--s2); font-weight: 700; }
+.toks3 span.mask { background: var(--ink); color: var(--panel); }
+.toks3 span.fut { color: var(--ink-3); border-style: dashed; }
+.pix { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.pix canvas { border: 1px solid var(--hair); border-radius: 6px; image-rendering: pixelated; width: 120px; height: 120px; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="10">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 10</span><span>对应原书第 10 章（第 279–300 页）</span><span>约 45 分钟</span></p>
+  <h1>没有标签，<em>数据自己就是老师</em></h1>
+  <p class="lead">Hinton 说：大脑大约有 10¹⁴ 个突触，人只活大约 10⁹ 秒，参数比数据多得多，所以必须做大量无监督学习。第 10 章按四条主线组织：学表示（PCA、稀疏编码、自编码器）、学分布（参数与非参数密度估计）、找结构（聚类）、以及现代的自监督学习——从数据自身构造监督信号，这正是大语言模型预训练的基础。原书提醒，读这一章最重要的是分清：一个方法到底在学“表示”、学“分布”、找“簇”，还是在完成某个代理任务。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" aria-current="page" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#pca">主成分分析</a><a href="#sc">稀疏编码</a><a href="#ae">自编码器</a><a href="#de">密度估计</a><a href="#km">聚类</a><a href="#ssl">自监督学习</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>PCA、稀疏编码、自编码器分别对表示施加了什么约束？自编码器为什么容易学成恒等函数？</li>
+  <li>参数密度估计和非参数密度估计的区别是什么？直方图、核方法、K 近邻各在调什么？</li>
+  <li>自监督学习和无监督学习是什么关系？下一个词元预测、掩码建模、对比学习有什么不同？</li>
+</ol></div>
+
+<section class="part" id="pca">
+  <div class="part-head"><h2>主成分分析：保留方差最大的方向</h2><span class="meta">原书 10 章引言、10.1.1 节 · 第 279–282 页</span></div>
+  <div class="sec-lede">
+    <p>无监督学习从无标签的数据里找有用的模式。原书把典型问题分成四类：<strong>无监督特征学习</strong>（降维、可视化、预处理）、<strong>概率密度估计</strong>（参数与非参数）、<strong>聚类</strong>（组内相似高于组间）、<strong>自监督学习</strong>（从数据自身构造监督信号）。它们同样有三要素：模型、学习准则、优化算法；特征学习常用最小重构误差并加低维、独立、非负、稀疏等约束，密度估计常用最大似然。</p>
+    <p><strong>主成分分析</strong>（PCA）找一个方向 w（‖w‖ = 1），让样本投影后的方差最大。投影方差可以写成 <strong>wᵀΣw</strong>，Σ 是样本协方差矩阵。用拉格朗日乘数法求最大值，得到 <strong>Σw = λw</strong>——w 是 Σ 的特征向量，而投影方差恰好等于特征值 λ。所以 PCA 就是特征值分解：最大特征值对应的特征向量是第一主成分；降到 D′ 维就取前 D′ 个。</p>
+    <p>原书提醒一个常被误用的地方：PCA 能去噪、去相关，可以作为监督学习的预处理，但<strong>它不保证投影后类别更可分</strong>（习题 10-6）——方差最大的方向不一定是区分类别的方向，那是 LDA 这类有监督方法的目标。</p>
+    <p class="go">转动投影方向，找方差最大的那条；再估一估原书习题 10-12。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">投影方向与投影方差（数据为示意）</p>
+    <div class="lab-split">
+      <div id="pcF"></div>
+      <div>
+        <label class="ctl"><span>投影方向角度 <output id="pcA">0°</output></span><input type="range" id="pcAs" min="0" max="179" value="0"></label>
+        <div class="btnrow"><button class="btn pri" type="button" id="pcBest">跳到第一主成分</button></div>
+        <div class="read"><div class="hl"><div class="v" id="pcV">0</div><div class="k">投影方差 wᵀΣw</div></div><div class="good"><div class="v" id="pcL">0</div><div class="k">最大特征值 λ₁</div></div><div><div class="v" id="pcR">0</div><div class="k">λ₁ 占总方差</div></div></div>
+        <div id="pcC"></div>
+        <p class="cap" id="pcW"></p>
+      </div>
+    </div>
+    <div id="pcG"></div>
+  </div>
+  <div class="notes" id="n-pca"></div>
+</section>
+
+<section class="part" id="sc">
+  <div class="part-head"><h2>稀疏编码：用少数几个“原子”表示</h2><span class="meta">原书 10.1.2 节 · 第 282–284 页</span></div>
+  <div class="sec-lede">
+    <p>稀疏编码受视觉皮层启发：初级视觉皮层的每个神经元只对感受野里特定的刺激（某个方向的边缘、条纹）响应，外界刺激经编码后只有一小部分神经元激活。数学上，给一组基向量（<strong>字典</strong>）A = [a₁, …, a<sub>M</sub>]，把输入写成线性组合 x = Az，系数 z 就是<strong>编码</strong>。要得到稀疏的编码，通常用<strong>过完备</strong>的字典（M &gt; D）：基向量多于空间维数，同一个输入有很多种表示方法，加上稀疏约束才能缩小解空间、得到稳定可辨识的表示。</p>
+    <p>目标函数是重构误差加稀疏惩罚：<strong>Σ‖x − Az‖² + ηρ(z)</strong>。最直接的稀疏度量是 ℓ0 范数（非零元素个数），但不连续不可导；实际用 <strong>ℓ1 范数</strong> Σ|z<sub>m</sub>|，或 log(1 + z²)、−exp(−z²)。训练用<strong>交替优化</strong>：固定 A 求每个样本的最优编码，再固定编码更新 A。稀疏编码的好处：可解释（一个输入只由少数几个特征描述）、自动特征选择（突出最相关的少数特征、降噪、减轻过拟合）；原书特别说明，学习编码本身要迭代优化，并不一定比稠密表示便宜，学好之后能利用稀疏结构才省。</p>
+    <p class="go">一段信号由字典里 2 个原子叠加而成（字典 16 个原子、信号 8 维，示意）。调 η，看编码有多稀疏、重构有多准。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">ℓ1 稀疏编码（迭代软阈值 ISTA 求解）</p>
+    <div class="lab-split">
+      <div><div id="scSig"></div></div>
+      <div>
+        <label class="ctl"><span>稀疏强度 η <output id="scE">0.10</output></span><input type="range" id="scEs" min="0" max="1" step="0.01" value="0.1"></label>
+        <div id="scZ" class="wide"></div>
+        <div class="read"><div class="hl"><div class="v" id="scN">0</div><div class="k">非零系数个数（|z| &gt; 0.01）</div></div><div class="warn"><div class="v" id="scR">0</div><div class="k">重构误差 ‖x − Az‖²</div></div></div>
+        <p class="cap" id="scW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-sc"></div>
+</section>
+
+<section class="part" id="ae">
+  <div class="part-head"><h2>自编码器家族</h2><span class="meta">原书 10.1.3–10.1.6 节 · 第 284–288 页</span></div>
+  <div class="sec-lede">
+    <p><strong>自编码器</strong>由编码器 f: ℝᴰ → ℝᴹ 和解码器 g: ℝᴹ → ℝᴰ 组成，目标是最小化重构误差 Σ‖x − g(f(x))‖²。M &lt; D 时它是降维方法；<strong>M ≥ D 且容量够大时，它很容易学成近似的恒等函数</strong>——重构误差很小，但表示没有意义。所以要加约束：低维、稀疏、对噪声鲁棒、取值范围等。最简单的是两层网络 z = f(W⁽¹⁾x + b⁽¹⁾)、x′ = g(W⁽²⁾z + b⁽²⁾)；令 W⁽²⁾ = W⁽¹⁾ᵀ 叫<strong>捆绑权重</strong>，参数更少、有一定正则化作用。线性激活 + 平方误差时，自编码器学到的主子空间和 PCA 密切相关，可以看作 PCA 的非线性推广。训练完通常只留编码器。</p>
+    <p><strong>稀疏自编码器</strong>让隐藏层维度 M &gt; D 但尽量稀疏。一种做法是让每个隐藏神经元的平均活性 ρ̂<sub>j</sub> 接近一个小的目标值 ρ*（如 0.05），用 KL(ρ*‖ρ̂<sub>j</sub>) 惩罚偏离。<strong>堆叠自编码器</strong>逐层训练深层自编码器，在深度学习早期为难优化的深层网络提供好的初始化；如今逐层预训练已不是主流，但“先用无标注数据学表示、再迁移”的思想深刻影响了自监督预训练。<strong>降噪自编码器</strong>（DAE）把输入按比例 μ（一般不超过 0.5）随机置零得到 x̃，要求从 x̃ 重构<strong>无损的</strong> x，学到更鲁棒的表示——它是现代“去噪重构”类自监督目标的早期代表。</p>
+    <p class="go">左边看稀疏自编码器的 KL 惩罚；右边给一个小图案加遮挡，这就是降噪自编码器的输入。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">KL(ρ*‖ρ̂)：平均活性偏离目标就罚</p>
+      <label class="ctl"><span>目标活性 ρ* <output id="klR">0.05</output></span><input type="range" id="klRs" min="0.01" max="0.5" step="0.01" value="0.05"></label>
+      <div id="klC"></div>
+      <p class="cap">ρ̂ = ρ* 时为 0；神经元越“爱激活”（ρ̂ 越大）罚得越重。求和后加到重构误差上：ℒ = Σ‖x − x′‖² + ηΣ<sub>j</sub>KL(ρ*‖ρ̂<sub>j</sub>) + λ‖W‖²。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">降噪自编码器：输入被随机损坏，目标仍是原图</p>
+      <label class="ctl"><span>损坏比例 μ <output id="daM">0.3</output></span><input type="range" id="daMs" min="0" max="0.8" step="0.05" value="0.3"></label>
+      <div class="pix"><figure style="margin:0"><canvas id="daA" width="12" height="12"></canvas><figcaption class="cap">原始 x（训练目标）</figcaption></figure><span>→ 损坏 →</span><figure style="margin:0"><canvas id="daB" width="12" height="12"></canvas><figcaption class="cap">x̃（编码器的输入）</figcaption></figure></div>
+      <div class="btnrow"><button class="btn" type="button" id="daR">重新损坏</button></div>
+      <p class="cap">图像有冗余，人能从残缺的图联想出完整内容；DAE 要求模型也学会这种“补全”，表示因此更鲁棒。μ 太大时信息不够，原书建议一般不超过 0.5。</p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：两种“SAE”</h4>
+    <p><b>稀疏自编码器</b>（Sparse Autoencoder）和<b>堆叠自编码器</b>（Stacked Auto-Encoder）的英文缩写都是 SAE。前者约束隐藏层稀疏、通常更宽；后者是多层逐层训练的深自编码器。</p>
+    <p><b>稀疏编码 vs 稀疏自编码器</b>：前者没有显式的编码器，每个样本的编码靠优化求出（推断慢）；后者用一个前馈编码器一次算出编码。</p>
+    <p><b>自编码器 vs PCA</b>：线性 + 平方误差时学到的子空间相当于 PCA 的主子空间；非线性自编码器能表示弯曲的数据流形。</p>
+  </div>
+  <div class="notes" id="n-ae"></div>
+</section>
+
+<section class="part" id="de">
+  <div class="part-head"><h2>概率密度估计：参数与非参数</h2><span class="meta">原书 10.2 节 · 第 288–292 页</span></div>
+  <div class="sec-lede">
+    <p><strong>参数密度估计</strong>先假设数据服从某种分布 p(x; θ)，再用最大似然估计参数。正态分布的结果就是样本均值和样本协方差：μ<sub>ML</sub> = (1/N)Σx、Σ<sub>ML</sub> = (1/N)Σ(x − μ)(x − μ)ᵀ；多项分布是每个状态出现的频率 μ<sub>k</sub> = m<sub>k</sub>/N。它的三个问题：<strong>模型选择</strong>（真实分布往往比正态复杂）、<strong>不可观测变量</strong>（要用 EM，第 14 篇）、<strong>维度灾难</strong>。</p>
+    <p><strong>非参数密度估计</strong>不假设分布形式。核心近似：样本落入体积为 V 的小区域的数量为 K，则 <strong>p(x) ≈ K/(NV)</strong>。要准，N 要大、V 要小，但样本有限，V 太小就没几个样本。于是两种做法：<strong>固定 V 数 K</strong>——直方图（区间宽度 Δ：太小噪声大、太大太平滑；D 维每维 M 个区间就是 Mᴰ 个格子，维度灾难）和<strong>核密度估计</strong>（Parzen 窗，用超立方体或高斯核，宽度 H 控制平滑）；<strong>固定 K 找 V</strong>——<strong>K 近邻</strong>方法，找到恰好包住 K 个样本的球。KNN 也常用于分类，N → ∞ 时最近邻分类器的错误率不超过最优分类器的两倍。原书最后指出，扩散模型、得分建模这些现代生成方法，核心目标仍是学数据分布（或其梯度），经典密度估计是理解它们的入口。</p>
+    <p class="go">同一批 200 个样本（两个峰，示意），切换三种方法、调它们各自的旋钮。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">直方图 / 核密度 / K 近邻 / 单个高斯（参数法）</p>
+    <div class="seg" id="deS"><button data-v="hist" aria-pressed="true">直方图</button><button data-v="kde">高斯核密度</button><button data-v="knn">K 近邻</button><button data-v="gauss">参数法：单个正态分布</button></div>
+    <label class="ctl" id="deK"><span><i id="deKl" style="font-style:normal">区间数</i> <output id="deKv">20</output></span><input type="range" id="deKs" min="1" max="100" value="20"></label>
+    <div id="deC"></div>
+    <p class="cap" id="deW"></p>
+    <div id="deG"></div>
+  </div>
+  <div class="notes" id="n-de"></div>
+</section>
+
+<section class="part" id="km">
+  <div class="part-head"><h2>聚类：K-Means</h2><span class="meta">原书 10.3 节 · 第 293 页</span></div>
+  <div class="sec-lede">
+    <p>聚类在没有标签时按相似性把数据分成簇。和特征学习相比，它输出离散的簇编号而不是连续表示；和密度估计相比，它不一定给出完整分布，只关心“哪些样本算同一类”。</p>
+    <p><strong>K-Means</strong> 同时找每个样本的簇分配 r<sub>n</sub> 和每个簇的中心 μ<sub>k</sub>，最小化组内平方距离之和 Σ‖x⁽ⁿ⁾ − μ<sub>r_n</sub>‖²。交替两步：固定中心，把每个样本分给最近的中心；固定分配，把中心更新为簇内均值。简单高效，但限制明显：<strong>要预先指定 K、对初始化和特征尺度敏感、容易陷入局部最优、隐含“簇近似球形、距离度量有意义”的假设</strong>。</p>
+    <p>原书特别强调：聚类结果强烈依赖特征空间和距离度量——原始像素空间接近的图像未必语义相近，在自编码器或自监督模型的表示空间里聚类，结果更能反映语义。评价也没有统一答案：无标签时用组内平方误差、轮廓系数等内部指标；有少量标签做事后评估时用纯度、归一化互信息等外部指标。同一批文档按主题、风格、时间聚类都可能合理，只是回答的问题不同。</p>
+    <p class="go">一步步跑 K-Means，然后试试换初始化、换 K、把横轴放大 10 倍。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">K-Means 交替优化（数据为示意）</p>
+    <div class="lab-split">
+      <div id="kmF"></div>
+      <div>
+        <div class="ctl-grid">
+          <label class="ctl"><span>簇数 K <output id="kmK">3</output></span><input type="range" id="kmKs" min="1" max="6" value="3"></label>
+        </div>
+        <div class="btnrow"><button class="btn pri" type="button" id="kmStep">走一步</button><button class="btn" type="button" id="kmRun">跑到收敛</button><button class="btn" type="button" id="kmInit">换个初始化</button><button class="btn" type="button" id="kmScale" aria-pressed="false">横轴 ×10：关</button></div>
+        <div class="read"><div class="hl"><div class="v" id="kmJ">0</div><div class="k">组内平方距离和</div></div><div><div class="v" id="kmT">0</div><div class="k">已走步数</div></div></div>
+        <p class="cap" id="kmW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-km"></div>
+</section>
+
+<section class="part" id="ssl">
+  <div class="part-head"><h2>自监督学习：从数据自身构造监督</h2><span class="meta">原书 10.4–10.5 节 · 第 293–298 页</span></div>
+  <div class="sec-lede">
+    <p><strong>自监督学习</strong>和监督学习在形式上没有本质区别——都是学“输入 → 目标”的映射，只是目标不是人工标的，而是从原始数据自动生成的，所以通常被看作无监督学习的一种重要实现。广义上自编码器（尤其降噪自编码器）就是自监督的；现代文献说“自监督”时更强调<strong>面向预训练的任务设计和表示的可迁移性</strong>。核心思想：用输入的一部分预测另一部分，或比较不同样本（或同一样本的不同视图）。原书把预训练任务分成四类：<strong>预测型、掩码重构型、对比型、跨模态型</strong>。</p>
+    <p><strong>下一个词元预测</strong>（NTP，因果语言建模）：p(x) = Π p(x<sub>t</sub>|x<sub>&lt;t</sub>)，最小化 −Σ log p(x<sub>t</sub>|x<sub>&lt;t</sub>)；GPT、LLaMA 都主要用它，规模、数据、计算同时扩大时能学到很强的迁移和少样本能力（规模法则）。<strong>掩码建模</strong>：遮住一部分，用其余部分恢复，−Σ<sub>t∈m(x)</sub> log p(x<sub>t</sub>|x<sub>∖m(x)</sub>)；BERT 用于文本，MAE 遮大量图像块再重构。两者都是“从上下文恢复缺失信息”，但 NTP 单向，适合生成；掩码建模双向，适合理解。</p>
+    <p><strong>对比学习</strong>：相似样本表示更近、不相似更远，常用 InfoNCE：−log [exp(sim(z, z⁺)/τ) / (exp(sim(z, z⁺)/τ) + Σ exp(sim(z, z⁻)/τ))]；关键是正负样本怎么构造（同一图的两种增强为正对）。SimCLR 展示了它在视觉上的效果，MoCo 用动量编码器和队列减少对大批量负样本的依赖，BYOL、SimSiam 不用负样本、靠停止梯度防止<strong>表示坍塌</strong>。<strong>联合嵌入预测</strong>（如 I-JEPA）不重构像素或词元，而是预测另一个视图的<strong>表征</strong>。<strong>多模态自监督</strong>利用图文、语音文本等天然配对，CLIP 风格的方法比较正确配对与错误配对，学共享语义空间。评价自监督表示通常靠下游任务（线性探测、微调、检索），预训练损失只是代理指标。</p>
+    <p class="go">先看 NTP 和掩码建模各用了哪些上下文；再调 InfoNCE 的相似度和温度。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同一句话的两种训练信号</p>
+    <div class="seg" id="tkS"><button data-v="ntp" aria-pressed="true">下一个词元预测</button><button data-v="mlm">掩码建模</button></div>
+    <label class="ctl"><span><i id="tkLb" style="font-style:normal">预测第几个词元</i> <output id="tkV">4</output></span><input type="range" id="tkVs" min="1" max="9" value="4"></label>
+    <div class="toks3" id="tkT"></div>
+    <p class="cap" id="tkW"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">InfoNCE 对比损失（1 个正样本、5 个负样本，示意）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>与正样本的相似度 <output id="ncP">0.8</output></span><input type="range" id="ncPs" min="-1" max="1" step="0.05" value="0.8"></label>
+        <label class="ctl"><span>与最难负样本的相似度 <output id="ncN">0.5</output></span><input type="range" id="ncNs" min="-1" max="1" step="0.05" value="0.5"></label>
+        <label class="ctl"><span>温度 τ <output id="ncT">0.20</output></span><input type="range" id="ncTs" min="0.05" max="1" step="0.01" value="0.2"></label>
+      </div>
+      <div id="ncB" class="wide"></div>
+      <div class="read"><div class="hl"><div class="v" id="ncL">0</div><div class="k">ℒ_CTL</div></div></div>
+      <p class="cap" id="ncW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">分类：属于哪类预训练任务</p>
+      <div id="sslG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-ssl"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">PCA：max wᵀΣw s.t. wᵀw = 1 ⇒ Σw = λw，投影方差 = λ</div>
+    <div class="fx">稀疏编码：Σ ‖x − Az‖² + ηρ(z)，ρ = ℓ1 / log(1+z²) / −exp(−z²)</div>
+    <div class="fx">自编码器：Σ ‖x − g(f(x))‖²；稀疏 AE 加 η Σ_j KL(ρ*‖ρ̂_j)</div>
+    <div class="fx">正态 MLE：μ = (1/N)Σx，Σ = (1/N)Σ(x−μ)(x−μ)ᵀ；多项 MLE：μ_k = m_k/N</div>
+    <div class="fx">非参数：p(x) ≈ K/(NV)；直方图 K_m/(NΔ)；KDE (1/N)Σ φ((x⁽ⁿ⁾−x)/H)/Hᴰ</div>
+    <div class="fx">K-Means：min Σ ‖x⁽ⁿ⁾ − μ_{r_n}‖²（分配 ↔ 更新中心）</div>
+    <div class="fx">NTP：−Σ log p(x_t | x_{&lt;t})；MLM：−Σ_{t∈m} log p(x_t | x_{∖m})</div>
+    <div class="fx">InfoNCE：−log exp(s⁺/τ) / (exp(s⁺/τ) + Σ exp(s⁻/τ))</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-9/"><small>上一篇</small><span>09 · 图神经网络</span></a><a class="nx" href="../2026-10-18-nndl-11/"><small>下一篇</small><span>11 · 模型独立的学习方式</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- PCA ---------- */
+var PCX = (function () { var r = S.rng(31), a = []; for (var i = 0; i < 60; i++) { var u = S.randn(r) * 1.6, v = S.randn(r) * 0.45, c = Math.cos(0.6), s = Math.sin(0.6); a.push([u * c - v * s, u * s + v * c]); } return a; })();
+var pcMu = [0, 0]; PCX.forEach(function (p) { pcMu[0] += p[0] / PCX.length; pcMu[1] += p[1] / PCX.length; });
+var pcS = [[0, 0], [0, 0]]; PCX.forEach(function (p) { var d = [p[0] - pcMu[0], p[1] - pcMu[1]]; pcS[0][0] += d[0] * d[0] / PCX.length; pcS[0][1] += d[0] * d[1] / PCX.length; pcS[1][1] += d[1] * d[1] / PCX.length; }); pcS[1][0] = pcS[0][1];
+var pcTr = pcS[0][0] + pcS[1][1], pcDet = pcS[0][0] * pcS[1][1] - pcS[0][1] * pcS[0][1], pcL1 = pcTr / 2 + Math.sqrt(pcTr * pcTr / 4 - pcDet);
+var pcAng = Math.atan2(pcL1 - pcS[0][0], pcS[0][1]) * 180 / Math.PI; if (pcAng < 0) pcAng += 180;
+var pcField = S.field($('#pcF'), { xr: [-4, 4], yr: [-4, 4], res: 10, size: 340, pts: PCX.map(function (p) { return [p[0], p[1], 0]; }),
+  overlay: function (ctx, X, Y) {
+    var a = +$('#pcAs').value * Math.PI / 180, w = [Math.cos(a), Math.sin(a)];
+    ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(X(pcMu[0] - 5 * w[0]), Y(pcMu[1] - 5 * w[1])); ctx.lineTo(X(pcMu[0] + 5 * w[0]), Y(pcMu[1] + 5 * w[1])); ctx.stroke();
+    ctx.strokeStyle = 'rgba(128,128,128,.5)'; ctx.lineWidth = 1;
+    PCX.forEach(function (p) { var z = (p[0] - pcMu[0]) * w[0] + (p[1] - pcMu[1]) * w[1], q = [pcMu[0] + z * w[0], pcMu[1] + z * w[1]]; ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1])); ctx.lineTo(X(q[0]), Y(q[1])); ctx.stroke(); ctx.fillStyle = S.css('--s2'); ctx.beginPath(); ctx.arc(X(q[0]), Y(q[1]), 2.5, 0, 7); ctx.fill(); });
+  } });
+var pcChart = S.chart($('#pcC'), { h: 170, x: [0, 180], y: [0, Math.ceil(pcL1 + 0.5)], xt: [0, 45, 90, 135, 180], yt: [0, Math.ceil(pcL1 + 0.5)], xl: '投影方向角度（度）' });
+function pc() {
+  var a = +$('#pcAs').value, r = a * Math.PI / 180, w = [Math.cos(r), Math.sin(r)];
+  var v = w[0] * w[0] * pcS[0][0] + 2 * w[0] * w[1] * pcS[0][1] + w[1] * w[1] * pcS[1][1];
+  $('#pcA').textContent = a + '°'; $('#pcV').textContent = S.f(v, 3); $('#pcL').textContent = S.f(pcL1, 3); $('#pcR').textContent = S.pct(pcL1 / pcTr, 0);
+  pcField({});
+  pcChart({ curves: [{ f: function (t) { var rr = t * Math.PI / 180, c = Math.cos(rr), s = Math.sin(rr); return c * c * pcS[0][0] + 2 * c * s * pcS[0][1] + s * s * pcS[1][1]; }, c: 'c1' }], dots: [{ x: a, y: v, c: 'c2' }], vl: [{ x: pcAng, c: 'ok', label: '主成分' }] });
+  $('#pcW').innerHTML = '橙线是投影方向，灰色细线是每个点到它的垂直投影。投影方差随角度变化是一条正弦形曲线，最大值就是协方差矩阵的最大特征值，出现在约 ' + S.f(pcAng, 0) + '°。只保留这一维就留下了 ' + S.pct(pcL1 / pcTr, 0) + ' 的方差。';
+}
+$('#pcAs').addEventListener('input', pc);
+$('#pcBest').addEventListener('click', function () { $('#pcAs').value = Math.round(pcAng); pc(); });
+pc();
+S.guess($('#pcG'), { q: '原书习题 10-12：三个样本 (1, 2)、(3, 4)、(5, 6)，按 1/N 计算协方差矩阵，最大特征值是多少？', ans: 16 / 3, fmt: function (x) { return S.f(x, 3); }, why: '均值 (3, 4)，去中心后是 (−2, −2)、(0, 0)、(2, 2)，Σ = (1/3)[[8, 8], [8, 8]]。特征值 16/3 ≈ 5.333 和 0，第一主成分方向 (1, 1)/√2，三点投影后的一维表示是 −2√2、0、2√2。另一个特征值为 0：三点共线，第二个方向上没有任何方差。' });
+S.notes($('#n-pca'), {
+  c: [
+    ['四类无监督问题', '特征学习、密度估计、聚类、自监督学习。'],
+    ['主成分分析', '找投影方差最大的方向，即协方差矩阵的特征向量。'],
+    ['PCA 的局限', '去噪去相关，但不保证类别可分（那是 LDA 的事）。']
+  ],
+  p: [
+    ['投影方差', 'σ(X; w) = wᵀΣw'],
+    ['最优条件', 'Σw = λw，方差 = λ'],
+    ['降到 D′ 维', '取 Σ 前 D′ 个最大特征值的特征向量，ΣW = W diag(λ)'],
+    ['常用准则', '特征学习：最小重构误差 + 约束；密度估计：最大似然。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 稀疏编码 ---------- */
+var SC_D = 8, SC_M = 16;
+var SC_A = (function () {
+  var A = [];
+  for (var m = 0; m < SC_M; m++) {
+    var col = [];
+    for (var d = 0; d < SC_D; d++) col.push(m < 8 ? Math.cos(Math.PI * (d + 0.5) * m / SC_D) : (d === m - 8 ? 1 : 0));
+    var n = Math.sqrt(col.reduce(function (s, v) { return s + v * v; }, 0)); A.push(col.map(function (v) { return v / n; }));
+  }
+  return A;
+})();
+var SC_TRUE = new Array(SC_M).fill(0); SC_TRUE[2] = 1.4; SC_TRUE[13] = -1.1;
+var SC_X = (function () { var r = S.rng(5), x = []; for (var d = 0; d < SC_D; d++) { var s = 0; for (var m = 0; m < SC_M; m++) s += SC_A[m][d] * SC_TRUE[m]; x.push(s + 0.03 * S.randn(r)); } return x; })();
+function ista(eta) {
+  var z = new Array(SC_M).fill(0), L = 0;
+  for (var m = 0; m < SC_M; m++) for (var k = 0; k < SC_M; k++) { var s = 0; for (var d = 0; d < SC_D; d++) s += SC_A[m][d] * SC_A[k][d]; L = Math.max(L, Math.abs(s)); }
+  var step = 1 / (2 * L * 2.5);
+  for (var it = 0; it < 3000; it++) {
+    var r = SC_X.map(function (x, d) { return x - z.reduce(function (s, v, m) { return s + v * SC_A[m][d]; }, 0); });
+    z = z.map(function (v, m) { var g = -2 * SC_A[m].reduce(function (s, a, d) { return s + a * r[d]; }, 0), u = v - step * g; return Math.sign(u) * Math.max(Math.abs(u) - step * eta, 0); });
+  }
+  return z;
+}
+var scChart = S.chart($('#scSig'), { h: 230, x: [0, 7], y: [-1.5, 1.5], xt: [0, 2, 4, 6], yt: [-1, 0, 1], xl: '信号的 8 个维度' });
+function sc() {
+  var eta = +$('#scEs').value; $('#scE').textContent = S.f(eta, 2);
+  var z = ista(eta), rec = SC_X.map(function (_, d) { return z.reduce(function (s, v, m) { return s + v * SC_A[m][d]; }, 0); });
+  var err = SC_X.reduce(function (s, x, d) { return s + Math.pow(x - rec[d], 2); }, 0), nz = z.filter(function (v) { return Math.abs(v) > 0.01; }).length;
+  scChart({ curves: [{ pts: SC_X.map(function (v, i) { return [i, v]; }), c: 'c1', label: '输入 x' }, { pts: rec.map(function (v, i) { return [i, v]; }), c: 'c2', dash: 1, label: '重构 Az' }] });
+  var mx = Math.max.apply(null, z.map(Math.abs).concat([0.01]));
+  S.bars($('#scZ'), z.map(function (v, m) { return { label: (m < 8 ? '余弦 ' + m : '尖峰 ' + (m - 8)), value: Math.abs(v) / Math.max(mx, 1.5), text: S.f(v, 2), cls: Math.abs(v) > 0.01 ? (SC_TRUE[m] ? 'ok' : 'alt') : 'dim' }; }));
+  $('#scN').textContent = nz + ' / 16'; $('#scR').textContent = S.f(err, 4);
+  $('#scW').innerHTML = '真实答案是“余弦 2”和“尖峰 5”两个原子（绿色）。' + (eta < 0.02 ? 'η ≈ 0 时没有稀疏约束，过完备字典有无数种组合都能重构，解很稠密、不唯一。' : eta > 0.6 ? 'η 太大，连真正有用的原子也被压成 0，重构误差上升。' : '适中的 η 让编码只剩少数几个非零系数，同时重构误差很小——这就是可解释、可选择特征的稀疏表示。');
+}
+$('#scEs').addEventListener('input', sc); sc();
+S.notes($('#n-sc'), {
+  c: [
+    ['字典 / 编码', '基向量 A 叫字典，系数 z 叫编码：x = Az。'],
+    ['完备 / 过完备', '基向量能张成 ℝᴰ；M = D 为完备，M > D 为过完备（冗余）。'],
+    ['稀疏性', '非零元素比例很低（或少数远大于 0、其余接近 0）。'],
+    ['交替优化', '固定 A 求编码，固定编码更新 A。']
+  ],
+  p: [
+    ['目标', 'Σ (‖x − Az‖² + ηρ(z))'],
+    ['稀疏度量', 'ℓ0（不可导）→ ℓ1、log(1+z²)、−exp(−z²)'],
+    ['三个优点', '可解释、特征选择、（学好后）计算效率'],
+    ['生物启发', '初级视觉皮层：局部、方向性、带通，只有少数神经元激活。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 自编码器 ---------- */
+var klChart = S.chart($('#klC'), { h: 210, x: [0.001, 1], y: [0, 3], xt: [0, 0.25, 0.5, 0.75, 1], yt: [0, 1, 2, 3], xl: '平均活性 ρ̂' });
+function kl() {
+  var r = +$('#klRs').value; $('#klR').textContent = S.f(r, 2);
+  klChart({ curves: [{ f: function (q) { q = S.clamp(q, 1e-4, 1 - 1e-4); return r * Math.log(r / q) + (1 - r) * Math.log((1 - r) / (1 - q)); }, c: 'c2' }], vl: [{ x: r, c: 'ok', label: 'ρ*' }] });
+}
+$('#klRs').addEventListener('input', kl); kl();
+var DIG = ['............', '....####....', '...##..##...', '..##....##..', '..##....##..', '.......##...', '......##....', '.....##.....', '....##......', '...##.......', '..########..', '............'];
+var daSeed = 1;
+function daPaint(cv, mask) {
+  var ctx = cv.getContext('2d'), img = ctx.createImageData(12, 12), ink = hexc(S.css('--ink')), bg = hexc(S.css('--panel')), al = hexc(S.css('--alert'));
+  for (var i = 0; i < 12; i++) for (var j = 0; j < 12; j++) { var k = (i * 12 + j) * 4, on = DIG[i][j] === '#', m = mask && mask[i * 12 + j], c = m ? (on ? al : bg) : (on ? ink : bg); if (m && !on) c = [bg[0] * 0.85 + al[0] * 0.15, bg[1] * 0.85 + al[1] * 0.15, bg[2] * 0.85 + al[2] * 0.15]; if (m && on) c = bg.map(function (v, x) { return v * 0.6 + al[x] * 0.4; }); img.data[k] = c[0]; img.data[k + 1] = c[1]; img.data[k + 2] = c[2]; img.data[k + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+}
+function hexc(c) { c = c.replace('#', ''); return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]; }
+function da() {
+  var mu = +$('#daMs').value; $('#daM').textContent = S.f(mu, 2);
+  var r = S.rng(daSeed * 13 + 7), mask = []; for (var i = 0; i < 144; i++) mask.push(r() < mu);
+  daPaint($('#daA'), null); daPaint($('#daB'), mask);
+}
+$('#daMs').addEventListener('input', da); $('#daR').addEventListener('click', function () { daSeed++; da(); }); da(); S.onTheme(da);
+S.notes($('#n-ae'), {
+  c: [
+    ['自编码器', '编码器 f + 解码器 g，最小化重构误差。'],
+    ['恒等函数陷阱', 'M ≥ D 且容量够大时只会“复制”输入，需加约束。'],
+    ['捆绑权重', 'W⁽²⁾ = W⁽¹⁾ᵀ，参数少、有正则化作用。'],
+    ['稀疏自编码器', '隐藏层宽而稀疏，平均活性接近 ρ*。'],
+    ['堆叠自编码器', '逐层训练深层自编码器；早期为深网提供初始化。'],
+    ['降噪自编码器', '从随机损坏的 x̃ 重构原始 x，学鲁棒表示。']
+  ],
+  p: [
+    ['重构误差', 'ℒ = Σ‖x − g(f(x))‖²（伯努利输出可用交叉熵）'],
+    ['两层自编码器', 'z = f(W⁽¹⁾x + b⁽¹⁾)，x′ = g(W⁽²⁾z + b⁽²⁾)'],
+    ['KL 稀疏惩罚', 'ρ* log(ρ*/ρ̂) + (1−ρ*) log((1−ρ*)/(1−ρ̂))'],
+    ['线性 AE', '学到的主子空间与 PCA 密切相关。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 密度估计 ---------- */
+var DEX = (function () { var r = S.rng(17), a = []; for (var i = 0; i < 200; i++) a.push(r() < 0.6 ? -1.2 + 0.55 * S.randn(r) : 1.6 + 0.8 * S.randn(r)); return a; })();
+function trueP(x) { return 0.6 * Math.exp(-Math.pow((x + 1.2) / 0.55, 2) / 2) / (0.55 * Math.sqrt(2 * Math.PI)) + 0.4 * Math.exp(-Math.pow((x - 1.6) / 0.8, 2) / 2) / (0.8 * Math.sqrt(2 * Math.PI)); }
+var deMode = 'hist';
+var deChart = S.chart($('#deC'), { h: 260, x: [-4, 5], y: [0, 0.75], xt: [-4, -2, 0, 2, 4], yt: [0, 0.25, 0.5, 0.75], xl: 'x' });
+var DE_CFG = { hist: ['区间数 M', 1, 100, 20], kde: ['核宽度 H（×0.01）', 2, 150, 30], knn: ['近邻数 K', 1, 100, 15], gauss: ['（无旋钮）', 1, 1, 1] };
+function deSet(m) { var c = DE_CFG[m]; $('#deKl').textContent = c[0]; $('#deKs').min = c[1]; $('#deKs').max = c[2]; $('#deKs').value = c[3]; $('#deK').style.display = m === 'gauss' ? 'none' : ''; }
+function de() {
+  var v = +$('#deKs').value; $('#deKv').textContent = v;
+  var N = DEX.length, est, extra = [];
+  if (deMode === 'hist') { var lo = -4, hi = 5, w = (hi - lo) / v, cnt = new Array(v).fill(0); DEX.forEach(function (x) { var k = Math.floor((x - lo) / w); if (k >= 0 && k < v) cnt[k]++; }); var pts = []; cnt.forEach(function (c, k) { var y = c / (N * w); pts.push([lo + k * w, y]); pts.push([lo + (k + 1) * w, y]); }); est = { pts: pts }; }
+  else if (deMode === 'kde') { var H = v / 100; est = { f: function (x) { return DEX.reduce(function (s, xi) { return s + Math.exp(-Math.pow((xi - x) / H, 2) / 2); }, 0) / (N * H * Math.sqrt(2 * Math.PI)); } }; }
+  else if (deMode === 'knn') { var K = v; est = { f: function (x) { var d = DEX.map(function (xi) { return Math.abs(xi - x); }).sort(function (a, b) { return a - b; }); return K / (N * 2 * Math.max(d[K - 1], 1e-3)); } }; }
+  else { var mu = DEX.reduce(function (a, b) { return a + b; }, 0) / N, s2 = DEX.reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / N; est = { f: function (x) { return Math.exp(-Math.pow(x - mu, 2) / (2 * s2)) / Math.sqrt(2 * Math.PI * s2); } }; extra = [{ x: mu, c: 'dim', label: 'μ_ML = ' + S.f(mu, 2) }]; }
+  est.c = 'c2'; est.w = 2.5; est.label = '估计';
+  deChart({ curves: [{ f: trueP, c: 'ok', label: '真实密度' }, est], vl: extra, dots: DEX.slice(0, 200).map(function (x) { return { x: x, y: 0.01, c: 'dim', r: 1.6 }; }) });
+  $('#deW').innerHTML = deMode === 'hist' ? (v < 6 ? '区间太宽：两个峰糊成一团。' : v > 60 ? '区间太窄：每格只有零星几个样本，估计非常毛糙。' : '区间适中，大致看出两个峰。') + ' 每格高度 = K<sub>m</sub>/(NΔ)。' :
+    deMode === 'kde' ? (v < 8 ? '核太窄：每个样本一个尖刺。' : v > 90 ? '核太宽：过度平滑，第二个峰几乎消失。' : '高斯核把每个样本“摊”成一个小钟形再求和，比直方图平滑。') :
+    deMode === 'knn' ? (v < 4 ? 'K 太小：估计剧烈抖动。' : v > 70 ? 'K 太大：局部细节被抹平。' : 'K 近邻在高密度处用小窗口、低密度处用大窗口，自适应。') + ' 注意它的积分一般不等于 1，不是严格的密度函数（习题 10-10）。' :
+    '假设数据服从单个正态分布，最大似然给出样本均值和方差——但真实分布有两个峰，<b>模型选错了</b>，再多数据也拟合不好。这就是参数法的“模型选择问题”。';
+}
+S.seg($('#deS'), function (m) { deMode = m; deSet(m); de(); });
+$('#deKs').addEventListener('input', de); deSet('hist'); de();
+S.guess($('#deG'), { q: '直方图每一维划分 10 个区间，数据是 10 维，一共有多少个格子？', unit: '个', ans: 1e10, fmt: function (x) { return x >= 1e5 ? S.sci(x, 0) : S.f(x, 0); }, why: '10¹⁰ 个格子——就算有一亿个样本，平均每 100 个格子才分到 1 个。这就是维度灾难：直方图只适合低维。' });
+S.notes($('#n-de'), {
+  c: [
+    ['参数密度估计', '假设分布形式，最大似然估计参数。'],
+    ['非参数密度估计', '不假设形式，p(x) ≈ K/(NV)。'],
+    ['直方图', '固定区间宽度 Δ，数每格样本数。'],
+    ['核密度估计（Parzen 窗）', '每个样本放一个核，宽度 H 控制平滑。'],
+    ['K 近邻', '固定 K，找刚好包住 K 个样本的区域。']
+  ],
+  p: [
+    ['正态 MLE', 'μ = 样本均值，Σ = (1/N)Σ(x−μ)(x−μ)ᵀ'],
+    ['多项分布 MLE', 'μ_k = m_k / N（拉格朗日乘子）'],
+    ['参数法三问题', '模型选择、不可观测变量（EM）、维度灾难'],
+    ['最近邻分类器', 'N → ∞ 时错误率 ≤ 最优分类器的 2 倍'],
+    ['与生成模型', '扩散 / 得分模型仍在学分布或其梯度。']
+  ]
+});
+
+/* ---------- K-Means ---------- */
+var KMX = (function () { var r = S.rng(23), a = []; [[-1.5, 1], [1.4, 1.2], [0, -1.4]].forEach(function (c) { for (var i = 0; i < 30; i++) a.push([c[0] + 0.5 * S.randn(r), c[1] + 0.5 * S.randn(r)]); }); return a; })();
+var kmC, kmR, kmT, kmSeed = 1, kmScale = false;
+function kmPts() { return KMX.map(function (p) { return kmScale ? [p[0] * 10, p[1]] : p; }); }
+function kmInit() { var K = +$('#kmKs').value, r = S.rng(kmSeed * 7 + 3), P = kmPts(); kmC = []; for (var k = 0; k < K; k++) kmC.push(P[Math.floor(r() * P.length)].slice()); kmR = null; kmT = 0; }
+function kmAssign() { var P = kmPts(); kmR = P.map(function (p) { var b = 0, bd = Infinity; kmC.forEach(function (c, k) { var d = Math.pow(p[0] - c[0], 2) + Math.pow(p[1] - c[1], 2); if (d < bd) { bd = d; b = k; } }); return b; }); }
+function kmUpdate() { var P = kmPts(); kmC = kmC.map(function (c, k) { var s = [0, 0], n = 0; P.forEach(function (p, i) { if (kmR[i] === k) { s[0] += p[0]; s[1] += p[1]; n++; } }); return n ? [s[0] / n, s[1] / n] : c; }); }
+function kmJ() { if (!kmR) return NaN; var P = kmPts(); return P.reduce(function (s, p, i) { var c = kmC[kmR[i]]; return s + Math.pow(p[0] - c[0], 2) + Math.pow(p[1] - c[1], 2); }, 0); }
+var kmField = S.field($('#kmF'), { xr: [-3.5, 3.5], yr: [-3.5, 3.5], res: 10, size: 340,
+  overlay: function (ctx, X, Y) { ctx.lineWidth = 3; kmC.forEach(function (c, k) { var cx = X(kmScale ? c[0] / 10 : c[0]), cy = Y(c[1]); ctx.strokeStyle = S.css('--ink'); ctx.beginPath(); ctx.moveTo(cx - 8, cy - 8); ctx.lineTo(cx + 8, cy + 8); ctx.moveTo(cx + 8, cy - 8); ctx.lineTo(cx - 8, cy + 8); ctx.stroke(); }); } });
+function km() {
+  $('#kmK').textContent = $('#kmKs').value;
+  kmField({ pts: KMX.map(function (p, i) { return [p[0], p[1], kmR ? kmR[i] % 3 : 0]; }), f: kmR ? function (x, y) { var p = kmScale ? [x * 10, y] : [x, y], b = 0, bd = Infinity; kmC.forEach(function (c, k) { var d = Math.pow(p[0] - c[0], 2) + Math.pow(p[1] - c[1], 2); if (d < bd) { bd = d; b = k; } }); return [[0, 1, 2, 4, 3, 0][b], 0.35]; } : null });
+  $('#kmJ').textContent = isNaN(kmJ()) ? '—' : S.f(kmJ(), 1); $('#kmT').textContent = kmT;
+  $('#kmW').innerHTML = (kmT === 0 ? '黑色 × 是随机选的初始中心。点“走一步”先把每个点分给最近的中心。' : kmT % 2 === 1 ? '刚完成<b>分配</b>：每个点分给最近的中心（背景颜色是各中心的“地盘”）。下一步更新中心。' : '刚完成<b>更新</b>：中心移到各簇的均值。目标函数只会下降。') + (kmScale ? ' 横轴放大 10 倍后，距离几乎只由横坐标决定，簇被切成竖条——K-Means 对特征尺度敏感。' : '');
+}
+$('#kmStep').addEventListener('click', function () { if (kmT % 2 === 0) kmAssign(); else kmUpdate(); kmT++; km(); });
+$('#kmRun').addEventListener('click', function () { for (var i = 0; i < 40; i++) { if (kmT % 2 === 0) kmAssign(); else kmUpdate(); kmT++; } km(); });
+$('#kmInit').addEventListener('click', function () { kmSeed++; kmInit(); km(); });
+$('#kmScale').addEventListener('click', function () { kmScale = !kmScale; this.textContent = '横轴 ×10：' + (kmScale ? '开' : '关'); this.setAttribute('aria-pressed', String(kmScale)); kmInit(); km(); });
+$('#kmKs').addEventListener('input', function () { kmInit(); km(); });
+kmInit(); km();
+S.notes($('#n-km'), {
+  c: [
+    ['聚类', '无标签时按相似性划分样本；输出离散簇编号。'],
+    ['K-Means', '交替：分配到最近中心 ↔ 中心更新为簇均值。'],
+    ['内部指标', '组内平方误差、轮廓系数（无标签）。'],
+    ['外部指标', '纯度、归一化互信息（用少量标签事后评估）。']
+  ],
+  p: [
+    ['目标', 'min Σ ‖x⁽ⁿ⁾ − μ_{r_n}‖²'],
+    ['K-Means 的限制', '预设 K、对初始化与尺度敏感、局部最优、假设球形簇'],
+    ['特征空间决定结果', '在好的表示空间里聚类更有语义'],
+    ['没有唯一正确答案', '按主题、风格、时间聚类都可能合理。']
+  ]
+});
+
+/* ---------- 自监督 ---------- */
+var TK = ['今天', '下午', '我们', '去', '公园', '散步', '然后', '吃', '晚饭'], tkMode = 'ntp', tkMask = [3, 6];
+function tk() {
+  var v = +$('#tkVs').value; $('#tkV').textContent = v;
+  var box = $('#tkT'); box.innerHTML = '';
+  if (tkMode === 'ntp') {
+    $('#tkLb').textContent = '预测第几个词元';
+    TK.forEach(function (w, i) { h('span', { text: i === v - 1 ? '?' : w, class: i < v - 1 ? 'ctx' : i === v - 1 ? 'tgt' : 'fut' }, box); });
+    $('#tkW').innerHTML = '要预测第 ' + v + ' 个词元“' + TK[v - 1] + '”，只能看左边的 ' + (v - 1) + ' 个（蓝色），右边的未来词元（虚线）看不到。一条长度为 T 的句子同时提供 T 个训练目标，全部来自文本本身。';
+  } else {
+    $('#tkLb').textContent = '遮住多少个词元';
+    var r = S.rng(v * 3 + 1), idx = TK.map(function (_, i) { return i; }); for (var i = idx.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
+    var m = idx.slice(0, Math.min(v, 8));
+    TK.forEach(function (w, i) { h('span', { text: m.indexOf(i) >= 0 ? '[MASK]' : w, class: m.indexOf(i) >= 0 ? 'mask' : 'ctx' }, box); });
+    $('#tkW').innerHTML = '遮住 ' + m.length + ' 个词元，模型用<b>两边</b>的上下文去恢复它们，损失只在被遮住的位置上算。遮得越多任务越难、每句话提供的信号越多，但上下文越少。双向上下文让它更适合“理解”，却不能直接按顺序生成。';
+  }
+}
+S.seg($('#tkS'), function (v) { tkMode = v; $('#tkVs').value = v === 'ntp' ? 4 : 2; tk(); });
+$('#tkVs').addEventListener('input', tk); tk();
+function nc() {
+  var sp = +$('#ncPs').value, sn = +$('#ncNs').value, t = +$('#ncTs').value;
+  $('#ncP').textContent = S.f(sp, 2); $('#ncN').textContent = S.f(sn, 2); $('#ncT').textContent = S.f(t, 2);
+  var negs = [sn, sn - 0.3, sn - 0.5, sn - 0.7, sn - 0.9].map(function (v) { return S.clamp(v, -1, 1); });
+  var logits = [sp].concat(negs).map(function (v) { return v / t; }), p = S.softmax(logits), L = -Math.log(p[0]);
+  S.bars($('#ncB'), p.map(function (v, i) { return { label: i ? '负样本 ' + i : '正样本', value: v, text: S.f(v, 3), cls: i ? 'dim' : 'ok' }; }));
+  $('#ncL').textContent = S.f(L, 3);
+  $('#ncW').innerHTML = 'InfoNCE 就是“在 6 个候选里认出正样本”的 softmax 交叉熵。' + (sp <= sn ? '正样本还没比最难负样本更像，损失很大。' : '拉开正样本与负样本的相似度差，损失下降。') + ' 温度 τ 越小，越看重最难的负样本（分布越尖）。';
+}
+['ncPs', 'ncNs', 'ncTs'].forEach(function (id) { $('#' + id).addEventListener('input', nc); }); nc();
+S.sortGame($('#sslG'), {
+  bins: [{ k: 'p', t: '预测型' }, { k: 'm', t: '掩码 / 重构型' }, { k: 'c', t: '对比型' }, { k: 'x', t: '跨模态型' }],
+  items: [
+    { t: 'GPT 预测下一个词元', k: 'p', why: '因果语言建模。' },
+    { t: 'BERT 恢复被遮住的词', k: 'm', why: '掩码语言模型。' },
+    { t: 'MAE 遮住 75% 图像块再重构', k: 'm', why: '视觉掩码自编码。' },
+    { t: 'SimCLR：同一张图的两种增强互为正样本', k: 'c', why: '对比学习。' },
+    { t: 'CLIP：匹配的图文更近、不匹配的更远', k: 'x', why: '利用图文天然配对的跨模态对比。' },
+    { t: '降噪自编码器', k: 'm', why: '去噪重构，现代掩码重构的早期代表。' },
+    { t: 'MoCo：动量编码器 + 负样本队列', k: 'c', why: '对比学习的高效版本。' }
+  ]
+});
+S.notes($('#n-ssl'), {
+  c: [
+    ['自监督学习', '监督信号由数据自身生成；常视为无监督学习的实现方式。'],
+    ['下一个词元预测', '单向（因果）上下文，适合生成；GPT、LLaMA。'],
+    ['掩码建模', '双向上下文恢复被遮内容，适合理解；BERT、MAE。'],
+    ['对比学习', '正样本拉近、负样本推远；SimCLR、MoCo。'],
+    ['表示坍塌', '所有输入映射到同一表示；BYOL、SimSiam 靠停止梯度避免。'],
+    ['联合嵌入预测', '预测另一视图的表征而非原始信号；I-JEPA。']
+  ],
+  p: [
+    ['NTP', 'p(x) = Π p(x_t|x_{<t})，ℒ = −Σ log p(x_t|x_{<t})'],
+    ['MLM', 'ℒ = −Σ_{t∈m(x)} log p(x_t | x_{∖m(x)})'],
+    ['InfoNCE', '−log exp(s⁺/τ) / (exp(s⁺/τ) + Σ exp(s⁻/τ))'],
+    ['评价', '线性探测、微调、检索等下游表现；预训练损失只是代理。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 三种约束', 'PCA：正交、低维、保留最大方差；稀疏编码：过完备字典 + 稀疏系数；自编码器：通过重构学表示，M ≥ D 时会退化成恒等函数，所以要加低维、稀疏、去噪等约束。'],
+    ['② 参数 vs 非参数', '参数法假设分布形式再估参数（选错模型就拟合不好）；非参数法 p ≈ K/(NV)：直方图调区间宽度、核方法调核宽度（都是固定 V），K 近邻调 K（固定 K 求 V）。'],
+    ['③ 自监督', '它是无监督学习在大数据、大模型、明确预训练目标下的新范式。NTP 单向适合生成；掩码建模双向适合理解；对比学习直接学判别性表示；多模态利用天然配对对齐语义。']
+  ],
+  p: [
+    ['原书一句话', '表示学习、概率建模、结构发现与预训练任务设计，是理解无监督学习的四个关键词。'],
+    ['下一篇', '不改模型、改学习方式：集成、半监督、多任务、迁移、持续、元学习。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

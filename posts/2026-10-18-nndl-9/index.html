@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>图神经网络：消息传递、GCN、GraphSAGE、GAT 与 GIN</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（九）：图的基本概念与表示、度与同质性、拉普拉斯矩阵与图信号平滑性；节点级 / 边级 / 图级任务与数据划分；消息传递、聚合、更新与读出；从卷积定理、图傅里叶变换、谱图卷积到 ChebNet 与 GCN；GraphSAGE 邻居采样、GAT 邻域注意力、GIN 与 WL 同构测试；过度平滑、过压缩与大图可扩展性。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.gsvg { width: 100%; max-width: 360px; height: auto; display: block; }
+.gsvg line { stroke: var(--rule); stroke-width: 2; }
+.gsvg line.hi { stroke: var(--s2); stroke-width: 3; }
+.gsvg circle { stroke: var(--ink-2); stroke-width: 1.6; }
+.gsvg text { font-size: 15px; font-family: var(--f-num); fill: var(--ink); pointer-events: none; }
+.gsvg text.v { font-size: 13px; }
+.wlrow { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.wlrow figure { margin: 0; }
+.wlrow figcaption { font-size: 15px; color: var(--ink-3); text-align: center; }
+.hist { display: flex; gap: 4px; align-items: flex-end; height: 50px; margin-top: 6px; }
+.hist span { width: 22px; border-radius: 3px 3px 0 0; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="9">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 09</span><span>对应原书第 9 章（第 249–276 页）</span><span>约 55 分钟</span></p>
+  <h1>每个节点都向邻居打听，<em>一层一跳</em></h1>
+  <p class="lead">社交网络、引文网络、分子、道路——很多数据天然是“实体—关系”的图：结构不规则、邻居数不固定、节点互相依赖，卷积和循环网络都用不上。图神经网络把“局部交互—状态更新”推广到一般图上：每层每个节点收集邻居的消息、聚合、更新自己。原书的主线是“图表示 → 消息传递 → 具体模型 → 现实约束”：GCN、GraphSAGE、GAT、GIN 都是对“怎么聚合、怎么更新”的不同回答，而过度平滑、过压缩、可扩展性是它们共同的边界。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" aria-current="page" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#graph">图与拉普拉斯</a><a href="#task">三类任务</a><a href="#mp">消息传递</a><a href="#gcn">GCN</a><a href="#sage">GraphSAGE 与 GAT</a><a href="#gin">GIN 与 WL</a><a href="#prob">共性问题</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>拉普拉斯矩阵 L = D − A 衡量的是什么？它和图卷积有什么关系？</li>
+  <li>消息传递的一层由哪几步组成？GCN、GraphSAGE、GAT、GIN 分别在哪一步上做了不同选择？</li>
+  <li>为什么 GNN 不能无限加深？过度平滑和过压缩有什么不同？</li>
+</ol></div>
+
+<section class="part" id="graph">
+  <div class="part-head"><h2>图、拉普拉斯矩阵与图信号</h2><span class="meta">原书 9.1 节 · 第 250–254 页</span></div>
+  <div class="sec-lede">
+    <p>图 𝒢 = (𝒱, ℰ) 由节点和边组成。<strong>无向图</strong>边是对称关系（好友），<strong>有向图</strong>边有方向（引用）；<strong>同质图</strong>只有一类节点和边，<strong>异质图</strong>有多类（作者、论文、会议；撰写、引用、发表于），需要关系图卷积、异质图注意力等专门建模。原书说欧氏空间（序列、图像）有规则坐标和固定邻域，图是<strong>非欧氏结构</strong>，邻居关系由边决定。表示方法：<strong>邻接矩阵</strong>（写公式最方便，稀疏大图很费内存）、<strong>邻接表</strong>（只存实际的边）、<strong>边列表</strong>（消息传递实现里常见）。</p>
+    <p>几个重要的数学量。<strong>度</strong>：与节点相连的边数（有向图分入度、出度）。<strong>同质性</strong>：相似节点倾向相连，同质比例 H<sub>ratio</sub> = 连接同类节点的边数 / 总边数；经典 GCN 默认“邻居信息有帮助”，更适合同质性强的图。与之相对的<strong>异配性</strong>指不同标签的节点更容易相连——原书特意提醒它和<strong>异质图</strong>不是一回事（一个说标签是否相似，一个说类型是否不同）。</p>
+    <p><strong>拉普拉斯矩阵 L = D − A</strong>（D 是度矩阵）。给每个节点附一个数，叫<strong>图信号</strong> x，则 (Lx)<sub>i</sub> = Σ<sub>j</sub> A<sub>ij</sub>(x<sub>i</sub> − x<sub>j</sub>)：节点自己与邻居之间的差。二次型 <strong>xᵀLx = ½Σ A<sub>ij</sub>(x<sub>i</sub> − x<sub>j</sub>)²</strong>：相邻节点越接近，这个值越小——所以 L 衡量图信号的<strong>平滑性</strong>，这是图正则化、谱聚类、图卷积的数学基础。归一化形式 L<sub>norm</sub> = I − D<sup>−1/2</sup>AD<sup>−1/2</sup> 消除了度差异的尺度影响。</p>
+    <p class="go">拖动 5 个节点上的信号值（原书图 9.1a 的无向图），看 Lx 和 xᵀLx；再点节点切换类别，看同质比例。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书式 9.4–9.8：A、D、L 与平滑度</p>
+    <div class="lab-split">
+      <div>
+        <svg class="gsvg" id="g1G" viewBox="0 0 320 280" role="img" aria-label="五节点无向图"></svg>
+        <div class="btnrow"><button class="btn" type="button" id="g1Sm">平滑信号</button><button class="btn" type="button" id="g1Ro">粗糙信号</button><button class="btn" type="button" id="g1Ct">常数信号</button></div>
+        <div class="ctl-grid" id="g1X"></div>
+      </div>
+      <div>
+        <div class="seg" id="g1M"><button data-v="A" aria-pressed="true">邻接矩阵 A</button><button data-v="D">度矩阵 D</button><button data-v="L">拉普拉斯 L</button><button data-v="list">邻接表</button></div>
+        <div id="g1T" style="margin-top:10px"></div>
+        <div class="read"><div class="hl"><div class="v" id="g1Q">0</div><div class="k">xᵀLx（越小越平滑）</div></div><div><div class="v" id="g1H">0</div><div class="k">同质比例 H_ratio</div></div></div>
+        <p class="cap" id="g1W"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-graph"></div>
+</section>
+
+<section class="part" id="task">
+  <div class="part-head"><h2>图上的三类任务与数据划分</h2><span class="meta">原书 9.2 节 · 第 254–257 页</span></div>
+  <div class="sec-lede">
+    <p>按预测对象，图学习任务分三层。<strong>节点级</strong>：节点分类（论文属于哪个领域）、节点回归（道路流量）、节点表示学习。<strong>边级</strong>：链接预测（两篇论文将来会不会引用；打分可以是 h<sub>u</sub>ᵀh<sub>v</sub> 或 MLP(h<sub>u</sub> ⊕ h<sub>v</sub>)）、边分类（正常 / 异常交易）、边回归（拥堵程度）。<strong>图级</strong>：图分类（分子有没有某种活性）、图回归（溶解度）、图生成（GraphVAE、GraphRNN）。它们共享同一核心：<strong>先学节点表示，再按预测对象设计读出</strong>——直接取节点表示、组合节点对、或全局汇聚成整图表示。</p>
+    <p>原书第二版强调了一个容易出错的地方：<strong>图上的数据划分</strong>。节点和边相互依赖，划分单位必须和预测对象一致。节点任务：传导式设置下模型可以看全图结构和特征，但只在训练节点的标签上算损失；归纳式设置要把新节点或新图从训练计算图里隔离。<strong>链接预测：必须把验证、测试正例边从训练图里删掉或遮蔽，否则模型直接“看到”答案</strong>；负例采样规则在各集合间保持一致；随时间演化的图要按时间划分。图级任务：以整张图为单位，还要防止近重复样本、同源结构跨集合泄漏。</p>
+    <p class="go">把这些任务分到三个层级里。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分类：节点级、边级还是图级</p>
+    <div id="tkG"></div>
+  </div>
+  <div class="notes" id="n-task"></div>
+</section>
+
+<section class="part" id="mp">
+  <div class="part-head"><h2>消息传递：聚合、更新、读出</h2><span class="meta">原书 9.3 节 · 第 257–259 页</span></div>
+  <div class="sec-lede">
+    <p>图神经网络的统一框架是<strong>消息传递</strong>（MPNN，Gilmer 等 2017）。一层分两步：<strong>消息传递与聚合</strong>——每个邻居 u 构造一条消息 m<sub>u→v</sub> = f(h<sub>v</sub>, h<sub>u</sub>, h<sub>e_uv</sub>)，再聚合 m<sub>v</sub> = AGGREGATE({m<sub>u→v</sub> : u ∈ 𝒩(v)})；<strong>节点更新</strong>——h<sub>v</sub>⁽ˡ⁾ = UPDATE(h<sub>v</sub>⁽ˡ⁻¹⁾, m<sub>v</sub>)，比如 ReLU(W[h<sub>v</sub> ⊕ m<sub>v</sub>])。邻居是一个<strong>集合</strong>，没有天然顺序，所以聚合函数必须<strong>对排列不变</strong>：求和、平均、最大值。</p>
+    <p>一层只能聚合一阶邻居，<strong>L 层最多覆盖 L 跳邻域</strong>——层数决定了图上的<strong>感受野</strong>。图级任务还需要<strong>全局汇聚</strong>（读出）把所有节点表示汇总成整图表示，如 h<sub>𝒢</sub> = Σ h<sub>v</sub>⁽ᴸ⁾。完整流程：初始化 H⁽⁰⁾ 为节点特征 → 逐层消息传递 → 读出 → 任务预测。原书的结论：<strong>不同 GNN 的差别，就在“如何聚合邻居、如何更新表示”这两个问题的回答上</strong>。</p>
+    <p class="go">点一个起点节点，拖动层数，看它的感受野怎么扩大（图为示意，两个社区之间只有一条桥）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">L 层 = L 跳邻域</p>
+    <div class="lab-split">
+      <svg class="gsvg" id="mpG" viewBox="0 0 360 260" role="img" aria-label="消息传递感受野"></svg>
+      <div>
+        <label class="ctl"><span>层数 L <output id="mpL">1</output></span><input type="range" id="mpLs" min="0" max="6" value="1"></label>
+        <div class="read"><div class="hl"><div class="v" id="mpN">0</div><div class="k">感受野内节点数</div></div></div>
+        <p class="cap" id="mpW">点任意节点作为中心。</p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-mp"></div>
+</section>
+
+<section class="part" id="gcn">
+  <div class="part-head"><h2>图卷积网络：从谱到局部</h2><span class="meta">原书 9.4.1 节 · 第 259–265 页</span></div>
+  <div class="sec-lede">
+    <p>GCN（Kipf 和 Welling，2017）想把卷积的两个特征——<strong>局部连接、参数共享</strong>——推广到图上：节点的一阶邻域就是它的局部感受野，全图共享同一组变换参数。但图上没有规则的平移，卷积怎么定义？原书走了一条“卷积定理 → 傅里叶变换 → 图傅里叶变换 → 谱图卷积 → 局部近似”的路。</p>
+    <p>关键一步：<strong>卷积定理</strong>说时域卷积等于频域逐点乘法；而经典傅里叶基 e<sup>iωt</sup> 正是拉普拉斯算子的特征函数。图虽然没有正弦余弦，但有拉普拉斯矩阵——<strong>它的特征向量就是图上的频率基</strong>：L = UΛUᵀ，图傅里叶变换 x̂ = Uᵀx，特征值 λ 是“频率”，小 λ 对应相邻节点取值接近的平滑模式，大 λ 对应剧烈振荡的模式。于是谱图卷积 g<sub>θ</sub> ∗<sub>G</sub> x = U g<sub>θ</sub>(Λ) Uᵀx。</p>
+    <p>它有两个问题：特征分解代价高（O(N²) 甚至更高），滤波器不保证局部。解法是把滤波器写成 L 的多项式 Σ α<sub>k</sub>L<sup>k</sup>：L<sup>k</sup>x 只依赖 k 跳以内，天然局部。<strong>ChebNet</strong> 用 Chebyshev 多项式近似、不用特征分解；Kipf 再取 K = 1、λ<sub>max</sub> ≈ 2、共享参数，加上<strong>重规范化技巧</strong>（加自环 Ã = A + I），得到 GCN 的一层：<strong>H⁽ˡ⁺¹⁾ = σ(D̃<sup>−1/2</sup>ÃD̃<sup>−1/2</sup>H⁽ˡ⁾W⁽ˡ⁾)</strong>。按节点展开就是 h<sub>v</sub> = σ(Σ<sub>u∈𝒩(v)∪{v}</sub> W h<sub>u</sub>/√(d̃<sub>u</sub>d̃<sub>v</sub>))：自环保留自身信息、对称归一化平衡度差异、共享变换。</p>
+    <p class="go">左边看图 9.1a 的五个频率基；右边一步步走完推导链，最后验算原书的三节点例子。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">图傅里叶基：归一化拉普拉斯的特征向量</p>
+      <svg class="gsvg" id="ftG" viewBox="0 0 320 280" role="img" aria-label="特征向量着色"></svg>
+      <label class="ctl"><span>第几个特征向量 <output id="ftK">1</output></span><input type="range" id="ftKs" min="1" max="5" value="1"></label>
+      <p class="cap" id="ftW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">从谱图卷积到 GCN</p>
+      <div id="dvS"></div>
+      <ol class="derive" id="dvL">
+        <li>卷积定理：f ∗ g = ℱ⁻¹(ℱ{f} ⊙ ℱ{g})——变到频域逐点乘，再变回来。</li>
+        <li>图上的频率基：L = UΛUᵀ，特征向量 U 作基，特征值 λ 作频率<div class="fx">x̂ = Uᵀx，x = Ux̂</div></li>
+        <li>谱图卷积：频域滤波器写成特征值的函数<div class="fx">g_θ ∗_G x = U g_θ(Λ) Uᵀ x</div></li>
+        <li>问题：特征分解贵、滤波器不局部 → 用 L 的多项式近似，L^k x 只看 k 跳<div class="fx">g_θ(L) x = Σ_{k=0}^{K} α_k L^k x</div></li>
+        <li>ChebNet：Chebyshev 多项式 T_k(L̃)，L̃ = 2L/λ_max − I，复杂度 O(KE)</li>
+        <li>GCN：K = 1、λ_max ≈ 2、θ = θ′₀ = −θ′₁<div class="fx">g_θ ∗ x ≈ θ(I + D^{−1/2}AD^{−1/2})x</div></li>
+        <li>重规范化：加自环 Ã = A + I，再推广 θ 为矩阵 W 并加激活<div class="fx">H⁽ˡ⁺¹⁾ = σ(D̃^{−1/2} Ã D̃^{−1/2} H⁽ˡ⁾ W⁽ˡ⁾)</div></li>
+      </ol>
+      <div id="gcnG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-gcn"></div>
+</section>
+
+<section class="part" id="sage">
+  <div class="part-head"><h2>GraphSAGE 与图注意力网络</h2><span class="meta">原书 9.4.2–9.4.3 节 · 第 265–268 页</span></div>
+  <div class="sec-lede">
+    <p><strong>GraphSAGE</strong>（Graph Sample and Aggregation）的贡献不只是新的聚合方式，更是把<strong>邻居采样</strong>和<strong>归纳学习</strong>系统地纳入训练。归纳学习指训练后能推广到没见过的新节点甚至新图；转导学习只对训练时已在图里的节点做预测。每层每个节点只采样最多 S 个邻居，计算规模就不随全图邻居数增长，可以小批量训练。聚合函数有三种：<strong>平均</strong>、<strong>LSTM</strong>（LSTM 对顺序敏感，要随机打乱来近似集合输入）、<strong>汇聚</strong>（max σ(W<sub>pool</sub>h<sub>u</sub> + b)）；更新 h<sub>v</sub> = σ(W[h<sub>v</sub> ⊕ h<sub>𝒩S(v)</sub>])，常再做 ℓ2 归一化。</p>
+    <p><strong>GAT</strong>（图注意力网络）认为不同邻居的重要性不同，不该像 GCN 那样用只由度决定的固定权重。它在邻域内算注意力：e<sub>vu</sub> = LeakyReLU(aᵀ[Wh<sub>v</sub> ⊕ Wh<sub>u</sub>])，在 𝒩(v) ∪ {v} 上 softmax 得 α<sub>vu</sub>，再加权聚合 h′<sub>v</sub> = σ(Σ α<sub>vu</sub>Wh<sub>u</sub>)。常用多头：中间层拼接、输出层平均。注意 GAT 仍是<strong>局部</strong>的消息传递，不是 Transformer 那样全节点两两注意。<strong>GATv2</strong> 调换线性变换和非线性的顺序 e<sub>vu</sub> = aᵀLeakyReLU(W[h<sub>v</sub> ⊕ h<sub>u</sub>])，缓解原始 GAT 的“静态注意力”限制。</p>
+    <p class="go">先估一下邻域爆炸有多严重；再比较 GCN 和 GAT 给同一组邻居的权重（特征为示意）。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">邻域爆炸 vs 邻居采样</p>
+      <div id="neG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>平均度 d <output id="neD">30</output></span><input type="range" id="neDs" min="2" max="100" value="30"></label>
+        <label class="ctl"><span>层数 L <output id="neL">3</output></span><input type="range" id="neLs" min="1" max="5" value="3"></label>
+        <label class="ctl"><span>每层采样 S <output id="neS">10</output></span><input type="range" id="neSs" min="1" max="30" value="10"></label>
+      </div>
+      <div id="neB" class="wide"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">中心节点 v 对 5 个邻居的权重</p>
+      <label class="ctl"><span>邻居 u₃ 和 v 的特征相似度 <output id="gaS">0.2</output></span><input type="range" id="gaSs" min="-1" max="1" step="0.05" value="0.2"></label>
+      <div class="lab-split"><div><p class="lab-s">GCN：1/√(d̃_u d̃_v)，只看度</p><div id="gaA" class="wide"></div></div><div><p class="lab-s">GAT：按特征学出来的 α_vu</p><div id="gaB" class="wide"></div></div></div>
+      <p class="cap" id="gaW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-sage"></div>
+</section>
+
+<section class="part" id="gin">
+  <div class="part-head"><h2>GIN 与 WL 同构测试：聚合函数决定表达能力</h2><span class="meta">原书 9.4.4–9.4.5 节 · 第 268–271 页</span></div>
+  <div class="sec-lede">
+    <p>图级任务里，模型能不能<strong>区分不同的图结构</strong>是关键。两个图只是节点编号、画法不同而连接关系一致，叫<strong>同构</strong>（存在保持边关系的双射）。判断同构很难，常用 <strong>Weisfeiler-Lehman 测试</strong>（1-WL，也叫颜色细化）：所有节点初始同色；每一轮把“自身颜色 + 邻居颜色的<strong>多重集合</strong>”映射成新颜色。某一轮两图的颜色分布不同，就<strong>一定不同构</strong>；一直相同，也只能说没区分出来，<strong>不能断定同构</strong>。多重集合关心每个元素出现几次，能区分 {a, a, b} 和 {a, b}。</p>
+    <p><strong>GIN</strong>（图同构网络）的出发点是：如果聚合函数连 1-WL 能区分的邻域多重集合都区分不开，模型的结构表达能力就受限。它用<strong>求和聚合 + MLP</strong>：h<sub>v</sub>⁽ˡ⁾ = MLP((1 + ε)h<sub>v</sub>⁽ˡ⁻¹⁾ + Σ<sub>u∈𝒩(v)</sub> h<sub>u</sub>⁽ˡ⁻¹⁾)，判别能力可以与 1-WL 相当。平均和最大值会丢掉“有几个”的信息。原书的结论：<strong>聚合函数的设计不是实现细节，它直接决定模型能区分哪些结构</strong>。</p>
+    <p class="go">选一对图，一轮轮做颜色细化，看什么时候分出来（第三对是 1-WL 区分不了的例子）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">1-WL 颜色细化（原书图 9.6）</p>
+    <div class="seg" id="wlP"><button data-v="0" aria-pressed="true">房子形 vs 五边形 C₅</button><button data-v="1">原书图 9.6 的三轮</button><button data-v="2">六边形 C₆ vs 两个三角形</button></div>
+    <div id="wlS" style="margin-top:8px"></div>
+    <div class="wlrow" id="wlR"></div>
+    <p class="cap" id="wlW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">求和、平均、最大值：谁分得清邻居的多重集合</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>邻居特征多重集合</th><th>求和</th><th>平均</th><th>最大值</th></tr></thead>
+      <tbody>
+        <tr><td>{1, 1} vs {1}</td><td class="on">2 vs 1 ✓</td><td>1 vs 1 ✗</td><td>1 vs 1 ✗</td></tr>
+        <tr><td>{1, 1, 2, 2} vs {1, 2}</td><td>6 vs 3 ✓</td><td>1.5 vs 1.5 ✗</td><td>2 vs 2 ✗</td></tr>
+        <tr><td>{1, 2, 2} vs {1, 1, 2}</td><td>5 vs 4 ✓</td><td>1.67 vs 1.33 ✓</td><td>2 vs 2 ✗</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">标量特征示意。平均只看比例，最大值只看极值，都会把不同的多重集合映射到同一个值；求和（再配上足够强的 MLP）能保留“每种邻居有几个”。这就是 GIN 选择求和聚合的原因。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>模型</th><th>核心思想</th><th>聚合方式</th><th>训练特点</th><th>特点与局限</th></tr></thead>
+    <tbody>
+      <tr><td>GCN</td><td>对邻域归一化聚合</td><td>固定权重的平均聚合</td><td>常为全图训练</td><td>简洁、适合入门；依赖同质性，深了易过度平滑</td></tr>
+      <tr><td>GraphSAGE</td><td>邻居采样后再聚合</td><td>平均、LSTM、汇聚</td><td>小批量</td><td>适合大图与归纳式；采样带来近似误差</td></tr>
+      <tr><td>GAT</td><td>学习邻居重要性</td><td>邻域内注意力加权</td><td>常配多头</td><td>更灵活；开销高于 GCN</td></tr>
+      <tr><td>GIN</td><td>强化聚合的判别能力</td><td>求和</td><td>常用于图分类</td><td>理论表达能力强；不直接解决大图与长程依赖</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 9.1。</p>
+  <div class="notes" id="n-gin"></div>
+</section>
+
+<section class="part" id="prob">
+  <div class="part-head"><h2>共性问题：过度平滑、过压缩、可扩展性</h2><span class="meta">原书 9.5–9.6 节 · 第 271–274 页</span></div>
+  <div class="sec-lede">
+    <p><strong>过度平滑</strong>：一层消息传递相当于把邻居做一次局部平均或混合，多层堆叠就是反复平均，节点表示越来越像，最后整张图的节点都差不多、分不开。可以用 <strong>Dirichlet 能量</strong> E(H) = ½Σ A<sub>vu</sub>‖h<sub>v</sub> − h<sub>u</sub>‖² 测量（就是前面 xᵀLx 的向量版），层数越多它越趋近 0。缓解办法：残差连接保留初始或浅层特征、随机删边（DropEdge）、规范化与正则化（如控制每层的 Dirichlet 能量）。</p>
+    <p><strong>过压缩</strong>：大量远距离信息经过若干层后，被迫通过少数边、低维表示“挤”进某个节点，信息在通道里丢失。它和过度平滑<strong>不是一回事</strong>：一个是“表示越来越像”，一个是“信息理论上可达，但传播通道太窄”。在长距离依赖、树状扩张、瓶颈结构中尤其明显。缓解：加长程边或重连边、残差 / 跳连 / 全局注意力、更强的读出或记忆。</p>
+    <p><strong>可扩展性</strong>：邻域随层数爆炸、存储需求高、每步访问全图太慢。三条典型路线：<strong>邻居采样</strong>（GraphSAGE，以节点为中心采样）、<strong>子图采样</strong>（GraphSAINT，按节点 / 边 / 随机游走采子图）、<strong>图划分</strong>（Cluster-GCN，先聚类分块再在块上训练），在精度、采样偏差和效率之间权衡。</p>
+    <p class="go">在两社区图上用 GCN 传播（无参数、无激活，示意），看层数增加时节点值怎么趋同；红色是唯一的桥。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">过度平滑：反复做 D̃^{−1/2}ÃD̃^{−1/2} 传播</p>
+    <div class="lab-split">
+      <svg class="gsvg" id="osG" viewBox="0 0 360 260" role="img" aria-label="过度平滑"></svg>
+      <div>
+        <label class="ctl"><span>传播层数 <output id="osL">0</output></span><input type="range" id="osLs" min="0" max="40" value="0"></label>
+        <div class="selrow"><span>残差</span><div class="seg" id="osR"><button data-v="0" aria-pressed="true">无</button><button data-v="1">保留 30% 初始特征</button></div></div>
+        <div id="osC"></div>
+        <p class="cap" id="osW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>异质图 vs 异配性</b>：异质图是节点 / 边<strong>类型</strong>多样；异配性是相连节点的<strong>标签</strong>倾向不同。一个同质图也可以是异配的。</p>
+    <p><b>过度平滑 vs 过压缩</b>：表示趋同 vs 信息被挤压丢失。前者和层数关系密切，后者和图结构的瓶颈关系密切。</p>
+    <p><b>归纳 vs 转导</b>：能否推广到训练时没出现的节点或图。</p>
+    <p><b>GAT vs 图 Transformer</b>：GAT 只在邻域内注意；图 Transformer 走向全局注意力（原书列为扩展方向）。</p>
+    <p><b>1-WL 区分出 vs 没区分出</b>：分出来 ⇒ 一定不同构；没分出来 ⇏ 同构。</p>
+  </div>
+  <div class="notes" id="n-prob"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">L = D − A；(Lx)_i = Σ_j A_ij(x_i − x_j)；xᵀLx = ½ Σ A_ij(x_i − x_j)²；L_norm = I − D^{−1/2}AD^{−1/2}</div>
+    <div class="fx">H_ratio = 同类边数 / 总边数</div>
+    <div class="fx">消息传递：m_{u→v} = f(h_v, h_u, h_e)，m_v = AGG({m_{u→v}})，h_v = UPDATE(h_v, m_v)；读出 h_𝒢 = Σ h_v</div>
+    <div class="fx">谱图卷积 U g_θ(Λ) Uᵀ x；GCN：H⁽ˡ⁺¹⁾ = σ(D̃^{−1/2} Ã D̃^{−1/2} H⁽ˡ⁾ W⁽ˡ⁾)，Ã = A + I</div>
+    <div class="fx">GraphSAGE：h_v = σ(W[h_v ⊕ AGG(h_u, u ∈ 𝒩_S(v))])</div>
+    <div class="fx">GAT：e_vu = LeakyReLU(aᵀ[Wh_v ⊕ Wh_u])，α = softmax，h′_v = σ(Σ α_vu W h_u)</div>
+    <div class="fx">GIN：h_v = MLP((1 + ε) h_v + Σ_{u∈𝒩(v)} h_u)；WL：c_v = HASH(c_v, {{c_u}})</div>
+    <div class="fx">Dirichlet 能量 E(H) = ½ Σ A_vu ‖h_v − h_u‖²</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-8/"><small>上一篇</small><span>08 · 注意力机制与 Transformer</span></a><a class="nx" href="../2026-10-18-nndl-10/"><small>下一篇</small><span>10 · 无监督学习</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 通用：画图 ---------- */
+function drawGraph(svg, nodes, edges, opt) {
+  opt = opt || {};
+  svg.innerHTML = '';
+  edges.forEach(function (e) { S.svg('line', { x1: nodes[e[0]][0], y1: nodes[e[0]][1], x2: nodes[e[1]][0], y2: nodes[e[1]][1], class: opt.hiEdge && opt.hiEdge(e) ? 'hi' : '' }, svg); });
+  nodes.forEach(function (p, i) {
+    var c = S.svg('circle', { cx: p[0], cy: p[1], r: opt.r || 17, fill: opt.fill ? opt.fill(i) : 'var(--panel)', style: opt.click ? 'cursor:pointer' : '' }, svg);
+    if (opt.stroke) c.setAttribute('stroke', opt.stroke(i));
+    if (opt.click) c.addEventListener('click', function () { opt.click(i); });
+    S.svg('text', { x: p[0], y: p[1] + 5, 'text-anchor': 'middle', text: opt.label ? opt.label(i) : 'v' + (i + 1) }, svg);
+    if (opt.sub) S.svg('text', { x: p[0], y: p[1] + 34, 'text-anchor': 'middle', text: opt.sub(i), class: 'v' }, svg);
+  });
+}
+function mix(v, lo, hi) { var a = S.clamp((v - lo) / (hi - lo), 0, 1); return a >= 0.5 ? 'color-mix(in srgb, var(--s2) ' + Math.round((a - 0.5) * 2 * 80) + '%, var(--panel))' : 'color-mix(in srgb, var(--s1) ' + Math.round((0.5 - a) * 2 * 80) + '%, var(--panel))'; }
+
+/* ---------- 图 9.1a ---------- */
+var G1N = [[160, 40], [270, 110], [230, 230], [90, 230], [50, 110]];
+var G1E = [[0, 1], [0, 3], [0, 4], [1, 2], [2, 3], [2, 4], [3, 4]];
+var G1A = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
+G1E.forEach(function (e) { G1A[e[0]][e[1]] = 1; G1A[e[1]][e[0]] = 1; });
+var G1Dg = G1A.map(function (r) { return r.reduce(function (a, b) { return a + b; }, 0); });
+var g1X = [1, 0.8, 0.2, 0.3, 0.6], g1Cls = [0, 0, 1, 1, 0], g1Mode = 'A';
+(function () {
+  var box = $('#g1X');
+  for (var i = 0; i < 5; i++) {
+    var lb = h('label', { class: 'ctl' }, box);
+    lb.innerHTML = '<span>x' + (i + 1) + ' <output id="g1x' + i + '">0</output></span><input type="range" min="-1" max="1" step="0.05" value="' + g1X[i] + '" id="g1xs' + i + '">';
+    (function (k) { $('#g1xs' + k).addEventListener('input', function () { g1X[k] = +this.value; g1(); }); })(i);
+  }
+})();
+function setX(v) { g1X = v.slice(); v.forEach(function (x, i) { $('#g1xs' + i).value = x; }); g1(); }
+$('#g1Sm').addEventListener('click', function () { setX([0.6, 0.4, 0.5, 0.55, 0.6]); });
+$('#g1Ro').addEventListener('click', function () { setX([1, -1, 1, -1, 0.9]); });
+$('#g1Ct').addEventListener('click', function () { setX([0.5, 0.5, 0.5, 0.5, 0.5]); });
+function g1() {
+  g1X.forEach(function (x, i) { $('#g1x' + i).textContent = S.f(x, 2); });
+  var Lx = G1A.map(function (r, i) { return G1Dg[i] * g1X[i] - r.reduce(function (s, a, j) { return s + a * g1X[j]; }, 0); });
+  var q = 0; G1E.forEach(function (e) { q += Math.pow(g1X[e[0]] - g1X[e[1]], 2); });
+  drawGraph($('#g1G'), G1N, G1E, { fill: function (i) { return mix(g1X[i], -1, 1); }, stroke: function (i) { return g1Cls[i] ? 'var(--s3)' : 'var(--ink-2)'; }, click: function (i) { g1Cls[i] = 1 - g1Cls[i]; g1(); }, sub: function (i) { return '(Lx)=' + S.f(Lx[i], 2); }, label: function (i) { return 'v' + (i + 1) + (g1Cls[i] ? '★' : ''); } });
+  var M = g1Mode === 'A' ? G1A : g1Mode === 'D' ? G1A.map(function (r, i) { return r.map(function (_, j) { return i === j ? G1Dg[i] : 0; }); }) : G1A.map(function (r, i) { return r.map(function (a, j) { return i === j ? G1Dg[i] : -a; }); });
+  if (g1Mode === 'list') $('#g1T').innerHTML = '<table class="calc">' + G1A.map(function (r, i) { return '<tr><td>v' + (i + 1) + '</td><td>' + r.map(function (a, j) { return a ? 'v' + (j + 1) : null; }).filter(Boolean).join('、') + '</td></tr>'; }).join('') + '</table><p class="cap">边列表：' + G1E.map(function (e) { return '(v' + (e[0] + 1) + ', v' + (e[1] + 1) + ')'; }).join(' ') + '</p>';
+  else S.grid($('#g1T'), M, { rl: ['v1', 'v2', 'v3', 'v4', 'v5'], cl: ['v1', 'v2', 'v3', 'v4', 'v5'], fmt: function (v) { return S.f(v, 0); }, cls: function (i, j, v) { return v === 0 ? 'dimc' : v < 0 ? 'neg' : ''; } });
+  var same = G1E.filter(function (e) { return g1Cls[e[0]] === g1Cls[e[1]]; }).length;
+  $('#g1Q').textContent = S.f(q, 3); $('#g1H').textContent = same + '/' + G1E.length + ' = ' + S.f(same / G1E.length, 2);
+  $('#g1W').innerHTML = '每个节点下方是 (Lx)<sub>i</sub> = 度 × 自己 − 邻居之和，例如 (Lx)₁ = 3x₁ − x₂ − x₄ − x₅（原书式 9.6）。常数信号时 Lx 全为 0、xᵀLx = 0，最平滑。★ 表示另一类节点，点节点可切换类别。';
+}
+S.seg($('#g1M'), function (v) { g1Mode = v; g1(); }); g1();
+S.notes($('#n-graph'), {
+  c: [
+    ['同质图 / 异质图', '一类节点和边 / 多类节点和边。'],
+    ['邻接矩阵 / 邻接表 / 边列表', '方阵 / 每个节点的邻居列表 / 所有边的集合。'],
+    ['度', '与节点相连的边数；有向图分入度、出度。'],
+    ['同质性 / 异配性', '相似节点倾向相连 / 不同标签节点倾向相连。'],
+    ['图信号', '每个节点上附着的一个数值或向量。']
+  ],
+  p: [
+    ['拉普拉斯', 'L = D − A'],
+    ['局部差异', '(Lx)_i = Σ_j A_ij (x_i − x_j)'],
+    ['平滑度', 'xᵀLx = ½ Σ A_ij (x_i − x_j)²'],
+    ['归一化', 'L_norm = I − D^{−1/2} A D^{−1/2}']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 任务分类 ---------- */
+S.sortGame($('#tkG'), {
+  bins: [{ k: 'n', t: '节点级' }, { k: 'e', t: '边级' }, { k: 'g', t: '图级' }],
+  items: [
+    { t: '预测论文属于哪个研究方向', k: 'n', why: '节点分类。' },
+    { t: '预测两篇论文将来是否互相引用', k: 'e', why: '链接预测。' },
+    { t: '判断一个分子是否有某种活性', k: 'g', why: '图分类。' },
+    { t: '预测道路节点的交通流量', k: 'n', why: '节点回归。' },
+    { t: '区分正常交易和异常交易', k: 'e', why: '边分类。' },
+    { t: '预测分子的溶解度', k: 'g', why: '图回归。' },
+    { t: '推荐：用户会不会点这个物品', k: 'e', why: '用户—物品二部图上的链接预测。' },
+    { t: '生成满足条件的新分子', k: 'g', why: '图生成。' }
+  ]
+});
+S.notes($('#n-task'), {
+  c: [
+    ['读出', '把节点表示变成任务输出：取节点、组合节点对、全局汇聚。'],
+    ['链接预测打分', 's(u,v) = h_uᵀh_v 或 MLP(h_u ⊕ h_v)。'],
+    ['传导式 vs 归纳式', '可见全图只遮标签 vs 要泛化到未见节点 / 图。']
+  ],
+  p: [
+    ['节点任务划分', '按节点划分；验证、测试标签保留到对应阶段。'],
+    ['链接预测划分', '验证、测试正例边要从训练图删除或遮蔽；负例规则一致；有时间就按时间分。'],
+    ['图级任务划分', '以整图为单位；防近重复、同源结构泄漏。'],
+    ['指标', '节点分类看准确率 / 宏微 F1；链接预测看 AUC、AP、Hits@K、MRR。']
+  ]
+});
+
+/* ---------- 消息传递感受野 ---------- */
+var G2N = [[50, 70], [110, 40], [150, 100], [90, 150], [40, 200], [120, 220], [240, 60], [300, 40], [330, 110], [280, 160], [230, 210], [310, 220]];
+var G2E = [[0, 1], [0, 3], [1, 2], [2, 3], [3, 4], [3, 5], [4, 5], [1, 3], [2, 6], [6, 7], [6, 9], [7, 8], [8, 9], [9, 10], [9, 11], [10, 11], [7, 9]];
+var G2Adj = G2N.map(function () { return []; }); G2E.forEach(function (e) { G2Adj[e[0]].push(e[1]); G2Adj[e[1]].push(e[0]); });
+var mpC = 4;
+function hops(c) { var d = G2N.map(function () { return Infinity; }); d[c] = 0; var q = [c]; while (q.length) { var u = q.shift(); G2Adj[u].forEach(function (v) { if (d[v] === Infinity) { d[v] = d[u] + 1; q.push(v); } }); } return d; }
+function mp() {
+  var L = +$('#mpLs').value; $('#mpL').textContent = L;
+  var d = hops(mpC), n = d.filter(function (x) { return x <= L; }).length;
+  drawGraph($('#mpG'), G2N, G2E, { r: 15, fill: function (i) { return d[i] <= L ? 'color-mix(in srgb, var(--s1) ' + Math.round(70 - 12 * d[i]) + '%, var(--panel))' : 'var(--panel)'; }, label: function (i) { return d[i] <= L ? String(d[i]) : ''; }, hiEdge: function (e) { return (e[0] === 2 && e[1] === 6); }, click: function (i) { mpC = i; mp(); } });
+  $('#mpN').textContent = n + ' / ' + G2N.length;
+  $('#mpW').innerHTML = '节点上的数字是到中心的跳数。L 层 GNN 里中心节点的表示只受这些节点影响。从一个社区出发，至少要 ' + Math.max.apply(null, d) + ' 层才能覆盖全图，而另一个社区的所有信息都要挤过那一条桥（红边）——这就是后面“过压缩”的伏笔。';
+}
+$('#mpLs').addEventListener('input', mp); mp();
+S.notes($('#n-mp'), {
+  c: [
+    ['消息传递', '局部信息传递、邻域聚合、表示更新，反复进行。'],
+    ['排列不变', '邻居是集合，聚合结果不能依赖枚举顺序。'],
+    ['感受野', 'L 层最多覆盖 L 跳邻域。'],
+    ['全局汇聚', '图级任务的读出：把所有节点表示汇总成整图表示。']
+  ],
+  p: [
+    ['消息', 'm_{u→v} = f(h_v, h_u, h_{e_uv})'],
+    ['聚合', 'm_v = AGGREGATE({m_{u→v} : u ∈ 𝒩(v)})（求和 / 平均 / 最大）'],
+    ['更新', 'h_v = UPDATE(h_v, m_v)，如 ReLU(W[h_v ⊕ m_v])'],
+    ['读出', 'h_𝒢 = Σ_v h_v⁽ᴸ⁾']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 图傅里叶基 ---------- */
+function jacobi(A) {
+  var n = A.length, a = A.map(function (r) { return r.slice(); }), V = A.map(function (r, i) { return r.map(function (_, j) { return i === j ? 1 : 0; }); });
+  for (var sweep = 0; sweep < 100; sweep++) {
+    var off = 0; for (var i = 0; i < n; i++) for (var j = i + 1; j < n; j++) off += a[i][j] * a[i][j];
+    if (off < 1e-20) break;
+    for (var p = 0; p < n; p++) for (var q = p + 1; q < n; q++) {
+      if (Math.abs(a[p][q]) < 1e-15) continue;
+      var th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = (th >= 0 ? 1 : -1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (var k = 0; k < n; k++) { var akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+      for (var k2 = 0; k2 < n; k2++) { var apk = a[p][k2], aqk = a[q][k2]; a[p][k2] = c * apk - s * aqk; a[q][k2] = s * apk + c * aqk; }
+      for (var k3 = 0; k3 < n; k3++) { var vkp = V[k3][p], vkq = V[k3][q]; V[k3][p] = c * vkp - s * vkq; V[k3][q] = s * vkp + c * vkq; }
+    }
+  }
+  var ev = a.map(function (r, i) { return r[i]; }), idx = ev.map(function (_, i) { return i; }).sort(function (x, y) { return ev[x] - ev[y]; });
+  return idx.map(function (i) { return { l: ev[i], u: V.map(function (r) { return r[i]; }) }; });
+}
+var LN = G1A.map(function (r, i) { return r.map(function (a, j) { return (i === j ? 1 : 0) - a / Math.sqrt(G1Dg[i] * G1Dg[j]); }); });
+var EIG = jacobi(LN);
+function ft() {
+  var k = +$('#ftKs').value - 1, e = EIG[k], mx = Math.max.apply(null, e.u.map(Math.abs));
+  $('#ftK').textContent = k + 1;
+  drawGraph($('#ftG'), G1N, G1E, { fill: function (i) { return mix(e.u[i] / mx, -1, 1); }, sub: function (i) { return S.f(e.u[i], 2); } });
+  var q = 0; G1E.forEach(function (ed) { q += Math.pow(e.u[ed[0]] / Math.sqrt(G1Dg[ed[0]]) - e.u[ed[1]] / Math.sqrt(G1Dg[ed[1]]), 2); });
+  $('#ftW').innerHTML = '特征值 λ<sub>' + (k + 1) + '</sub> = <b>' + S.f(Math.abs(e.l) < 1e-9 ? 0 : e.l, 3) + '</b>。' + (k === 0 ? '最小的特征值为 0，对应的特征向量（按 √度 缩放后）是常数——“直流分量”，最平滑。' : k === 4 ? '最大的特征值对应最剧烈的振荡：相邻节点颜色尽量相反，是这张图上的“最高频”。' : '特征值越大，相邻节点的取值差异越大，频率越高。') + ' 任何图信号都可以分解成这 5 个基的组合，x̂ = Uᵀx 就是各个频率的系数。';
+}
+$('#ftKs').addEventListener('input', ft); ft();
+var dvItems = S.$$('#dvL li');
+S.stepper($('#dvS'), dvItems.length, function (i) { dvItems.forEach(function (li, k) { li.classList.toggle('hide', k > i); li.classList.toggle('on', k === i); }); });
+S.guess($('#gcnG'), { q: '原书习题 9-9：链图 u − v − w，初始特征 1、2、0，W = 1，忽略激活。一层 GCN 后 h_v 是多少？', ans: 1 / Math.sqrt(6) + 2 / 3, fmt: function (x) { return S.f(x, 4); }, why: '加自环后度为 d̃_u = 2、d̃_v = 3、d̃_w = 2。h_v = 1/√(3·2)·1 + 1/√(3·3)·2 + 1/√(3·2)·0 = 1/√6 + 2/3 ≈ 1.0749。它不是简单平均（简单平均是 1），自身和邻居都被纳入、并按度做了对称归一化。' });
+S.notes($('#n-gcn'), {
+  c: [
+    ['卷积定理', '时域卷积 = 频域逐点乘法。'],
+    ['图傅里叶变换', 'x̂ = Uᵀx，U 是拉普拉斯的特征向量，特征值是“频率”。'],
+    ['谱图卷积', 'U g_θ(Λ) Uᵀ x：变到图频域、滤波、变回。'],
+    ['ChebNet', 'Chebyshev 多项式近似滤波器，免特征分解，K 跳局部。'],
+    ['重规范化技巧', '加自环 Ã = A + I，用 D̃^{−1/2}ÃD̃^{−1/2}。']
+  ],
+  p: [
+    ['GCN 层', 'H⁽ˡ⁺¹⁾ = σ(D̃^{−1/2} Ã D̃^{−1/2} H⁽ˡ⁾ W⁽ˡ⁾)'],
+    ['节点形式', 'h_v = σ(Σ_{u∈𝒩(v)∪{v}} W h_u / √(d̃_u d̃_v))'],
+    ['多项式即局部', 'L^k x 只依赖 k 跳以内'],
+    ['三步', '保留自身（自环）、归一化聚合、共享变换。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 邻域爆炸与 GAT ---------- */
+function ne() {
+  var d = +$('#neDs').value, L = +$('#neLs').value, Sm = Math.min(+$('#neSs').value, d);
+  $('#neD').textContent = d; $('#neL').textContent = L; $('#neS').textContent = +$('#neSs').value;
+  var full = 0, samp = 0; for (var l = 0; l <= L; l++) { full += Math.pow(d, l); samp += Math.pow(Sm, l); }
+  S.magbars($('#neB'), [{ label: '全邻域', v: full, text: S.big(full), cls: 'alt' }, { label: '每层采样 ' + Sm + ' 个', v: samp, text: S.big(samp), cls: 'ok' }], { log: true });
+}
+['neDs', 'neLs', 'neSs'].forEach(function (id) { $('#' + id).addEventListener('input', ne); }); ne();
+S.guess($('#neG'), { q: '平均度 30 的图上，一个目标节点的 3 层 GNN 计算树最多要涉及多少个节点？（1 + d + d² + d³）', unit: '个', ans: 1 + 30 + 900 + 27000, fmt: function (x) { return Math.round(x).toLocaleString(); }, why: '1 + 30 + 900 + 27 000 = 27 931——一个节点就要碰近 3 万个节点，一个小批量里几百个目标节点就是全图。每层只采样 10 个邻居时是 1 + 10 + 100 + 1000 = 1111。这就是 GraphSAGE 采样的意义，代价是近似误差。' });
+var GA_D = [2, 6, 3, 9, 2], GA_DV = 5;
+function ga() {
+  var s3 = +$('#gaSs').value; $('#gaS').textContent = S.f(s3, 2);
+  var sims = [0.9, -0.3, s3, 0.1, 0.6], self = 1;
+  var gcn = GA_D.map(function (d) { return 1 / Math.sqrt((d + 1) * (GA_DV + 1)); }).concat([1 / (GA_DV + 1)]);
+  var gs = gcn.reduce(function (a, b) { return a + b; }, 0);
+  var e = sims.concat([self]).map(function (v) { var z = 2.5 * v; return z > 0 ? z : 0.2 * z; });
+  var al = S.softmax(e);
+  var names = ['u₁（度 2）', 'u₂（度 6）', 'u₃（度 3）', 'u₄（度 9）', 'u₅（度 2）', 'v 自己'];
+  S.bars($('#gaA'), gcn.map(function (w, i) { return { label: names[i], value: w / gs, text: S.f(w / gs, 2), cls: 'dim' }; }));
+  S.bars($('#gaB'), al.map(function (w, i) { return { label: names[i], value: w, text: S.f(w, 2), cls: i === 2 ? 'alt' : '' }; }));
+  $('#gaW').innerHTML = 'GCN 的权重只由度决定（度大的邻居权重小），和特征无关，拖动滑块它纹丝不动；GAT 的权重随 u₃ 与 v 的特征相似度变化（这里用相似度 × 2.5 过 LeakyReLU 模拟 aᵀ[Wh_v ⊕ Wh_u]）。为便于比较，左边按总和归一化显示。';
+}
+$('#gaSs').addEventListener('input', ga); ga();
+S.notes($('#n-sage'), {
+  c: [
+    ['归纳学习', '训练后能推广到没见过的新节点或新图。'],
+    ['邻居采样', '每层每个节点最多采 S 个邻居，控制计算规模。'],
+    ['GraphSAGE 聚合', '平均、LSTM（需打乱顺序）、汇聚（max σ(W h + b)）。'],
+    ['GAT', '邻域内注意力加权聚合，仍是局部消息传递。'],
+    ['GATv2', '先非线性再点 a，缓解静态注意力。']
+  ],
+  p: [
+    ['GraphSAGE 更新', 'h_v = σ(W[h_v ⊕ h_{𝒩S(v)}])，再 ℓ2 归一化'],
+    ['GAT 打分', 'e_vu = LeakyReLU(aᵀ[Wh_v ⊕ Wh_u])'],
+    ['GAT 聚合', 'α_vu = softmax_{𝒩(v)∪{v}}(e_vu)，h′_v = σ(Σ α_vu W h_u)'],
+    ['多头', '中间层拼接，输出层平均']
+  ],
+  ph: '公式'
+});
+
+/* ---------- WL 测试 ---------- */
+var WLG = {
+  house: { n: [[80, 20], [30, 70], [130, 70], [30, 140], [130, 140]], e: [[0, 1], [0, 2], [1, 2], [1, 3], [2, 4], [3, 4]], name: '房子形' },
+  c5: { n: [[80, 20], [140, 65], [115, 140], [45, 140], [20, 65]], e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]], name: '五边形 C₅' },
+  c6: { n: [[80, 15], [135, 45], [135, 115], [80, 145], [25, 115], [25, 45]], e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]], name: '六边形 C₆' },
+  tt: { n: [[40, 20], [10, 80], [70, 80], [110, 70], [80, 140], [140, 140]], e: [[0, 1], [1, 2], [2, 0], [3, 4], [4, 5], [5, 3]], name: '两个三角形' }
+};
+var WLP = [['house', 'c5'], ['house'], ['c6', 'tt']], wlPair = 0;
+var WLC = ['var(--dim-soft)', 'var(--s3-soft)', 'var(--ok-soft)', 'var(--s2-soft)', 'var(--s1-soft)', 'var(--alert-soft)'];
+var WLC2 = ['var(--dim)', 'var(--s3)', 'var(--ok)', 'var(--s2)', 'var(--s1)', 'var(--alert)'];
+function wlRun(keys, T) {
+  var gs = keys.map(function (k) { var g = WLG[k], adj = g.n.map(function () { return []; }); g.e.forEach(function (e) { adj[e[0]].push(e[1]); adj[e[1]].push(e[0]); }); return { g: g, adj: adj, c: g.n.map(function () { return 0; }) }; });
+  var hist = [gs.map(function (x) { return x.c.slice(); })];
+  for (var t = 1; t <= T; t++) {
+    var dict = {}, next = 0;
+    var sigs = gs.map(function (x) { return x.c.map(function (c, v) { return c + '|' + x.adj[v].map(function (u) { return x.c[u]; }).sort().join(','); }); });
+    sigs.forEach(function (sg) { sg.forEach(function (s) { if (!(s in dict)) dict[s] = next++; }); });
+    gs.forEach(function (x, i) { x.c = sigs[i].map(function (s) { return dict[s]; }); });
+    hist.push(gs.map(function (x) { return x.c.slice(); }));
+  }
+  return { gs: gs, hist: hist };
+}
+function histOf(c) { var h = {}; c.forEach(function (x) { h[x] = (h[x] || 0) + 1; }); return h; }
+var wlGo;
+function wlDraw(t) {
+  var keys = WLP[wlPair], R = wlRun(keys, 3), box = $('#wlR'); box.innerHTML = '';
+  var cs = R.hist[t];
+  keys.forEach(function (k, gi) {
+    var fig = h('figure', null, box), svg = S.svg('svg', { viewBox: '0 0 170 170', class: 'gsvg', style: 'max-width:200px' }, fig);
+    drawGraph(svg, WLG[k].n, WLG[k].e, { r: 14, fill: function (i) { return WLC[cs[gi][i] % WLC.length]; }, label: function (i) { return String(cs[gi][i]); } });
+    var hs = histOf(cs[gi]), hb = h('div', { class: 'hist' }, fig);
+    Object.keys(hs).sort().forEach(function (c) { h('span', { style: 'height:' + hs[c] * 9 + 'px;background:' + WLC2[c % WLC2.length], title: '颜色 ' + c + '：' + hs[c] + ' 个' }, hb); });
+    h('figcaption', { text: WLG[k].name + '：' + Object.keys(hs).sort().map(function (c) { return '色' + c + '×' + hs[c]; }).join('，') }, fig);
+  });
+  var same = keys.length === 2 && JSON.stringify(histOf(cs[0])) === JSON.stringify(histOf(cs[1]));
+  var msg = '第 ' + t + ' 轮。';
+  if (wlPair === 0) msg += t === 0 ? '初始所有节点同色，两图的颜色分布一样。' : same ? '颜色分布仍相同。' : '<b>颜色分布已经不同</b>：房子形有两个度为 3 的节点被分出新颜色，C₅ 的五个节点仍完全等价——<b>一定不同构</b>。';
+  else if (wlPair === 1) msg += t === 0 ? '初始全部同色。' : t === 1 ? '两个度为 3 的节点（左上、右上）得到新颜色，其余三个度为 2 的节点一类。' : '顶部节点连着两个“度 3”节点，底部两个各连一个“度 3”一个“度 2”，于是顶部被再细分出来——更远一层的结构差异被编码进了颜色。';
+  else msg += same ? (t === 0 ? '初始全部同色。' : '每个节点度都是 2、邻居颜色也都一样，<b>每一轮颜色分布都相同</b>。但一个是连通的六边形，一个是两个分开的三角形，显然不同构——这正是 1-WL 区分不了的例子，求和聚合的 GNN 也一样分不开。') : '';
+  $('#wlW').innerHTML = msg;
+}
+wlGo = S.stepper($('#wlS'), 4, wlDraw, ['t = 0', 't = 1', 't = 2', 't = 3']);
+S.seg($('#wlP'), function (v) { wlPair = +v; wlGo(0); });
+S.notes($('#n-gin'), {
+  c: [
+    ['图同构', '存在保持边关系的节点双射，只是编号或画法不同。'],
+    ['1-WL 测试（颜色细化）', '反复用“自身颜色 + 邻居颜色多重集合”生成新颜色。'],
+    ['多重集合', '关心元素出现几次：{a, a, b} ≠ {a, b}。'],
+    ['GIN', '求和聚合 + MLP，判别能力可与 1-WL 相当。']
+  ],
+  p: [
+    ['WL 更新', 'c_v = HASH(c_v, {{c_u : u ∈ 𝒩(v)}})'],
+    ['WL 的结论', '分布不同 ⇒ 一定不同构；相同 ⇏ 同构'],
+    ['GIN 更新', 'h_v = MLP((1 + ε) h_v + Σ_{u∈𝒩(v)} h_u)'],
+    ['为何求和', '平均只看比例、最大只看极值，都会丢“有几个”。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 过度平滑 ---------- */
+var OS0 = G2N.map(function (_, i) { return i < 6 ? 1 : -1; }); OS0[2] = 0.3; OS0[9] = -0.4;
+var osRes = 0;
+var osChart = S.chart($('#osC'), { h: 180, x: [0, 40], y: [0, 1], xt: [0, 10, 20, 30, 40], yt: [0, 0.5, 1], xl: '层数', yl: 'Dirichlet 能量（相对）' });
+function propagate(x) {
+  var At = G2Adj.map(function (nb, i) { return nb.concat([i]); }), dt = At.map(function (nb) { return nb.length; });
+  return x.map(function (_, i) { return At[i].reduce(function (s, j) { return s + x[j] / Math.sqrt(dt[i] * dt[j]); }, 0); });
+}
+function energy(x) { var e = 0; G2E.forEach(function (ed) { e += Math.pow(x[ed[0]] - x[ed[1]], 2); }); return e; }
+function osd() {
+  var L = +$('#osLs').value; $('#osL').textContent = L;
+  var x = OS0.slice(), E0 = energy(x), pts = [[0, 1]], cur = x;
+  for (var l = 1; l <= 40; l++) { var p = propagate(x); x = osRes ? p.map(function (v, i) { return 0.7 * v + 0.3 * OS0[i]; }) : p; var mx = Math.max.apply(null, x.map(Math.abs)) || 1; var xn = x.map(function (v) { return v / mx; }); pts.push([l, energy(xn) / E0]); if (l === L) cur = xn; }
+  if (L === 0) cur = OS0;
+  drawGraph($('#osG'), G2N, G2E, { r: 15, fill: function (i) { return mix(cur[i], -1, 1); }, label: function (i) { return S.f(cur[i], 1); }, hiEdge: function (e) { return e[0] === 2 && e[1] === 6; } });
+  osChart({ curves: [{ pts: pts, c: 'c2' }], vl: [{ x: L, c: 'dim' }] });
+  $('#osW').innerHTML = '左社区初值约 +1、右社区约 −1（每层传播后按最大绝对值缩放，只看相对差异）。' + (osRes ? '保留 30% 初始特征后，能量稳定在一个正值，两个社区一直分得开——这就是残差缓解过度平滑的思路。' : L < 3 ? '前几层先抹平社区内部的差异，这是有益的平滑。' : L < 15 ? '再往后，桥两端的差异也开始被抹平。' : '层数很深时 Dirichlet 能量趋近 0：两个社区的节点几乎同色，<b>过度平滑</b>，节点分类就做不下去了。');
+}
+$('#osLs').addEventListener('input', osd);
+S.seg($('#osR'), function (v) { osRes = +v; osd(); }); osd();
+S.notes($('#n-prob'), {
+  c: [
+    ['过度平滑', '层数增加后节点表示趋同、难以区分。'],
+    ['Dirichlet 能量', 'E(H) = ½Σ A_vu‖h_v − h_u‖²，越小越平滑。'],
+    ['过压缩', '远距离信息被挤过少数边 / 低维表示而丢失。'],
+    ['可扩展性', '邻域爆炸、存储大、访问全图太慢。']
+  ],
+  p: [
+    ['缓解过度平滑', '残差保留初始 / 浅层特征；DropEdge；规范化与能量约束。'],
+    ['缓解过压缩', '加长程边 / 重连；残差、跳连、全局注意力；更强读出。'],
+    ['大图三路线', '邻居采样（GraphSAGE）、子图采样（GraphSAINT）、图划分（Cluster-GCN）。'],
+    ['扩展方向', '图 Transformer、图自监督、图生成、时空图、异质图。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 拉普拉斯', 'L = D − A，(Lx)_i 是节点与邻居的差，xᵀLx 衡量图信号的平滑程度。它的特征向量是图上的频率基，谱图卷积 U g_θ(Λ) Uᵀ x 就建立在这上面；GCN 是它的一阶局部近似。'],
+    ['② 消息传递与四个模型', '构造消息 → 排列不变的聚合 → 更新；图级再读出。GCN：固定的度归一化平均；GraphSAGE：先采样邻居再聚合（可扩展、可归纳）；GAT：注意力学出邻居权重；GIN：求和 + MLP，表达能力对齐 1-WL。'],
+    ['③ 不能无限加深', '每层是一次局部平均，层数多了节点表示趋同（过度平滑，Dirichlet 能量 → 0）；远处的信息要挤过窄通道（过压缩，与图的瓶颈结构有关）；邻域还会随层数指数爆炸。']
+  ],
+  p: [
+    ['原书一句话', '无论模型名称怎么变，消息传递始终是理解图神经网络的主线。'],
+    ['下一篇', '没有标签时怎么学：无监督学习与自监督学习。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>训练系统：从期限倒推卡数、分片、调度与恢复</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（十）：临界 batch size 与弱强扩展、每参数 16 字节与 ZeRO 四档、重计算与卸载的转换位置、1F1B 与零气泡的时间显存两根轴、容量因子与补零、checkpoint 最优间隔、掉队者、RL 三阶段配比与权重同步，以及 32 卡 vs 48 卡的完成时间。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .l1 { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.rsvg .l2 { stroke: var(--s2); stroke-width: 2; fill: none; stroke-dasharray: 5 3; }
+.rsvg .l3 { stroke: var(--dim); stroke-width: 2; fill: none; stroke-dasharray: 2 3; }
+.rsvg .dot { fill: var(--ok); }
+.stack { display: flex; height: 26px; border-radius: 5px; overflow: hidden; margin: 8px 0; border: 1px solid var(--hair); }
+.stack span { font-size: 11px; line-height: 26px; text-align: center; color: #fff; overflow: hidden; white-space: nowrap; }
+.s-w { background: var(--s1); } .s-g { background: var(--s3); } .s-m { background: var(--s2); } .s-o { background: var(--dim); } .s-a { background: var(--ok); }
+</style>
+</head>
+<body data-series="infra-series" data-part="10">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 10</span><span>对应原书第 10 章</span><span>约 40 分钟</span></p>
+  <h1>30 天练完 100B token，<em>要几张卡</em></h1>
+  <p class="lead">原书第 10 章从一个期限开始倒推：100B token、8192 序列、全参数训练、30 天交付。预留 5 天后每步只剩 67.9 秒；两张 80 GB 卡装得下 131 GB 状态却要 77 天；32 卡在加通信前就超时，48 卡刚好 24.6 天。这一章就是把容量、每步耗时、停顿和恢复一项项填进这个预算表。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" aria-current="page" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#budget">时间预算</a><a href="#state">状态容量</a><a href="#shard">分片与卸载</a><a href="#sched">流水调度</a><a href="#moe">MoE 与长序列</a><a href="#ckpt">checkpoint</a><a href="#strag">掉队者</a><a href="#rl">RL</a><a href="#plan">两套方案</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>给定期限和数据量，怎么倒推出至少要几张卡？卡数翻倍能不能让它快一倍？</li>
+  <li>一个 8B 模型全参数训练要多少显存？分片、重计算、卸载各省什么、各付什么？</li>
+  <li>checkpoint 多久存一次最划算？掉队者和故障要多留多少余量？</li>
+</ol></div>
+
+<section class="part" id="budget">
+  <div class="part-head"><h2>时间预算：每步只有 67.9 秒</h2><span class="meta">原书 10.1.1、10.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>任务：100B 有效 token、8192 序列、全参数训练、混合精度 Adam，每步 384 条序列（3,145,728 token）。<strong>31,790 次迭代</strong>；30 天里预留 5 天给启动、评估和计划停顿，剩 25 天 → <strong>每步 67.9 秒</strong>（平均有效吞吐要求从 38,600 升到 46,300 token/s）。</p>
+    <p>为什么是 384 条？因为<strong>临界 batch size</strong>：B 大到一定程度后，再加样本只能略微减少步数，每步计算量却成比例涨。梯度噪声尺度 <strong>B<sub>noise</sub> = tr(HΣ)/(G<sup>T</sup>HG)</strong>，经验关系 (S/S<sub>min</sub> − 1)(E/E<sub>min</sub> − 1) = 1。本例取二百万 token（文献在已训练的最大模型上测得收敛时一到二百万），反推 S<sub>min</sub> ≈ 19,434 步、E<sub>min</sub> ≈ 38.9B token——<strong>当前 batch 已是 B<sub>noise</sub> 的 1.57 倍，弱扩展的加速上限只有 31,790/19,434 ≈ 1.64 倍</strong>：1536 卡把 batch 放大 32 倍，完成时间也只从 19.4 天降到 12.1 天。</p>
+    <p>卡数下界：<strong>p ≥ ⌈F/(Pη·T)⌉</strong>。一条 8192 序列前反向约 4.31×10<sup>14</sup> FLOPs（每 token 52.7 GFLOPs），100B token 共 5.27×10<sup>21</sup>。H100 按 989 TFLOP/s × 40% 约 7,500 token/s，<strong>五张卡 37,600 不够，至少六张</strong>；而两张 80 GB 卡虽然装得下 131.1 GB 状态，却要 77 天。4090（165.2 TFLOP/s）按 40%、30 天至少 31 张，所以取 32 卡和 48 卡两套方案（每卡分别累积 12 和 8 个 micro-batch）。</p>
+    <p>原书还交代了另外六成峰值算力去哪了：<strong>没重叠的通信、流水线气泡、受带宽限制的参数更新、重计算、掉队者、checkpoint</strong>——前四项是必须计入的工作（漏算会让估计偏短），后两项才含有可以减少的开销。</p>
+    <p class="go">先猜每步预算，再看弱扩展和强扩展差多少。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">从期限倒推卡数</p>
+      <div id="bgG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>数据量（B token） <output id="bdD">100</output></span><input type="range" id="bdDs" min="10" max="2000" step="10" value="100"></label>
+        <label class="ctl"><span>可用执行天数 <output id="bdT">25</output></span><input type="range" id="bdTs" min="5" max="120" value="25"></label>
+        <label class="ctl"><span>单卡效率 η <output id="bdE">40%</output></span><input type="range" id="bdEs" min="20" max="60" step="5" value="40"></label>
+      </div>
+      <div class="selrow"><span>卡型</span><div class="seg" id="bdC"><button data-v="989" aria-pressed="true">H100 989 TFLOP/s</button><button data-v="165.2">RTX 4090 165.2</button></div></div>
+      <div class="read"><div class="hl"><div class="v" id="bdP">0</div><div class="k">至少要几张卡</div></div><div><div class="v" id="bdS">0</div><div class="k">每步预算</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">弱扩展 vs 强扩展（原书表）</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th>卡数</th><th>弱扩展每步 token</th><th>弱扩展完成</th><th>强扩展完成</th></tr></thead>
+        <tbody>
+          <tr class="on"><td>48（参考）</td><td>3,145,728</td><td>19.4 天</td><td>19.4 天</td></tr>
+          <tr><td>96</td><td>6,291,456</td><td>15.7</td><td>9.8</td></tr>
+          <tr><td>192</td><td>12,582,912</td><td>13.8</td><td>5.0</td></tr>
+          <tr><td>384</td><td>25,165,824</td><td>12.8</td><td>2.6</td></tr>
+          <tr><td>1536</td><td>100,663,296</td><td>12.1</td><td>0.8</td></tr>
+        </tbody>
+      </table></div>
+      <p class="cap"><strong>弱扩展的上限是 1.64 倍</strong>（31,790/19,434 步）：batch 放大 32 倍只省 7.3 天。强扩展不受 B<sub>noise</sub> 限制，但 0.58 s 的固定等待占比越来越高——0.8 天里已占四分之一。若 B<sub>noise</sub> 是两千万 token，弱扩展上限才升到 7.36 倍。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-budget"></div>
+</section>
+
+<section class="part" id="state">
+  <div class="part-head"><h2>状态容量：每参数 16 字节</h2><span class="meta">原书 10.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>混合精度 Adam 的常驻状态：BF16 权重 2 + BF16 梯度 2 + FP32 主权重 4 + 一阶矩 4 + 二阶矩 4 = <strong>每参数 16 字节</strong>。Qwen3-8B 的 81.9 亿参数 → <strong>131.1 GB（122.1 GiB）</strong>。梯度改 FP32 就是 18 字节——"混合精度"这个词本身并不规定梯度格式。</p>
+    <p>显存峰值要看同一时刻：<strong>M<sub>peak</sub> = max<sub>t</sub>[常驻 + 激活 + 临时]</strong>。8 GiB 激活和 4 GiB 收集缓冲同时出现就要 12 GiB；先释放激活再收集参数就能复用。</p>
+    <p>格式选择也是数值问题。FP16 五位指数，最小正规数 2<sup>−14</sup>，小于 2<sup>−24</sup> 直接变零——混合精度论文统计：语音识别模型约 <strong>5% 的权重梯度</strong>指数小于 −24；检测网络落在 [2<sup>−27</sup>, 2<sup>−24</sup>) 的激活梯度对训练仍然重要。所以要<strong>损失缩放</strong>（反向前乘 S、更新前除 S，论文用的 S 在 8 到 32K 之间；太小仍下溢、太大会溢出要跳过这步并调小）。BF16 八位指数和 FP32 一样，不用缩放，代价是尾数只有七位、靠 FP32 累加器补。</p>
+    <p>FP8 要更细的分块缩放：E4M3 最大正规数只有 448，单一全局因子装不下各层激活。DeepSeek-V3 的做法是<strong>激活按 1×128 小块、权重按 128×128 块求 scale，每累加 128 个元素就转 FP32 继续累加</strong>，相对损失误差低于 0.25%。但要注意：<strong>FP8 只改送进矩阵单元的那份权重副本</strong>（每参数约 1.0002 字节，Qwen3-8B 从 16.4 降到 8.2 GB），主权重、梯度和优化器状态仍是高精度，<strong>16 字节/参数的常驻状态不会跟着降到 1 字节</strong>。</p>
+    <p class="go">勾选状态项，看显存和所需卡数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">常驻训练状态</p>
+    <div id="stG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>参数量（十亿） <output id="sdN">8.19</output></span><input type="range" id="sdNs" min="0.5" max="700" step="0.01" value="8.19"></label>
+      <label class="ctl"><span>梯度格式 <output id="sdG">BF16</output></span><input type="range" id="sdGs" min="2" max="4" step="2" value="2"></label>
+    </div>
+    <div class="stack" id="sdStack"></div>
+    <div class="read"><div class="warn"><div class="v" id="sdM">0</div><div class="k">常驻训练状态</div></div><div><div class="v" id="sdB">0</div><div class="k">每参数字节</div></div><div class="hl"><div class="v" id="sdC">0</div><div class="k">理想均分要几张 80 GB 卡</div></div></div>
+  </div>
+  <div class="notes" id="n-state"></div>
+</section>
+
+<section class="part" id="shard">
+  <div class="part-head"><h2>分片、重计算、卸载：三种换法</h2><span class="meta">原书 10.2 节</span></div>
+  <div class="sec-lede">
+    <p>ZeRO 四档的每卡常驻状态：<strong>M₀ = 16N，M₁ = 4N + 12N/d，M₂ = 2N + 14N/d，M₃ = 16N/d</strong>。但原书提醒一个常见误区：<strong>分片数翻倍不等于峰值减半</strong>——小模型例里常驻从 18 降到 9 MiB，其他张量和缓冲区仍占 21 MiB，峰值只从 39 降到 30 MiB。</p>
+    <p><strong>重计算</strong>换的是激活的驻留时间。Qwen3-8B 的 MLP 里 h = a ⊙ u，下投影反向需要 h；若 a、u 已为非线性反向保留，就可以在用它之前重新相乘。128 token 的 micro-batch、FP32 激活下，h 是 6 MiB、两个归一化加权输出各 2 MiB，<strong>每层省 10 MiB，九层阶段从 135 降到 45 MiB</strong>；四个 micro-batch 等待反向时省 360 MiB，而重建只需反复用同一块 6 MiB 工作区。<strong>等待反向的 micro-batch 越多，长期保存的越多——所以重计算和流水调度要一起看。</strong></p>
+    <p><strong>卸载</strong>换的是传输能否赶上：<strong>T<sub>wait</sub> = max(0, V/B − W)</strong>。原书算了个很有意思的例子——96 MiB 的 BF16 梯度要给 CPUAdam 用，先传 BF16 再在 CPU 转，还是先在 GPU 转再传 FP32？<strong>T<sub>c</sub> = G/B + 3G/C<sub>c</sub>，T<sub>g</sub> = 3G/C<sub>g</sub> + 2G/B</strong>。4090 经 PCIe 4.0（32 GB/s）：CPU 路径 4.13 ms，GPU 路径 6.59 ms——<strong>GPU 转换省 0.68 ms，却多传 3.15 ms</strong>。分界点 <strong>B* = 1/(3(1/C<sub>c</sub> − 1/C<sub>g</sub>)) ≈ 147 GB/s</strong>，高于 PCIe 5.0 的 64 GB/s，所以<strong>经 PCIe 连接的卡都该先传 BF16</strong>；换成 GH200 的 NVLink-C2C（450 GB/s）就反过来（1.21 vs 0.75 ms）。而且 GPU 转换期间原始 96 MiB 和输出 192 MiB 共存，还要多 192 MiB 缓冲。</p>
+    <p class="go">先猜转换位置的分界带宽。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">ZeRO 四档的每卡常驻状态</p>
+      <label class="ctl"><span>数据并行卡数 d <output id="zdD">8</output></span><input type="range" id="zdDs" min="1" max="64" value="8"></label>
+      <div id="zdBars" class="wide"></div>
+      <p class="cap" id="zdW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">在 CPU 还是 GPU 上转换梯度</p>
+      <div id="cvG"></div>
+      <label class="ctl"><span>主机链路（GB/s） <output id="cvB">32</output></span><input type="range" id="cvBs" min="8" max="450" step="8" value="32"></label>
+      <div class="read"><div><div class="v" id="cvC">0</div><div class="k">先传 BF16，CPU 转</div></div><div><div class="v" id="cvG2">0</div><div class="k">GPU 转，传 FP32</div></div><div class="hl"><div class="v" id="cvS">0</div><div class="k">分界带宽 B*</div></div></div>
+      <p class="verdict3" id="cvW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-shard"></div>
+</section>
+
+<section class="part" id="sched">
+  <div class="part-head"><h2>流水调度：时间和显存是两根轴</h2><span class="meta">原书 10.3 节</span></div>
+  <div class="sec-lede">
+    <p>梯度累积只改执行顺序不改目标，前提是<strong>分母一致</strong>：所有 micro-batch 的损失都除以同一个有效 token 总数 L。原书的例子很清楚：八条回答共 20 个有效 token（四条两个、四条三个），按 token 平均梯度是 0.32；先算每条平均再对八条平均，长短回答各占一半，变成 0.30；已经除了 20 又除以八，变成 0.04。</p>
+    <p>流水调度的两根轴：<strong>T = (m + p − 1)(t<sub>f</sub> + t<sub>b</sub>)，u = m/(m + p − 1)</strong>；以及显存——每个 micro-batch 的激活从前向完成一直留到反向到达，<strong>同一时刻有多少个在等反向，显存里就有多少份</strong>。原书的四阶段八 micro-batch 例子（前向 10 ms、反向 20 ms、边界 1 ms）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>调度</th><th>完成时间</th><th>阶段 0 激活峰值</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr><td>填满排空</td><td>337 ms</td><td>约 2.57 GB</td><td>峰值随 m 线性增长</td></tr>
+        <tr class="on"><td>1F1B</td><td>347 ms（慢 3%）</td><td>约 0.97 GB（降 62%）</td><td>交错引入依赖等待</td></tr>
+        <tr><td>交错式 1F1B（v = 2）</td><td>298 ms</td><td>约 1,329 MiB</td><td>前向消息 24 → 56 次</td></tr>
+        <tr><td>零气泡 ZB-H1</td><td>283 ms</td><td>阶段 3 从 308 升到约 1,226 MiB</td><td>dW 推迟，靠后阶段激活留更久</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap"><strong>"1F1B 优于填满排空"只在显存这根轴上成立</strong>——时间上反而慢 3%。但如果只给中间结果留 1 GB，就只有提前反向的调度能跑完这一步：<strong>显存往往不是快慢问题，是能不能运行的问题</strong>。交错式把气泡从 (p−1)/m 降到 (1/v)·(p−1)/m；零气泡把反向拆成 dX（在关键路径上，要早做）和 dW（只交给本层累积，可以塞进空隙），气泡从 (p−1)(T<sub>F</sub>+T<sub>B</sub>+T<sub>W</sub>) 降到 (p−1)(T<sub>F</sub>+T<sub>B</sub>−T<sub>W</sub>) 甚至 −2T<sub>W</sub>。</p>
+    <p>梯度通信也一样：<strong>桶越大越可能等最后生成的梯度，桶越小启动次数越多</strong>。本章 48 卡方案每步通信 <strong>V = 3m·(d−1)/d·2N ≈ 385 GB</strong>，4090 没有 NVLink 也不支持 P2P，全部要过各自的 PCIe 4.0（32 GB/s）→ 链路时间 12.0 s。但 ZeRO-3 逐层预取：每个 micro-batch 链路 1.50 s 而计算 6.53 s，收集一层 0.39 GB 只要 12 ms——<strong>大部分通信藏在计算里，暴露的只有首次 AllGather 和末次 ReduceScatter（都作用于 1.24 GB 词嵌入），合计约 0.08 s</strong>。</p>
+    <p class="go">调 micro-batch 数和阶段数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">流水线利用率与激活峰值</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>阶段数 p <output id="pbP">4</output></span><input type="range" id="pbPs" min="2" max="16" value="4"></label>
+      <label class="ctl"><span>micro-batch 数 m <output id="pbM">8</output></span><input type="range" id="pbMs" min="1" max="64" value="8"></label>
+      <label class="ctl"><span>每份激活（MiB） <output id="pbA">320</output></span><input type="range" id="pbAs" min="20" max="800" step="20" value="320"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="pbU">0</div><div class="k">利用率 m/(m+p−1)</div></div><div class="warn"><div class="v" id="pbF">0</div><div class="k">填满排空的激活峰值</div></div><div class="good"><div class="v" id="pbB">0</div><div class="k">1F1B 的激活峰值</div></div></div>
+    <p class="cap">填满排空要等全部 m 个前向完成才开始第一个反向，峰值随 m 线性增长；1F1B 预热后最多 p 份在等反向。</p>
+  </div>
+  <div class="notes" id="n-sched"></div>
+</section>
+
+<section class="part" id="moe">
+  <div class="part-head"><h2>MoE 的容量因子，和序列长度不均</h2><span class="meta">原书 10.3.4 节</span></div>
+  <div class="sec-lede">
+    <p>路由不均要有明确规则：<strong>每专家容量 = ⌊c × token 数 × k / E⌋</strong>，超出的 dispatch 被<strong>丢弃</strong>（该层不处理，表示经残差直接传下一层），没填满的槽位<strong>补零</strong>（仍占计算和通信）。Qwen3-235B-A22B（E = 128、k = 8、8192 token → 65,536 次 dispatch、平均 512 行），假设一半专家收到 1.5 倍：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>容量因子 c</th><th>每专家容量</th><th>丢弃占比</th><th>补零行占执行量</th></tr></thead>
+      <tbody>
+        <tr><td>1.0</td><td>512</td><td>25%</td><td>25%</td></tr>
+        <tr><td>1.25</td><td>640</td><td>12.5%</td><td>30%</td></tr>
+        <tr class="on"><td>1.5</td><td>768</td><td>0</td><td>33%</td></tr>
+        <tr><td>2.0</td><td>1,024</td><td>0</td><td>50%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">这个分布要 c = 1.5 才把丢弃降到零。<strong>路由越均衡，c 越能取接近 1，补零浪费越少</strong>——辅助损失直接惩罚不均，DeepSeek-V3 的无辅助损失方案按负载动态调路由偏置。第 2 章那个"不丢弃任何 dispatch"的假设，对应的就是 c 足够大的情形。</p>
+    <p>通信也要按空隙切桶：72 MiB 的 FP32 专家梯度由四个 DP 成员环形 AllReduce，每卡发 108 MiB，25 GB/s 下整桶 4.55 ms，<strong>塞不进 2 ms 的空闲</strong>；切成三个 24 MiB 子桶各 1.53 ms 就能分别塞进三个空隙——<strong>总处理时间反而增到 4.59 ms，但计算之后的等待减少了</strong>。</p>
+    <p>长序列还有另一层：token 总数相同，注意力配对数可能差很多。<strong>s(s+1)/2</strong>：4096 + 4096 约 1680 万对，7168 + 1024 却有 <strong>2620 万对（多 56%）</strong>。</p>
+    <p class="go">调不均衡程度和容量因子。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">容量因子：丢弃 vs 补零</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>容量因子 c <output id="cfC">1.5</output></span><input type="range" id="cfCs" min="1" max="3" step="0.05" value="1.5"></label>
+        <label class="ctl"><span>热专家倍数 <output id="cfH">1.5</output></span><input type="range" id="cfHs" min="1" max="3" step="0.1" value="1.5"></label>
+      </div>
+      <div class="read"><div class="warn"><div class="v" id="cfD">0</div><div class="k">丢弃的 dispatch</div></div><div><div class="v" id="cfZ">0</div><div class="k">补零行占执行量</div></div></div>
+      <p class="cap" id="cfW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">同样 8192 token，序列怎么切</p>
+      <label class="ctl"><span>第一条序列长度 <output id="sqL">4096</output></span><input type="range" id="sqLs" min="1024" max="7168" step="256" value="4096"></label>
+      <div class="read"><div class="hl"><div class="v" id="sqP">0</div><div class="k">注意力配对数</div></div><div><div class="v" id="sqR">0</div><div class="k">相对均分</div></div></div>
+      <p class="note">两条序列合计 8192 token。配对数 = Σ s(s+1)/2，随长度近似平方增长。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-moe"></div>
+</section>
+
+<section class="part" id="ckpt">
+  <div class="part-head"><h2>checkpoint：最优间隔 √(2c/λ)</h2><span class="meta">原书 10.4.4 节</span></div>
+  <div class="sec-lede">
+    <p>单位有用训练时间的附加成本 <strong>L(τ) = c/τ + λτ/2 + λr</strong>，求导得 <strong>τ* = √(2c/λ)</strong>。Meta 的统计：1024 卡作业平均 7.9 小时中断一次、中断率与卡数成正比，<strong>相当于每卡约 337 天一次</strong>。115 GB 的 checkpoint 按 7 GB/s 存是 c ≈ 16.4 s，恢复 120 s → <strong>最优间隔约 965 s（16 分钟）</strong>。</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>有用训练间隔</th><th>保存</th><th>重做</th><th>恢复</th><th>合计</th></tr></thead>
+      <tbody>
+        <tr><td>300 s</td><td>5.5%</td><td>0.5%</td><td>0.4%</td><td>6.4%</td></tr>
+        <tr class="on"><td>900 s</td><td>1.8%</td><td>1.6%</td><td>0.4%</td><td>3.8%</td></tr>
+        <tr><td>1800 s</td><td>0.9%</td><td>3.2%</td><td>0.4%</td><td>4.5%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap"><strong>卡数翻倍 → 故障率翻倍 → 最优间隔变 1/√2；保存速度翻倍也让最优间隔按同样比例缩短</strong>（因为每次保存更短）。最低点很平缓，可以选附近好用的间隔。</p>
+    <p>损失尖峰的处理方式和硬件故障相同（丢弃当前参数、回上一份快照），所以也进同一个模型：<strong>τ* = √(2c/(λ<sub>hw</sub> + λ<sub>spike</sub>))</strong>。</p>
+    <p>一次中断值多少钱？小米 MiMo-V2.6 的公开看板：Pro 和 Flash 的 RL 后训练分别约 260 万和 90 万美元，<strong>每小时 2.06 万和 1.03 万美元</strong>。Pro 共重启 14 次、中断累计 <strong>30.1 小时（占总运行 23.6%）、折合约 61.9 万美元</strong>；第五次重启前距上一步完成已过 2.76 h ≈ 5.67 万美元。重启原因分三类：显存双比特错误等硬件故障、容器崩溃和评分服务网络不通等服务故障、以及内存不足（KV 池耗尽、专家负载不均导致显存溢出、序列打包时主机内存不足）。还有一次 infra 错误没被及时检出，做完第 17 步才从第 15 步重来，<strong>第 16、17 步的约 4 小时作废</strong>。</p>
+    <p class="go">先猜最优间隔。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">L(τ) = c/τ + λτ/2 + λr</p>
+    <div id="ckG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>卡数 <output id="ckN">1024</output></span><input type="range" id="ckNs" min="8" max="8192" step="8" value="1024"></label>
+      <label class="ctl"><span>保存耗时 c（s） <output id="ckC">16.4</output></span><input type="range" id="ckCs" min="2" max="120" step="0.2" value="16.4"></label>
+      <label class="ctl"><span>恢复耗时 r（s） <output id="ckR">120</output></span><input type="range" id="ckRs" min="30" max="600" step="10" value="120"></label>
+      <label class="ctl"><span>实际采用的间隔（s） <output id="ckT">900</output></span><input type="range" id="ckTs" min="60" max="3600" step="30" value="900"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="ckO">0</div><div class="k">最优间隔 τ*</div></div><div><div class="v" id="ckL">0</div><div class="k">当前间隔的附加成本</div></div><div class="good"><div class="v" id="ckB">0</div><div class="k">最优点的附加成本</div></div></div>
+    <svg class="rsvg" id="ckSvg" viewBox="0 0 560 200" role="img" aria-label="checkpoint 成本曲线"></svg>
+  </div>
+  <div class="notes" id="n-ckpt"></div>
+</section>
+
+<section class="part" id="strag">
+  <div class="part-head"><h2>掉队者：步时间是最大值不是均值</h2><span class="meta">原书 10.4.5 节</span></div>
+  <div class="sec-lede">
+    <p>同步数据并行每步等最慢的卡。N 个独立正态样本最大值的期望是 μ 加若干倍 σ：<strong>N = 8、48、1024 时约 1.42、2.23、3.25 倍</strong>。本章 48 卡方案 μ = 52.2 s：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>卡数</th><th>E[max] − μ</th><th>σ = 2% 时每步</th><th>σ = 5% 时每步</th></tr></thead>
+      <tbody>
+        <tr><td>8</td><td>1.42σ</td><td>54.3 s</td><td>56.5 s</td></tr>
+        <tr class="on"><td>48</td><td>2.23σ</td><td>55.1</td><td>58.6</td></tr>
+        <tr><td>1024</td><td>3.25σ</td><td>56.2</td><td>61.3</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">无波动时约 52.8 s。<strong>48 卡、σ = 5% 时每步多 5.8 s，吃掉 14.4 s 余量的四成。</strong>慢卡可以从通信等待里检测：每张卡在 AllReduce 上的等待 = 步结束时刻 − 自己计算结束时刻，对耗时恰为均值的卡，这段等待的期望正是 E[max] − μ。</p>
+    <p>三种响应各有适用范围。<strong>等待</strong>：一张慢到 μ+3σ 的卡让其余卡多等多少，取决于其余 N−1 张本来的最大值——σ = 2% 时 8 卡多等 1.65σ（1.72 s），48 卡只多 0.78σ（0.81 s），<strong>1024 卡时其余卡的最大值本身已超过 μ+3σ，多等为零</strong>。<strong>重分配</strong>：均值变 μN/(N−1)，48 卡每步约 56.2 s、8 卡 61.6 s，<strong>都比等待还慢</strong>（摊派让每卡多做 1/(N−1)，这份增量超过了一张慢卡的等待，卡越少差距越大）。</p>
+    <p class="go">调卡数和波动，看步时间。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">掉队者对步时间的影响</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>卡数 N <output id="sgN">48</output></span><input type="range" id="sgNs" min="3" max="10" value="5"></label>
+      <label class="ctl"><span>波动 σ（占均值） <output id="sgS">2%</output></span><input type="range" id="sgSs" min="1" max="10" value="2"></label>
+      <label class="ctl"><span>单卡计算均值 μ（s） <output id="sgM">52.2</output></span><input type="range" id="sgMs" min="10" max="120" step="0.2" value="52.2"></label>
+    </div>
+    <div class="read"><div><div class="v" id="sgE">0</div><div class="k">E[max] − μ</div></div><div class="hl"><div class="v" id="sgT">0</div><div class="k">期望每步</div></div><div class="warn"><div class="v" id="sgD">0</div><div class="k">比无波动多</div></div></div>
+    <div id="sgBars" class="wide"></div>
+  </div>
+  <div class="notes" id="n-strag"></div>
+</section>
+
+<section class="part" id="rl">
+  <div class="part-head"><h2>RL：三阶段配比与权重同步</h2><span class="meta">原书 10.5 节</span></div>
+  <div class="sec-lede">
+    <p>RL 把训练变成反馈循环。三道工序串起来：<strong>r<sub>effective</sub> = min(r<sub>l</sub>, q·min(r<sub>g</sub>, r<sub>v</sub>))</strong>。原书例：生成 12 条/s、验证 6 条/s、学习 8 条/s，验证后四分之一因版本过旧被丢 → 每秒只有 4.5 条进学习。<strong>生成翻倍到 24 条毫无用处</strong>（验证仍卡在 6 × 0.75 = 4.5）；<strong>验证翻倍到 12 条</strong>才让 9 条/s 送到训练端，此时学习端的 8 条成了新瓶颈。</p>
+    <p><strong>共享加速器 vs 独立部署</strong>。共享的成本在切换：H100（74.5 GiB）上训练状态 40 GiB，生成要 15.3 GiB 权重 + 24 GiB KV 池 + 4 GiB 共用开销。各自独占时 44 和 43.3 GiB 都够，但<strong>先恢复生成权重和 KV 再释放训练状态，峰值 83.3 GiB 超了</strong>；改成先加载生成权重（59.3）→ 释放训练状态（19.3）→ 再分配 KV（43.3），<strong>峰值差 24 GiB，正好一份 KV 池</strong>。</p>
+    <p>独立部署的成本在发权重：Qwen3-235B-A22B 的 BF16 专家权重 423 GiB，EP16 时每个接收方只要约 26.4 GiB。<strong>逐一发完整专家集合要发 16 × 423 = 6768 GiB，按分片发只要 423 GiB</strong>。</p>
+    <p>异步还带来策略版本问题：行为分布 μ、本轮起点 π<sub>old</sub>、当前 π<sub>θ</sub>，<strong>π<sub>θ</sub>/μ = (π<sub>θ</sub>/π<sub>old</sub>)(π<sub>old</sub>/μ)</strong>。还有个容易被忽略的：<strong>同组回答奖励都是 1，中心化后优势全为零</strong>——前向、反向、优化器全跑了一遍，却没有学习信号。统计训练吞吐要算每秒<strong>实际用于训练</strong>的轨迹或 token。</p>
+    <p class="go">调三阶段速率，看瓶颈在哪。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">RL 三阶段的有效样本率</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>生成 r<sub>g</sub>（条/s） <output id="rlG">12</output></span><input type="range" id="rlGs" min="1" max="40" value="12"></label>
+      <label class="ctl"><span>验证 r<sub>v</sub>（条/s） <output id="rlV">6</output></span><input type="range" id="rlVs" min="1" max="40" value="6"></label>
+      <label class="ctl"><span>学习 r<sub>l</sub>（条/s） <output id="rlL">8</output></span><input type="range" id="rlLs" min="1" max="40" value="8"></label>
+      <label class="ctl"><span>保留比例 q <output id="rlQ">75%</output></span><input type="range" id="rlQs" min="10" max="100" step="5" value="75"></label>
+    </div>
+    <div id="rlBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="rlE">0</div><div class="k">有效样本率</div></div><div><div class="v" id="rlB">—</div><div class="k">当前瓶颈</div></div></div>
+    <p class="cap" id="rlW"></p>
+  </div>
+  <div class="notes" id="n-rl"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>汇总：32 卡还是 48 卡</h2><span class="meta">原书 10.6 节</span></div>
+  <div class="sec-lede">
+    <p><strong>T<sub>finish</sub> = T₀ + ⌈D/b⌉·t<sub>s</sub>(1 + L)</strong>：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>设计项</th><th>32 卡</th><th>48 卡</th></tr></thead>
+      <tbody>
+        <tr><td>八卡主机数 / 每卡累积次数</td><td>4 / 12</td><td>6 / 8</td></tr>
+        <tr><td>每卡显存占用（可用 22 GiB）</td><td>13.8 GiB</td><td>12.5 GiB</td></tr>
+        <tr><td>每步单卡计算</td><td>78.3 s</td><td>52.2 s</td></tr>
+        <tr><td>每步 ZeRO-3 链路时间（PCIe 4.0）</td><td>17.9 s</td><td>12.0 s</td></tr>
+        <tr><td>每步通信等待 / 输入等待</td><td>0.08 / 0.5 s</td><td>0.08 / 0.5 s</td></tr>
+        <tr><td>每步训练时间</td><td>78.9 s</td><td>52.8 s</td></tr>
+        <tr><td>保存、重做与恢复附加</td><td>1.02%</td><td>1.08%</td></tr>
+        <tr class="on"><td>加 5 天预留后的完成时间</td><td>34.3 天（超期）</td><td>24.6 天</td></tr>
+      </tbody>
+    </table></div>
+    <p>48 卡每步上限 <strong>t<sub>s</sub> ≤ 25×86400/(31790×1.0108) ≈ 67.2 s</strong>，实际 52.8，<strong>余量 14.4 s/步</strong>。固定计算 52.2 和输入 0.5 后，通信等待最多 14.5 s——<strong>即使预取完全失效、12.0 s 链路时间全部暴露（64.8 s），仍在上限内</strong>。</p>
+    <p>32 卡要按期，单卡效率得从 40% 提到约 <strong>47%</strong>——已经高于 Llama 3 报告的最高 43%。所以两条路线很清楚：<strong>加两台主机，还是在原有卡上把效率提 7 个百分点</strong>。</p>
+    <p>通信预算还要落到物理接口：12.0 s 的前提是<strong>每卡一张 200 Gbit/s 网卡</strong>。若八张卡共用一张，385 GB 全要过这张 25 GB/s 的网卡 → 15.4 s，<strong>已超 14.5 s 上限</strong>；预取有效时暴露的仍只有首尾两次，<strong>但预取一失效每步 68.1 s 就超期</strong>——<strong>共用网卡把按期完成押在重叠上，每卡一张则不依赖重叠</strong>。</p>
+    <p>换硬件就用 <strong>T′/T = 1 − f + f/r</strong>。本方案暴露通信只占 0.14%，<strong>PCIe 带宽减半每步从 52.8 变 52.9，几乎不动</strong>；但单卡效率从 40% 掉到 30%，每步变 70.2 s 就超期了——<strong>决定能否按期的是单卡效率</strong>。</p>
+    <p>再放大到模型规模：<strong>p ≥ ⌈6ND/(PηT)⌉</strong>。1T 参数、20T token、40% MFU 下，16,384 张 A100 / H100 / B200 分别要 <strong>679 / 214 / 94 天</strong>——90 天预算里 B200 也超 4 天，要增到 17,147 张；<strong>MFU 提到 50%，B200 才降到 75 天</strong>。10 个百分点的 MFU 就决定了能不能按期。</p>
+    <p class="go">先猜 48 卡的完成时间。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">完成时间模型</p>
+    <div id="plG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>卡数 <output id="pfN">48</output></span><input type="range" id="pfNs" min="16" max="128" step="8" value="48"></label>
+      <label class="ctl"><span>单卡效率 η <output id="pfE">40%</output></span><input type="range" id="pfEs" min="25" max="55" step="1" value="40"></label>
+      <label class="ctl"><span>每步输入 + 通信等待（s） <output id="pfW">0.58</output></span><input type="range" id="pfWs" min="0.1" max="20" step="0.1" value="0.58"></label>
+    </div>
+    <table class="calc" id="pfT"></table>
+    <p class="verdict3" id="pfV"></p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">B_noise = tr(HΣ)/(GᵀHG)；　(S/S_min − 1)(E/E_min − 1) = 1，　B_crit = E_min/S_min</div>
+    <div class="fx">M_persistent = 16N；　M_peak = max_t[常驻 + 激活 + 临时]</div>
+    <div class="fx">T = F/(pPη)，　p ≥ ⌈F/(PηT)⌉；　稠密 F ≈ 6ND</div>
+    <div class="fx">ZeRO：M₀ = 16N，M₁ = 4N + 12N/d，M₂ = 2N + 14N/d，M₃ = 16N/d</div>
+    <div class="fx">T_wait = max(0, V/B − W)；　T_c = G/B + 3G/C_c，T_g = 3G/C_g + 2G/B，B* = 1/(3(1/C_c − 1/C_g))</div>
+    <div class="fx">T_pipe = (m + p − 1)(t_f + t_b)，　u = m/(m + p − 1)；　交错气泡 (1/v)(p−1)/m</div>
+    <div class="fx">每专家容量 = ⌊c·n·k/E⌋；　注意力配对 s(s+1)/2</div>
+    <div class="fx">L(τ) = c/τ + λτ/2 + λr，　τ* = √(2c/λ)（含尖峰则 λ_hw + λ_spike）</div>
+    <div class="fx">r_effective = min(r_l, q·min(r_g, r_v))；　π_θ/μ = (π_θ/π_old)(π_old/μ)</div>
+    <div class="fx">T_finish = T₀ + ⌈D/b⌉·t_s(1 + L)；　T′/T = 1 − f + f/r</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>67.9 s</b><span>100B token、25 天、31,790 步的每步预算</span></div>
+      <div><b>16 字节/参数</b><span>混合精度 Adam；Qwen3-8B 共 131.1 GB</span></div>
+      <div><b>1.64 倍</b><span>弱扩展上限（batch 已是 B_noise 的 1.57 倍）</span></div>
+      <div><b>147 GB/s</b><span>CPU / GPU 转换梯度的分界链路带宽</span></div>
+      <div><b>337 ms vs 347 ms</b><span>填满排空 vs 1F1B（显存 2.57 → 0.97 GB）</span></div>
+      <div><b>c = 1.5</b><span>3:1 不均衡下丢弃降到零所需的容量因子</span></div>
+      <div><b>965 s</b><span>1024 卡、c = 16.4 s、r = 120 s 的最优间隔</span></div>
+      <div><b>2.23σ</b><span>48 卡时 E[max] − μ（1024 卡是 3.25σ）</span></div>
+      <div><b>6768 vs 423 GiB</b><span>RL 权重同步：逐一发完整集合 vs 按分片发</span></div>
+      <div><b>34.3 vs 24.6 天</b><span>32 卡（超期）vs 48 卡</span></div>
+    </div>
+    <p class="src">数字均取自原书第 10 章。</p>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-9/"><small>上一篇</small><span>09 · 分布式推理</span></a><a class="nx" href="../2026-10-16-infra-11/"><small>下一篇</small><span>11 · 资源调度与运行环境</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+function days(x) { return S.f(x, 1) + ' 天'; }
+function gb(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' TB' : S.f(x, 1) + ' GB'; }
+
+/* ---------- 时间预算 ---------- */
+var bdC = 989;
+function bd() {
+  var D = +$('#bdDs').value * 1e9, T = +$('#bdTs').value, e = +$('#bdEs').value / 100;
+  $('#bdD').textContent = D / 1e9; $('#bdT').textContent = T; $('#bdE').textContent = Math.round(e * 100) + '%';
+  var F = D * 52.7e9, secs = T * 86400;
+  var p = Math.ceil(F / (bdC * 1e12 * e * secs));
+  var steps = Math.ceil(D / 3145728);
+  $('#bdP').textContent = p + ' 张'; $('#bdS').textContent = S.f(secs / steps, 1) + ' s';
+}
+S.seg($('#bdC'), function (v) { bdC = +v; bd(); });
+['bdDs', 'bdTs', 'bdEs'].forEach(function (id) { $('#' + id).addEventListener('input', bd); }); bd();
+S.guess($('#bgG'), { q: '100B token、31,790 步、25 天可用，每步预算多少秒？', unit: '秒', ans: 67.9, fmt: function (x) { return S.f(x, 1); }, why: '原书：25 × 86400 / 31790 ≈ 67.9 s。每步计算、通信等待、输入等待，以及分摊到这一步的 checkpoint 与恢复，都要塞进这 67.9 秒。H100 按 40% 效率一张卡约 7500 token/s，五张卡 37,600 还不够 30 天所需的 38,600，至少六张。' });
+S.notes($('#n-budget'), {
+  c: [
+    ['临界 batch size', 'B 超过它之后，再加样本只能略减步数，计算量却成比例涨。'],
+    ['B_noise', 'tr(HΣ)/(GᵀHG)；本例取二百万 token。'],
+    ['弱 vs 强扩展', '放大 batch vs 固定 batch 缩短每步。'],
+    ['p ≥ ⌈F/(PηT)⌉', '从期限倒推的卡数下界。']
+  ],
+  p: [
+    ['弱扩展上限 1.64 倍', '1536 卡放大 32 倍，只从 19.4 降到 12.1 天。'],
+    ['强扩展的固定等待', '0.8 天里 0.58 s/步的等待已占四分之一。'],
+    ['六成算力去哪了', '没重叠的通信、气泡、参数更新、重计算（必须计入）+ 掉队者、checkpoint（可减少）。']
+  ]
+});
+
+/* ---------- 状态容量 ---------- */
+function sd() {
+  var N = +$('#sdNs').value * 1e9, g = +$('#sdGs').value;
+  $('#sdN').textContent = S.f(N / 1e9, 2); $('#sdG').textContent = g === 2 ? 'BF16' : 'FP32';
+  var items = [['BF16 权重', 2, 's-w'], ['梯度', g, 's-g'], ['FP32 主权重', 4, 's-m'], ['一阶矩', 4, 's-o'], ['二阶矩', 4, 's-a']];
+  var tot = items.reduce(function (a, i) { return a + i[1]; }, 0);
+  var box = $('#sdStack'); box.innerHTML = '';
+  items.forEach(function (i) { h('span', { class: i[2], style: 'width:' + (i[1] / tot * 100) + '%', text: i[0] + ' ' + i[1] }, box); });
+  var bytes = N * tot;
+  $('#sdM').textContent = gb(bytes / 1e9); $('#sdB').textContent = tot + ' B';
+  $('#sdC').textContent = Math.ceil(bytes / 80e9) + ' 张';
+}
+['sdNs', 'sdGs'].forEach(function (id) { $('#' + id).addEventListener('input', sd); }); sd();
+S.guess($('#stG'), { q: 'Qwen3-8B（81.9 亿参数）混合精度 Adam 的常驻训练状态是多少 GB？', unit: 'GB', ans: 131.1, fmt: function (x) { return S.f(x, 1); }, why: '原书：2 + 2 + 4 + 4 + 4 = 16 字节/参数，共 131.1 GB（122.1 GiB）。两张 80 GB 卡装得下，但要 77 天才能算完——容量和时间是两个独立的下界。FP8 只改送进矩阵单元的那份权重副本（16.4 → 8.2 GB），这 16 字节不会跟着降。' });
+S.notes($('#n-state'), {
+  c: [
+    ['16 字节/参数', 'BF16 权重 + BF16 梯度 + FP32 主权重 + Adam 两个矩。'],
+    ['M_peak', '同一时刻的常驻 + 激活 + 临时，不是各自的最大值相加。'],
+    ['损失缩放', 'FP16 要在反向前乘 S、更新前除 S（论文用 8–32K）。'],
+    ['FP8 分块缩放', '激活 1×128、权重 128×128，每 128 个元素转 FP32 累加。']
+  ],
+  p: [
+    ['梯度格式是独立选择', '"混合精度"不规定梯度格式；FP32 梯度就是 18 字节。'],
+    ['FP16 的下溢', '语音模型约 5% 的权重梯度指数小于 −24。'],
+    ['BF16 的代价', '尾数七位，靠 FP32 累加器补。'],
+    ['损失尖峰', '不论起因，处理都是回滚到上一份 checkpoint。']
+  ]
+});
+
+/* ---------- 分片与卸载 ---------- */
+var Nq = 8.190735360e9;
+function zd() {
+  var d = +$('#zdDs').value; $('#zdD').textContent = d;
+  var ms = [['普通 DP（16N）', 16 * Nq], ['ZeRO-1（4N + 12N/d）', (4 + 12 / d) * Nq], ['ZeRO-2（2N + 14N/d）', (2 + 14 / d) * Nq], ['ZeRO-3 / FSDP（16N/d）', 16 / d * Nq]];
+  S.bars($('#zdBars'), ms.map(function (m, i) { return { label: m[0], value: m[1] / (16 * Nq), text: gb(m[1] / 1e9), cls: i === 3 ? 'ok' : i === 0 ? 'alt' : '' }; }));
+  $('#zdW').innerHTML = 'd = ' + d + ' 时 ZeRO-3 每卡 ' + gb(16 / d * Nq / 1e9) + '。但<b>分片只缩小常驻状态</b>：激活和缓冲区照旧，所以峰值不会按同样比例下降。';
+}
+$('#zdDs').addEventListener('input', zd); zd();
+function cv() {
+  var B = +$('#cvBs').value; $('#cvB').textContent = B;
+  var G = 96 * 1048576, Cc = 307.2e9, Cg = 1008e9;
+  var tc = (G / (B * 1e9) + 3 * G / Cc) * 1000, tg = (3 * G / Cg + 2 * G / (B * 1e9)) * 1000;
+  var bstar = 1 / (3 * (1 / Cc - 1 / Cg)) / 1e9;
+  $('#cvC').textContent = S.f(tc, 2) + ' ms'; $('#cvG2').textContent = S.f(tg, 2) + ' ms'; $('#cvS').textContent = S.f(bstar, 0) + ' GB/s';
+  var w = $('#cvW'); w.className = 'verdict3' + (tc <= tg ? '' : '');
+  w.innerHTML = tc <= tg ? '<b>先传 BF16、在 CPU 转更快</b>（链路 ' + B + ' GB/s 低于分界 ' + S.f(bstar, 0) + '）。GPU 转换还要多 192 MiB 缓冲。' :
+    '<b>在 GPU 转换更快</b>（链路已超过分界 ' + S.f(bstar, 0) + ' GB/s，多传 96 MiB 的代价变小了）。原书对照：GH200 的 NVLink-C2C 450 GB/s 下是 1.21 vs 0.75 ms。';
+}
+$('#cvBs').addEventListener('input', cv); cv();
+S.guess($('#cvG'), { q: '先传 BF16 梯度在 CPU 转、还是先在 GPU 转再传 FP32？两者一样快的链路带宽是多少 GB/s？', unit: 'GB/s', ans: 147, fmt: function (x) { return S.f(x, 0); }, why: '原书：B* = 1/(3(1/C_c − 1/C_g)) ≈ 147 GB/s（CPU 307.2、GPU 1008 GB/s）。147 高于 PCIe 5.0 x16 的 64 GB/s，所以经 PCIe 的卡都该先传 BF16；4090 上是 4.13 vs 6.59 ms——GPU 转换省 0.68 ms 却多传 3.15 ms。' });
+S.notes($('#n-shard'), {
+  c: [
+    ['ZeRO 四档', '16N / 4N+12N/d / 2N+14N/d / 16N/d。'],
+    ['重计算', '用已保留的值重建中间结果，缩短驻留时间。'],
+    ['卸载', 'T_wait = max(0, V/B − W)：看数据能否在使用前传回。'],
+    ['B*', '转换快慢与传输多少的分界带宽。']
+  ],
+  p: [
+    ['分片 ≠ 峰值减半', '激活和缓冲区不随分片变小。'],
+    ['重计算与调度联动', '等待反向的 micro-batch 越多，长期保存的越多。'],
+    ['双缓冲的代价', 'GPU 转换期间原始和输出共存，峰值 288 MiB。']
+  ]
+});
+
+/* ---------- 流水调度 ---------- */
+function pb() {
+  var p = +$('#pbPs').value, m = +$('#pbMs').value, a = +$('#pbAs').value;
+  $('#pbP').textContent = p; $('#pbM').textContent = m; $('#pbA').textContent = a;
+  var u = m / (m + p - 1);
+  $('#pbU').textContent = S.pct(u);
+  $('#pbF').textContent = S.f(m * a / 1024, 2) + ' GiB';
+  $('#pbB').textContent = S.f(Math.min(m, p) * a / 1024, 2) + ' GiB';
+}
+['pbPs', 'pbMs', 'pbAs'].forEach(function (id) { $('#' + id).addEventListener('input', pb); }); pb();
+S.notes($('#n-sched'), {
+  c: [
+    ['分母一致', '所有 micro-batch 的损失都除以同一个有效 token 总数。'],
+    ['两根轴', '完成时间看气泡，显存驻留看激活等多久。'],
+    ['零气泡的拆分', 'dX 在关键路径要早做，dW 只交给本层累积可以塞进空隙。'],
+    ['梯度分桶', '桶大等最后生成的，桶小启动次数多。']
+  ],
+  p: [
+    ['1F1B 只赢在显存', '时间慢 3%，激活峰值降 62%；但 1 GB 限制下只有它能跑。'],
+    ['交错式的代价', '前向消息 24 → 56 次，早期阶段激活峰值升高。'],
+    ['ZeRO-3 的暴露部分', '只有首次 AllGather 和末次 ReduceScatter（1.24 GB 词嵌入），约 0.08 s。'],
+    ['收益有上限', '1.3 s 归约只有 0.2 s 延续到计算之后，消除它最多省 0.2 s。']
+  ]
+});
+
+/* ---------- MoE ---------- */
+function cf() {
+  var c = +$('#cfCs').value, hot = +$('#cfHs').value;
+  $('#cfC').textContent = c.toFixed(2); $('#cfH').textContent = hot.toFixed(1);
+  var total = 65536, E = 128, avg = total / E;
+  var hotRows = avg * hot, coldRows = (total - 64 * hotRows) / 64;
+  var cap = Math.floor(c * avg);
+  var dropped = 64 * Math.max(0, hotRows - cap) + 64 * Math.max(0, coldRows - cap);
+  var exec = 128 * cap;
+  var zeros = exec - (total - dropped);
+  $('#cfD').textContent = S.pct(dropped / total, 1);
+  $('#cfZ').textContent = S.pct(zeros / exec, 0);
+  $('#cfW').innerHTML = '每专家容量 ' + cap + ' 行；热专家 ' + S.f(hotRows, 0) + ' 行、冷专家 ' + S.f(coldRows, 0) + ' 行。' +
+    (dropped > 0 ? ' <b>还在丢弃</b>——要 c ≥ ' + S.f(hotRows / avg, 2) + ' 才降到零。' : ' 不再丢弃，但补零占了执行量的 ' + S.pct(zeros / exec, 0) + '。');
+}
+['cfCs', 'cfHs'].forEach(function (id) { $('#' + id).addEventListener('input', cf); }); cf();
+function sq() {
+  var a = +$('#sqLs').value, b = 8192 - a; $('#sqL').textContent = a;
+  var pairs = a * (a + 1) / 2 + b * (b + 1) / 2, even = 2 * 4096 * 4097 / 2;
+  $('#sqP').textContent = S.big(pairs);
+  $('#sqR').textContent = (pairs >= even ? '+' : '') + S.pct(pairs / even - 1, 0);
+}
+$('#sqLs').addEventListener('input', sq); sq();
+S.notes($('#n-moe'), {
+  c: [
+    ['容量因子', '⌊c·n·k/E⌋；超出丢弃、不足补零。'],
+    ['丢弃的后果', '该层不处理，表示经残差直接传下一层。'],
+    ['序列长度', '配对数 s(s+1)/2，近似平方增长。']
+  ],
+  p: [
+    ['路由越均衡 c 越小', '辅助损失或动态路由偏置都在推它。'],
+    ['切桶填空隙', '总处理时间从 4.55 增到 4.59 ms，但计算之后的等待减少了。'],
+    ['同样 8192 token', '4096+4096 是 1680 万对，7168+1024 是 2620 万（多 56%）。']
+  ]
+});
+
+/* ---------- checkpoint ---------- */
+function ck() {
+  var N = +$('#ckNs').value, c = +$('#ckCs').value, r = +$('#ckRs').value, tau = +$('#ckTs').value;
+  $('#ckN').textContent = N; $('#ckC').textContent = c.toFixed(1); $('#ckR').textContent = r; $('#ckT').textContent = tau;
+  var lam = N / (337 * 86400);
+  var opt = Math.sqrt(2 * c / lam);
+  function L(t) { return c / t + lam * t / 2 + lam * r; }
+  $('#ckO').textContent = S.f(opt, 0) + ' s（' + S.f(opt / 60, 1) + ' 分钟）';
+  $('#ckL').textContent = S.pct(L(tau), 2);
+  $('#ckB').textContent = S.pct(L(opt), 2);
+  var g = $('#ckSvg'); g.innerHTML = '';
+  var X = S.scale(0, 3600, 55, 540), Y = S.scale(0, Math.max(L(120), 0.08) * 1.1, 165, 12);
+  S.svg('line', { x1: 55, y1: 165, x2: 540, y2: 165, class: 'ax' }, g);
+  S.svg('line', { x1: 55, y1: 165, x2: 55, y2: 12, class: 'ax' }, g);
+  var pts = []; for (var t = 60; t <= 3600; t += 20) pts.push([X(t), Y(Math.min(L(t), Math.max(L(120), 0.08) * 1.1))]);
+  S.svg('path', { d: S.path(pts), class: 'l1' }, g);
+  S.svg('circle', { cx: X(Math.min(opt, 3600)), cy: Y(L(opt)), r: 6, class: 'dot' }, g);
+  S.svg('circle', { cx: X(tau), cy: Y(Math.min(L(tau), Math.max(L(120), 0.08) * 1.1)), r: 5, fill: 'var(--s2)' }, g);
+  [600, 1800, 3000].forEach(function (t2) { var tx = S.svg('text', { x: X(t2), y: 181, 'text-anchor': 'middle' }, g); tx.textContent = (t2 / 60) + ' 分'; });
+  var yl = S.svg('text', { x: 51, y: 16, 'text-anchor': 'end' }, g); yl.textContent = S.pct(Math.max(L(120), 0.08) * 1.1, 0);
+}
+['ckNs', 'ckCs', 'ckRs', 'ckTs'].forEach(function (id) { $('#' + id).addEventListener('input', ck); }); ck();
+S.guess($('#ckG'), { q: '1024 卡（每卡约 337 天一次故障）、保存 16.4 s、恢复 120 s，最优 checkpoint 间隔是多少秒？', unit: '秒', ans: 965, fmt: function (x) { return S.f(x, 0); }, why: '原书：τ* = √(2c/λ) ≈ 965 s（约 16 分钟）。卡数翻倍故障率翻倍，最优间隔变 1/√2；保存速度翻倍也按同样比例缩短。最低点很平缓：5 / 15 / 30 分钟的附加成本是 6.4% / 3.8% / 4.5%。' });
+S.notes($('#n-ckpt'), {
+  c: [
+    ['L(τ)', 'c/τ + λτ/2 + λr：保存 + 平均丢半个间隔 + 恢复。'],
+    ['τ*', '√(2c/λ)；损失尖峰并入 λ 一起算。'],
+    ['故障率与卡数成正比', 'Meta 统计：1024 卡 7.9 小时一次，每卡约 337 天。']
+  ],
+  p: [
+    ['最低点平缓', '可以选附近便于使用的间隔。'],
+    ['中断很贵', 'MiMo Pro 中断 30.1 h（占 23.6%），约 61.9 万美元。'],
+    ['三类重启原因', '硬件故障、服务故障、内存不足（KV 池耗尽、专家负载不均、序列打包）。'],
+    ['检出要及时', '一次 infra 错误到第 17 步才发现，第 16、17 步的 4 小时作废。']
+  ]
+});
+
+/* ---------- 掉队者 ---------- */
+var nsVals = [8, 16, 24, 32, 48, 64, 128, 256, 512, 1024];
+function expMax(n) { return n <= 1 ? 0 : Math.sqrt(2 * Math.log(n)) - (Math.log(Math.log(n)) + Math.log(4 * Math.PI)) / (2 * Math.sqrt(2 * Math.log(n))); }
+function sg() {
+  var N = nsVals[+$('#sgNs').value], sr = +$('#sgSs').value / 100, mu = +$('#sgMs').value;
+  $('#sgN').textContent = N; $('#sgS').textContent = (sr * 100) + '%'; $('#sgM').textContent = mu.toFixed(1);
+  var k = expMax(N), sigma = mu * sr, step = mu + k * sigma + 0.58;
+  $('#sgE').textContent = S.f(k, 2) + 'σ'; $('#sgT').textContent = S.f(step, 1) + ' s';
+  $('#sgD').textContent = '+' + S.f(k * sigma, 2) + ' s';
+  S.bars($('#sgBars'), [8, 48, 1024].map(function (n) {
+    var kk = expMax(n), st = mu + kk * sigma + 0.58;
+    return { label: n + ' 卡（' + S.f(kk, 2) + 'σ）', value: st / (mu * 1.3), text: S.f(st, 1) + ' s', cls: n === N ? 'alt' : 'dim' };
+  }));
+}
+['sgNs', 'sgSs', 'sgMs'].forEach(function (id) { $('#' + id).addEventListener('input', sg); }); sg();
+S.notes($('#n-strag'), {
+  c: [
+    ['掉队者', '同步 DP 每步等最慢的卡，步时间是最大值不是均值。'],
+    ['E[max] − μ', 'N = 8/48/1024 时约 1.42/2.23/3.25 倍 σ。'],
+    ['怎么检测', '每张卡在 AllReduce 上的等待 = 步结束 − 自己计算结束。']
+  ],
+  p: [
+    ['48 卡 σ=5%', '每步多 5.8 s，吃掉 14.4 s 余量的四成。'],
+    ['重分配往往更差', '摊派让每卡多做 1/(N−1)，超过一张慢卡的等待。'],
+    ['卡越多越不怕一张慢卡', '1024 卡时其余卡的最大值本身就超过 μ+3σ。']
+  ]
+});
+
+/* ---------- RL ---------- */
+function rl() {
+  var g = +$('#rlGs').value, v = +$('#rlVs').value, l = +$('#rlLs').value, q = +$('#rlQs').value / 100;
+  $('#rlG').textContent = g; $('#rlV').textContent = v; $('#rlL').textContent = l; $('#rlQ').textContent = Math.round(q * 100) + '%';
+  var feed = q * Math.min(g, v), eff = Math.min(l, feed);
+  var mx = Math.max(g, v, l);
+  S.bars($('#rlBars'), [{ label: '生成 r_g', value: g / mx, text: g + ' 条/s', cls: Math.min(g, v) === g ? 'alt' : 'dim' },
+    { label: '验证 r_v', value: v / mx, text: v + ' 条/s', cls: Math.min(g, v) === v ? 'alt' : 'dim' },
+    { label: '筛选后进学习', value: feed / mx, text: S.f(feed, 2) + ' 条/s', cls: 'dim' },
+    { label: '学习 r_l', value: l / mx, text: l + ' 条/s', cls: eff === l ? 'alt' : 'dim' }]);
+  $('#rlE').textContent = S.f(eff, 2) + ' 条/s';
+  $('#rlB').textContent = eff === l ? '学习端' : (Math.min(g, v) === g ? '生成端' : '验证端');
+  $('#rlW').innerHTML = '扩容应该先给<b>' + $('#rlB').textContent + '</b>；它加速后再看瓶颈转到哪里。原书例：生成 12 翻倍到 24 毫无用处（验证仍卡 4.5），验证翻倍到 12 才让 9 条/s 送到训练端，此时学习端的 8 条成了新瓶颈。';
+}
+['rlGs', 'rlVs', 'rlLs', 'rlQs'].forEach(function (id) { $('#' + id).addEventListener('input', rl); }); rl();
+S.notes($('#n-rl'), {
+  c: [
+    ['r_effective', 'min(r_l, q·min(r_g, r_v))。'],
+    ['共享加速器', '成本在切换：先加载生成权重、再释放训练状态、最后分配 KV。'],
+    ['独立部署', '成本在发权重：按分片发 423 GiB vs 逐一发 6768 GiB。'],
+    ['三个策略版本', 'μ（行为）、π_old（本轮起点）、π_θ（当前）。']
+  ],
+  p: [
+    ['扩容给最慢的那道工序', '生成翻倍对验证瓶颈毫无帮助。'],
+    ['切换顺序差 24 GiB', '正好一份 KV 池。'],
+    ['优势可能全为零', '同组奖励相同时跑完整套流程却没有学习信号。'],
+    ['OPD', '学生自己生成、教师在这些位置给分布，减少前缀分布偏移。']
+  ]
+});
+
+/* ---------- 汇总 ---------- */
+function pf() {
+  var n = +$('#pfNs').value, e = +$('#pfEs').value / 100, w = +$('#pfWs').value;
+  $('#pfN').textContent = n; $('#pfE').textContent = Math.round(e * 100) + '%'; $('#pfW').textContent = w.toFixed(2);
+  var perStepF = 1.66e17, comp = perStepF / (n * 165.2e12 * e);
+  var ts = comp + w, L = 0.0105, steps = 31790;
+  var base = steps * ts / 86400, tot = 5 + base * (1 + L);
+  var limit = 25 * 86400 / (steps * (1 + L));
+  $('#pfT').innerHTML = '<tr><td>每步单卡计算（4090 × ' + Math.round(e * 100) + '%）</td><td class="n">' + S.f(comp, 1) + ' s</td></tr>' +
+    '<tr><td>+ 通信与输入等待</td><td class="n">' + w.toFixed(2) + ' s</td></tr>' +
+    '<tr><td>每步训练时间 t_s</td><td class="n">' + S.f(ts, 1) + ' s（上限 ' + S.f(limit, 1) + '）</td></tr>' +
+    '<tr><td>基础训练时间</td><td class="n">' + days(base) + '</td></tr>' +
+    '<tr class="tot' + (tot > 30 ? ' over' : '') + '"><td>+ 恢复与 5 天预留</td><td class="n">' + days(tot) + '</td></tr>';
+  var v = $('#pfV'); v.className = 'verdict3' + (tot <= 30 ? '' : ' bad');
+  v.innerHTML = tot <= 30 ? '满足 30 天期限，余量 ' + days(30 - tot) + '，每步余量 ' + S.f(limit - ts, 1) + ' s。' :
+    '<b>超期 ' + days(tot - 30) + '</b>。要按期，单卡效率得提到约 ' + S.pct(e * ts / limit, 0) + '——原书对照：32 卡需要 47%，已高于 Llama 3 报告的最高 43%。';
+}
+['pfNs', 'pfEs', 'pfWs'].forEach(function (id) { $('#' + id).addEventListener('input', pf); }); pf();
+S.guess($('#plG'), { q: '48 张 4090、单卡效率 40%，这个任务的完成时间（含 5 天预留）是多少天？', unit: '天', ans: 24.6, fmt: function (x) { return S.f(x, 1); }, why: '原书：每步 52.8 s × 31,790 步 = 19.4 天，加 1.08% 恢复附加和 5 天预留 = 24.6 天。32 卡是 34.3 天（超期），要按期得把单卡效率从 40% 提到 47%——已高于 Llama 3 报告的最高 43%。' });
+S.notes($('#n-plan'), {
+  c: [
+    ['T_finish', 'T₀ + ⌈D/b⌉·t_s(1 + L)。'],
+    ['每步上限', '25×86400/(步数×(1+L))；48 卡是 67.2 s。'],
+    ['T′/T', '1 − f + f/r：按各项耗时比例应用 Amdahl。'],
+    ['p ≥ ⌈6ND/(PηT)⌉', '放大到模型规模的卡数边界。']
+  ],
+  p: [
+    ['两条改进路线', '加两台主机，或把单卡效率从 40% 提到 47%。'],
+    ['网卡配置决定余量', '每卡一张不依赖重叠，八卡共用一张就押在重叠上。'],
+    ['瓶颈是效率不是带宽', 'PCIe 减半几乎不动，效率掉 10 个点就超期。'],
+    ['MFU 决定规模', '16,384 张 B200 练 1T 模型：40% 要 94 天，50% 只要 75 天。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 倒推卡数', 'p ≥ ⌈F/(Pη·T)⌉：100B token、25 天、H100 40% 时至少六张（两张卡装得下状态却要 77 天）。卡数翻倍不一定快一倍——batch 已是 B_noise 的 1.57 倍，弱扩展上限只有 1.64 倍，该走强扩展。'],
+    ['② 显存与三种换法', '混合精度 Adam 每参数 16 字节（8B 模型 131.1 GB）。分片只缩小常驻状态（峰值不会同比下降）；重计算用重建换驻留时间，和流水调度联动；卸载看 T_wait = max(0, V/B − W)，转换位置的分界是 147 GB/s。'],
+    ['③ 恢复与余量', 'τ* = √(2c/λ)（1024 卡约 965 s，最低点平缓）；掉队者让 48 卡 σ=5% 时每步多 5.8 s，吃掉余量的四成；而重分配往往比等待还慢。']
+  ],
+  p: [
+    ['方法', '容量判能否开始，关键路径求 t_s，checkpoint 模型给 L，汇总成完成时间。'],
+    ['下一篇', '多个作业共享同一个资源池：调度、沙箱与运行环境。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,442 @@
+---
+title: 模型架构：把配置表变成 M、F、R
+desc: 深入理解 AI Infra 学习笔记（二）：从矩阵尺寸算参数量与 FLOPs、查询—键配对数、prefill 与 decode、KV 缓存与累计读取、GQA / MLA / 窗口压缩 / 递推 / 跨层共享各省了什么、MoE 的专家读取、MTP 推测解码，以及一张卡能放多少条请求。
+kicker: <span>技术学习</span><span>深入理解 AI Infra · 02</span><span>对应原书第 2 章</span><span>约 35 分钟</span>
+h1: “一个 8B 模型”<em>还不够</em>
+lead: 第 1 篇代入的 70 GB、140 GFLOPs 都是近似。这一章把它们从模型配置里逐项算出来：矩阵尺寸决定权重和线性运算，查询—键配对数决定注意力运算，缓存驻留多久、读多少次决定状态容量和读取量，专家怎么分派决定一批要读多少份权重。原书用五个真实模型对照，本篇以 Qwen3-8B 为主线，再看其他结构各改了哪一项。
+nav: graph|矩阵与 FLOPs;kv|KV 与生成;state|上下文状态;moe|MoE;shape|网络形状;whole|整模型;back|三个问题
+---
+<style>
+.mtx { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 18px; }
+.mtx label { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 15px; color: var(--ink-2); padding: 4px 0; border-bottom: 1px solid var(--hair); }
+.mtx input { width: 6.5em; font: inherit; font-size: 15px; font-family: var(--f-num); padding: 2px 6px; border: 1px solid var(--rule); border-radius: 5px; background: var(--bg); color: var(--ink); text-align: right; }
+.heads { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.heads span { display: inline-block; width: 26px; height: 26px; border-radius: 5px; font-size: 13px; line-height: 26px; text-align: center; font-family: var(--f-num); }
+.heads .q { background: var(--s1-soft); color: var(--s1); }
+.heads .k { background: var(--s2); color: #fff; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>拿到一张模型配置表，怎样算出参数量、一次 prefill 和一次 decode 的 FLOPs？</li>
+  <li>KV 缓存有多大？为什么生成过程中累计读取的 KV 比最终保存的多近千倍？GQA、MLA、压缩、递推各省了什么？</li>
+  <li>MoE 总参数很大，为什么一个 token 算得少？一张卡到底能同时放几条请求？</li>
+</ol></div>
+
+<section class="part" id="graph">
+  <div class="part-head"><h2>从矩阵尺寸到参数量和 FLOPs</h2><span class="meta">原书 2.1 节</span></div>
+  <div class="sec-lede">
+    <p>所有估算都从一条规则开始：m 个 token 每个 k 维，乘一个 k×n 的权重，<strong>N<sub>W</sub> = kn，F = 2mkn，M<sub>W</sub> = b<sub>W</sub>kn</strong>。m 翻倍，运算翻倍、权重不变（同一模型处理更多输入）；n 翻倍，两者都翻倍（层变宽了）。Qwen3-8B 有 36 层，隐藏维度 4096，FFN 中间维度 12288，32 个查询头、8 个 KV 头、每头 128 维，词表 151936。每层 Q、O 投影各 4096×4096，K、V 各 4096×1024，SwiGLU 三个矩阵各 4096×12288，合计每 token 每层线性运算 <strong>385,875,968 FLOPs</strong>，其中 FFN 约占 78%。</p>
+    <p>注意力的 QK<sup>T</sup> 和 AV 不随参数走，而随<strong>查询—键配对数</strong>走：已有 S 个 token、新输入 P 个时，N<sub>pair</sub> = B(PS + P(P+1)/2)，一个长方形加一个三角形；每对每个查询头约 4d<sub>h</sub> FLOPs，Qwen3-8B 每层 16384·N<sub>pair</sub>。所以 prefill 长度翻倍，投影行数翻倍，注意力配对约翻四倍；而把一条长输入拆成两条短输入，跨越分界的配对就消失了。保持 BP 不变，只能保持投影不变。</p>
+    <p>全模型：F = 36(385,875,968·m + 16,384·N<sub>pair</sub>) + 2·m<sub>out</sub>·4096·151936。8192 token 的 prefill 约 <strong>133.6 TFLOPs</strong>；已有 8192 token 再补一个 token 约 <strong>20.0 GFLOPs</strong>。KV 缓存省掉的是旧 token 的投影和 FFN 重算，当前查询和上下文的注意力仍要算。</p>
+    <p class="go">先估一个数，再用计算器改配置、改 B / S / P。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次前向的矩阵 FLOPs（默认 Qwen3-8B 配置）</p>
+    <div id="fwG"></div>
+    <div class="mtx" id="fwCfg"></div>
+    <div class="selrow" style="margin-top:10px"><span>调用形状</span><div class="seg" id="fwPre"><button data-v="pf" aria-pressed="true">8K prefill（S=0, P=8192）</button><button data-v="dc">8K 后 decode（S=8192, P=1）</button><button data-v="ex">练习 2-2（B=4, S=4096, P=1024）</button></div></div>
+    <div class="mtx" id="fwShape"></div>
+    <table class="calc" id="fwT"></table>
+  </div>
+  <div class="notes" id="n-graph"></div>
+</section>
+
+<section class="part" id="kv">
+  <div class="part-head"><h2>KV 缓存：存得不多，读得很多</h2><span class="meta">原书 2.2 节</span></div>
+  <div class="sec-lede">
+    <p>因果模型里旧 token 看不到后来的 token，所以旧 token 的 K、V 可以保留：把“重算旧 token”变成“保存并读取旧状态”。每个上下文 token 的 KV：<strong>c<sub>KV</sub> = 2·L·n<sub>KV</sub>·d<sub>h</sub>·b<sub>KV</sub></strong>，Qwen3-8B BF16 是 2×36×8×128×2 = <strong>144 KiB</strong>，8192 token 即 1.125 GiB。数据按生命周期分三类：权重（多次调用间不变）、上下文状态（随请求追加）、临时数据（用完即释放）。</p>
+    <p>一批请求共享权重读取，但上下文各读各的。上下文读取超过权重读取的 batch：<strong>B* = R<sub>W</sub> / (c<sub>KV</sub>H)</strong>，Qwen3-8B 权重读取约 15.14 GB，8K 上下文时 B* = 13，2K 时 51。上下文越长，批内复用的收益越早被抵消。</p>
+    <p>完整回答：prefill 后执行 n<sub>d</sub> = G − 1 次 decode，第 j 次要读 H + j 个旧 token，累计读取 <strong>R<sub>old</sub> = c<sub>KV</sub>[n<sub>d</sub>H + n<sub>d</sub>(n<sub>d</sub>−1)/2]</strong>。原书例题：输入 8192、返回 1025 个 token，累计读 KV 约 <strong>1224 GiB</strong>，而结束时只保存约 <strong>1.27 GiB</strong>，近千倍。原因是每个进入上下文的 token，后面每次 decode 都要再读一遍。</p>
+    <p class="go">先猜那个倍数，再拖动输入输出长度。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一条请求的 KV 存储 vs 累计读取（Qwen3-8B，BF16）</p>
+      <div id="kvG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>输入 P（S=0） <output id="kvP">8192</output></span><input type="range" id="kvPs" min="256" max="40960" step="256" value="8192"></label>
+        <label class="ctl"><span>返回 G <output id="kvGn">1025</output></span><input type="range" id="kvGs" min="1" max="8193" step="64" value="1025"></label>
+        <label class="ctl"><span>KV 位宽（字节） <output id="kvB">2</output></span><input type="range" id="kvBs" min="0.5" max="2" step="0.5" value="2"></label>
+      </div>
+      <div class="read"><div><div class="v" id="kvS">0</div><div class="k">结束时保存的 KV</div></div><div class="warn"><div class="v" id="kvR">0</div><div class="k">decode 累计读取旧 KV</div></div><div class="hl"><div class="v" id="kvX">0</div><div class="k">读取 / 保存</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">上下文读取何时超过权重读取</p>
+      <label class="ctl"><span>每请求上下文 H <output id="bsH">8192</output></span><input type="range" id="bsHs" min="512" max="32768" step="512" value="8192"></label>
+      <div class="read"><div class="hl"><div class="v" id="bsB">0</div><div class="k">最小整数 B*</div></div></div>
+      <p class="note">R<sub>W</sub> = 15,136,811,008 字节，c<sub>KV</sub> = 147,456 字节（原书例题 2-2）。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-kv"></div>
+</section>
+
+<section class="part" id="state">
+  <div class="part-head"><h2>上下文状态：每 token 存多少，每步读多少</h2><span class="meta">原书 2.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书用两种记录办法打比方：逐页留记录（按 token 存 K、V，随历史增长），或只留一张不断改写的定长摘要（递推状态）。减少状态的手段各改一个量：<strong>GQA / MQA</strong> 减少 KV 组数（Qwen3-8B 四个查询头共用一组 KV，若每头单独存是 4 倍，全部共用是 1/8），但查询头仍各自打分，注意力运算不按比例下降；<strong>MLA</strong> 降低每 token 的表示宽度，靠结合律 qK<sup>T</sup> = (qU<sub>k</sub><sup>T</sup>)c<sup>T</sup> 只存潜变量，Kimi K3 的 24 层 MLA 在 8K 下紧凑路径 216 MiB，展开路径约 11.25 GiB；<strong>窗口 + 压缩 + 稀疏索引</strong>（DeepSeek V4-Flash 的 CSA 4:1、HCA 128:1、窗口 128）减少条目数，但索引扫描仍要遍历所有压缩索引条目；<strong>线性注意力 / 递推</strong>（Kimi 的 KDA）状态大小固定，K3 69 层 FP32 共 414 MiB，但每步要一读一写 828 MiB。</p>
+    <p>混合结构的容量：<strong>M<sub>state</sub>(H) = M<sub>fixed</sub> + c<sub>state</sub>·H</strong>，两部分相等处 H* = M<sub>fixed</sub>/c<sub>state</sub>：Qwen3.6 固定 61.875 MiB、每 token 20 KiB，H* = 3168；Kimi K3 固定约 433.4 MiB、每 token 27 KiB，H* 约 16.4K。低于交点缩短上下文省不了多少，远高于交点才该减小每 token 宽度。DeepSeek V4.1 Flash 再进一步：40 层里只有 4 层有独立全局 KV（3 层 2:1 压缩、1 层 1:1），FP4 主记录 288 B + 索引 68 B，平均每 token <strong>890 B</strong>，V4-Flash 是 3514.25 B，Qwen3-8B 是 147,456 B。</p>
+    <p class="go">左边看 GQA 的头共享，右边拖动上下文长度看混合结构的两部分。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">KV 组数与容量（固定 Qwen3-8B 层数、头宽、8192 token、BF16）</p>
+      <div class="seg" id="gqS"><button data-v="32">MHA：32 组</button><button data-v="8" aria-pressed="true">GQA：8 组（实际）</button><button data-v="1">MQA：1 组</button></div>
+      <div class="heads" id="gqH"></div>
+      <div class="read"><div class="hl"><div class="v" id="gqC">0</div><div class="k">8K KV 容量</div></div><div><div class="v" id="gqF">不变</div><div class="k">QK<sup>T</sup> 与 AV 运算</div></div></div>
+      <p class="note">蓝格是 32 个查询头，橙格是 KV 头；查询头仍各自给上下文打分。MHA、MQA 两档是原书用来分析共享比例的结构变体。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">混合结构：固定部分 + 随上下文增长部分</p>
+      <div class="seg" id="hyS"><button data-v="q" aria-pressed="true">Qwen3.6</button><button data-v="k">Kimi K3（紧凑 MLA）</button></div>
+      <label class="ctl"><span>上下文 H（token） <output id="hyH">8192</output></span><input type="range" id="hyHs" min="0" max="17" step="1" value="5"></label>
+      <div id="hyBars" class="wide"></div>
+      <p class="cap" id="hyW"></p>
+    </div>
+  </div>
+  <div class="kvc">
+    <h3>每个 token 的全局历史增量（对数刻度，原书 2.3.6 节表）</h3>
+    <div id="bptBars" class="wide"></div>
+    <p class="src">前七行 BF16；V4-Flash、V4.1 Flash 为生产混合格式。Kimi K3 若按参考实现展开 K/V，每 token 是 1,474,560 B。</p>
+  </div>
+  <div class="notes" id="n-state"></div>
+</section>
+
+<section class="part" id="moe">
+  <div class="part-head"><h2>MoE：保存的参数和读取的参数是两回事</h2><span class="meta">原书 2.4 节</span></div>
+  <div class="sec-lede">
+    <p>MoE 把 FFN 的参数分给多个专家，路由器为每个 token 选 top-k 个。每层保存 E·N<sub>e</sub> 个路由专家参数，每 token 只做约 2k<sub>top</sub>N<sub>e</sub> 的专家运算。Qwen3.6-35B-A3B：40 层、隐藏 2048、每层 256 个路由专家选 8 个、专家中间维度 512；一个专家 3×2048×512 = 3,145,728 参数，BF16 6 MiB，每层全部专家 1.5 GiB，一个 token 选中的 48 MiB。全部文本参数约 346.6 亿，BF16 约 69.3 GB；但 8K 后一步 decode 只要约 7.33 GFLOPs，比 Qwen3-8B 的 20.0 还少。</p>
+    <p>一批 token 同时路由时，运算看分派总行数，读取看<strong>实际访问了多少个不同专家 U</strong>：<strong>F<sub>expert</sub> = 2N<sub>e</sub>·B·k<sub>top</sub>，R<sub>expert</sub> = b<sub>W</sub>·N<sub>e</sub>·U</strong>。原书例题 2-4：B = 64，共 512 次分派；均匀分到 256 个专家（每个 2 行），每层读 1.5 GiB；集中到同一组 8 个专家（每个 64 行），每层只读 48 MiB，相差 32 倍，运算量却完全一样。专家放在不同卡上时，还要把 token 发过去、把结果收回来（第 6、9 篇）。</p>
+    <p class="go">调 batch 和路由集中程度，看两项各自怎么变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Qwen3.6 一层的路由专家：运算 vs 读取</p>
+    <div id="moG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>batch B（decode，每请求 1 token） <output id="moB">64</output></span><input type="range" id="moBs" min="1" max="256" value="64"></label>
+      <label class="ctl"><span>实际访问的不同专家数 U <output id="moU">256</output></span><input type="range" id="moUs" min="8" max="256" value="256"></label>
+    </div>
+    <div class="read"><div><div class="v" id="moF">0</div><div class="k">专家矩阵运算</div></div><div class="warn"><div class="v" id="moR">0</div><div class="k">每层专家权重读取（BF16）</div></div><div class="hl"><div class="v" id="moT">0</div><div class="k">平均每专家处理行数</div></div></div>
+    <p class="note">U 的范围是 8（全部集中）到 min(256, 8B)。运算只取决于 B·k<sub>top</sub> 次分派，读取只取决于 U。</p>
+  </div>
+  <div class="notes" id="n-moe"></div>
+</section>
+
+<section class="part" id="shape">
+  <div class="part-head"><h2>网络形状：深度、专家粒度、残差和 MTP</h2><span class="meta">原书 2.5 节</span></div>
+  <div class="sec-lede">
+    <p>稠密主干参数大致正比于 L·d²：隐藏维度减半、层数增至四倍，参数相近，但逐层依赖链长四倍。专家也能等价变形：单层路由专家总参数 3Edf、单 token 运算 6k<sub>top</sub>df，把 E 减半、f 加倍、k<sub>top</sub> 减半，两者都不变，但矩阵变成更少更大的块，路由器参数和每专家接收行数都会变。</p>
+    <p>连接方式决定哪些张量要同时保存：DeepSeek V4-Flash 的 <strong>mHC</strong> 把残差扩成 4 路，用 Sinkhorn 迭代归一化混合矩阵，8192 token 时混合投影约 555 GFLOPs、非矩阵约 149 GFLOPs；Kimi K3 的 <strong>AttnRes</strong> 沿深度做注意力选取浅层表示，增加的是一次前向内的临时存储，而 KV 要跨调用保留。</p>
+    <p><strong>MTP</strong> 让一次前向给出多个候选，配合<strong>推测解码</strong>由主模型验证。设普通 decode 耗时 T<sub>d</sub>，一轮草稿 + 验证 T<sub>s</sub> + T<sub>v</sub>，平均得到 ḡ 个有效输出，有收益的条件是 <strong>ḡ &gt; (T<sub>s</sub> + T<sub>v</sub>) / T<sub>d</sub></strong>。原书例：T<sub>d</sub> = 20 ms、草稿加验证 30 ms，每轮 2 个有效输出时每输出 15 ms，只有 1 个时 30 ms。V4-Flash 一次 MTP 辅助计算约 1.80 GFLOPs，其中共享词表头就占 1.06。</p>
+    <p class="go">代入推测解码的条件。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">推测解码值不值</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>普通 decode T<sub>d</sub>（ms） <output id="spD">20</output></span><input type="range" id="spDs" min="5" max="60" value="20"></label>
+      <label class="ctl"><span>草稿 + 验证（ms） <output id="spV">30</output></span><input type="range" id="spVs" min="5" max="120" value="30"></label>
+      <label class="ctl"><span>平均有效输出 ḡ <output id="spG">2</output></span><input type="range" id="spGs" min="1" max="6" step="0.1" value="2"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="spO">0</div><div class="k">每输出分摊</div></div><div><div class="v" id="spN">0</div><div class="k">盈亏平衡所需 ḡ</div></div></div>
+    <p class="verdict3" id="spW"></p>
+  </div>
+  <div class="notes" id="n-shape"></div>
+</section>
+
+<section class="part" id="whole">
+  <div class="part-head"><h2>整模型比较，和一张卡能放几条请求</h2><span class="meta">原书 2.6 节</span></div>
+  <div class="sec-lede">
+    <p>整模型只是按层类别加权求和：M<sub>W</sub> = b<sub>W</sub>Σ L<sub>g</sub>N<sub>g</sub> + 嵌入 + 输出头，F = Σ L<sub>g</sub>F<sub>g</sub> + F<sub>head</sub>。原书把五个模型放在同一条件下：总参数（Qwen3.6、V4-Flash、Kimi K3 的路由专家占 93%–98%）决定容量，选中的专家和注意力类型决定单次运算，上下文表示决定状态。所以 Qwen3.6 权重约是 Qwen3-8B 的四倍，单步运算反而更少；V4-Flash 权重更大，8K 状态反而因压缩更小。上下文到 1M 时差距被放大：Qwen3-8B 状态 144 GiB，V4.1 Flash 只有 3.138 GiB。V4.1 的 CED 让大部分输入只过 20 层编码器，8K prefill 从参考全层的 282.4 降到 143.9 TFLOPs。</p>
+    <p>单卡能放几条请求：<strong>B<sub>max</sub> = ⌊(M<sub>device</sub> − M<sub>weight</sub> − M<sub>workspace</sub>) / M<sub>state/request</sub>⌋</strong>。原书例：24 GB 的 RTX 4090 跑 Qwen3-8B BF16、预留 2 GiB，8K 上下文 4 条，16K 2 条，4K 9 条；70B 的 4-bit 方案（39.500 GB，含 scale 和高精度部分）放在 H100 上，8K 14 条，32K 只剩 3 条。反过来也能从加速器反推模型：N<sub>max</sub> = (C − M<sub>0</sub> − BK) / b<sub>W</sub>，4090 留 4 条 8K 请求后 BF16 最多约 85.1 亿参数。</p>
+    <p class="go">先看五个模型在各个指标上的对比，再算并发上限。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五个模型，同一条件（原书表 2-B、2-C、2-E）</p>
+    <div class="seg" id="cmS"><button data-v="w" aria-pressed="true">BF16 完整权重</button><button data-v="pf">8K prefill</button><button data-v="s8">8K 状态</button><button data-v="s1">1M 状态</button><button data-v="i1">1M 上下文交互</button></div>
+    <div id="cmBars" class="wide" style="margin-top:10px"></div>
+    <p class="cap" id="cmW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">单卡并发上限 B<sub>max</sub></p>
+    <div id="bmG"></div>
+    <div class="selrow"><span>模型</span><div class="seg" id="bmM"><button data-v="q8" aria-pressed="true">Qwen3-8B BF16</button><button data-v="l8">70B 8-bit</button><button data-v="l4">70B 4-bit</button></div></div>
+    <div class="selrow"><span>加速器</span><div class="seg" id="bmD"><button data-v="24" aria-pressed="true">RTX 4090 · 24 GB</button><button data-v="48">RTX 6000 Ada · 48 GB</button><button data-v="80">H100 SXM · 80 GB</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>上下文（K token） <output id="bmL">8</output></span><input type="range" id="bmLs" min="1" max="64" value="8"></label>
+      <label class="ctl"><span>工作区预留（GiB） <output id="bmW">2</output></span><input type="range" id="bmWs" min="0" max="8" step="0.5" value="2"></label>
+    </div>
+    <table class="calc" id="bmT"></table>
+    <p class="verdict3" id="bmV"></p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">N_W = kn，　F = 2mkn，　M_W = b_W·kn　　（m = BP）</div>
+    <div class="fx">N_pair = B(PS + P(P+1)/2)，　F_attn = 4·n_Q·d_h·N_pair</div>
+    <div class="fx">Qwen3-8B：F = 36(385,875,968·m + 16,384·N_pair) + 2·m_out·4096·151936</div>
+    <div class="fx">c_KV = 2·L·n_KV·d_h·b_KV，　M_KV = c_KV·H</div>
+    <div class="fx">B* = R_W / (c_KV·H)　　（上下文读取超过权重读取）</div>
+    <div class="fx">R_old = c_KV[n_d·H + n_d(n_d−1)/2]，　n_d = G − 1</div>
+    <div class="fx">M_state(H) = M_fixed + c_state·H，　H* = M_fixed / c_state</div>
+    <div class="fx">F_expert = 2N_e·B·k_top，　R_expert = b_W·N_e·U</div>
+    <div class="fx">推测解码有收益：ḡ &gt; (T_s + T_v) / T_d</div>
+    <div class="fx">B_max = ⌊(M_device − M_weight − M_workspace) / M_state/request⌋，　N_max = (C − M_0 − BK) / b_W</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>81.9 亿</b><span>Qwen3-8B 参数；BF16 16.38 GB</span></div>
+      <div><b>144 KiB</b><span>Qwen3-8B 每 token KV；8K = 1.125 GiB</span></div>
+      <div><b>133.6 T / 20.0 G</b><span>Qwen3-8B 8K prefill / 8K 后一步 decode 的 FLOPs</span></div>
+      <div><b>1224 GiB vs 1.27 GiB</b><span>8K 输入返回 1025 token：累计读 vs 最终存</span></div>
+      <div><b>B* = 13</b><span>8K 上下文时 KV 读取超过权重读取的 batch</span></div>
+      <div><b>890 B/token</b><span>V4.1 Flash 全局 KV；V4-Flash 3514.25</span></div>
+      <div><b>216 MiB vs 11.25 GiB</b><span>Kimi K3 MLA 8K 紧凑 vs 展开</span></div>
+      <div><b>1.5 GiB vs 48 MiB</b><span>Qwen3.6 一层专家读取：均匀 vs 集中</span></div>
+      <div><b>282.4 → 143.9 T</b><span>V4.1 Flash 8K prefill：全层 vs CED</span></div>
+      <div><b>4 条</b><span>4090 跑 Qwen3-8B BF16、8K 的并发上限</span></div>
+    </div>
+    <p class="src">数字均取自原书第 2 章正文与表格。</p>
+  </div>
+  <div class="notes" id="n-whole"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+function GiB(x) { return x / Math.pow(2, 30); }
+function MiB(x) { return x / Math.pow(2, 20); }
+function bytes(x) { var a = Math.abs(x); return a >= Math.pow(2, 30) ? S.f(GiB(x), GiB(x) >= 100 ? 0 : 2) + ' GiB' : a >= Math.pow(2, 20) ? S.f(MiB(x), MiB(x) >= 100 ? 0 : 1) + ' MiB' : S.f(x / 1024, 1) + ' KiB'; }
+function flops(x) { return x >= 1e12 ? S.f(x / 1e12, 2) + ' TFLOPs' : x >= 1e9 ? S.f(x / 1e9, 2) + ' GFLOPs' : S.f(x / 1e6, 1) + ' MFLOPs'; }
+
+/* ---------- 前向 FLOPs ---------- */
+var cfg = { L: 36, d: 4096, f: 12288, nQ: 32, nKV: 8, dh: 128, V: 151936 };
+var shp = { B: 1, S: 0, P: 8192 };
+var cfgName = { L: '层数 L', d: '隐藏维度 d', f: 'FFN 中间维度 f', nQ: '查询头 n_Q', nKV: 'KV 头 n_KV', dh: '头维度 d_h', V: '词表 V' };
+function mkInputs(box, obj, names, cb) {
+  Object.keys(names).forEach(function (k) {
+    var l = h('label', null, box); h('span', { text: names[k] }, l);
+    var inp = h('input', { type: 'number', min: 0, value: obj[k] }, l);
+    inp.addEventListener('input', function () { obj[k] = Math.max(0, +inp.value || 0); cb(); });
+    obj['_' + k] = inp;
+  });
+}
+mkInputs($('#fwCfg'), cfg, cfgName, fw);
+mkInputs($('#fwShape'), shp, { B: '请求数 B', S: '已有上下文 S', P: '本次输入 P' }, fw);
+S.seg($('#fwPre'), function (v) {
+  var p = { pf: [1, 0, 8192], dc: [1, 8192, 1], ex: [4, 4096, 1024] }[v];
+  shp.B = p[0]; shp.S = p[1]; shp.P = p[2];
+  shp._B.value = p[0]; shp._S.value = p[1]; shp._P.value = p[2]; fw();
+});
+function fw() {
+  var c = cfg, m = shp.B * shp.P;
+  var nProj = 2 * c.d * c.nQ * c.dh + 2 * c.d * c.nKV * c.dh, nFFN = 3 * c.d * c.f;
+  var npair = shp.B * (shp.P * shp.S + shp.P * (shp.P + 1) / 2);
+  var lin = c.L * 2 * m * (nProj + nFFN), att = c.L * 4 * c.nQ * c.dh * npair, head = 2 * shp.B * c.d * c.V;
+  var params = c.L * (nProj + nFFN) + 2 * c.V * c.d;
+  $('#fwT').innerHTML =
+    '<tr><td>每层投影参数 + FFN 参数</td><td class="n">' + S.big(nProj) + ' + ' + S.big(nFFN) + '</td></tr>' +
+    '<tr><td>主要矩阵参数（各层 + 嵌入 + 输出头，不含归一化）</td><td class="n">' + S.f(params / 1e9, 2) + ' B</td></tr>' +
+    '<tr><td>线性投影与 FFN：' + c.L + ' × 2m(N_proj + N_FFN)，m = ' + m + '</td><td class="n">' + flops(lin) + '</td></tr>' +
+    '<tr><td>注意力 QKᵀ + AV：N_pair = ' + S.big(npair) + '</td><td class="n">' + flops(att) + '</td></tr>' +
+    '<tr><td>词表头（每请求末尾 1 个 token）</td><td class="n">' + flops(head) + '</td></tr>' +
+    '<tr class="tot"><td>合计</td><td class="n">' + flops(lin + att + head) + '</td></tr>' +
+    '<tr><td>注意力占比</td><td class="n">' + S.pct(att / (lin + att + head)) + '</td></tr>';
+}
+fw();
+S.guess($('#fwG'), { q: 'Qwen3-8B 处理 8192 个输入 token（prefill，从零开始），矩阵运算大约多少 TFLOPs？', unit: 'TFLOPs', ans: 133.6, why: '原书：约 133.6 TFLOPs。其中注意力配对数 8192×8193/2 ≈ 3356 万，贡献约 19.8 T；已有 8192 token 再补 1 个只要约 20.0 GFLOPs，因为旧 token 的投影和 FFN 不再重算。' });
+S.notes($('#n-graph'), {
+  c: [
+    ['矩阵规则', 'N_W = kn，F = 2mkn，M_W = b_W·kn；m = BP 是本次参与投影的 token 数。'],
+    ['查询—键配对', 'N_pair = B(PS + P(P+1)/2)：长方形（读旧上下文）+ 三角形（新输入内部）。'],
+    ['因果依赖', 'Transformer 同层已知 token 可并行，下一层等上一层；生成另有跨调用的串行依赖。'],
+    ['Qwen3-8B 配置', '36 层、d 4096、f 12288、32 Q 头 / 8 KV 头 × 128、词表 151936。']
+  ],
+  p: [
+    ['FFN 占大头', '短上下文时 FFN 约占主要投影参数的 78%。'],
+    ['BP 相同 ≠ 注意力相同', '拆分长输入会丢掉跨界配对；加长上下文只增配对不增投影。'],
+    ['缓存省什么', '省旧 token 的投影和 FFN；当前查询与上下文的注意力照算。']
+  ]
+});
+
+/* ---------- KV ---------- */
+var C1 = 147456;
+function kvc() {
+  var P = +$('#kvPs').value, G = +$('#kvGs').value, b = +$('#kvBs').value;
+  $('#kvP').textContent = P; $('#kvGn').textContent = G; $('#kvB').textContent = b;
+  var c = C1 * b / 2, nd = G - 1, H = P;
+  var stored = c * (H + nd), read = c * (nd * H + nd * (nd - 1) / 2);
+  $('#kvS').textContent = bytes(stored); $('#kvR').textContent = nd ? bytes(read) : '0';
+  $('#kvX').textContent = nd ? S.f(read / stored, 0) + '×' : '—';
+}
+['kvPs', 'kvGs', 'kvBs'].forEach(function (id) { $('#' + id).addEventListener('input', kvc); });
+kvc();
+S.guess($('#kvG'), { q: 'Qwen3-8B 输入 8192、返回 1025 个 token：decode 期间累计读取的旧 KV，是结束时保存的 KV 的多少倍？', unit: '倍', ans: 1224 / 1.27, fmt: function (x) { return S.f(x, 0); }, why: '原书：累计读约 1224 GiB，结束时保存约 1.27 GiB，“近千倍”。KV 位宽减半，两者同时减半，倍数不变。' });
+function bstar() {
+  var H = +$('#bsHs').value; $('#bsH').textContent = H;
+  $('#bsB').textContent = Math.ceil(15136811008 / (C1 * H));
+}
+$('#bsHs').addEventListener('input', bstar); bstar();
+S.notes($('#n-kv'), {
+  c: [
+    ['c_KV', '2·L·n_KV·d_h·b_KV；Qwen3-8B BF16 = 144 KiB/token。'],
+    ['三类数据', '权重（调用间不变）、上下文状态（随请求追加）、临时数据（用完释放）。'],
+    ['R_old', 'c_KV[n_d·H + n_d(n_d−1)/2]：早进入上下文的 token 被读得更多次。'],
+    ['n_d = G − 1', '最后返回的 token 没再送入模型，不自动保存它的 KV。']
+  ],
+  p: [
+    ['存储 vs 累计读取', '8K 输入、1025 输出：1.27 GiB vs 1224 GiB。'],
+    ['B* = R_W / (c_KV·H)', '8K 时 13，2K 时 51；上下文越长批内复用越早失效。'],
+    ['算读写 vs 算峰值', '读写量要数每次访问；内存峰值要找同时存活的张量。']
+  ]
+});
+
+/* ---------- 状态 ---------- */
+function gq(n) {
+  var box = $('#gqH'); box.innerHTML = '';
+  for (var i = 0; i < 32; i++) h('span', { class: 'q', text: i + 1 }, box);
+  for (var j = 0; j < n; j++) h('span', { class: 'k', text: 'KV' }, box);
+  var c = 2 * 36 * n * 128 * 2 * 8192;
+  $('#gqC').textContent = bytes(c);
+}
+S.seg($('#gqS'), function (v) { gq(+v); }); gq(8);
+var hy = { q: { f: 61.875 * Math.pow(2, 20), c: 20 * 1024, n: 'Qwen3.6' }, k: { f: 414 * Math.pow(2, 20) + 20348928, c: 27 * 1024, n: 'Kimi K3' } }, hyk = 'q';
+var Hs = [256, 512, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 262144, 524288, 786432, 1048576];
+function hyc() {
+  var H = Hs[+$('#hyHs').value], m = hy[hyk];
+  $('#hyH').textContent = H.toLocaleString();
+  var g = m.c * H, tot = m.f + g;
+  S.bars($('#hyBars'), [{ label: '固定（递推 + 卷积）', value: m.f / tot, text: bytes(m.f), cls: 'dim' }, { label: '随 H 增长', value: g / tot, text: bytes(g) }, { label: '合计', value: 1, text: bytes(tot), cls: 'alt' }]);
+  var Hstar = m.f / m.c;
+  $('#hyW').innerHTML = m.n + '：H* = ' + S.f(Hstar, 0) + '。当前 H ' + (H < Hstar ? '<b>低于</b>交点，缩短上下文能省的有限' : '<b>高于</b>交点，每 token 宽度才是关键') + '。';
+}
+S.seg($('#hyS'), function (v) { hyk = v; hyc(); });
+$('#hyHs').addEventListener('input', hyc); hyc();
+S.magbars($('#bptBars'), [
+  { label: 'Qwen3-32B', v: 262144, text: '262,144' }, { label: 'Qwen3-235B-A22B', v: 192512, text: '192,512' },
+  { label: 'Qwen3-8B', v: 147456, text: '147,456' }, { label: 'Qwen3-30B-A3B', v: 98304, text: '98,304' },
+  { label: 'Qwen3.5-397B（全注意力部分）', v: 30720, text: '30,720' }, { label: 'Kimi K3（紧凑 MLA）', v: 27648, text: '27,648' },
+  { label: 'Qwen3.6（全注意力部分）', v: 20480, text: '20,480' }, { label: 'DeepSeek V4-Flash', v: 3514.25, text: '3,514', cls: 'ok' },
+  { label: 'DeepSeek V4.1 Flash', v: 890, text: '890', cls: 'ok' }
+], { log: true });
+S.notes($('#n-state'), {
+  c: [
+    ['GQA / MQA', '减少 KV 组数；查询头仍各自打分，注意力运算不随之下降。'],
+    ['MLA', '只存低维潜变量，靠结合律把上投影挪到查询和汇总一侧。'],
+    ['窗口 / 压缩 / 索引', 'SWA 读近期；CSA 4:1 + 索引选 top-k；HCA 128:1 全读；索引扫描仍随历史增长。'],
+    ['递推（KDA）', '固定大小关联矩阵；状态不增长，但每步一读一写。'],
+    ['跨层共享（V4.1 CED）', '40 层只有 4 层独立全局 KV，平均 890 B/token。']
+  ],
+  p: [
+    ['H* = M_fixed / c_state', 'Qwen3.6 3168；Kimi K3 约 16.4K。'],
+    ['固定状态也有访问', 'K3 递推 414 MiB，每步读写 828 MiB。'],
+    ['容量 ≠ 读取', 'V4-Flash 8K 生产格式存 27.455 MiB、每步读 12.556 MiB；V4.1 存 6.953、读 11.375。'],
+    ['设计反向影响', 'MQA 原论文直接以增量推理的内存带宽为动机。']
+  ]
+});
+
+/* ---------- MoE ---------- */
+var Ne = 3145728;
+function moe() {
+  var B = +$('#moBs').value, us = $('#moUs');
+  us.max = Math.min(256, 8 * B); us.min = Math.min(8, 8 * B);
+  var U = Math.min(+us.value, +us.max);
+  $('#moB').textContent = B; $('#moU').textContent = U;
+  $('#moF').textContent = flops(2 * Ne * B * 8);
+  $('#moR').textContent = bytes(2 * Ne * U);
+  $('#moT').textContent = S.f(B * 8 / U, 1);
+}
+['moBs', 'moUs'].forEach(function (id) { $('#' + id).addEventListener('input', moe); }); moe();
+S.guess($('#moG'), { q: 'B=64 时，均匀分派（访问全部 256 个专家）和集中分派（只访问 8 个）相比，每层专家权重读取相差几倍？', unit: '倍', ans: 32, fmt: function (x) { return S.f(x, 0); }, why: '原书例题 2-4：1.5 GiB vs 48 MiB，相差 32 倍，而矩阵运算量相同（都是 512 次分派）。集中时每份权重供 64 行使用，复用更高。' });
+S.notes($('#n-moe'), {
+  c: [
+    ['MoE', '路由器为每 token 选 top-k 个专家；可有所有 token 都走的共享专家。'],
+    ['保存 vs 计算', '每层保存 E·N_e，单 token 计算约 2k_top·N_e。'],
+    ['F 看行数，R 看 U', 'F = 2N_e·B·k_top；R = b_W·N_e·U。']
+  ],
+  p: [
+    ['Qwen3.6', '256 专家选 8，每专家 6 MiB；全部文本参数 346.6 亿，8K decode 只要 7.33 GFLOPs。'],
+    ['潜空间专家', 'Kimi K3 把专家输入降到 3584 维，多了进出潜空间两次投影。'],
+    ['跨卡专家', '专家在别的卡上就要发送 token、收回结果，通信量看放置。']
+  ]
+});
+
+/* ---------- MTP ---------- */
+function sp() {
+  var d = +$('#spDs').value, v = +$('#spVs').value, g = +$('#spGs').value;
+  $('#spD').textContent = d; $('#spV').textContent = v; $('#spG').textContent = g.toFixed(1);
+  var o = v / g, be = v / d;
+  $('#spO').textContent = S.f(o, 1) + ' ms'; $('#spN').textContent = S.f(be, 2);
+  var w = $('#spW'); w.className = 'verdict3' + (g > be ? '' : ' bad');
+  w.textContent = g > be ? '有收益：每输出 ' + S.f(o, 1) + ' ms < 普通 decode ' + d + ' ms。' : '不划算：采纳的输出不够多，抵消不了草稿和验证的开销。';
+}
+['spDs', 'spVs', 'spGs'].forEach(function (id) { $('#' + id).addEventListener('input', sp); }); sp();
+S.notes($('#n-shape'), {
+  c: [
+    ['深度 vs 宽度', '参数 ∝ L·d²；d 减半、L 乘四，参数相近，依赖链长四倍。'],
+    ['专家粒度不变式', '3Edf 与 6k_top·df：E 减半、f 加倍、k 减半，两者都不变。'],
+    ['mHC / AttnRes', '4 路残差 + Sinkhorn 归一化 / 沿深度做注意力；增加一次前向内的临时存储。'],
+    ['MTP + 推测解码', '一次给多个候选，主模型验证；ḡ > (T_s+T_v)/T_d 才有收益。']
+  ],
+  p: [
+    ['原书例', '20 ms decode、30 ms 草稿 + 验证：ḡ = 2 时 15 ms，ḡ = 1 时 30 ms。'],
+    ['词表头不便宜', 'V4-Flash 一次 MTP 1.80 GFLOPs，共享词表头占 1.06。']
+  ]
+});
+
+/* ---------- 整模型 ---------- */
+var models = ['DeepSeek V4.1 Flash', 'Qwen3-8B', 'Qwen3.6', 'DeepSeek V4-Flash', 'Kimi K3'];
+var met = {
+  w: { v: [748.495 * 2, 8.191 * 2, 34.66 * 2, 284.33 * 2, 2779.485 * 2], u: 'GB', t: '按表 2-B 参数 × 2 字节换算（含全部路由专家；V4.1 含 Engram）。总参数决定容量。' },
+  pf: { v: [143.95, 133.59, 52.09, 231.13, 1863.46], u: 'TFLOPs', t: '表 2-C：B=1、S=0、P=8192，词表头只处理末尾 token。V4.1 走 CED + 末尾窗口重放。' },
+  s8: { v: [0.029, 1.125, 0.217, 0.069, 0.634], u: 'GiB', t: '表 2-E：8K 上下文的每请求状态（含固定递推状态与压缩缓冲）。' },
+  s1: { v: [3.138, 144, 20.06, 6.735, 27.423], u: 'GiB', t: '表 2-E：1M 上下文。Qwen3-8B、Qwen3.6 的 1M 行按同一结构外推。' },
+  i1: { v: [25.23, 618.48, 171.80, 113.80, 5257.04], u: 'GFLOPs', t: '表 2-E：1M 上下文再处理一个 token 的上下文交互运算（含索引点积）。' }
+};
+function cm(k) {
+  var m = met[k];
+  S.magbars($('#cmBars'), models.map(function (n, i) { return { label: n, v: m.v[i], text: S.f(m.v[i], m.v[i] >= 100 ? 0 : m.v[i] >= 1 ? 2 : 3) + ' ' + m.u, cls: n === 'Qwen3-8B' ? 'alt' : '' }; }), { log: true });
+  $('#cmW').textContent = m.t + '（对数刻度）';
+}
+S.seg($('#cmS'), cm); cm('w');
+var bm = { m: 'q8', d: 24 };
+var bmM = { q8: { n: 'Qwen3-8B BF16', w: 16.38147072e9, c: 147456 }, l8: { n: '70B 分组 8-bit', w: 73.726e9, c: 2.5 * Math.pow(2, 30) / 8192 }, l4: { n: '70B 分组 4-bit', w: 39.5e9, c: 2.5 * Math.pow(2, 30) / 8192 } };
+function bmc() {
+  var L = +$('#bmLs').value * 1024, W = +$('#bmWs').value, M = bmM[bm.m];
+  $('#bmL').textContent = L / 1024; $('#bmW').textContent = W;
+  var dev = bm.d * 1e9, ws = W * Math.pow(2, 30), st = M.c * L, free = dev - M.w - ws, n = Math.floor(free / st);
+  $('#bmT').innerHTML = '<tr><td>显存（十进制）</td><td class="n">' + bm.d + ' GB</td></tr><tr><td>− 权重 ' + M.n + '</td><td class="n">' + S.f(M.w / 1e9, 2) + ' GB</td></tr><tr><td>− 工作区</td><td class="n">' + W + ' GiB</td></tr>' +
+    '<tr class="tot"><td>剩给请求状态</td><td class="n">' + S.f(free / 1e9, 2) + ' GB</td></tr><tr><td>每请求 KV（' + L / 1024 + 'K）</td><td class="n">' + bytes(st) + '</td></tr>';
+  var v = $('#bmV'); v.className = 'verdict3' + (n >= 1 ? '' : ' bad');
+  v.innerHTML = free <= 0 ? '权重加工作区就放不下了。' : 'B<sub>max</sub> = <b>' + Math.max(0, n) + '</b> 条' + (n < 1 ? '：剩余空间装不下一条完整请求。' : '。');
+}
+S.seg($('#bmM'), function (v) { bm.m = v; bmc(); });
+S.seg($('#bmD'), function (v) { bm.d = +v; bmc(); });
+['bmLs', 'bmWs'].forEach(function (id) { $('#' + id).addEventListener('input', bmc); }); bmc();
+S.guess($('#bmG'), { q: '24 GB 的 RTX 4090 跑 Qwen3-8B BF16，预留 2 GiB 工作区，8K 上下文最多同时放几条请求？', unit: '条', ans: 4, fmt: function (x) { return S.f(x, 0); }, why: '原书：⌊(24 GB − 16.38 GB − 2 GiB) / 1.125 GiB⌋ = 4；16K 时 2 条，4K 时 9 条。请求数按整数跳变。' });
+S.notes($('#n-whole'), {
+  c: [
+    ['整模型累加', 'M_W = b_W·Σ L_g·N_g + 嵌入 + 输出头；F = Σ L_g·F_g + F_head。'],
+    ['B_max', '⌊(显存 − 权重 − 工作区) / 每请求状态⌋，向下取整。'],
+    ['N_max', '(C − M_0 − BK) / b_W：先扣服务状态，再看能放多大模型。']
+  ],
+  p: [
+    ['三个量分开算', '总参数 → 容量；选中专家与注意力类型 → 单次运算；上下文表示 → 状态。'],
+    ['量化的真实大小', '70B 4-bit 是 39.500 GB 而不是 35 GB：scale、高精度部分、打包填充。'],
+    ['比较模型的两种对照', '同 token 数比资源结构；同文本比任务质量，分词器会给出不同长度。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 从配置算 F', '逐个矩阵用 2mkn，注意力用 4·n_Q·d_h·N_pair，再按层数累加、加词表头。Qwen3-8B：8K prefill 133.6 T，8K 后 decode 20.0 G。'],
+    ['② KV 多大、为何读得多', 'c_KV = 2L·n_KV·d_h·b，Qwen3-8B 144 KiB/token；每次 decode 重读全部旧 KV，8K 输入返回 1025 token 累计读 1224 GiB、只存 1.27 GiB。GQA 减组数、MLA 减宽度、压缩减条目、递推固定大小、跨层共享减份数。'],
+    ['③ MoE 与并发上限', 'MoE 保存全部专家、只算选中的 k 个，读取取决于批内访问的不同专家数；单卡并发 = ⌊(显存 − 权重 − 工作区)/每请求状态⌋，4090 + Qwen3-8B + 8K = 4 条。']
+  ],
+  p: [
+    ['方法', '新条件先问它改变了哪个对象（矩阵、配对、状态、专家），再代回相应公式。'],
+    ['下一篇', '加入请求到达、工具调用和训练，看这些需求怎样随时间累积成负载。']
+  ],
+  ph: '一句话'
+});

@@ -1,0 +1,528 @@
+---
+title: 深度强化学习：MDP、值函数、策略梯度、PPO 与奖励建模
+desc: 神经网络与深度学习（第二版）学习笔记（十二）：多臂赌博机与探索—利用；马尔可夫决策过程、回报与折扣、贝尔曼方程；策略迭代与值迭代；蒙特卡罗与时序差分；SARSA 与 Q 学习在悬崖行走上的差别；DQN 的目标网络与经验回放；策略梯度、REINFORCE 与基准线；演员—评论员；TRPO、PPO 裁剪目标与 GAE；世界模型、离线强化学习与 RLHF。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 12</span><span>对应原书第 12 章（第 329–360 页）</span><span>约 55 分钟</span>
+h1: 没有标准答案，<em>只有奖励</em>
+lead: 想用监督学习教模型下围棋，就得给每个棋局标出“最佳落子”——专家也给不出唯一答案。但判断一局棋的输赢很容易。强化学习就是在和环境的交互中，凭着（常常是延迟的）奖励反过来评估中间动作的好坏。原书点出它和监督学习的三点不同：序列决策（当前动作会影响以后看到的数据）、延迟奖励、探索与利用的权衡。这一篇从多臂赌博机走到悬崖行走，再走到 PPO 和 RLHF。
+nav: prob|问题与 MDP;value|值函数方法;td|时序差分;pg|策略梯度;ppo|AC 与 PPO;model|模型、离线与奖励;back|三个问题
+---
+<style>
+.gw { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; max-width: 520px; }
+.gw div { aspect-ratio: 1; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 15px/1.15 var(--f-num); color: var(--ink); background: var(--panel); border: 1px solid var(--hair); }
+.gw div.cl { background: var(--alert-soft); color: var(--alert); }
+.gw div.se { border: 2px solid var(--ink); font-weight: 700; }
+.gw div.on { background: var(--s2-soft); border-color: var(--s2); }
+.gw div b { font-size: 20px; line-height: 1; color: var(--s1); }
+.gw div small { font-size: 15px; color: var(--ink-3); }
+.gwrow { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 8px 0 14px; }
+@media (max-width: 760px) { .gwrow { grid-template-columns: 1fr; } }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>强化学习的学习信号是什么？值函数和贝尔曼方程在其中起什么作用？</li>
+  <li>蒙特卡罗、时序差分、SARSA、Q 学习、DQN 的关系是什么？同策略和异策略差在哪？</li>
+  <li>策略梯度为什么方差大？基准线、演员—评论员、PPO 和 GAE 分别怎么让它更稳？</li>
+</ol></div>
+
+<section class="part" id="prob">
+  <div class="part-head"><h2>强化学习问题：智能体、环境与 MDP</h2><span class="meta">原书 12.1 节 · 第 330–335 页</span></div>
+  <div class="sec-lede">
+    <p>先看最简单的例子：<strong>多臂赌博机</strong>。K 台机器各有不同的中奖概率，在有限次数里怎么拉才能累计收益最大？一直拉目前看起来最好的那台（<strong>利用</strong>），可能错过真正更好的；老是乱试（<strong>探索</strong>），又浪费机会。<strong>ε-贪心</strong>是最简单的折中：以 1 − ε 的概率选当前最好的，以 ε 的概率随机选。赌博机不建模状态转移，是强化学习里最简单的一类；一般的问题还要考虑动作对未来状态的影响。</p>
+    <p>一般的强化学习问题写成<strong>折扣马尔可夫决策过程</strong>（MDP）(𝒮, 𝒜, p, r, γ)：状态空间、动作空间、状态转移概率 p(s′|s, a)、即时奖励 r(s, a, s′)、折扣率 γ。<strong>智能体</strong>感知状态、按<strong>策略</strong> π(a|s) 选动作；<strong>环境</strong>转到新状态并返回奖励。“马尔可夫”指下一个状态只取决于当前状态和动作。一条轨迹的概率是 p(τ) = p(s₀)Π π(a<sub>t</sub>|s<sub>t</sub>) p(s<sub>t+1</sub>|s<sub>t</sub>, a<sub>t</sub>)。策略分确定性和随机性两种，强化学习里随机性策略更常见：便于探索、在博弈中不易被预测、在连续动作上便于定义可微的模型。</p>
+    <p>从时刻 t 开始的<strong>回报</strong> G<sub>t</sub> = Σ<sub>k</sub> γ<sup>k</sup> r<sub>t+k+1</sub>。有终止状态的叫<strong>回合式任务</strong>，没有的叫<strong>持续式任务</strong>，后者必须靠 γ &lt; 1 让累加不发散；γ 接近 0 只顾眼前，接近 1 看重长远。目标是最大化期望回报 𝒥(θ) = 𝔼<sub>τ</sub>[G₀]。为了评估策略，定义<strong>状态值函数</strong> V<sup>π</sup>(s) = 𝔼[G<sub>t</sub>|s<sub>t</sub> = s] 和<strong>状态—动作值函数</strong>（Q 函数）Q<sup>π</sup>(s, a) = 𝔼[G<sub>t</sub>|s<sub>t</sub> = s, a<sub>t</sub> = a]。它们满足<strong>贝尔曼方程</strong>：V<sup>π</sup>(s) = 𝔼<sub>a</sub>𝔼<sub>s′</sub>[r + γV<sup>π</sup>(s′)]——当前状态的价值由下一个状态的价值递推出来。值函数的用处：如果某个动作 Q(s, a*) &gt; V(s)，就该提高它的概率。</p>
+    <p class="go">先玩赌博机：5 台机器（中奖概率为示意），比较三种 ε。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多臂赌博机：ε-贪心（200 次独立实验平均）</p>
+    <div id="bdC"></div>
+    <p class="cap" id="bdW"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">折扣率 γ：终点奖励 +1，需要走 n 步才拿到</p>
+      <label class="ctl"><span>γ <output id="gmV">0.9</output></span><input type="range" id="gmS" min="0.5" max="1" step="0.01" value="0.9"></label>
+      <div id="gmC"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">原书习题 12-1</p>
+      <div id="gmG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-prob"></div>
+</section>
+
+<section class="part" id="value">
+  <div class="part-head"><h2>基于值函数：动态规划与蒙特卡罗</h2><span class="meta">原书 12.2.1–12.2.2 节 · 第 336–340 页</span></div>
+  <div class="sec-lede">
+    <p>有限状态、有限动作时，策略空间有 |𝒜|<sup>|𝒮|</sup> 种，逐个评估不现实。可行的是迭代改进：算出当前策略的 Q<sup>π</sup>，令新策略 π′(s) = argmax<sub>a</sub> Q<sup>π</sup>(s, a)，可以证明新策略处处不差于旧的（习题 12-4）。</p>
+    <p><strong>模型已知</strong>（知道 p 和 r）时用动态规划，这叫<strong>基于模型的强化学习</strong>——“模型”指环境的转移和奖励机制，不是神经网络。<strong>策略迭代</strong>交替做“策略评估”（反复用贝尔曼方程算到 V<sup>π</sup> 收敛）和“策略改进”；<strong>值迭代</strong>把两步合并，直接迭代<strong>贝尔曼最优方程</strong> V*(s) = max<sub>a</sub> 𝔼<sub>s′</sub>[r + γV*(s′)]。策略迭代单轮更贵但轮数少，值迭代单轮便宜但轮数多。动态规划的两个限制：要求模型已知；状态多时效率低。</p>
+    <p><strong>模型未知</strong>时只能与环境交互采样，这叫<strong>模型无关的强化学习</strong>。<strong>蒙特卡罗方法</strong>：从 (s, a) 出发跑 N 个完整回合，用回报的平均 (1/N)ΣG<sup>(n)</sup> 估计 Q(s, a)。如果策略太确定，只能估准 Q(s, π(s))，别的动作没机会比较——所以要用 ε-贪心保证探索。采样和改进用同一个策略（都是 π<sup>ε</sup>）叫<strong>同策略</strong>；采样用 π<sup>ε</sup>、优化目标是 π，靠重要性采样修正，叫<strong>异策略</strong>。</p>
+    <p class="go">原书图 12.1 的悬崖行走：7 × 3 网格，从左下 S 走到右下 E，底边中间 5 格是悬崖。每步奖励 −1，掉下悬崖 −100 并回到起点，γ = 1（具体数值为示意）。原书设定每步有一定概率滑到周围格子，本页简化成“侧风”：以一定概率被吹向下方（悬崖一侧）一格。把迭代次数拖到 0 再慢慢往右，看值迭代怎么把价值从终点“传”回来；再调大侧风概率看最优策略如何改变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">值迭代：V(s) ← max<sub>a</sub> 𝔼[r + γV(s′)]</p>
+    <div class="lab-split">
+      <div><div class="gw" id="viG"></div><p class="cap">格内数字是 V(s)，箭头是当前贪心策略。</p></div>
+      <div>
+        <label class="ctl"><span>迭代次数 k <output id="viK">60</output></span><input type="range" id="viKs" min="0" max="60" value="60"></label>
+        <label class="ctl"><span>侧风概率（被吹向悬崖一侧一格） <output id="viP">0</output></span><input type="range" id="viPs" min="0" max="0.2" step="0.05" value="0"></label>
+        <p class="cap" id="viW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-value"></div>
+</section>
+
+<section class="part" id="td">
+  <div class="part-head"><h2>时序差分：SARSA、Q 学习与 DQN</h2><span class="meta">原书 12.2.3–12.2.4 节 · 第 340–344 页</span></div>
+  <div class="sec-lede">
+    <p>蒙特卡罗要等回合结束才能更新。先把平均写成增量形式：Q ← Q + (1/N)(G − Q)，再把 1/N 换成小常数 α。<strong>时序差分</strong>（TD）更进一步：不等完整回报，用贝尔曼方程近似 G ≈ r + γQ(s′, a′)，走一步就更新一次——Q(s, a) ← Q(s, a) + α(r + γQ(s′, a′) − Q(s, a))。这叫<strong>自举</strong>：用自己当前的估计去更新自己。蒙特卡罗需要完整路径、不依赖马尔可夫性质；TD 只要一步，靠马尔可夫性质近似。原书还提到一个有意思的对应：多巴胺的释放量对应的是实际奖励与预期奖励之差，而不是奖励本身——这正是 TD 误差。</p>
+    <p>更新只用到 (s, a, r, s′, a′) 五元组，所以叫 <strong>SARSA</strong>。它的 a′ 是 ε-贪心实际选出来的，采样和优化都是 π<sup>ε</sup>，是<strong>同策略</strong>。<strong>Q 学习</strong>把目标换成 r + γ max<sub>a′</sub>Q(s′, a′)：不管实际下一步选了什么，都按最优的估——直接逼近 Q*，采样仍用 ε-贪心，是<strong>异策略</strong>。</p>
+    <p>状态太多时用神经网络 Q<sub>φ</sub>(s, a) 近似，离散动作时让网络一次输出 M 个动作的 Q 值。以 Q 学习为例，最小化 (r + γ max Q<sub>φ̂</sub>(s′, a′) − Q<sub>φ</sub>(s, a))²。两个问题：目标依赖参数本身，不稳定；相邻样本强相关。<strong>DQN</strong> 的两个对策：<strong>目标网络冻结</strong>（每隔 C 步才把 φ 复制给 φ̂）和<strong>经验回放</strong>（把经历存进经验池，随机抽批训练）。标准 DQN 主要面向离散动作，因为 max<sub>a′</sub> 在连续动作上很难算。</p>
+    <p class="go">先看一个 5 状态随机游走（经典例子，示意），比较蒙特卡罗和 TD 估值的误差；再回到悬崖行走，用 ε = 0.1、α = 0.1 训练 SARSA 和 Q 学习各 1000 回合（确定性移动），看它们学到的路线。</p>
+  </div>
+  <div class="lab">
+      <p class="lab-t">随机游走：A–E 五个状态，从 C 出发，右端终止奖励 1</p>
+      <label class="ctl"><span>步长 α <output id="rwA">0.10</output></span><input type="range" id="rwAs" min="0.02" max="0.3" step="0.01" value="0.1"></label>
+      <div id="rwC"></div>
+      <p class="cap">真值 V = 1/6, 2/6, …, 5/6；纵轴是 5 个状态估值的均方根误差，100 次实验平均。常数步长下蒙特卡罗的误差停在较高水平，因为每次都用整段（随机性很大的）回报更新。</p>
+  </div>
+  <div class="lab">
+      <p class="lab-t">SARSA vs Q 学习（悬崖行走）</p>
+      <div class="btnrow"><button class="btn pri" type="button" id="clGo">训练 1000 回合</button><span class="stepinfo" id="clSeed"></span></div>
+      <div class="gwrow"><div><p class="cap"><b>SARSA</b> 学到的贪心路线</p><div class="gw" id="clS"></div></div><div><p class="cap"><b>Q 学习</b> 学到的贪心路线</p><div class="gw" id="clQ"></div></div></div>
+      <div id="clC"></div>
+      <p class="cap" id="clW"></p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>SARSA vs Q 学习</b>：目标里用实际采到的 Q(s′, a′) vs 用 max<sub>a′</sub>Q(s′, a′)。前者学的是“带着探索噪声时”的价值，所以离悬崖远一点；后者学的是最优策略的价值，路线最短但训练时会因探索不断掉崖（习题 12-2）。</p>
+    <p><b>同策略 vs 异策略</b>：采样策略和被优化的策略是否同一个。</p>
+    <p><b>蒙特卡罗 vs 时序差分</b>：等完整回报（无偏、方差大）vs 一步自举（有偏、方差小、样本效率高）。</p>
+    <p><b>基于模型 vs 模型无关</b>：这里的“模型”是环境的转移与奖励，不是神经网络。</p>
+    <p><b>目标网络 vs 经验回放</b>：前者稳住“目标”，后者打散“样本相关性”（习题 12-7）。</p>
+  </div>
+  <div class="notes" id="n-td"></div>
+</section>
+
+<section class="part" id="pg">
+  <div class="part-head"><h2>策略梯度与 REINFORCE</h2><span class="meta">原书 12.3 节 · 第 343–348 页</span></div>
+  <div class="sec-lede">
+    <p>值函数方法“先估价值再改策略”，动作空间大或连续时 argmax 难算。<strong>策略搜索</strong>直接在策略空间里优化：参数化一个可微策略 π<sub>θ</sub>(a|s)，用梯度上升最大化 𝒥(θ)。这样天然能表示随机策略，也便于处理连续动作。</p>
+    <p>关键推导是<strong>对数导数技巧</strong>：∂p/∂θ = p · ∂log p/∂θ，于是 ∂𝒥/∂θ = 𝔼<sub>τ</sub>[∂log p<sub>θ</sub>(τ)/∂θ · G₀]——让回报高的轨迹概率变大。log p<sub>θ</sub>(τ) 展开后，初始分布和状态转移项都和 θ 无关，只剩 Σ log π<sub>θ</sub>(a<sub>t</sub>|s<sub>t</sub>)：<strong>不需要知道环境模型</strong>。再利用“时刻 t 之前的回报和 a<sub>t</sub> 无关、其期望梯度为 0”，得到 ∂𝒥/∂θ = 𝔼[Σ<sub>t</sub> ∂log π<sub>θ</sub>(a<sub>t</sub>|s<sub>t</sub>)/∂θ · γ<sup>t</sup>G<sub>t</sub>]：每个动作只按它<strong>之后</strong>的回报来评价。用采样轨迹近似这个期望、每采一条就更新，就是 <strong>REINFORCE</strong>。</p>
+    <p>REINFORCE 的通病是方差大。通用的降方差手段是<strong>控制变量</strong>：f̂ = f − α(g − 𝔼[g])，期望不变，方差变成 (1 − corr(f, g)²)var(f)——g 和 f 越相关，降得越多。用到策略梯度上就是减去一个和动作无关的<strong>基准线</strong> b(s<sub>t</sub>)：因为 Σ<sub>a</sub>∂π/∂θ = ∂1/∂θ = 0，减掉它不改变梯度的期望（习题 12-6）。b 和 G<sub>t</sub> 越相关越好，自然的选择是值函数 V(s<sub>t</sub>)，用一个可学习的 V<sub>φ</sub> 去逼近。</p>
+    <p class="go">在一个 3 臂赌博机上跑 REINFORCE（奖励均值 10、11、12，加标准正态噪声，示意）。奖励全是正的，没有基准线时每次都“鼓励”刚选的动作，只是鼓励程度有差别。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">REINFORCE：有无基准线（100 次实验平均）</p>
+    <div class="lab-split">
+      <div id="rfC"></div>
+      <div>
+        <label class="ctl"><span>学习率 α <output id="rfL">0.04</output></span><input type="range" id="rfLs" min="0.005" max="0.1" step="0.005" value="0.04"></label>
+        <table class="calc" id="rfT"></table>
+        <p class="cap" id="rfW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">控制变量降了多少方差</p>
+    <div id="cvG"></div>
+  </div>
+  <div class="notes" id="n-pg"></div>
+</section>
+
+<section class="part" id="ppo">
+  <div class="part-head"><h2>演员—评论员、信赖域与 PPO</h2><span class="meta">原书 12.4–12.5 节 · 第 349–354 页</span></div>
+  <div class="sec-lede">
+    <p>REINFORCE 要等完整轨迹。借用时序差分的思想，用 Ĝ<sub>t</sub> = r<sub>t+1</sub> + γV<sub>φ</sub>(s<sub>t+1</sub>) 近似回报，就得到<strong>演员—评论员</strong>算法：<strong>演员</strong>是策略 π<sub>θ</sub>，<strong>评论员</strong>是值函数 V<sub>φ</sub>。每走一步算 TD 误差 δ = r + γV<sub>φ</sub>(s′) − V<sub>φ</sub>(s)，评论员据此修正估值，演员据此调整策略，不用等回合结束。原书特别说明：带基准线的 REINFORCE 虽然也同时学策略和值函数，但值函数只用来减方差，不是用 TD 估计回报，所以不算典型的演员—评论员。</p>
+    <p>普通策略梯度还有三个问题：步长难控（一步太大性能骤降）；样本利用率低（更新一次后旧数据不再服从新策略的分布）；缺少显式约束。<strong>信赖域</strong>的思路是：只在足够小的邻域里相信局部近似。用<strong>优势函数</strong> A(s, a) = Q(s, a) − V(s) 衡量动作比平均好多少。可以证明 𝒥(θ) − 𝒥(θ<sub>old</sub>) 等于新策略轨迹上累积优势的期望；新旧策略接近时，用旧策略的状态分布近似，得到<strong>代理目标</strong>。用旧数据评估新策略要引入重要性采样比值 r<sub>t</sub>(θ) = π<sub>θ</sub>(a<sub>t</sub>|s<sub>t</sub>)/π<sub>old</sub>(a<sub>t</sub>|s<sub>t</sub>)。<strong>TRPO</strong> 最大化 𝔼[r<sub>t</sub>A<sub>t</sub>]，约束平均 KL ≤ δ，要用共轭梯度等近似二阶方法。原书强调：信赖域约束不是让学习变保守，而是保证局部近似仍然可信。</p>
+    <p><strong>PPO</strong> 把约束融进目标，只用一阶梯度。常用的<strong>裁剪目标</strong>：ℒ<sup>clip</sup> = 𝔼[min(r<sub>t</sub>A<sub>t</sub>, clip(r<sub>t</sub>, 1 − ε, 1 + ε)A<sub>t</sub>)]。A &gt; 0 时希望提高该动作概率，但 r 超过 1 + ε 就不再奖励；A &lt; 0 时希望降低，但 r 低于 1 − ε 就不再惩罚。它还能把同一批旧数据反复用好几个 epoch。优势用 <strong>GAE</strong> 估计：Â<sub>t</sub> = Σ(γλ)<sup>l</sup>δ<sub>t+l</sub>。λ = 0 退化为一步 TD（方差小、偏差大），λ = 1 接近整段回报（偏差小、方差大）。</p>
+    <p class="go">左边看 PPO 裁剪目标随 r 的形状；右边看 GAE 给未来各步 TD 误差的权重。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">PPO 裁剪目标：min(rA, clip(r, 1 − ε, 1 + ε)A)</p>
+      <div class="seg" id="ppS"><button data-v="1" aria-pressed="true">A &gt; 0（好动作）</button><button data-v="-1">A &lt; 0（坏动作）</button></div>
+      <label class="ctl"><span>裁剪范围 ε <output id="ppE">0.2</output></span><input type="range" id="ppEs" min="0.05" max="0.5" step="0.05" value="0.2"></label>
+      <div id="ppC"></div>
+      <p class="cap" id="ppW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">GAE：δ<sub>t+l</sub> 的权重 (γλ)<sup>l</sup></p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>λ <output id="gaL">0.95</output></span><input type="range" id="gaLs" min="0" max="1" step="0.05" value="0.95"></label>
+        <label class="ctl"><span>γ <output id="gaY">0.99</output></span><input type="range" id="gaYs" min="0.9" max="1" step="0.01" value="0.99"></label>
+      </div>
+      <div id="gaB"></div>
+      <p class="cap" id="gaW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-ppo"></div>
+</section>
+
+<section class="part" id="model">
+  <div class="part-head"><h2>环境模型、离线数据与奖励建模</h2><span class="meta">原书 12.6–12.8 节 · 第 355–360 页</span></div>
+  <div class="sec-lede">
+    <p>DQN、REINFORCE、AC、PPO 都直接用真实交互样本，不学环境的转移模型，属于<strong>无模型</strong>强化学习。<strong>基于模型</strong>的方法显式学习转移模型 p̂<sub>ψ</sub>(s′|s, a) 和奖励模型，再用它规划或生成虚拟轨迹。观测高维时，可以先学隐状态 z<sub>t</sub>，在隐空间里预测演化、奖励和终止——这就是<strong>世界模型</strong>。它让智能体可以“想象式”推演、少碰真实环境；风险是模型误差在长时程推演里累积，策略学会利用模型的漏洞。</p>
+    <p>按样本来源还可以分<strong>在线</strong>和<strong>离线</strong>强化学习。离线只有一个固定数据集，不能探索，看起来像监督学习，但目标不是模仿数据里的动作，而是在数据支持范围内优化长期回报。核心困难是<strong>分布外动作</strong>：数据里很少出现的动作，价值函数可能过度乐观，所以要保守的价值估计、策略约束或不确定性惩罚。奖励函数本身也可能需要学：语言模型对齐时很难写出“有用、真实、安全”的奖励函数，于是先用人类偏好训练奖励模型 R<sub>ω</sub>(x, y)，再用策略优化更新模型——<strong>RLHF</strong>。从 RL 视角看，语言模型就是策略 π<sub>θ</sub>(y<sub>t</sub>|x, y<sub>&lt;t</sub>)：状态是输入加已生成的历史，动作是下一个词元，轨迹是整段回答（细节见原书第 13 章，以及本站<a href="../2026-10-15-llm-6/">《变成聊天助手》</a>和<a href="../2026-10-16-agent-8/">《后训练：把能力写进参数》</a>）。</p>
+    <p>原书扩展阅读里还提到三个方向：<strong>POMDP</strong>（只能看到部分观测 o，用 RNN、记忆或信念状态弥补）、<strong>逆向强化学习</strong>（从专家轨迹反推奖励函数，比只模仿表层行为的行为克隆泛化潜力更强）、<strong>分层强化学习</strong>（高层决定做什么、低层决定怎么做）。</p>
+    <p class="go">把下面这些方法归到原书图 12.4 的分支里。</p>
+  </div>
+  <div class="lab"><p class="lab-t">分一分：属于哪条主线</p><div id="rlG"></div></div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>学习设置</th><th>样本或模型来源</th><th>核心用途</th><th>主要风险</th></tr></thead>
+    <tbody>
+      <tr><td>在线无模型</td><td>当前或旧策略与真实环境交互</td><td>直接估计价值、优势或策略梯度</td><td>交互成本高、探索可能不安全、样本利用率有限</td></tr>
+      <tr><td>基于模型</td><td>已知或学到的转移、奖励或隐空间动力学模型</td><td>在模型中规划、生成虚拟轨迹、模型预测控制</td><td>模型偏差在长时程推演中累积，策略可能利用模型误差</td></tr>
+      <tr><td>离线</td><td>行为策略收集的固定数据集</td><td>不能继续探索时学习新策略</td><td>分布外动作的价值估计不可靠，容易过度乐观</td></tr>
+      <tr><td>偏好反馈与 RLHF</td><td>人类偏好、AI 反馈等训练出的奖励模型</td><td>把主观偏好变成可优化的回报</td><td>奖励模型可能被过度优化，需要约束策略偏离、持续评估</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 12.1。</p>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>算法</th><th>（1）执行策略、生成样本</th><th>（2）估计回报</th><th>（3）更新策略</th></tr></thead>
+    <tbody>
+      <tr><td>SARSA</td><td>s, a, r, s′, a′</td><td>Q ← Q + α(r + γQ(s′, a′) − Q)</td><td>π(s) = argmax Q(s, a)</td></tr>
+      <tr><td>Q 学习</td><td>s, a, r, s′</td><td>Q ← Q + α(r + γ max Q(s′, a′) − Q)</td><td>π(s) = argmax Q(s, a)</td></tr>
+      <tr><td>REINFORCE</td><td>整条轨迹 τ</td><td>G<sub>t</sub> = Σγ<sup>k</sup>r<sub>t+k+1</sub></td><td>θ ← θ + Σ ∇log π · γ<sup>t</sup>G<sub>t</sub></td></tr>
+      <tr><td>演员—评论员</td><td>s, a, r, s′</td><td>Ĝ = r + γV<sub>φ</sub>(s′)，更新 φ</td><td>θ ← θ + αw(Ĝ − V<sub>φ</sub>(s))∇log π，w ← γw</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 12.2：大多数算法都能放进“执行策略生成样本 → 估计回报或价值 → 更新策略”这个统一闭环。</p>
+  <div class="notes" id="n-model"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">G_t = Σ_k γ^k r_{t+k+1}；𝒥(θ) = 𝔼_τ[G₀]</div>
+    <div class="fx">贝尔曼方程：V^π(s) = 𝔼_{a~π} 𝔼_{s′}[r + γV^π(s′)]；Q^π(s,a) = 𝔼_{s′}[r + γ𝔼_{a′}Q^π(s′,a′)]</div>
+    <div class="fx">贝尔曼最优：V*(s) = max_a 𝔼_{s′}[r + γV*(s′)]；Q*(s,a) = 𝔼_{s′}[r + γ max_{a′} Q*(s′,a′)]</div>
+    <div class="fx">TD：SARSA 目标 r + γQ(s′,a′)；Q 学习目标 r + γ max_{a′} Q(s′,a′)；DQN 损失 (r + γ max Q_φ̂(s′,a′) − Q_φ(s,a))²</div>
+    <div class="fx">策略梯度：∇𝒥 = 𝔼[Σ_t ∇log π_θ(a_t|s_t) γ^t (G_t − b(s_t))]</div>
+    <div class="fx">控制变量：var(f̂) = (1 − corr(f,g)²) var(f)</div>
+    <div class="fx">AC：δ = r + γV_φ(s′) − V_φ(s)；A(s,a) = Q(s,a) − V(s)</div>
+    <div class="fx">PPO：𝔼[min(r_t A_t, clip(r_t, 1−ε, 1+ε) A_t)]，r_t = π_θ/π_old；GAE：Â_t = Σ_l (γλ)^l δ_{t+l}</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 赌博机 ---------- */
+var BD = [0.3, 0.5, 0.45, 0.7, 0.6];
+(function () {
+  var T = 600, R = 200, EPS = [0, 0.1, 0.3], curves = [], best = [];
+  EPS.forEach(function (eps, ei) {
+    var avg = new Array(T).fill(0), opt = 0;
+    for (var k = 0; k < R; k++) {
+      var r = S.rng(1000 * ei + k + 7), q = [0, 0, 0, 0, 0], n = [0, 0, 0, 0, 0];
+      for (var t = 0; t < T; t++) {
+        var a;
+        if (r() < eps) a = Math.floor(r() * 5);
+        else { a = 0; for (var i = 1; i < 5; i++) if (q[i] > q[a] || (q[i] === q[a] && r() < 0.5)) a = i; }
+        var rew = r() < BD[a] ? 1 : 0; n[a]++; q[a] += (rew - q[a]) / n[a]; avg[t] += rew / R;
+        if (t >= T - 100 && a === 3) opt += 1 / (100 * R);
+      }
+    }
+    var sm = [], acc = 0; avg.forEach(function (v, t) { acc += v; if (t >= 20) acc -= avg[t - 20]; if (t >= 19) sm.push([t + 1, acc / 20]); });
+    curves.push(sm); best.push(opt);
+  });
+  S.chart($('#bdC'), { h: 250, x: [20, 600], y: [0.4, 0.72], xt: [100, 200, 300, 400, 500, 600], yt: [0.4, 0.5, 0.6, 0.7], xl: '拉杆次数', yl: '平均奖励（20 步滑动平均）',
+    curves: [{ pts: curves[0], c: 'dim', label: 'ε = 0（纯利用）' }, { pts: curves[1], c: 'c2', label: 'ε = 0.1' }, { pts: curves[2], c: 'c1', label: 'ε = 0.3' }], hl: [{ y: 0.7, c: 'ok', label: '最好那台 0.7' }] })();
+  $('#bdW').innerHTML = '中奖概率 ' + BD.join('、') + '，用样本平均估计每台的价值。最后 100 步选中最好那台的比例：ε = 0 是 <b>' + S.pct(best[0], 0) + '</b>，ε = 0.1 是 <b>' + S.pct(best[1], 0) + '</b>，ε = 0.3 是 <b>' + S.pct(best[2], 0) + '</b>。纯利用常常被早期的好运气骗住，一直拉一台次优的；探索太多又在已经知道答案后还浪费机会。';
+})();
+
+/* ---------- 折扣 ---------- */
+var gmChart = S.chart($('#gmC'), { h: 220, x: [1, 50], y: [0, 1.05], xt: [1, 10, 20, 30, 40, 50], yt: [0, 0.5, 1], xl: '到达终点需要的步数 n', yl: '回报 G₀ = γⁿ⁻¹' });
+function gm() {
+  var g = +$('#gmS').value; $('#gmV').textContent = S.f(g, 2);
+  gmChart({ curves: [{ f: function (n) { return Math.pow(g, n - 1); }, c: 'c2', label: 'γ = ' + S.f(g, 2) }, { f: function () { return 1; }, c: 'dim', dash: 1, label: 'γ = 1' }] });
+}
+$('#gmS').addEventListener('input', gm); gm();
+S.quiz($('#gmG'), [{
+  q: '走迷宫：走出迷宫奖励 +1，其他状态奖励 0，折扣率 γ = 1。智能体容易学会“尽快走出去”吗？',
+  o: ['容易，奖励信号很明确', '不容易，绕 10 步和绕 1000 步走出去回报一样都是 1', '不可能学会，γ = 1 时回报发散'],
+  a: 1,
+  why: 'γ = 1 时只要最终走出去，G₀ 都是 1，快慢没有区别；而且在找到出口之前奖励全是 0，几乎没有学习信号。改进思路：取 γ &lt; 1（左图：步数越多回报越小），或者每步给 −1 的奖励（下面的悬崖行走就是这么做的）。回合式任务里 γ = 1 不会发散，所以第三项不对。'
+}]);
+S.notes($('#n-prob'), {
+  c: [
+    ['多臂赌博机', 'K 台机器，有限次数内最大化累积收益；不建模状态转移。'],
+    ['探索 / 利用', '试新动作找更好的 vs 用已知最好的。'],
+    ['MDP', '(𝒮, 𝒜, p, r, γ)：下一状态只依赖当前状态和动作。'],
+    ['策略', '确定性 π: 𝒮 → 𝒜，或随机性 π(a|s)。'],
+    ['回合式 / 持续式', '有终止状态 vs 无终止状态（需 γ < 1）。'],
+    ['V 与 Q', '从状态 / 状态—动作出发、按 π 执行的期望回报。']
+  ],
+  p: [
+    ['与监督学习的三点不同', '序列决策、延迟奖励、探索与利用'],
+    ['回报', 'G_t = Σ γ^k r_{t+k+1}'],
+    ['贝尔曼方程', 'V(s) = 𝔼_a 𝔼_{s′}[r + γV(s′)]'],
+    ['V 与 Q 的关系', 'V(s) = 𝔼_{a~π}[Q(s, a)]'],
+    ['ε-贪心', '选 π(s) 概率 1 − ε + ε/|𝒜|，其他各 ε/|𝒜|'],
+    ['深度强化学习四条路', '值函数近似（DQN）、策略近似（REINFORCE）、AC / PPO、环境模型学习']
+  ]
+});
+
+/* ---------- 悬崖网格 ---------- */
+var GW = 7, GH = 3, DX = [0, 0, -1, 1], DY = [1, -1, 0, 0], ARR = ['↑', '↓', '←', '→'];
+function isCliff(x, y) { return y === 0 && x >= 1 && x <= 5; }
+function isEnd(x, y) { return x === 6 && y === 0; }
+function move(x, y, a) { var nx = S.clamp(x + DX[a], 0, GW - 1), ny = S.clamp(y + DY[a], 0, GH - 1); return isCliff(nx, ny) ? [0, 0, -100] : [nx, ny, -1]; }
+function drawGrid(box, cell) {
+  box.innerHTML = '';
+  for (var y = GH - 1; y >= 0; y--) for (var x = 0; x < GW; x++) {
+    var d = S.h('div', null, box);
+    if (isCliff(x, y)) { d.className = 'cl'; d.textContent = '悬崖'; continue; }
+    cell(d, x, y);
+  }
+}
+function vi() {
+  var K = +$('#viKs').value, p = +$('#viPs').value, g = 1;
+  $('#viK').textContent = K; $('#viP').textContent = S.f(p, 2);
+  var V = [], i; for (i = 0; i < GW * GH; i++) V.push(0);
+  function qv(V, x, y, a) {
+    var outs = [[a, 1 - p], [1, p]], s = 0;
+    outs.forEach(function (o) { if (!o[1]) return; var m = move(x, y, o[0]); s += o[1] * (m[2] + (isEnd(m[0], m[1]) ? 0 : g * V[m[1] * GW + m[0]])); });
+    return s;
+  }
+  for (var k = 0; k < K; k++) { var V2 = V.slice(); for (var y = 0; y < GH; y++) for (var x = 0; x < GW; x++) { if (isCliff(x, y) || isEnd(x, y)) continue; var b = -1e9; for (var a = 0; a < 4; a++) b = Math.max(b, qv(V, x, y, a)); V2[y * GW + x] = b; } V = V2; }
+  var path = {}, cx = 0, cy = 0;
+  for (var st = 0; st < 20 && !isEnd(cx, cy); st++) { path[cx + ',' + cy] = 1; var ba = 0, bv = -1e9; for (var a2 = 0; a2 < 4; a2++) { var q = qv(V, cx, cy, a2); if (q > bv + 1e-9) { bv = q; ba = a2; } } var m = move(cx, cy, ba); if (m[2] === -100) break; cx = m[0]; cy = m[1]; }
+  drawGrid($('#viG'), function (d, x, y) {
+    if (isEnd(x, y)) { d.className = 'se'; d.innerHTML = 'E<small>终点</small>'; return; }
+    var ba = 0, bv = -1e9; for (var a = 0; a < 4; a++) { var q = qv(V, x, y, a); if (q > bv + 1e-9) { bv = q; ba = a; } }
+    if (path[x + ',' + y] && K > 0) d.className = 'on';
+    if (x === 0 && y === 0) d.className += ' se';
+    d.innerHTML = (K > 0 ? '<b>' + ARR[ba] + '</b>' : '') + S.f(V[y * GW + x], 1) + (x === 0 && y === 0 ? '<small>S</small>' : '');
+  });
+  var row = 0; Object.keys(path).forEach(function (k) { row = Math.max(row, +k.split(',')[1]); });
+  $('#viW').innerHTML = K === 0 ? 'V 全部初始化为 0，还没有任何信息。往右拖动迭代次数。' :
+    K < 8 ? '每迭代一次，终点的信息就往外“传”一格：离 E 近的格子先算出合理的价值和箭头，远处的还在乱指。这就是贝尔曼方程的递推。' :
+    '价值已经从终点传遍全图。高亮的是从 S 出发的贪心路线：' + (row >= 2 ? '<b>绕到最上面一行</b>——有侧风时，贴着悬崖走每一步都有被吹下去的风险（−100），宁可多走两步。' : '<b>贴着悬崖走第二行</b>，最短，共 8 步。') + (p === 0 ? ' 把侧风概率调到 0.05 试试。' : ' 被吹到第二行时，箭头会先指回上方。');
+}
+['viKs', 'viPs'].forEach(function (id) { $('#' + id).addEventListener('input', vi); }); vi();
+S.notes($('#n-value'), {
+  c: [
+    ['基于模型的 RL', '已知（或学到）环境的转移和奖励，用动态规划求解。'],
+    ['策略迭代', '策略评估（算到 V 收敛）+ 策略改进，交替进行。'],
+    ['值迭代', '直接迭代贝尔曼最优方程，最后取 argmax。'],
+    ['模型无关的 RL', '不知道 p 和 r，只靠采样交互。'],
+    ['蒙特卡罗方法', '跑完整回合，用回报平均估计 Q。'],
+    ['同策略 / 异策略', '采样策略和被优化策略是否相同。']
+  ],
+  p: [
+    ['策略改进', 'π′(s) = argmax_a Q^π(s, a)，则 V^{π′} ≥ V^π'],
+    ['贝尔曼最优方程', 'V*(s) = max_a 𝔼[r + γV*(s′)]'],
+    ['折扣下的保证', '贝尔曼算子是压缩映射，迭代收敛到唯一不动点'],
+    ['动态规划的两个限制', '要求模型已知；状态多时效率低'],
+    ['蒙特卡罗为何要探索', '策略太确定时只能估准 Q(s, π(s))']
+  ]
+});
+
+/* ---------- 随机游走 MC vs TD ---------- */
+var rwChart = S.chart($('#rwC'), { h: 230, x: [0, 100], y: [0, 0.3], xt: [0, 25, 50, 75, 100], yt: [0, 0.1, 0.2, 0.3], xl: '回合数', yl: '均方根误差' });
+function rw() {
+  var al = +$('#rwAs').value; $('#rwA').textContent = S.f(al, 2);
+  var TRUE = [1, 2, 3, 4, 5].map(function (k) { return k / 6; }), NE = 100, NR = 100, mc = new Array(NE + 1).fill(0), td = new Array(NE + 1).fill(0);
+  function rms(V) { return Math.sqrt(V.reduce(function (s, v, i) { return s + Math.pow(v - TRUE[i], 2); }, 0) / 5); }
+  for (var k = 0; k < NR; k++) {
+    var r = S.rng(31 * k + 3), Vm = [0.5, 0.5, 0.5, 0.5, 0.5], Vt = Vm.slice();
+    mc[0] += rms(Vm) / NR; td[0] += rms(Vt) / NR;
+    for (var e = 1; e <= NE; e++) {
+      var s = 2, vis = [], G;
+      while (true) { vis.push(s); var s2 = s + (r() < 0.5 ? -1 : 1); var rew = s2 === 5 ? 1 : 0, term = s2 < 0 || s2 > 4;
+        Vt[s] += al * (rew + (term ? 0 : Vt[s2]) - Vt[s]); if (term) { G = rew; break; } s = s2; }
+      vis.forEach(function (st) { Vm[st] += al * (G - Vm[st]); });
+      mc[e] += rms(Vm) / NR; td[e] += rms(Vt) / NR;
+    }
+  }
+  rwChart({ curves: [{ pts: mc.map(function (v, i) { return [i, v]; }), c: 'c1', label: '蒙特卡罗（等回合结束）' }, { pts: td.map(function (v, i) { return [i, v]; }), c: 'c2', label: 'TD(0)（每步自举）' }] });
+}
+$('#rwAs').addEventListener('input', rw); rw();
+
+/* ---------- SARSA vs Q ---------- */
+var clSeed = 0;
+function clTrain(alg, seed) {
+  var r = S.rng(seed), Q = [], i; for (i = 0; i < GW * GH; i++) Q.push([0, 0, 0, 0]);
+  function pick(s) { if (r() < 0.1) return Math.floor(r() * 4); var q = Q[s], b = 0; for (var a = 1; a < 4; a++) if (q[a] > q[b] || (q[a] === q[b] && r() < 0.5)) b = a; return b; }
+  var rets = [];
+  for (var ep = 0; ep < 1000; ep++) {
+    var x = 0, y = 0, s = 0, a = pick(0), G = 0;
+    for (var t = 0; t < 500; t++) {
+      var m = move(x, y, a), s2 = m[1] * GW + m[0], end = isEnd(m[0], m[1]); G += m[2];
+      var a2 = pick(s2), tgt = end ? m[2] : m[2] + (alg === 'q' ? Math.max.apply(null, Q[s2]) : Q[s2][a2]);
+      Q[s][a] += 0.1 * (tgt - Q[s][a]); if (end) break; x = m[0]; y = m[1]; s = s2; a = a2;
+    }
+    rets.push(G);
+  }
+  var path = {}, cx = 0, cy = 0;
+  for (var k = 0; k < 20 && !isEnd(cx, cy); k++) { path[cx + ',' + cy] = 1; var q = Q[cy * GW + cx], b = 0; for (var a3 = 1; a3 < 4; a3++) if (q[a3] > q[b]) b = a3; var mm = move(cx, cy, b); if (mm[2] === -100) break; cx = mm[0]; cy = mm[1]; }
+  return { Q: Q, path: path, rets: rets };
+}
+var clChart = S.chart($('#clC'), { h: 220, x: [0, 1000], y: [-80, 0], xt: [0, 250, 500, 750, 1000], yt: [-80, -60, -40, -20, 0], xl: '回合', yl: '每回合总奖励（50 回合平均）' });
+function cl() {
+  var sd = 11 + 17 * clSeed, A = clTrain('sarsa', sd), B = clTrain('q', sd + 5);
+  [[A, '#clS'], [B, '#clQ']].forEach(function (z) {
+    drawGrid($(z[1]), function (d, x, y) {
+      if (isEnd(x, y)) { d.className = 'se'; d.textContent = 'E'; return; }
+      var q = z[0].Q[y * GW + x], b = 0; for (var a = 1; a < 4; a++) if (q[a] > q[b]) b = a;
+      if (z[0].path[x + ',' + y]) d.className = 'on';
+      if (x === 0 && y === 0) d.className += ' se';
+      d.innerHTML = '<b>' + ARR[b] + '</b>' + (x === 0 && y === 0 ? '<small>S</small>' : '');
+    });
+  });
+  function sm(a) { var out = []; for (var i = 49; i < a.length; i += 10) { var s = 0; for (var j = i - 49; j <= i; j++) s += a[j]; out.push([i + 1, s / 50]); } return out; }
+  clChart({ curves: [{ pts: sm(A.rets), c: 'c2', label: 'SARSA' }, { pts: sm(B.rets), c: 'c1', label: 'Q 学习' }] });
+  function avg(a) { return a.slice(-200).reduce(function (s, v) { return s + v; }, 0) / 200; }
+  $('#clSeed').textContent = '随机种子 #' + (clSeed + 1) + '，再点换一组';
+  $('#clW').innerHTML = '这一组：SARSA 训练时最后 200 回合平均每回合 <b>' + S.f(avg(A.rets), 1) + '</b>，Q 学习 <b>' + S.f(avg(B.rets), 1) + '</b>。Q 学习学到的是贴着悬崖的最短路（最优策略），但训练时仍按 ε-贪心行动，每次随机往下一步就掉崖，所以<b>训练中的实际回报反而更差</b>；SARSA 的目标里包含了自己的探索行为，学到了离悬崖更远的“安全路线”。如果让 ε 逐渐减小到 0，两者都会收敛到最短路（此处数值为本页模拟结果）。';
+  clSeed++;
+}
+$('#clGo').addEventListener('click', cl); cl();
+S.notes($('#n-td'), {
+  c: [
+    ['时序差分', '走一步就用 r + γQ(s′, a′) 近似回报来更新（自举）。'],
+    ['SARSA', '五元组 (s, a, r, s′, a′)，同策略 TD。'],
+    ['Q 学习', '目标用 max_{a′} Q(s′, a′)，异策略 TD，逼近 Q*。'],
+    ['值函数近似', '用 Q_φ(s, a) 代替表格，可处理高维 / 连续状态。'],
+    ['目标网络冻结', '每隔 C 步才同步 φ̂ ← φ，稳住学习目标。'],
+    ['经验回放', '经验池随机抽样，打破相邻样本相关性、提高样本利用率。']
+  ],
+  p: [
+    ['增量平均', 'Q ← Q + (1/N)(G − Q)，1/N 换成 α'],
+    ['TD 误差', 'δ = r + γQ(s′, a′) − Q(s, a)（对应多巴胺“奖励预测误差”）'],
+    ['MC vs TD', '完整路径、不依赖马尔可夫性 vs 一步、依赖马尔可夫性'],
+    ['DQN 为何多用于离散动作', 'max_{a′} 在连续动作上难以遍历'],
+    ['DQN 的不稳定来源', '函数逼近 + 自举 + 异策略叠加']
+  ]
+});
+
+/* ---------- REINFORCE ---------- */
+var rfChart = S.chart($('#rfC'), { h: 250, x: [0, 300], y: [0, 1], xt: [0, 100, 200, 300], yt: [0, 0.2, 0.4, 0.6, 0.8, 1], xl: '更新次数', yl: '选中最好那台的概率' });
+function rf() {
+  var lr = +$('#rfLs').value; $('#rfL').textContent = S.f(lr, 3);
+  var MU = [10, 11, 12], T = 300, R = 100;
+  function run(base) {
+    var curve = new Array(T).fill(0), gv = 0, gn = 0;
+    for (var k = 0; k < R; k++) {
+      var r = S.rng(k * 13 + 5), th = [0, 0, 0], b = 0;
+      for (var t = 0; t < T; t++) {
+        var p = S.softmax(th, 1); curve[t] += p[2] / R;
+        var u = r(), a = u < p[0] ? 0 : u < p[0] + p[1] ? 1 : 2, rew = MU[a] + S.randn(r), adv = rew - (base ? b : 0);
+        for (var i = 0; i < 3; i++) { var g = adv * ((i === a ? 1 : 0) - p[i]); th[i] += lr * g; if (i === 2) { gv += g * g; gn++; } }
+        b += 0.1 * (rew - b);
+      }
+    }
+    return { c: curve, v: gv / gn };
+  }
+  var A = run(false), B = run(true);
+  rfChart({ curves: [{ pts: A.c.map(function (v, i) { return [i + 1, v]; }), c: 'dim', label: '不减基准线' }, { pts: B.c.map(function (v, i) { return [i + 1, v]; }), c: 'c2', label: '减去基准线 b（回报的滑动平均）' }], hl: [{ y: 1 / 3, c: 'dim', label: '随机 1/3' }] });
+  $('#rfT').innerHTML = '<tr><td></td><td class="n">300 步后 P(最好)</td><td class="n">梯度分量的均方</td></tr><tr><td>不减基准线</td><td class="n">' + S.f(A.c[T - 1], 2) + '</td><td class="n">' + S.f(A.v, 2) + '</td></tr><tr><td>减去基准线</td><td class="n">' + S.f(B.c[T - 1], 2) + '</td><td class="n">' + S.f(B.v, 2) + '</td></tr>';
+  $('#rfW').innerHTML = '基准线让梯度的均方小了约 <b>' + S.f(A.v / B.v, 0) + ' 倍</b>。不减基准线时，即使选了最差的那台（奖励约 10）也会被大力“鼓励”，学习主要靠三者之间 1 分的差距从噪声里慢慢显现；学习率一大，策略还会被早期的随机结果锁死在次优动作上。减去基准线后，只有“比平均好”的动作被鼓励，“比平均差”的被抑制（此处数值为本页模拟结果）。';
+}
+$('#rfLs').addEventListener('input', rf); rf();
+S.guess($('#cvG'), { q: '控制变量 g 与 f 的相关系数为 0.9，取最优系数后，f̂ 的方差是原来的百分之多少？', unit: '%', ans: 19, fmt: function (x) { return S.f(x, 0); }, why: 'var(f̂) = (1 − 0.9²)var(f) = 0.19 var(f)。相关性 0.9 听上去不算完美，方差却只剩不到五分之一；相关性 0.5 时只降到 75%。所以基准线最好选和 G_t 高度相关的东西——值函数 V(s_t) 正是 G_t 的条件期望。' });
+S.notes($('#n-pg'), {
+  c: [
+    ['策略搜索', '直接在策略空间优化参数化策略。'],
+    ['策略梯度', '对 𝒥(θ) 做梯度上升。'],
+    ['REINFORCE', '采一条轨迹，按每个时刻的后续回报更新。'],
+    ['控制变量', '减去一个期望已知且与 f 相关的 g，期望不变、方差减小。'],
+    ['基准线', '与动作无关的 b(s_t)，常取可学习的 V_φ(s_t)。']
+  ],
+  p: [
+    ['对数导数技巧', '∇p = p ∇log p'],
+    ['与环境模型无关', '∇log p(τ) = Σ ∇log π_θ(a_t|s_t)'],
+    ['只看后续回报', '∇𝒥 = 𝔼[Σ ∇log π · γ^t G_t]'],
+    ['基准线不改期望', 'Σ_a ∇π(a|s) = ∇1 = 0'],
+    ['方差缩减', '(1 − corr²) var(f)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- PPO ---------- */
+var ppA = 1;
+var ppChart = S.chart($('#ppC'), { h: 240, x: [0, 2], y: [-2, 2], xt: [0, 0.5, 1, 1.5, 2], yt: [-2, -1, 0, 1, 2], xl: '概率比 r = π_θ / π_old' });
+function pp() {
+  var e = +$('#ppEs').value; $('#ppE').textContent = S.f(e, 2);
+  var A = ppA;
+  ppChart({ curves: [{ f: function (r) { return r * A; }, c: 'dim', dash: 1, label: '未裁剪 rA' }, { f: function (r) { return Math.min(r * A, S.clamp(r, 1 - e, 1 + e) * A); }, c: 'c2', w: 3.5, label: 'PPO 裁剪目标' }], vl: [{ x: 1 - e, c: 'dim', label: '1 − ε' }, { x: 1 + e, c: 'dim', label: '1 + ε' }] });
+  $('#ppW').innerHTML = A > 0 ? '好动作：目标随 r 增大，鼓励提高它的概率；但 r 超过 1 + ε 后变平，<b>梯度为 0</b>，不再继续推。r 小于 1 时不裁剪——如果新策略反而降低了好动作的概率，照样被纠正。' :
+    '坏动作：目标随 r 减小而增大，鼓励降低它的概率；r 低于 1 − ε 后变平，不再继续压。r 大于 1 时不裁剪，新策略若错误地提高了坏动作的概率，会被完整惩罚。min 保证裁剪只会让目标<b>更悲观</b>，不会更乐观。';
+}
+S.seg($('#ppS'), function (v) { ppA = +v; pp(); });
+$('#ppEs').addEventListener('input', pp); pp();
+function ga() {
+  var l = +$('#gaLs').value, g = +$('#gaYs').value; $('#gaL').textContent = S.f(l, 2); $('#gaY').textContent = S.f(g, 2);
+  var rows = []; for (var k = 0; k < 10; k++) { var w = Math.pow(g * l, k); rows.push({ label: 'δ(t+' + k + ')', value: w, text: S.f(w, 3), cls: k ? 'c2' : 'ok' }); }
+  S.bars($('#gaB'), rows);
+  var eff = l * g < 1 ? 1 / (1 - g * l) : Infinity;
+  $('#gaW').innerHTML = l === 0 ? 'λ = 0：只用一步 TD 误差 δ<sub>t</sub>，方差最小，但完全依赖评论员 V 的准确性，偏差大。' : l === 1 && g === 1 ? 'λ = γ = 1：所有未来 TD 误差等权相加，等于 G<sub>t</sub> − V(s<sub>t</sub>)，就是带基准线的蒙特卡罗，无偏但方差大。' : '权重按 (γλ)<sup>l</sup> 衰减，“有效视野”约 1/(1 − γλ) ≈ <b>' + S.f(eff, 1) + '</b> 步。λ 越大越接近整段回报（偏差小、方差大），越小越接近一步 TD（方差小、偏差大）。';
+}
+['gaLs', 'gaYs'].forEach(function (id) { $('#' + id).addEventListener('input', ga); }); ga();
+S.notes($('#n-ppo'), {
+  c: [
+    ['演员—评论员', '演员 π_θ 选动作，评论员 V_φ 用 TD 误差评价并自我修正。'],
+    ['优势函数', 'A = Q − V：比“按当前策略平均行动”好多少。'],
+    ['代理目标', '用旧策略的状态分布近似新策略的，得到可优化的局部目标。'],
+    ['TRPO', '最大化 𝔼[r_t A_t]，约束 KL ≤ δ；近似二阶求解。'],
+    ['PPO', '裁剪概率比，只用一阶梯度；同一批数据可用多个 epoch。'],
+    ['GAE', '对多步 TD 误差做 (γλ)^l 指数加权，折中偏差与方差。']
+  ],
+  p: [
+    ['TD 误差', 'δ = r + γV_φ(s′) − V_φ(s)'],
+    ['策略改进恒等式', '𝒥(θ) − 𝒥(θ_old) = 𝔼_{τ~π_θ}[Σ γ^t A^{π_old}(s_t, a_t)]'],
+    ['重要性比值', 'r_t(θ) = π_θ(a_t|s_t) / π_old(a_t|s_t)'],
+    ['信赖域的本意', '不是变保守，而是让局部近似仍然可信'],
+    ['ε 过大 / 过小', '过大约束失效、更新不稳；过小学得太慢（习题 12-8）']
+  ]
+});
+
+/* ---------- 分类 ---------- */
+S.sortGame($('#rlG'), {
+  bins: [{ k: 'v', t: '值函数估计' }, { k: 'p', t: '策略搜索（含策略梯度）' }, { k: 'ac', t: '演员—评论员一族' }, { k: 'm', t: '环境模型 / 数据 / 奖励' }],
+  items: [
+    { t: '值迭代', k: 'v', why: '动态规划，迭代贝尔曼最优方程。' },
+    { t: 'SARSA', k: 'v', why: '同策略 TD，估计 Q 函数。' },
+    { t: 'DQN', k: 'v', why: '用深度网络近似 Q 函数的 Q 学习。' },
+    { t: 'REINFORCE', k: 'p', why: '纯策略梯度，用蒙特卡罗回报。' },
+    { t: '无梯度的策略搜索', k: 'p', why: '原书图 12.4：策略搜索分基于梯度和无梯度两类。' },
+    { t: 'PPO', k: 'ac', why: '演员—评论员框架下的信赖域式策略优化。' },
+    { t: 'A3C', k: 'ac', why: '并行采样、异步更新的演员—评论员。' },
+    { t: '世界模型', k: 'm', why: '学隐空间动力学，在模型里想象式推演。' },
+    { t: '离线强化学习', k: 'm', why: '只用固定数据集，核心困难是分布外动作。' },
+    { t: 'RLHF', k: 'm', why: '先从人类偏好学奖励模型，再做策略优化。' }
+  ]
+});
+S.notes($('#n-model'), {
+  c: [
+    ['无模型 / 基于模型', '直接用真实样本 vs 学习或利用环境模型。'],
+    ['世界模型', '在隐空间预测状态演化、奖励和终止信号。'],
+    ['离线强化学习', '固定数据集上学策略，不能探索。'],
+    ['RLHF', '人类偏好 → 奖励模型 → 策略优化。'],
+    ['POMDP', '只能看到部分观测，(𝒮, 𝒜, T, R, Ω, 𝒪, γ)。'],
+    ['逆向强化学习', '从专家轨迹反推奖励函数。'],
+    ['分层强化学习', '高层决定做什么，低层决定怎么做。']
+  ],
+  p: [
+    ['世界模型的风险', '长时程推演误差累积，策略钻模型漏洞'],
+    ['离线的关键困难', '分布外动作的价值被高估'],
+    ['LLM 作为策略', '状态 = 输入 + 已生成历史，动作 = 下一个词元'],
+    ['奖励模型的风险', '分布偏移、奖励过度优化、评估失真'],
+    ['统一闭环', '执行策略生成样本 → 估计回报 / 价值 → 更新策略']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 学习信号', '奖励，而且常常延迟。目标是期望回报最大。值函数把“长期回报”变成每个状态 / 动作上的一个数，贝尔曼方程让它可以一步步递推，从而把延迟奖励的信息传回早期动作。'],
+    ['② 值函数一族', '动态规划要模型；蒙特卡罗等完整回合；TD 一步自举。SARSA 用实际下一个动作（同策略），Q 学习用 max（异策略）；DQN 是用神经网络做 Q 学习，加目标网络和经验回放来稳住训练。'],
+    ['③ 让策略梯度更稳', 'REINFORCE 用整段回报，方差大。基准线减掉与动作无关的部分；演员—评论员用 TD 估计回报、单步更新；TRPO / PPO 限制每次策略变化不太大；GAE 在一步 TD 和整段回报之间连续调节。']
+  ],
+  p: [
+    ['原书一句话', '当学习对象不再是“给定数据上的预测器”，而是“能持续行动并影响环境的决策体”时，建模方式、优化目标和学习信号都会系统性地变化。'],
+    ['下一篇', '把语言模型当作策略，再往前走：大语言模型与智能体。']
+  ],
+  ph: '一句话'
+});

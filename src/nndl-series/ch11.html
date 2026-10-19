@@ -1,0 +1,482 @@
+---
+title: 模型独立的学习方式：集成、半监督、多任务、迁移、持续与元学习
+desc: 神经网络与深度学习（第二版）学习笔记（十一）：集成学习的误差分析、Bagging / 随机森林 / AdaBoost；半监督的自训练与协同训练；多任务学习的四种共享模式与负迁移；迁移学习的领域与任务、归纳迁移与参数高效微调（Adapter / Prefix / LoRA）、领域适应与三种分布偏移、领域对抗；持续学习的灾难性遗忘与 EWC；元学习、少样本学习、学习优化器与 MAML，以及上下文学习作为隐式元学习。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 11</span><span>对应原书第 11 章（第 300–326 页）</span><span>约 50 分钟</span>
+h1: 不换模型，<em>换一种学法</em>
+lead: 前面的章节都在讲“用什么模型”。第 11 章讲的是另一回事：数据分布对不上、标注太少、任务不断冒出来、新任务只给几个样本——这时与其每次从零训练，不如换学习方式。“模型独立”指这些方法不依赖特定结构，线性模型、决策树、神经网络都能用。原书给了一个好用的比较框架：额外信息从哪来、训练怎么组织（同时、先后、还是在任务分布上）、主要风险是什么。
+nav: ens|集成学习;semi|半监督;mtl|多任务;tl|迁移学习;cl|持续学习;meta|元学习;back|三个问题
+---
+<style>
+.mtsvg { width: 100%; max-width: 360px; height: auto; display: block; }
+.mtsvg rect { stroke-width: 1.5; rx: 4; }
+.mtsvg rect.sh { fill: var(--s2-soft); stroke: var(--s2); }
+.mtsvg rect.pr { fill: var(--s1-soft); stroke: var(--s1); }
+.mtsvg path { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+.mtsvg path.soft { stroke: var(--s3); stroke-dasharray: 4 3; }
+.mtsvg text { font-size: 15px; fill: var(--ink); text-anchor: middle; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>集成为什么能降低误差？Bagging 和 Boosting 用什么办法制造“差异”？</li>
+  <li>多任务学习、迁移学习、半监督学习、持续学习都在“利用额外知识”，它们的区别是什么？</li>
+  <li>灾难性遗忘是怎么回事，EWC 怎么缓解？元学习“学会学习”学的是什么？</li>
+</ol></div>
+
+<section class="part" id="ens">
+  <div class="part-head"><h2>集成学习：三个臭皮匠</h2><span class="meta">原书 11.1 节 · 第 301–306 页</span></div>
+  <div class="sec-lede">
+    <p>集成学习把多个模型的预测组合起来。最直接的是<strong>直接平均</strong> F(x) = (1/M)Σf<sub>m</sub>(x)（输出类别时就是投票）。<strong>定理 11.1</strong>：集成的期望错误 R(F) 不超过各模型的平均期望错误 R̄(f)（平方函数是凸的，由 Jensen 不等式）；各模型错误两两不相关时 R(F) = R̄(f)/M；错误完全相同时 R(F) = R̄(f)，集成毫无收益。所以好的集成既要每个基模型有一定准确率，又要彼此<strong>有差异</strong>——这也连着第 2 篇：集成主要降的是方差。</p>
+    <p>制造差异的两类方法。<strong>Bagging 类</strong>随机构造训练样本或特征：Bagging（Bootstrap Aggregating）在原训练集上<strong>有放回</strong>地采样出 M 个同样大小的自助采样集，各训一个模型再投票或平均；<strong>随机森林</strong>再加随机特征，每个基模型是一棵决策树。<strong>Boosting 类</strong>按顺序训练，每个模型针对前面模型的错误：<strong>AdaBoost</strong> 学加性模型 F(x) = Σα<sub>m</sub>f<sub>m</sub>(x)，每轮按当前样本权重训一个弱分类器，算加权错误 ε<sub>m</sub>，集成权重 <strong>α<sub>m</sub> = ½ log((1 − ε<sub>m</sub>)/ε<sub>m</sub>)</strong>，再把分错样本的权重乘以 e<sup>α</sup>、分对的乘以 e<sup>−α</sup> 并归一化。原书还给了统计学解释：AdaBoost 是在用指数损失 exp(−yF(x)) 做分步优化，α 的公式正是对它求导得到的。</p>
+    <p class="go">左边看错误相关性如何限制集成收益；右边用决策树桩（只在一个坐标上切一刀的弱分类器）一轮轮跑 AdaBoost。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">定理 11.1：R(F) 随模型数 M 与错误相关性 ρ 的变化</p>
+      <div id="enG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>模型数 M <output id="enM">10</output></span><input type="range" id="enMs" min="1" max="50" value="10"></label>
+        <label class="ctl"><span>错误相关系数 ρ <output id="enR">0.3</output></span><input type="range" id="enRs" min="0" max="1" step="0.05" value="0.3"></label>
+      </div>
+      <div id="enC"></div>
+      <p class="cap" id="enW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">AdaBoost + 决策树桩（数据为示意，点的大小 = 样本权重）</p>
+      <div id="abF"></div>
+      <div class="btnrow"><button class="btn pri" type="button" id="abStep">再加一个弱分类器</button><button class="btn" type="button" id="abR">重来</button></div>
+      <table class="calc" id="abT"></table>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">自助采样里有多少不重复的样本</p>
+    <div id="bsG"></div>
+  </div>
+  <div class="notes" id="n-ens"></div>
+</section>
+
+<section class="part" id="semi">
+  <div class="part-head"><h2>半监督学习：自训练与协同训练</h2><span class="meta">原书 11.2 节 · 第 306–308 页</span></div>
+  <div class="sec-lede">
+    <p>标注贵、无标注便宜：给少量标注集 ℒ 和大量无标注集 𝒰（M ≫ N），<strong>半监督学习</strong>要从无标注数据里挖信息帮当前任务。成功的关键是无标注数据的结构能给分类边界或表示提供额外约束；如果无标注数据和目标任务分布差很大，或者伪标签质量差，反而会添乱。</p>
+    <p><strong>自训练</strong>（自举法）：先用标注数据训一个模型，预测无标注样本，把<strong>置信度最高的 P 个</strong>连同伪标签加进训练集，重训，反复进行（原书算法 11.2）。它和 EM 算法有相似之处；缺点是无法保证伪标签正确，错了就会<strong>误差累积</strong>。原书提醒：模型的置信度不等于真实正确率，要在验证集上设阈值，结合概率校准或人工抽查。</p>
+    <p><strong>协同训练</strong>是改进版：很多数据天然有两个视角（网页的文字内容和超链接），假设两个视角在给定标签时<strong>条件独立</strong>，且<strong>各自都足以</strong>训练出不错的分类器。分别在两个视角上训练 f₁、f₂，各自挑高置信度的样本加入训练集，互相“教”对方。两个视角高度重合时就退化成自训练。</p>
+    <p class="go">每类只有 3 个标注点（实心），其余都是无标注点。一轮轮自训练，看边界和伪标签的变化（数据为示意，灰色点的真实类别只用于统计错误）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">自训练：逐轮加入高置信伪标签</p>
+    <div class="lab-split">
+      <div id="stF"></div>
+      <div>
+        <label class="ctl"><span>每轮加入 P 个 <output id="stP">10</output></span><input type="range" id="stPs" min="2" max="40" value="10"></label>
+        <div class="btnrow"><button class="btn pri" type="button" id="stGo">下一轮</button><button class="btn" type="button" id="stR">重来</button></div>
+        <div class="read"><div class="hl"><div class="v" id="stN">0</div><div class="k">已加入伪标签</div></div><div class="warn"><div class="v" id="stE">0</div><div class="k">其中标错的</div></div><div><div class="v" id="stA">0</div><div class="k">全体数据上的准确率</div></div></div>
+        <p class="cap" id="stW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-semi"></div>
+</section>
+
+<section class="part" id="mtl">
+  <div class="part-head"><h2>多任务学习：一起学，共享知识</h2><span class="meta">原书 11.3 节 · 第 308–311 页</span></div>
+  <div class="sec-lede">
+    <p>相关的任务之间有共享的知识（表示、参数、学习算法）。<strong>多任务学习</strong>同时学多个相关任务，利用相关性提高每个任务的性能和泛化——它可以看作一种<strong>归纳迁移学习</strong>：把相关任务的信息当作<strong>归纳偏置</strong>。神经网络里主要在表示层面共享，原书图 11.1 给了四种模式：<strong>硬共享</strong>（低层共享、高层各任务私有）、<strong>软共享</strong>（不显式共享，但可以复制或用注意力借用其他任务的隐状态）、<strong>层次共享</strong>（低级任务在低层输出、高级任务在高层输出）、<strong>共享—私有</strong>（共享模块抓跨任务特征，私有模块抓任务特有特征，二者拼起来）。</p>
+    <p>联合目标是各任务损失的加权和 ℒ(θ) = Σ<sub>m</sub>Σ<sub>n</sub> η<sub>m</sub>ℒ<sub>m</sub>（通常 η<sub>m</sub> = 1）。训练分两阶段：<strong>联合训练</strong>（把各任务的小批量混在一起随机排序，每个批只算它对应任务的损失）和可选的<strong>单任务微调</strong>。为什么有效？原书列了四点：训练数据更多，相当于隐式数据增强；共享模块要兼顾所有任务，是一种正则化；能服务多个任务的表示往往更通用；每个任务能“选择性”利用其他任务学到的特征。但任务相关性弱或共享设计不当时会出现<strong>负迁移</strong>。</p>
+    <p class="go">切换四种共享模式（红框共享、蓝框任务私有）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 11.1：四种共享模式（任务 A、B、C）</p>
+    <div class="seg" id="mtS"><button data-v="hard" aria-pressed="true">硬共享</button><button data-v="soft">软共享</button><button data-v="hier">层次共享</button><button data-v="sp">共享—私有</button></div>
+    <div class="lab-split" style="margin-top:10px"><svg class="mtsvg" id="mtG" viewBox="0 0 360 230" role="img" aria-label="共享模式"></svg><p class="cap" id="mtW"></p></div>
+  </div>
+  <div class="notes" id="n-mtl"></div>
+</section>
+
+<section class="part" id="tl">
+  <div class="part-head"><h2>迁移学习：从源到目标</h2><span class="meta">原书 11.4 节 · 第 311–317 页</span></div>
+  <div class="sec-lede">
+    <p>先分清两个概念：<strong>领域</strong> 𝒟 = (𝒳, p(x))——输入空间和输入的边际分布；<strong>任务</strong> 𝒯 = (𝒴, p(y|x))——输出空间和条件分布。标准机器学习假设源和目标的领域、任务都相同；只要有一个不同，就是<strong>迁移学习</strong>：用源领域、源任务学到的知识帮目标领域、目标任务。它分两类：<strong>归纳迁移</strong>（先在源上学一般知识，再迁到目标任务）和<strong>转导迁移</strong>（样本到样本，训练时能看到目标领域的无标注样本）。</p>
+    <p><strong>归纳迁移</strong>：源只有无标注数据时，用自监督预训练（从 word2vec、GloVe 到 ELMo、GPT、BERT）；源有大量标注时，直接迁移 ImageNet 上训好的 AlexNet、VGG、ResNet。迁移方式三种：<strong>基于特征</strong>（拿预训练模型的中间输出当特征）、<strong>微调</strong>、<strong>参数高效适配</strong>（PEFT）——Adapter 在每层插小瓶颈模块，Prefix Tuning 在输入前拼可学习前缀，<strong>LoRA</strong> 把权重更新分解成两个低秩矩阵 ΔW = BA（r ≪ min(d<sub>in</sub>, d<sub>out</sub>)），只训 A、B。网络低层学通用特征、高层学任务相关特征，可以按需选择迁移哪些层。它和多任务学习的区别：分两个阶段、单向迁移，只关心目标任务。</p>
+    <p><strong>转导迁移</strong>的典型问题是<strong>领域适应</strong>：样本空间相同但 p<sub>S</sub>(x, y) ≠ p<sub>T</sub>(x, y)。由 p(x, y) = p(y|x)p(x) = p(x|y)p(y)，偏移有三种：<strong>协变量偏移</strong>（p(x) 变、p(y|x) 不变）、<strong>概念偏移</strong>（p(x) 不变、p(y|x) 变）、<strong>先验偏移</strong>（p(y) 变、p(x|y) 不变）。针对协变量偏移，目标风险可以写成源分布上按 p<sub>T</sub>(x)/p<sub>S</sub>(x) 加权的风险；更常用的是学一个<strong>领域无关的表示</strong>：在源域损失之外加一项特征空间里两个领域分布的差异（MMD、CMD），或者用<strong>领域对抗</strong>——训练一个领域判别器分辨特征来自哪个领域，同时让特征提取器骗过它。</p>
+    <p class="go">切换三种偏移看源和目标分布哪里不同；再算一下 LoRA 省了多少参数。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">三种分布偏移（一维示意）</p>
+      <div class="seg" id="shS"><button data-v="cov" aria-pressed="true">协变量偏移</button><button data-v="con">概念偏移</button><button data-v="pri">先验偏移</button></div>
+      <div id="shC"></div>
+      <p class="cap" id="shW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">全量微调 vs LoRA（一个权重矩阵）</p>
+      <div id="loG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>d_in = d_out <output id="loD">4096</output></span><input type="range" id="loDs" min="8" max="14" value="12"></label>
+        <label class="ctl"><span>秩 r <output id="loR">8</output></span><input type="range" id="loRs" min="0" max="7" value="3"></label>
+      </div>
+      <div id="loB" class="wide"></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：几种“利用额外知识”的方式</h4>
+    <p><b>多任务学习</b>：多个任务<strong>同时</strong>学，想提高<strong>所有</strong>任务。<b>迁移学习</b>：<strong>先后</strong>两阶段，<strong>单向</strong>，只关心目标任务。<b>半监督学习</b>：任务不变，额外利用<strong>无标注数据</strong>。</p>
+    <p><b>归纳迁移 vs 转导迁移</b>：先学一般知识再迁移 vs 训练时直接用目标域的样本做样本到样本的迁移。</p>
+    <p><b>协变量 / 概念 / 先验偏移</b>：p(x) 变 / p(y|x) 变 / p(y) 变。</p>
+    <p><b>领域 vs 任务</b>：(𝒳, p(x)) vs (𝒴, p(y|x))。</p>
+  </div>
+  <div class="notes" id="n-tl"></div>
+</section>
+
+<section class="part" id="cl">
+  <div class="part-head"><h2>持续学习：学了新的，别忘了旧的</h2><span class="meta">原书 11.5 节 · 第 317–320 页</span></div>
+  <div class="sec-lede">
+    <p>大多数模型训练完参数就固定了。如果任务按时间一个个到来，模型要在学新知识的同时保留旧能力——<strong>持续学习</strong>（终身学习）。它和归纳迁移学习的区别是关心长期知识累积，而不只是目标任务；和多任务学习的区别是任务不同时出现。关键难题是<strong>灾难性遗忘</strong>：对任务 A 很重要的参数，学 B 时被改掉了，A 就坏了。好在网络通常参数冗余，A 有很多组参数都能做到相近性能，有希望找到一组既不伤 A 又能做好 B 的参数。</p>
+    <p><strong>弹性权重巩固</strong>（EWC）从贝叶斯角度推导：log p(θ|𝒟<sub>A</sub>∪𝒟<sub>B</sub>) = log p(𝒟<sub>B</sub>|θ) + log p(θ|𝒟<sub>A</sub>) + 常数——任务 A 学到的一切都在后验 p(θ|𝒟<sub>A</sub>) 里。用高斯近似它：均值是 A 上学到的 θ*<sub>A</sub>，精度矩阵用 <strong>Fisher 信息矩阵</strong>（打分函数 ∇log p 的协方差，衡量参数携带了多少数据的信息）的对角线近似。于是学 B 时的损失是 <strong>ℒ<sub>B</sub>(θ) + (λ/2)Σ F<sub>i</sub><sup>A</sup>(θ<sub>i</sub> − θ*<sub>A,i</sub>)²</strong>：<strong>对 A 越重要（Fisher 越大）的参数，越不许乱动</strong>。</p>
+    <p>EWC 属于<strong>正则化</strong>类方法。另外两类：<strong>重放</strong>（保存部分旧样本或用生成模型重建旧样本，和新数据混着训）；<strong>参数隔离 / 结构扩展</strong>（给不同任务分配不同参数子空间，或新任务来时动态加网络结构）。</p>
+    <p class="go">在一个两参数的模型上：先学完任务 A（蓝色等高线，在 θ₁ 方向很窄），再学任务 B（红色等高线）。分别不加和加 EWC，看最后停在哪（示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">灾难性遗忘与 EWC</p>
+    <div class="lab-split">
+      <div id="ewF"></div>
+      <div>
+        <label class="ctl"><span>EWC 强度 λ <output id="ewL">0</output></span><input type="range" id="ewLs" min="0" max="20" step="0.5" value="0"></label>
+        <div class="read"><div class="warn"><div class="v" id="ewA">0</div><div class="k">学完 B 后任务 A 的损失</div></div><div class="hl"><div class="v" id="ewB">0</div><div class="k">任务 B 的损失</div></div></div>
+        <table class="calc" id="ewT"></table>
+        <p class="cap" id="ewW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-cl"></div>
+</section>
+
+<section class="part" id="meta">
+  <div class="part-head"><h2>元学习：学会学习</h2><span class="meta">原书 11.6–11.7 节 · 第 320–325 页</span></div>
+  <div class="sec-lede">
+    <p>没有免费午餐定理说，没有通用的最优学习算法，所以通常要“就事论事”选模型、损失、优化器、超参数。能不能从一组任务里<strong>自动总结出一种更适合新任务的学习方法</strong>？这就是<strong>元学习</strong>（学习的学习）。它和<strong>少样本学习</strong>密切相关：每类只有 K 个样本（K = 1 叫单样本，K = 0 叫零样本）。少样本学习关心“样本少时怎么做好”，元学习关心“怎样从多个任务里学到快速适应的机制”，很多元学习方法可用于少样本学习，但两者不等价。</p>
+    <p><strong>基于优化器的元学习</strong>：不同优化算法的区别只在更新规则，那就让一个网络（如 LSTM）来学更新规则 θ<sub>t+1</sub> = θ<sub>t</sub> + g<sub>t</sub>(∇ℒ; φ)，目标是若干步后的损失之和最小；为了可行，每个参数共享一个小 LSTM。</p>
+    <p><strong>MAML</strong>（模型无关的元学习）：任务来自分布 p(𝒯)，想学一个<strong>初始参数 θ</strong>，让它在新任务上只走一步（或几步）梯度就能做好。内层：θ′<sub>m</sub> = θ − α∇ℒ<sub>𝒯m</sub>(f<sub>θ</sub>)；外层：θ ← θ − β∇<sub>θ</sub>Σℒ<sub>𝒯m</sub>(f<sub>θ′m</sub>)。外层梯度里有二阶项 (I − α∇²ℒ)，实践中一阶近似也常够用；α 很小时 MAML 和普通多任务学习形式接近。原书最后联系到大模型：<strong>上下文学习可以看作隐式的元学习</strong>——预训练让模型内化了“从少量示例归纳模式”的能力，推断时的前向传播本身就是内循环适应，不需要梯度更新；MAML 则显式地用梯度。</p>
+    <p class="go">四个一维二次任务 ℒ<sub>m</sub> = a<sub>m</sub>(θ − c<sub>m</sub>)²（示意）。比较“直接最小化总损失”（多任务）和 MAML 的最优初始化。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">MAML 的目标：适应一步之后的损失最小</p>
+    <div class="lab-split">
+      <div id="mmC"></div>
+      <div>
+        <label class="ctl"><span>内层学习率 α <output id="mmA">0.10</output></span><input type="range" id="mmAs" min="0" max="0.25" step="0.005" value="0.1"></label>
+        <table class="calc" id="mmT"></table>
+        <p class="cap" id="mmW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>学习方式</th><th>额外信息来源</th><th>训练组织方式</th><th>收益与风险</th></tr></thead>
+    <tbody>
+      <tr><td>集成学习</td><td>多个模型或多次采样得到的差异</td><td>独立或顺序训练后组合</td><td>降方差、更稳健；错误高度相关时收益有限</td></tr>
+      <tr><td>半监督学习</td><td>少量标注 + 大量无标注</td><td>伪标签、一致性或多视角扩充监督</td><td>降低标注需求；伪标签错误和分布不匹配会放大噪声</td></tr>
+      <tr><td>多任务学习</td><td>多个相关任务的数据与损失</td><td>联合训练、共享部分表示</td><td>更通用的表示；相关性弱时负迁移</td></tr>
+      <tr><td>迁移学习</td><td>源领域 / 任务的表示、参数或数据</td><td>先学源任务，再适配目标</td><td>减少目标标注；差异大时负迁移或过度适配</td></tr>
+      <tr><td>持续学习</td><td>依次到来的历史任务经验</td><td>按时间学新任务并保留旧能力</td><td>长期累积；主要风险是灾难性遗忘</td></tr>
+      <tr><td>元学习</td><td>多个任务构成的任务分布</td><td>在任务层面学快速适应机制</td><td>少样本适应；训练与测试任务分布差大时受限</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 11.2。</p>
+  <div class="notes" id="n-meta"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">R(F) = (1/M²) Σ_m Σ_n 𝔼[ε_m ε_n] ≤ R̄(f)；不相关时 = R̄(f)/M</div>
+    <div class="fx">AdaBoost：α_m = ½ log((1 − ε_m)/ε_m)，w ← w·exp(−α_m y f_m(x))，F = sgn(Σ α_m f_m)；等价于指数损失 exp(−yF) 的分步优化</div>
+    <div class="fx">多任务：ℒ(θ) = Σ_m Σ_n η_m ℒ_m(f_m(x⁽ᵐ'ⁿ⁾; θ), y⁽ᵐ'ⁿ⁾)</div>
+    <div class="fx">领域 𝒟 = (𝒳, p(x))，任务 𝒯 = (𝒴, p(y|x))；协变量偏移下 ℛ_T = 𝔼_S[(p_T(x)/p_S(x)) ℒ]</div>
+    <div class="fx">领域对抗：max_{θc} ℒ_c；min_{θf,θg} Σ ℒ(f(g(x_S)), y_S) − γℒ_c</div>
+    <div class="fx">LoRA：ΔW = BA，A ∈ ℝ^{r×d_in}，B ∈ ℝ^{d_out×r}</div>
+    <div class="fx">EWC：ℒ(θ) = ℒ_B(θ) + (λ/2) Σ_i F_i^A (θ_i − θ*_{A,i})²；F = 𝔼[∇log p ∇log pᵀ]</div>
+    <div class="fx">MAML：θ′_m = θ − α∇ℒ_m(θ)；θ ← θ − β∇_θ Σ ℒ_m(θ′_m)</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 集成：定理 11.1 ---------- */
+var enChart = S.chart($('#enC'), { h: 220, x: [1, 50], y: [0, 1.05], xt: [1, 10, 20, 30, 40, 50], yt: [0, 0.25, 0.5, 0.75, 1], xl: '模型数 M', yl: 'R(F) / R̄(f)' });
+function en() {
+  var M = +$('#enMs').value, r = +$('#enRs').value; $('#enM').textContent = M; $('#enR').textContent = S.f(r, 2);
+  enChart({ curves: [{ f: function (m) { return r + (1 - r) / m; }, c: 'c2', label: '当前 ρ' }, { f: function (m) { return 1 / m; }, c: 'ok', dash: 1, label: 'ρ = 0' }, { f: function () { return 1; }, c: 'dim', dash: 1, label: 'ρ = 1' }], hl: [{ y: r, c: 'c2', label: '下限 ρ' }], dots: [{ x: M, y: r + (1 - r) / M, c: 'c2' }] });
+  $('#enW').innerHTML = '假设各模型误差方差相同、两两相关系数为 ρ，则 R(F)/R̄(f) = ρ + (1 − ρ)/M。M = ' + M + ' 时是 <b>' + S.f(r + (1 - r) / M, 3) + '</b>。加模型只能消掉不相关的那部分，<b>永远降不到 ρ 以下</b>——所以集成的关键是差异性，而不只是数量。';
+}
+['enMs', 'enRs'].forEach(function (id) { $('#' + id).addEventListener('input', en); }); en();
+S.guess($('#enG'), { q: '10 个模型，误差方差相同、两两相关系数 0.5。简单平均后的期望错误是单个模型的几成？', unit: '倍', ans: 0.55, fmt: function (x) { return S.f(x, 2); }, why: 'ρ + (1 − ρ)/M = 0.5 + 0.5/10 = 0.55。如果误差完全不相关，就是 1/10 = 0.1。这个式子是在定理 11.1 的基础上，假设各模型误差方差相同推出来的。' });
+
+/* ---------- AdaBoost ---------- */
+var AB = (function () { var r = S.rng(19), a = []; for (var i = 0; i < 40; i++) { var x = -2 + 4 * r(), y = -2 + 4 * r(); var lab = (x * x + y * y < 1.6) ? 1 : -1; a.push([x, y, lab]); } return a; })();
+var abW, abSt;
+function abInit() { abW = AB.map(function () { return 1 / AB.length; }); abSt = []; }
+function abF(x, y) { return abSt.reduce(function (s, st) { var v = (st.d === 0 ? x : y); return s + st.a * (v > st.t ? st.s : -st.s); }, 0); }
+function abStep() {
+  var best = null;
+  [0, 1].forEach(function (d) {
+    var vals = AB.map(function (p) { return p[d]; }).sort(function (a, b) { return a - b; });
+    for (var i = 0; i <= vals.length; i++) {
+      var t = i === 0 ? vals[0] - 0.1 : i === vals.length ? vals[i - 1] + 0.1 : (vals[i - 1] + vals[i]) / 2;
+      [1, -1].forEach(function (s) {
+        var e = 0; AB.forEach(function (p, k) { var pred = p[d] > t ? s : -s; if (pred !== p[2]) e += abW[k]; });
+        if (!best || e < best.e) best = { d: d, t: t, s: s, e: e };
+      });
+    }
+  });
+  var eps = Math.max(best.e, 1e-6); best.a = 0.5 * Math.log((1 - eps) / eps);
+  var Z = 0; abW = abW.map(function (w, k) { var p = AB[k], pred = p[best.d] > best.t ? best.s : -best.s, nw = w * Math.exp(-best.a * p[2] * pred); Z += nw; return nw; });
+  abW = abW.map(function (w) { return w / Z; });
+  abSt.push(best);
+}
+var abField = S.field($('#abF'), { xr: [-2, 2], yr: [-2, 2], res: 70, size: 330, smooth: false, f: function (x, y) { return abSt.length ? S.sigmoid(1.5 * abF(x, y)) : null; },
+  overlay: function (ctx, X, Y) {
+    AB.forEach(function (p, k) { var r = 3 + Math.sqrt(abW[k] * AB.length) * 4; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), r, 0, 7); ctx.fillStyle = S.css(p[2] > 0 ? '--s2' : '--s1'); ctx.fill(); ctx.strokeStyle = S.css('--panel'); ctx.lineWidth = 1.5; ctx.stroke(); });
+    if (abSt.length) { var st = abSt[abSt.length - 1]; ctx.strokeStyle = S.css('--ink'); ctx.lineWidth = 2.5; ctx.setLineDash([6, 4]); ctx.beginPath(); if (st.d === 0) { ctx.moveTo(X(st.t), Y(-2)); ctx.lineTo(X(st.t), Y(2)); } else { ctx.moveTo(X(-2), Y(st.t)); ctx.lineTo(X(2), Y(st.t)); } ctx.stroke(); ctx.setLineDash([]); }
+  } });
+function ab() {
+  abField({ f: abSt.length ? function (x, y) { return S.sigmoid(1.5 * abF(x, y)); } : null });
+  var acc = AB.filter(function (p) { return Math.sign(abF(p[0], p[1]) || -1) === p[2]; }).length / AB.length;
+  var rows = '<tr><td>轮</td><td class="n">树桩</td><td class="n">加权错误 ε</td><td class="n">α</td></tr>';
+  abSt.slice(-6).forEach(function (st, i) { rows += '<tr><td>' + (abSt.length - Math.min(6, abSt.length) + i + 1) + '</td><td class="n">' + (st.d ? 'y' : 'x') + (st.s > 0 ? ' > ' : ' ≤ ') + S.f(st.t, 2) + '</td><td class="n">' + S.f(st.e, 3) + '</td><td class="n">' + S.f(st.a, 3) + '</td></tr>'; });
+  rows += '<tr class="tot"><td>强分类器训练准确率</td><td class="n" colspan="3">' + (abSt.length ? S.pct(acc, 0) : '—') + '</td></tr>';
+  $('#abT').innerHTML = rows;
+}
+$('#abStep').addEventListener('click', function () { abStep(); ab(); });
+$('#abR').addEventListener('click', function () { abInit(); ab(); });
+abInit(); ab();
+S.guess($('#bsG'), { q: '从 N 个样本里有放回地抽 N 次（自助采样），N 很大时，大约百分之多少的原始样本会至少被抽到一次？', unit: '%', ans: 100 * (1 - 1 / Math.E), fmt: function (x) { return S.f(x, 1); }, why: '某个样本一次都没被抽到的概率是 (1 − 1/N)ᴺ → 1/e ≈ 36.8%，所以约 63.2% 的样本会出现。每个自助采样集都缺约三分之一的样本、又有重复，这正是 Bagging 让各基模型产生差异的来源（这一数值为补充推导，原书未列）。' });
+S.notes($('#n-ens'), {
+  c: [
+    ['集成学习', '组合多个模型的预测，群体决策。'],
+    ['Bagging', '有放回自助采样出 M 个训练集，各训一个再投票 / 平均。'],
+    ['随机森林', 'Bagging + 随机特征，基模型是决策树。'],
+    ['Boosting', '按顺序训练，后面的模型针对前面的错误。'],
+    ['AdaBoost', '加性模型；增大分错样本的权重、按错误率给弱分类器权重。']
+  ],
+  p: [
+    ['定理 11.1', 'R(F) ≤ R̄(f)；不相关时 R̄(f)/M；完全相同时 R̄(f)'],
+    ['集成权重', 'α_m = ½ log((1 − ε_m)/ε_m)'],
+    ['样本权重', 'w ← w·exp(−α_m y f_m(x))，再归一化'],
+    ['统计学解释', '指数损失 exp(−yF(x)) 的分步优化']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 自训练 ---------- */
+var STD = (function () { var r = S.rng(41), a = []; [[-1, -0.6, 0], [1, 0.7, 1]].forEach(function (c) { for (var i = 0; i < 60; i++) a.push([c[0] + 0.75 * S.randn(r), c[1] + 0.75 * S.randn(r), c[2]]); }); return a; })();
+var stLab, stPseudo, stW, stRound;
+function stInit() { stLab = {}; [0, 1, 2, 60, 61, 62].forEach(function (i) { stLab[i] = STD[i][2]; }); stPseudo = {}; stRound = 0; stFit(); }
+function stFit() {
+  var w = [0, 0, 0], idx = Object.keys(stLab).map(Number).concat(Object.keys(stPseudo).map(Number));
+  for (var it = 0; it < 400; it++) { var g = [0, 0, 0]; idx.forEach(function (i) { var p = STD[i], y = i in stLab ? stLab[i] : stPseudo[i], e = y - S.sigmoid(w[0] * p[0] + w[1] * p[1] + w[2]); g[0] -= e * p[0]; g[1] -= e * p[1]; g[2] -= e; }); for (var k = 0; k < 3; k++) w[k] -= 0.5 * g[k] / idx.length + 0.001 * w[k]; }
+  stW = w;
+}
+function stStep() {
+  var P = +$('#stPs').value, cand = [];
+  STD.forEach(function (p, i) { if (i in stLab || i in stPseudo) return; var q = S.sigmoid(stW[0] * p[0] + stW[1] * p[1] + stW[2]); cand.push([i, Math.abs(q - 0.5), q > 0.5 ? 1 : 0]); });
+  cand.sort(function (a, b) { return b[1] - a[1]; });
+  cand.slice(0, P).forEach(function (c) { stPseudo[c[0]] = c[2]; });
+  stRound++; stFit();
+}
+var stField = S.field($('#stF'), { xr: [-3.5, 3.5], yr: [-3.5, 3.5], res: 50, size: 340, f: function (x, y) { return S.sigmoid(stW[0] * x + stW[1] * y + stW[2]); },
+  overlay: function (ctx, X, Y) {
+    STD.forEach(function (p, i) {
+      var lab = i in stLab, ps = i in stPseudo;
+      ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), lab ? 7 : ps ? 4.5 : 3.5, 0, 7);
+      if (lab) { ctx.fillStyle = S.css(p[2] ? '--s2' : '--s1'); ctx.fill(); ctx.strokeStyle = S.css('--ink'); ctx.lineWidth = 2; ctx.stroke(); }
+      else if (ps) { ctx.fillStyle = S.css(stPseudo[i] ? '--s2' : '--s1'); ctx.globalAlpha = 0.75; ctx.fill(); ctx.globalAlpha = 1; if (stPseudo[i] !== p[2]) { ctx.strokeStyle = S.css('--alert'); ctx.lineWidth = 2.5; ctx.stroke(); } }
+      else { ctx.fillStyle = 'rgba(128,128,128,.45)'; ctx.fill(); }
+    });
+  } });
+function st() {
+  $('#stP').textContent = $('#stPs').value;
+  stField({});
+  var keys = Object.keys(stPseudo).map(Number), wrong = keys.filter(function (i) { return stPseudo[i] !== STD[i][2]; }).length;
+  var acc = STD.filter(function (p) { return (S.sigmoid(stW[0] * p[0] + stW[1] * p[1] + stW[2]) > 0.5 ? 1 : 0) === p[2]; }).length / STD.length;
+  $('#stN').textContent = keys.length; $('#stE').textContent = wrong; $('#stA').textContent = S.pct(acc, 0);
+  $('#stW').innerHTML = stRound === 0 ? '只用 6 个标注点训练的 Logistic 回归。灰点是无标注数据。' : '第 ' + stRound + ' 轮：离边界最远（置信度最高）的 ' + $('#stPs').value + ' 个无标注点被打上伪标签（半透明），红圈是<b>标错的</b>。早期伪标签大多正确、边界被拉到两团之间；越往后剩下的都是边界附近的难样本，错的比例上升，错误会被下一轮模型当真——这就是误差累积。';
+}
+$('#stGo').addEventListener('click', function () { stStep(); st(); });
+$('#stR').addEventListener('click', function () { stInit(); st(); });
+$('#stPs').addEventListener('input', function () { $('#stP').textContent = this.value; });
+stInit(); st();
+S.notes($('#n-semi'), {
+  c: [
+    ['半监督学习', '少量标注 + 大量无标注共同训练。'],
+    ['自训练（自举法）', '用模型给无标注样本打伪标签，挑高置信的加入训练集，迭代。'],
+    ['协同训练', '两个视角各训一个分类器，互相提供高置信伪标签。'],
+    ['误差累积', '错误伪标签被当真，后续模型越学越偏。']
+  ],
+  p: [
+    ['成功的关键', '无标注数据的结构能约束边界 / 表示；分布要匹配。'],
+    ['协同训练的两个假设', '给定标签时两视角条件独立；每个视角都足以单独训练。'],
+    ['选样标准', '置信度 ≠ 正确率：验证集定阈值、校准、人工抽查。'],
+    ['与 EM 的关系', '都迭代改进；自训练是硬伪标签、无正确性保证（习题 11-7）。']
+  ]
+});
+
+/* ---------- 多任务 ---------- */
+var MT = {
+  hard: '低层共享模块提取通用特征，高层每个任务一个私有模块。最常用、最简单。',
+  soft: '没有显式的共享层，每个任务自己一路，但可以复制或用注意力从其他任务借用隐状态（紫色虚线）。',
+  hier: '低级任务（如词性标注）在低层输出，高级任务（如句法、语义）在更高层输出，符合“低层抽局部特征、高层抽语义”的规律。',
+  sp: '共享模块抓跨任务的共性，私有模块只抓任务特有的东西，两者拼接成最终表示——分工最明确。'
+};
+function mt(k) {
+  var g = $('#mtG'); g.innerHTML = '';
+  function box(x, y, w, hh, cls, t) { S.svg('rect', { x: x, y: y, width: w, height: hh, class: cls }, g); S.svg('text', { x: x + w / 2, y: y + hh / 2 + 5, text: t }, g); }
+  function ln(x1, y1, x2, y2, cls) { S.svg('path', { d: 'M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y2, class: cls || '' }, g); }
+  if (k === 'hard') { box(60, 160, 240, 40, 'sh', '共享层'); [70, 160, 250].forEach(function (x, i) { box(x, 70, 50, 40, 'pr', 'ABC'[i]); ln(x + 25, 110, x + 25, 160); ln(x + 25, 70, x + 25, 30); S.svg('text', { x: x + 25, y: 22, text: 'ŷ' + 'ABC'[i] }, g); }); }
+  else if (k === 'soft') { [70, 160, 250].forEach(function (x, i) { box(x, 160, 50, 40, 'pr', 'ABC'[i] + '₁'); box(x, 80, 50, 40, 'pr', 'ABC'[i] + '₂'); ln(x + 25, 160, x + 25, 120); ln(x + 25, 80, x + 25, 40); S.svg('text', { x: x + 25, y: 30, text: 'ŷ' + 'ABC'[i] }, g); }); [[120, 180, 160, 100], [210, 180, 250, 100], [160, 180, 120, 100], [250, 180, 210, 100]].forEach(function (p) { ln(p[0], p[1], p[2], p[3], 'soft'); }); }
+  else if (k === 'hier') { box(60, 180, 240, 34, 'sh', '第 1 层'); box(60, 115, 240, 34, 'sh', '第 2 层'); box(60, 50, 240, 34, 'sh', '第 3 层'); ln(180, 180, 180, 149); ln(180, 115, 180, 84); box(310, 182, 40, 30, 'pr', 'A'); ln(300, 197, 310, 197); box(310, 117, 40, 30, 'pr', 'B'); ln(300, 132, 310, 132); box(310, 52, 40, 30, 'pr', 'C'); ln(300, 67, 310, 67); }
+  else { box(20, 170, 90, 36, 'pr', 'A 私有'); box(135, 170, 90, 36, 'sh', '共享'); box(250, 170, 90, 36, 'pr', 'C 私有'); box(20, 70, 90, 36, 'pr', 'A'); box(250, 70, 90, 36, 'pr', 'C'); ln(65, 170, 65, 106); ln(180, 170, 65, 106); ln(180, 170, 295, 106); ln(295, 170, 295, 106); }
+  $('#mtW').innerHTML = MT[k];
+}
+S.seg($('#mtS'), mt); mt('hard');
+S.notes($('#n-mtl'), {
+  c: [
+    ['多任务学习', '同时学多个相关任务，共享知识，提升每个任务。'],
+    ['归纳偏置视角', '把相关任务的信息当作归纳偏置（归纳迁移学习）。'],
+    ['四种共享', '硬共享、软共享、层次共享、共享—私有。'],
+    ['负迁移', '相关性弱或共享不当时，其他任务的信息反而干扰。']
+  ],
+  p: [
+    ['联合目标', 'ℒ(θ) = Σ_m Σ_n η_m ℒ_m(…)，常取 η_m = 1'],
+    ['两阶段', '联合训练（混合小批量）→ 可选单任务微调'],
+    ['为什么有效', '隐式数据增强、正则化、更通用的表示、相互借用特征']
+  ]
+});
+
+/* ---------- 分布偏移 ---------- */
+function gauss(x, m, s) { return Math.exp(-Math.pow((x - m) / s, 2) / 2) / (s * Math.sqrt(2 * Math.PI)); }
+var shChart = S.chart($('#shC'), { h: 250, x: [-4, 6], y: [0, 1.05], xt: [-4, -2, 0, 2, 4, 6], yt: [0, 0.5, 1], xl: 'x' });
+function sh(k) {
+  var cv = [];
+  if (k === 'cov') cv = [{ f: function (x) { return gauss(x, 0, 1) * 2; }, c: 'c1', label: 'p_S(x)（×2）' }, { f: function (x) { return gauss(x, 2.5, 1) * 2; }, c: 'c2', label: 'p_T(x)（×2）' }, { f: function (x) { return S.sigmoid(1.5 * (x - 1)); }, c: 'ok', dash: 1, label: 'p(y=1|x) 两域相同' }, { f: function (x) { return Math.min(1, gauss(x, 2.5, 1) / gauss(x, 0, 1) / 12); }, c: 'c3', w: 1.5, label: '权重 p_T/p_S（÷12，超过 1 截断）' }];
+  else if (k === 'con') cv = [{ f: function (x) { return gauss(x, 1, 1.4) * 2.5; }, c: 'dim', label: 'p(x) 两域相同（×2.5）' }, { f: function (x) { return S.sigmoid(1.5 * (x - 0)); }, c: 'c1', label: 'p_S(y=1|x)' }, { f: function (x) { return S.sigmoid(1.5 * (x - 2.5)); }, c: 'c2', label: 'p_T(y=1|x)' }];
+  else cv = [{ f: function (x) { return 0.8 * gauss(x, -1, 0.9) * 2 + 0.2 * gauss(x, 2.5, 0.9) * 2; }, c: 'c1', label: 'p_S(x)：正类占 20%' }, { f: function (x) { return 0.3 * gauss(x, -1, 0.9) * 2 + 0.7 * gauss(x, 2.5, 0.9) * 2; }, c: 'c2', label: 'p_T(x)：正类占 70%' }];
+  shChart({ curves: cv });
+  $('#shW').innerHTML = k === 'cov' ? '输入分布挪了位置，但“给定 x 时 y 是什么”的规律没变。在源域训练时，只要按 p<sub>T</sub>(x)/p<sub>S</sub>(x)（紫线）给样本加权，就能近似目标域的风险——目标域常见、源域少见的区域权重大。' :
+    k === 'con' ? '同样的 x，两个领域给出的标签规律不同（比如同一句话在不同社区的情感含义不同）。任务本身变了，光对齐输入分布没用，必须有目标域的标注。' :
+    '每个类内部长什么样没变（p(x|y) 相同），只是类别比例变了。可以用少量标注或其他先验估计目标域的标签分布，再调整分类器的阈值或先验。';
+}
+S.seg($('#shS'), sh); sh('cov');
+function lo() {
+  var d = Math.pow(2, +$('#loDs').value), r = Math.pow(2, +$('#loRs').value);
+  $('#loD').textContent = d; $('#loR').textContent = r;
+  var full = d * d, lora = 2 * d * r;
+  S.magbars($('#loB'), [{ label: '全量微调 d_out × d_in', v: full, text: full.toLocaleString(), cls: 'dim' }, { label: 'LoRA r × (d_in + d_out)', v: lora, text: lora.toLocaleString() + '（' + S.pct(lora / full, 2) + '）', cls: 'ok' }], { log: true });
+}
+['loDs', 'loRs'].forEach(function (id) { $('#' + id).addEventListener('input', lo); }); lo();
+S.guess($('#loG'), { q: '一个 4096 × 4096 的权重矩阵，用秩 r = 8 的 LoRA，要训练的参数占全量的百分之几？', unit: '%', ans: 100 * 2 * 4096 * 8 / (4096 * 4096), fmt: function (x) { return S.f(x, 2); }, why: 'A 是 8 × 4096、B 是 4096 × 8，共 65 536 个参数；全量是 16 777 216 个，占 0.39%。而且训练完可以把 BA 加回 W，推理时没有额外开销。' });
+S.notes($('#n-tl'), {
+  c: [
+    ['领域 / 任务', '𝒟 = (𝒳, p(x))；𝒯 = (𝒴, p(y|x))。'],
+    ['归纳迁移', '先在源上学一般知识，再迁到目标任务。'],
+    ['转导迁移', '样本到样本，训练时可见目标域无标注样本。'],
+    ['领域适应', '样本空间相同、分布不同的转导迁移。'],
+    ['PEFT', '只训少量新增参数：Adapter、Prefix Tuning、LoRA。'],
+    ['领域对抗', '判别器分辨领域，特征提取器骗过它，得到领域无关表示。']
+  ],
+  p: [
+    ['三种迁移方式', '基于特征、微调、参数高效适配'],
+    ['三种偏移', '协变量 p(x)、概念 p(y|x)、先验 p(y)'],
+    ['重要性加权', 'ℛ_T = 𝔼_S[(p_T(x)/p_S(x)) ℒ]'],
+    ['领域无关表示', 'ℛ_S + γ d_g(S, T)，d 可用 MMD、CMD 或对抗'],
+    ['迁移的三点好处', '初始性能更好、学得更快、最终性能可能更好']
+  ]
+});
+
+/* ---------- EWC ---------- */
+var EW_A = [-0.8, 0.2], EW_FA = [6, 0.4], EW_B = [1.2, 1.4], EW_FB = [0.6, 4];
+function lossA(p) { return EW_FA[0] * Math.pow(p[0] - EW_A[0], 2) + EW_FA[1] * Math.pow(p[1] - EW_A[1], 2); }
+function lossB(p) { return EW_FB[0] * Math.pow(p[0] - EW_B[0], 2) + EW_FB[1] * Math.pow(p[1] - EW_B[1], 2); }
+var ewPath = [];
+var ewField = S.field($('#ewF'), { xr: [-2.5, 2.5], yr: [-2, 3], res: 60, size: 340,
+  overlay: function (ctx, X, Y) {
+    [[EW_A, EW_FA, '--s1'], [EW_B, EW_FB, '--s2']].forEach(function (q) {
+      ctx.strokeStyle = S.css(q[2]); ctx.lineWidth = 1.6;
+      [0.3, 1.2, 3, 6].forEach(function (c) { ctx.beginPath(); ctx.ellipse(X(q[0][0]), Y(q[0][1]), Math.abs(X(Math.sqrt(c / q[1][0])) - X(0)), Math.abs(Y(Math.sqrt(c / q[1][1])) - Y(0)), 0, 0, 7); ctx.stroke(); });
+    });
+    ctx.strokeStyle = S.css('--ink'); ctx.lineWidth = 2.2; ctx.beginPath(); ewPath.forEach(function (p, i) { if (i) ctx.lineTo(X(p[0]), Y(p[1])); else ctx.moveTo(X(p[0]), Y(p[1])); }); ctx.stroke();
+    ctx.font = '15px ' + S.css('--f-sans'); ctx.fillStyle = S.css('--ink');
+    [[EW_A, 'θ*_A'], [EW_B, 'θ*_B']].forEach(function (q) { ctx.beginPath(); ctx.arc(X(q[0][0]), Y(q[0][1]), 5, 0, 7); ctx.fill(); ctx.fillText(q[1], X(q[0][0]) + 8, Y(q[0][1]) - 8); });
+    var e = ewPath[ewPath.length - 1]; ctx.fillStyle = S.css('--s2'); ctx.beginPath(); ctx.arc(X(e[0]), Y(e[1]), 7, 0, 7); ctx.fill();
+  } });
+function ew() {
+  var lam = +$('#ewLs').value; $('#ewL').textContent = S.f(lam, 1);
+  var p = EW_A.slice(); ewPath = [p.slice()];
+  for (var t = 0; t < 300; t++) { var g = [2 * EW_FB[0] * (p[0] - EW_B[0]) + lam * EW_FA[0] * (p[0] - EW_A[0]), 2 * EW_FB[1] * (p[1] - EW_B[1]) + lam * EW_FA[1] * (p[1] - EW_A[1])]; var lr = 0.4 / (2 * Math.max(EW_FB[0] + lam * EW_FA[0] / 2, EW_FB[1] + lam * EW_FA[1] / 2) + 1); p = [p[0] - lr * g[0], p[1] - lr * g[1]]; ewPath.push(p.slice()); }
+  ewField({});
+  $('#ewA').textContent = S.f(lossA(p), 3); $('#ewB').textContent = S.f(lossB(p), 3);
+  $('#ewT').innerHTML = '<tr><td>参数</td><td class="n">任务 A 的 Fisher F^A</td><td class="n">最终偏离 θ*_A</td></tr><tr><td>θ₁</td><td class="n">' + EW_FA[0] + '（重要）</td><td class="n">' + S.f(p[0] - EW_A[0], 2) + '</td></tr><tr><td>θ₂</td><td class="n">' + EW_FA[1] + '（不重要）</td><td class="n">' + S.f(p[1] - EW_A[1], 2) + '</td></tr>';
+  $('#ewW').innerHTML = lam === 0 ? '不加约束时直接滑到任务 B 的最优点，θ₁ 被大幅改动，而它对任务 A 至关重要（A 的谷在 θ₁ 方向很窄）——任务 A 的损失暴涨，这就是<b>灾难性遗忘</b>。' : 'EWC 按 Fisher 信息加权：θ₁ 对 A 很重要，被牢牢拉住；θ₂ 对 A 不重要，可以自由地为 B 调整。最终停在“两个任务都还不错”的地方。λ 越大越保守。';
+}
+$('#ewLs').addEventListener('input', ew); ew();
+S.notes($('#n-cl'), {
+  c: [
+    ['持续学习 / 终身学习', '任务按时间依次到来，持续累积知识。'],
+    ['灾难性遗忘', '学新任务时改掉了对旧任务重要的参数。'],
+    ['Fisher 信息矩阵', '打分函数 ∇log p 的协方差，衡量参数携带的信息量。'],
+    ['EWC', '按 Fisher 对角线加权，惩罚偏离旧任务最优参数。']
+  ],
+  p: [
+    ['EWC 损失', 'ℒ_B(θ) + (λ/2) Σ F_i^A (θ_i − θ*_{A,i})²'],
+    ['贝叶斯来源', 'log p(θ|𝒟) = log p(𝒟_B|θ) + log p(θ|𝒟_A) + 常数'],
+    ['打分函数期望为 0', '𝔼[∇log p(x;θ)] = 0'],
+    ['三类方法', '正则化（EWC）、重放、参数隔离 / 结构扩展']
+  ],
+  ph: '公式'
+});
+
+/* ---------- MAML ---------- */
+var MM = [[0.5, -1.5], [1, -0.3], [3, 1.2], [4.5, 1.8]];
+var mmChart = S.chart($('#mmC'), { h: 260, x: [-3, 3], y: [0, 6], xt: [-3, -2, -1, 0, 1, 2, 3], yt: [0, 2, 4, 6], xl: '初始参数 θ' });
+function mm() {
+  var a = +$('#mmAs').value; $('#mmA').textContent = S.f(a, 3);
+  function multi(t) { return MM.reduce(function (s, m) { return s + m[0] * Math.pow(t - m[1], 2); }, 0); }
+  function maml(t) { return MM.reduce(function (s, m) { return s + m[0] * Math.pow(1 - 2 * a * m[0], 2) * Math.pow(t - m[1], 2); }, 0); }
+  var wM = MM.map(function (m) { return m[0]; }), tM = MM.reduce(function (s, m, i) { return s + wM[i] * m[1]; }, 0) / wM.reduce(function (x, y) { return x + y; }, 0);
+  var wA = MM.map(function (m) { return m[0] * Math.pow(1 - 2 * a * m[0], 2); }), sA = wA.reduce(function (x, y) { return x + y; }, 0), tA = sA > 1e-12 ? MM.reduce(function (s, m, i) { return s + wA[i] * m[1]; }, 0) / sA : tM;
+  var top = Math.max(multi(-3), multi(3)) / 8;
+  mmChart({ curves: [{ f: function (t) { return multi(t) / 8; }, c: 'dim', label: '多任务：Σℒ_m(θ)（÷8）' }, { f: function (t) { return maml(t) / 8 * (sA > 1e-9 ? 1 : 1); }, c: 'c2', label: 'MAML：Σℒ_m(θ − α∇ℒ_m)（÷8）' }], vl: [{ x: tM, c: 'dim' }, { x: tA, c: 'c2' }], dots: MM.map(function (m) { return { x: m[1], y: 0.1, c: 'ok', r: 5 }; }) });
+  function after(t) { return MM.map(function (m) { var tp = t - a * 2 * m[0] * (t - m[1]); return m[0] * Math.pow(tp - m[1], 2); }); }
+  var aM = after(tM), aA = after(tA);
+  $('#mmT').innerHTML = '<tr><td>任务 (a, c)</td><td class="n">从多任务最优出发适应一步</td><td class="n">从 MAML 最优出发适应一步</td></tr>' + MM.map(function (m, i) { return '<tr><td>(' + m[0] + ', ' + m[1] + ')</td><td class="n">' + S.f(aM[i], 3) + '</td><td class="n">' + S.f(aA[i], 3) + '</td></tr>'; }).join('') +
+    '<tr class="tot"><td>合计</td><td class="n">' + S.f(aM.reduce(function (x, y) { return x + y; }, 0), 3) + '</td><td class="n">' + S.f(aA.reduce(function (x, y) { return x + y; }, 0), 3) + '</td></tr>';
+  $('#mmW').innerHTML = '绿点是 4 个任务各自的最优参数。多任务最优 θ = ' + S.f(tM, 2) + '（按曲率加权平均）；MAML 最优 θ = ' + S.f(tA, 2) + '。' + (a < 0.005 ? 'α ≈ 0 时两者重合——原书说 α 很小时 MAML 和多任务学习形式接近。' : '曲率大的任务一步梯度就能走很远（2αa 接近 1 时一步到位），所以 MAML 不必让初始点靠近它们，转而照顾那些“难以一步适应”的任务。MAML 学的不是“平均最好”的参数，而是“最容易适应”的参数。');
+}
+$('#mmAs').addEventListener('input', mm); mm();
+S.notes($('#n-meta'), {
+  c: [
+    ['元学习', '学习的学习：从多个任务学一种适应新任务的方法。'],
+    ['少样本学习', '每类 K 个样本；K = 1 单样本、K = 0 零样本。'],
+    ['学习优化器', '用 LSTM 学更新规则 θ_{t+1} = θ_t + g(∇ℒ; φ)。'],
+    ['MAML', '学一个只需少量梯度步就能适应新任务的初始化。'],
+    ['上下文学习', '隐式元学习：靠前向传播（注意力）适应，不更新参数。']
+  ],
+  p: [
+    ['MAML 内层', 'θ′_m = θ − α∇ℒ_m(θ)'],
+    ['MAML 外层', 'θ ← θ − β∇_θ Σ ℒ_m(θ′_m)，含 (I − α∇²ℒ)'],
+    ['一阶近似', '去掉二阶项通常也够用'],
+    ['α → 0', 'MAML ≈ 多任务学习']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 集成', 'R(F) ≤ R̄(f)，收益取决于错误相关性（不相关时降到 1/M，完全相同时没收益）。Bagging 靠自助采样和随机特征制造差异；Boosting 靠逐轮加大错样本权重让后来者补前者的短板。'],
+    ['② 几种知识复用', '多任务：同时学、共享表示、提升全部；迁移：先后学、单向、只看目标；半监督：任务不变、借无标注数据；持续：按时间学、防遗忘；元学习：在任务分布上学快速适应。'],
+    ['③ 遗忘与元学习', '灾难性遗忘是新任务改掉了对旧任务重要的参数；EWC 用 Fisher 信息衡量重要性并惩罚其偏离。MAML 学的是一个“几步梯度就能适应”的初始化，上下文学习则是不需梯度的隐式元学习。']
+  ],
+  p: [
+    ['原书一句话', '当监督信号有限、任务不断变化、分布偏移或样本稀缺时，需要的不只是更大的模型，还需要更高效的知识组织、迁移与适应机制。'],
+    ['下一篇', '没有标签也没有正确答案，只有奖励：深度强化学习。']
+  ],
+  ph: '一句话'
+});

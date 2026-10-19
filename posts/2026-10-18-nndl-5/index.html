@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>卷积神经网络：局部连接、权重共享与经典结构</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（五）：全连接处理图像的两个问题、等变性与不变性、一维 / 二维卷积与互相关、步长与零填充、窄 / 宽 / 等宽卷积、卷积层与特征图、汇聚层、卷积网络的反向传播、LeNet-5 / AlexNet / VGG / Inception / ResNet、转置卷积、空洞卷积、分组卷积与深度可分离卷积。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.imgs { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.imgs figure { margin: 0; }
+.imgs canvas { display: block; border: 1px solid var(--hair); border-radius: 6px; image-rendering: pixelated; }
+.imgs figcaption { font-size: 15px; color: var(--ink-3); margin-top: 4px; }
+.cgrid { display: inline-grid; gap: 2px; font-family: var(--f-num); font-size: 15px; }
+.cgrid span { width: 34px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; background: var(--bg); border: 1px solid var(--hair); }
+.cgrid span.win { background: var(--s1-soft); border-color: var(--s1); }
+.cgrid span.out { background: var(--s2-soft); border-color: var(--s2); font-weight: 700; }
+.cgrid span.pad { color: var(--ink-3); border-style: dashed; }
+.cgrid span.dim { color: var(--ink-3); }
+.convrow { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin: 10px 0; }
+.convrow .op { font-size: 22px; color: var(--ink-3); }
+.archcards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+@media (max-width: 760px) { .archcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.archcards button { font: inherit; text-align: left; background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink); }
+.archcards button small { display: block; font-family: var(--f-num); color: var(--ink-3); font-size: 15px; }
+.archcards button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.rfin { font: inherit; width: 100%; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); box-sizing: border-box; margin-top: 6px; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="5">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 05</span><span>对应原书第 5 章（第 117–147 页）</span><span>约 55 分钟</span></p>
+  <h1>一个小窗口，<em>在整张图上滑</em></h1>
+  <p class="lead">用全连接网络处理一张 100×100 的彩色图，第一个隐藏层只放 256 个神经元，参数就有 768 万——而且它完全不知道“相邻像素有关系”“同一个图案可能出现在任何位置”。卷积神经网络把这两条先验直接写进结构：每个神经元只看一个局部窗口（局部连接），所有位置共用同一个窗口的权重（权重共享）。这一篇先把卷积这个运算算清楚，再看它怎么搭成网络，最后过一遍从 LeNet 到 ResNet 的设计演化。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" aria-current="page" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么卷积</a><a href="#c1d">一维卷积</a><a href="#c2d">二维卷积</a><a href="#size">尺寸与感受野</a><a href="#layer">卷积层与汇聚</a><a href="#bp">反向传播</a><a href="#arch">经典结构</a><a href="#more">其他卷积</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>卷积层为什么参数少？参数量和输入图像的大小有关吗？</li>
+  <li>卷积和互相关有什么区别？输出尺寸、感受野怎么算？</li>
+  <li>从 LeNet 到 ResNet，每一代结构解决了什么问题？1×1 卷积、残差连接、深度可分离卷积各管什么？</li>
+</ol></div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么需要卷积：参数太多，又不懂图像</h2><span class="meta">原书第 5 章引言 · 第 117–118 页</span></div>
+  <div class="sec-lede">
+    <p>原书开篇列出用全连接网络处理图像的两个问题。<strong>参数太多</strong>：100 × 100 × 3 的图像，第一个隐藏层每个神经元就有 30 000 个连接，256 个神经元就是约 768 万个参数，训练慢、易过拟合。<strong>没利用局部结构先验</strong>：自然图像里像素有很强的局部相关性，同一种局部模式会出现在不同位置，全连接网络对这些一无所知，只能靠数据增强去补。</p>
+    <p>卷积网络的灵感来自生物学的<strong>感受野</strong>机制：视觉皮层的神经元只接受视网膜上特定区域的刺激。它有三个核心结构特性：<strong>局部连接、权重共享、汇聚 / 下采样</strong>。</p>
+    <p>这里有一组原书特别区分的概念。<strong>等变性</strong>：f(T(x)) = T(f(x))——图像平移后再卷积，等于先卷积再平移输出；<strong>不变性</strong>：f(T(x)) = f(x)——目标出现在哪个位置，分类结果都不变。<strong>卷积运算本身只带来平移等变性</strong>；分类所需的平移不变性，要靠汇聚、步长、全局平均汇聚、数据增强等机制共同实现。对尺度和旋转的鲁棒性，卷积本身基本不提供。</p>
+    <p class="go">把输入里的图案左右平移，看卷积输出（等变）和全局最大汇聚的结果（不变）各怎么变。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">等变 vs 不变：一维信号 + 边缘检测滤波器 [−1, 0, 1]</p>
+    <label class="ctl"><span>图案平移 <output id="eqS">0</output></span><input type="range" id="eqSs" min="-5" max="5" value="0"></label>
+    <div id="eqC"></div>
+    <div class="read"><div class="hl"><div class="v" id="eqM">0</div><div class="k">全局最大汇聚 max(y)</div></div><div><div class="v" id="eqA">0</div><div class="k">最大值出现的位置</div></div></div>
+    <p class="cap">平移输入，卷积输出跟着平移同样的距离（<b>等变</b>）；再做一次全局最大汇聚，得到的数完全不变（<b>不变</b>），位置信息被丢掉了。</p>
+    <div id="fcG"></div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="c1d">
+  <div class="part-head"><h2>一维卷积：局部加权求和</h2><span class="meta">原书 5.1.1.1 节 · 第 118–119 页</span></div>
+  <div class="sec-lede">
+    <p>原书从信号处理讲起：一个信号发生器每个时刻产生 x<sub>t</sub>，信息每过一步衰减成原来的一部分（w₁ = 1、w₂ = 1/2、w₃ = 1/4），那么 t 时刻收到的是当前和过去信号的叠加 y<sub>t</sub> = Σ w<sub>k</sub>x<sub>t−k+1</sub>。w 叫<strong>滤波器</strong>或<strong>卷积核</strong>，卷积本质上就是<strong>局部加权求和</strong>，滤波器长度 K 远小于信号长度。</p>
+    <p>不同的滤波器提取不同的特征：[1/K, …, 1/K] 是<strong>移动平均</strong>，平滑掉随机波动、保留低频；[1, −2, 1] 近似<strong>二阶微分</strong> x(t+1) + x(t−1) − 2x(t)，检测变化剧烈的高频部分。传统信号处理里滤波器靠人设计，<strong>卷积网络里卷积核是从数据中学出来的参数</strong>。</p>
+    <p class="go">换一个滤波器，看同一段信号被提取出什么。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同一信号，不同滤波器（信号为示意）</p>
+    <div class="seg" id="f1S"><button data-v="avg3" aria-pressed="true">[1/3, 1/3, 1/3] 平滑</button><button data-v="avg7">长度 7 的移动平均</button><button data-v="lap">[1, −2, 1] 二阶差分</button><button data-v="decay">[1, 1/2, 1/4] 衰减累积</button><button data-v="edge">[−1, 0, 1] 一阶差分</button></div>
+    <div id="f1C"></div>
+    <p class="cap" id="f1W"></p>
+  </div>
+  <div class="notes" id="n-c1d"></div>
+</section>
+
+<section class="part" id="c2d">
+  <div class="part-head"><h2>二维卷积与互相关</h2><span class="meta">原书 5.1.1.2–5.1.2 节 · 第 119–122 页</span></div>
+  <div class="sec-lede">
+    <p>图像是二维的，卷积也扩展到二维：<strong>y<sub>ij</sub> = Σ<sub>u</sub>Σ<sub>v</sub> w<sub>uv</sub>x<sub>i−u+1, j−v+1</sub></strong>。卷积后的结果叫<strong>特征图</strong>（Feature Map）。原书图 5.3 给了三个经典滤波器：高斯滤波器平滑去噪，另外两个提取边缘。</p>
+    <p>按数学定义，卷积要先把卷积核<strong>翻转 180 度</strong>再滑动相乘。实现上通常省掉翻转，直接滑动做点积，这叫<strong>互相关</strong>（不翻转卷积）：<strong>y<sub>ij</sub> = Σ<sub>u</sub>Σ<sub>v</sub> w<sub>uv</sub>x<sub>i+u−1, j+v−1</sub></strong>。关键结论：<strong>卷积核是可学习的参数时，翻不翻转在表示能力上完全等价</strong>（学出来的核自己翻过去就行）。所以深度学习工具里的“卷积”实际都是互相关，原书此后也用 ⊗ 表示互相关、∗ 表示真正的卷积。</p>
+    <p class="go">先在原书图 5.2 的数字上一格格算，再看三种滤波器作用在一张图上。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 5.2：5×5 输入与 3×3 卷积核</p>
+    <div class="selrow"><span>运算</span><div class="seg" id="c2M"><button data-v="conv" aria-pressed="true">卷积（先翻转核）</button><button data-v="xc">互相关（不翻转）</button></div></div>
+    <div id="c2S"></div>
+    <div class="convrow"><div class="cgrid" id="c2X" style="grid-template-columns:repeat(5,34px)"></div><span class="op" id="c2Op">∗</span><div class="cgrid" id="c2W" style="grid-template-columns:repeat(3,34px)"></div><span class="op">=</span><div class="cgrid" id="c2Y" style="grid-template-columns:repeat(3,34px)"></div></div>
+    <p class="stepinfo" id="c2T"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 5.3 的三个滤波器（图像为程序生成的示意图）</p>
+    <div class="seg" id="imS"><button data-v="gauss" aria-pressed="true">高斯平滑</button><button data-v="lap">拉普拉斯边缘</button><button data-v="diag">对角边缘</button><button data-v="sobel">竖直边缘（Sobel，补充）</button></div>
+    <div class="imgs" style="margin-top:12px"><figure><canvas id="imIn"></canvas><figcaption>原始图像</figcaption></figure><figure><div id="imK"></div><figcaption>滤波器</figcaption></figure><figure><canvas id="imOut"></canvas><figcaption id="imCap">输出特征图</figcaption></figure></div>
+    <p class="cap" id="imW"></p>
+  </div>
+  <div class="notes" id="n-c2d"></div>
+</section>
+
+<section class="part" id="size">
+  <div class="part-head"><h2>步长、零填充、输出尺寸与感受野</h2><span class="meta">原书 5.1.3、5.4.3 节与习题 5-13 · 第 122–123、135 页</span></div>
+  <div class="sec-lede">
+    <p><strong>步长</strong> S 是卷积核每次滑动的间隔；<strong>零填充</strong> P 是在输入两端各补 P 个 0。输入长度 M、卷积核大小 K 时，输出长度是 <strong>M′ = ⌊(M − K + 2P)/S⌋ + 1</strong>，二维时两个方向分别算。三种常用卷积：<strong>窄卷积</strong>（S = 1、P = 0，输出 M − K + 1）；<strong>宽卷积</strong>（S = 1、P = K − 1，输出 M + K − 1）；<strong>等宽卷积</strong>（S = 1、P = (K − 1)/2，输出仍是 M，K 为奇数时）。早期文献默认窄卷积，现在的框架常默认等宽。</p>
+    <p>另一个要会算的量是<strong>感受野</strong>：深层一个神经元对应输入图像上多大一块。每叠一层 K × K 卷积，感受野增加 (K − 1) × (之前所有层步长的乘积)。这就是 VGG 的思路：<strong>两层 3×3 的感受野等于一层 5×5，参数却是 2 × 3² = 18 &lt; 5² = 25</strong>，还多了一次非线性。</p>
+    <p class="go">先用计算器验算原书习题 5-2，再算一个三层网络的感受野。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一维输出长度 M′ = ⌊(M − K + 2P)/S⌋ + 1</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>输入长度 M <output id="szM">7</output></span><input type="range" id="szMs" min="3" max="12" value="7"></label>
+        <label class="ctl"><span>核大小 K <output id="szK">3</output></span><input type="range" id="szKs" min="1" max="7" value="3"></label>
+        <label class="ctl"><span>步长 S <output id="szS">1</output></span><input type="range" id="szSs" min="1" max="4" value="1"></label>
+        <label class="ctl"><span>零填充 P <output id="szP">0</output></span><input type="range" id="szPs" min="0" max="6" value="0"></label>
+      </div>
+      <div class="btnrow"><button class="btn" type="button" data-p="narrow">窄卷积</button><button class="btn" type="button" data-p="wide">宽卷积</button><button class="btn" type="button" data-p="same">等宽卷积</button></div>
+      <svg class="cg" id="szG" viewBox="0 0 440 150" style="width:100%;height:auto"></svg>
+      <div class="read"><div class="hl"><div class="v" id="szO">0</div><div class="k">输出长度 M′</div></div></div>
+      <div id="szGs"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">感受野计算器</p>
+      <label class="ctl"><span>每层“核大小/步长”，逗号分隔（默认是习题 5-13）</span><input class="rfin" id="rfIn" value="3/1, 3/2, 3/1"></label>
+      <table class="calc" id="rfT"></table>
+      <div id="rfG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-size"></div>
+</section>
+
+<section class="part" id="layer">
+  <div class="part-head"><h2>卷积层与汇聚层</h2><span class="meta">原书 5.2 节 · 第 124–129 页</span></div>
+  <div class="sec-lede">
+    <p>用卷积代替全连接，第 l 层的净输入变成 z⁽ˡ⁾ = w⁽ˡ⁾ ⊗ a⁽ˡ⁻¹⁾ + b⁽ˡ⁾，带来两个性质：<strong>局部连接</strong>（连接数从 M<sub>l</sub> × M<sub>l−1</sub> 降到 M<sub>l</sub> × K）和<strong>权重共享</strong>（同一个核在所有位置寻找同一种局部模式；要提取多种特征就用多个核）。一维情形下整层只有 K + 1 个参数，<strong>和神经元数量无关</strong>。</p>
+    <p>图像上，每层神经元组织成“高 × 宽 × 深度”的三维结构，由多个特征图组成：输入层灰度图深度 1、彩色图深度 3。输入 M × N × D、输出 M′ × N′ × P 的卷积层，每个输出特征图要用 D 个核分别卷积输入的 D 个特征图、相加、加一个标量偏置、过激活函数。<strong>参数量 P × D × U × V + P，和输入空间大小 M × N 无关</strong>。1 × 1 卷积只在通道维上做线性变换，常用来升维、降维或重组通道。</p>
+    <p>卷积层的神经元个数并没有少多少，所以常接一个<strong>汇聚层</strong>（子采样层）：把每个特征图划成区域，每个区域取<strong>最大值</strong>（最大汇聚）或<strong>平均值</strong>（平均汇聚）。它降低分辨率、减少计算、扩大后续单元的感受野，并对小的局部形变更鲁棒。典型做法是 2 × 2 不重叠的最大汇聚；汇聚层可以看成核运算为 max 或 mean 的特殊卷积层。现代网络还常用<strong>全局平均汇聚</strong>（GAP）把 M × N × D 压成 D 维向量，替代参数量巨大的全连接层。</p>
+    <p class="go">在原书图 5.8 的数据上切换两种汇聚；再算一个卷积层的参数量。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 5.8：2×2 汇聚</p>
+      <div class="seg" id="plS"><button data-v="max" aria-pressed="true">最大汇聚</button><button data-v="mean">平均汇聚</button></div>
+      <div class="convrow"><div class="cgrid" id="plX" style="grid-template-columns:repeat(4,34px)"></div><span class="op">→</span><div class="cgrid" id="plY" style="grid-template-columns:repeat(2,34px)"></div></div>
+      <p class="cap">点右边任意一格，看它汇总的是左边哪 4 个数。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">卷积层 vs 全连接层的参数量</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>输入边长 M = N <output id="lpM">32</output></span><input type="range" id="lpMs" min="8" max="224" step="8" value="32"></label>
+        <label class="ctl"><span>输入通道 D <output id="lpD">3</output></span><input type="range" id="lpDs" min="1" max="256" value="3"></label>
+        <label class="ctl"><span>输出通道 P <output id="lpP">64</output></span><input type="range" id="lpPs" min="1" max="512" value="64"></label>
+        <label class="ctl"><span>核大小 U = V <output id="lpK">3</output></span><input type="range" id="lpKs" min="1" max="11" step="2" value="3"></label>
+      </div>
+      <table class="calc" id="lpT"></table>
+    </div>
+  </div>
+  <div class="notes" id="n-layer"></div>
+</section>
+
+<section class="part" id="bp">
+  <div class="part-head"><h2>卷积网络的反向传播</h2><span class="meta">原书 5.1.4、5.3 节 · 第 123–124、130–132 页</span></div>
+  <div class="sec-lede">
+    <p>卷积网络也用反向传播训练，和全连接网络的区别只有两点。第一，<strong>卷积核在所有位置共享，所以它的梯度要把所有位置的贡献累加起来</strong>：∂ℒ/∂W⁽ˡ,ᵖ,ᵈ⁾ = δ⁽ˡ,ᵖ⁾ ⊗ X⁽ˡ⁻¹,ᵈ⁾——误差项和输入做互相关；偏置的梯度是误差项所有元素之和。</p>
+    <p>第二，误差项怎么往回传。<strong>下一层是汇聚层</strong>时，把误差项<strong>上采样</strong>回原大小，再乘激活函数的导数：最大汇聚把误差原样传给区域里最大值的那个神经元、其他位置为 0；平均汇聚把误差平均分给区域里所有神经元；区域重叠时贡献累加。<strong>下一层是卷积层</strong>时，δ⁽ˡ,ᵈ⁾ = f′(Z⁽ˡ,ᵈ⁾) ⊙ Σ<sub>p</sub> rot180(W⁽ˡ⁺¹,ᵖ,ᵈ⁾) ⊗̃ δ⁽ˡ⁺¹,ᵖ⁾：把卷积核<strong>翻转 180 度</strong>后和误差项做<strong>宽</strong>互相关，并对所有依赖这个输入通道的输出通道累加。这和全连接层“前向乘 W、反向乘 Wᵀ”的关系完全对应。</p>
+    <p class="go">在一个 4×4 的汇聚层上看误差项如何被上采样回去。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">汇聚层的误差回传（输入沿用图 5.8；上游误差为示意）</p>
+    <div class="seg" id="upS"><button data-v="max" aria-pressed="true">最大汇聚</button><button data-v="mean">平均汇聚</button></div>
+    <div class="convrow"><div><p class="lab-s">前向输入 X</p><div class="cgrid" id="upX" style="grid-template-columns:repeat(4,34px)"></div></div><span class="op">←</span><div><p class="lab-s">上游误差 δ⁽ˡ⁺¹⁾</p><div class="cgrid" id="upD" style="grid-template-columns:repeat(2,34px)"></div></div><span class="op">⇒</span><div><p class="lab-s">上采样 up(δ⁽ˡ⁺¹⁾)</p><div class="cgrid" id="upY" style="grid-template-columns:repeat(4,44px)"></div></div></div>
+    <p class="cap" id="upW"></p>
+  </div>
+  <div class="notes" id="n-bp"></div>
+</section>
+
+<section class="part" id="arch">
+  <div class="part-head"><h2>经典结构：LeNet 到 ResNet</h2><span class="meta">原书 5.2.4、5.4 节 · 第 129、132–138 页</span></div>
+  <div class="sec-lede">
+    <p>经典卷积网络是“卷积层 – 汇聚层 – 全连接层”的组合；现代卷积网络则由若干<strong>卷积块</strong>堆叠，用步长卷积代替部分汇聚，配合批量规范化和残差连接，最后用全局平均汇聚加一个小的线性分类器。原书总结了四个趋势：更小的卷积核（1×1、3×3）堆叠扩大感受野；步长卷积代替汇聚；分组 / 深度可分离卷积提效率；全局平均汇聚代替大全连接层。</p>
+    <p>每一代经典网络都在回答一个问题。点一张卡片看它的要点。</p>
+    <p class="go">最后用一个模拟看看：同样 30 层深，加不加残差连接，误差项能传回多远。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五个里程碑</p>
+    <div class="archcards" id="arB">
+      <button data-v="lenet" aria-pressed="true">LeNet-5<small>1998</small></button>
+      <button data-v="alex" aria-pressed="false">AlexNet<small>2012</small></button>
+      <button data-v="vgg" aria-pressed="false">VGG<small>2015</small></button>
+      <button data-v="incep" aria-pressed="false">Inception<small>2015</small></button>
+      <button data-v="res" aria-pressed="false">ResNet<small>2016</small></button>
+    </div>
+    <div id="arD" style="margin-top:12px"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">残差连接：h(x) = x + f(x)，误差项多了一条直通路（模拟）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>网络深度 <output id="rsL">30</output></span><input type="range" id="rsLs" min="4" max="60" value="30"></label>
+      <label class="ctl"><span>每层权重尺度 <output id="rsS">0.6</output></span><input type="range" id="rsSs" min="0.2" max="1.2" step="0.05" value="0.6"></label>
+    </div>
+    <div id="rsC"></div>
+    <p class="cap" id="rsW"></p>
+  </div>
+  <div class="notes" id="n-arch"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>其他卷积：转置、空洞、分组、深度可分离</h2><span class="meta">原书 5.5 节 · 第 138–143 页</span></div>
+  <div class="sec-lede">
+    <p><strong>转置卷积</strong>：卷积可以写成稀疏矩阵乘法 z = Cx（5 维到 3 维），那么 x = Cᵀz 就是从低维到高维的映射，等价于把核翻转后做宽卷积。它常被叫作“反卷积”，但原书提醒这个名字不恰当——<strong>它不是卷积的逆运算，只是形式上的转置</strong>。普通卷积步长 S &gt; 1 做下采样，对应的转置卷积要在输入元素之间插 S − 1 个 0 来上采样，所以也叫<strong>微步卷积</strong>。用于生成时可能产生棋盘状伪影，常改用“先插值上采样，再普通卷积”。</p>
+    <p><strong>空洞卷积</strong>（膨胀卷积）：在卷积核元素之间插入 D − 1 个空洞，<strong>不增加参数</strong>就扩大感受野，有效大小 <strong>K′ = K + (K − 1)(D − 1)</strong>。扩大感受野的另外三种办法（大核、多层、先汇聚）要么加参数、要么丢信息，所以空洞卷积特别适合语义分割这类既要大感受野又要高分辨率的任务。</p>
+    <p><strong>分组卷积</strong>：输入通道分成若干组，每组只连对应的一部分输出通道（AlexNet 两块 GPU 分开算，其实就是分组卷积）。<strong>深度可分离卷积</strong>把标准卷积同时做的两件事拆开：<strong>逐通道卷积</strong>（每个输入通道一个 K×K 核，只管空间）+ <strong>逐点卷积</strong>（P 个 1×1 核，只管通道混合）。参数量从 K²DP 降到 K²D + DP，比值约 <strong>1/P + 1/K²</strong>，K = 3 时约为 1/9 到 1/8；代价是逐通道阶段没有跨通道交互，表示能力弱一些，适合轻量网络（MobileNet、EfficientNet）。</p>
+    <p class="go">先估一下原书习题 5-12 的参数量之比，再拖动参数看。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">标准卷积 vs 深度可分离卷积</p>
+      <div id="dsG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>K <output id="dsK">3</output></span><input type="range" id="dsKs" min="1" max="7" step="2" value="3"></label>
+        <label class="ctl"><span>输入通道 D <output id="dsD">128</output></span><input type="range" id="dsDs" min="8" max="1024" step="8" value="128"></label>
+        <label class="ctl"><span>输出通道 P <output id="dsP">256</output></span><input type="range" id="dsPs" min="8" max="1024" step="8" value="256"></label>
+      </div>
+      <div id="dsBars" class="wide"></div>
+      <p class="cap" id="dsW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">空洞卷积：有效大小 K′ = K + (K − 1)(D − 1)</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>核大小 K <output id="dlK">3</output></span><input type="range" id="dlKs" min="2" max="5" value="3"></label>
+        <label class="ctl"><span>膨胀率 D <output id="dlD">2</output></span><input type="range" id="dlDs" min="1" max="4" value="2"></label>
+      </div>
+      <div class="cgrid" id="dlG" style="margin-top:8px"></div>
+      <div class="read"><div class="hl"><div class="v" id="dlE">0</div><div class="k">有效感受野边长</div></div><div><div class="v" id="dlN">0</div><div class="k">参数量（单通道）</div></div><div><div class="v" id="dlPd">0</div><div class="k">等宽所需 P</div></div></div>
+      <p class="cap">深色格是卷积核真正有参数的位置。习题 5-4：K = 3、D = 2 时等宽卷积需要 P = (K′ − 1)/2 = 2。</p>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">转置卷积：z = Cx 与 x = Cᵀz（原书式 5.48、5.51）</p>
+    <div class="convrow"><div><p class="lab-s">C（3×5）：5 维 → 3 维</p><div id="tcC"></div></div><div><p class="lab-s">Cᵀ（5×3）：3 维 → 5 维</p><div id="tcT"></div></div></div>
+    <p class="cap">C 每一行是卷积核 [w₁, w₂, w₃] 往右平移一格；转置后每一列是同一个核，相当于用翻转后的核 [w₃, w₂, w₁] 对补零的 z 做卷积。两者形状互逆，但数值上并不是逆运算。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>卷积 vs 互相关</b>：卷积要翻转核，互相关不翻；核可学习时两者等价，框架里的“卷积”都是互相关。</p>
+    <p><b>等变 vs 不变</b>：卷积带来平移等变；分类需要的平移不变来自汇聚、步长、GAP、数据增强。</p>
+    <p><b>转置卷积 vs 反卷积</b>：常被混称，但转置卷积不是卷积的逆运算。</p>
+    <p><b>空洞卷积 vs 汇聚</b>：都能扩大感受野；空洞卷积不丢分辨率、不加参数，汇聚会丢信息。</p>
+    <p><b>分组卷积 vs 深度可分离卷积</b>：逐通道卷积是分组数 = 输入通道数的分组卷积；深度可分离 = 逐通道卷积 + 1×1 逐点卷积。</p>
+  </div>
+  <div class="notes" id="n-more"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">卷积 y_ij = Σ_u Σ_v w_uv x_{i−u+1, j−v+1}；互相关 y_ij = Σ_u Σ_v w_uv x_{i+u−1, j+v−1}；W ⊗ X = rot180(W) ∗ X</div>
+    <div class="fx">输出尺寸 M′ = ⌊(M − K + 2P)/S⌋ + 1；窄 P = 0，宽 P = K − 1，等宽 P = (K − 1)/2</div>
+    <div class="fx">卷积层：Z⁽ᵖ⁾ = Σ_d W⁽ᵖ,ᵈ⁾ ⊗ X⁽ᵈ⁾ + b⁽ᵖ⁾；参数 P × D × U × V + P</div>
+    <div class="fx">梯度：∂ℒ/∂W = δ ⊗ X；∂ℒ/∂b = Σ_ij δ_ij；δ⁽ˡ⁾ = f′ ⊙ Σ_p rot180(W) ⊗̃ δ⁽ˡ⁺¹⁾</div>
+    <div class="fx">残差：h(x) = x + f(x; θ)；空洞：K′ = K + (K − 1)(D − 1)</div>
+    <div class="fx">深度可分离：K²D + DP vs K²DP，比值 ≈ 1/P + 1/K²</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-4/"><small>上一篇</small><span>04 · 前馈神经网络</span></a><a class="nx" href="../2026-10-18-nndl-6/"><small>下一篇</small><span>06 · 循环神经网络</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 等变与不变 ---------- */
+var eqChart = S.chart($('#eqC'), { h: 230, x: [0, 30], y: [-1.3, 1.3], xt: [0, 10, 20, 30], yt: [-1, 0, 1], xl: '位置' });
+function eq() {
+  var s = +$('#eqSs').value; $('#eqS').textContent = s;
+  var x = []; for (var i = 0; i <= 30; i++) { var t = i - 12 - s; x.push(t >= 0 && t <= 5 ? (t <= 2 ? t / 2 : (5 - t) / 3) : 0); }
+  var y = []; for (var j = 1; j < 30; j++) y.push([j, x[j + 1] - x[j - 1]]);
+  var mx = Math.max.apply(null, y.map(function (p) { return p[1]; })), am = y.filter(function (p) { return p[1] === mx; })[0][0];
+  eqChart({ curves: [{ pts: x.map(function (v, i) { return [i, v]; }), c: 'c1', label: '输入 x' }, { pts: y, c: 'c2', label: '卷积输出 y = [−1, 0, 1] ⊗ x' }], vl: [{ x: am, c: 'dim' }] });
+  $('#eqM').textContent = S.f(mx, 3); $('#eqA').textContent = am;
+}
+$('#eqSs').addEventListener('input', eq); eq();
+S.guess($('#fcG'), { q: '输入 100 × 100 × 3 的图像，全连接的第一个隐藏层有 256 个神经元，权重有多少个？', unit: '万', ans: 768, fmt: function (x) { return S.f(x, 0); }, why: '30 000 × 256 = 7 680 000，约 768 万（不含偏置）。换成 64 个 3×3 卷积核只要 64 × 3 × 9 = 1728 个权重——而且不论图像多大都是这么多。' });
+S.notes($('#n-why'), {
+  c: [
+    ['感受野', '神经元只接受特定区域内刺激的机制；卷积网络的灵感来源。'],
+    ['等变性', 'f(T(x)) = T(f(x))：输入平移，输出跟着平移。'],
+    ['不变性', 'f(T(x)) = f(x)：输入平移，输出不变。'],
+    ['三个结构特性', '局部连接、权重共享、汇聚 / 下采样。']
+  ],
+  p: [
+    ['全连接的两个问题', '参数太多；没利用局部结构先验。'],
+    ['卷积带来的是', '平移等变；不变性靠汇聚、步长、GAP、数据增强。'],
+    ['尺度与旋转', '卷积本身不提供，要靠数据增强或专门结构。']
+  ]
+});
+
+/* ---------- 一维卷积 ---------- */
+var SIG = (function () { var r = S.rng(3), a = []; for (var i = 0; i < 80; i++) a.push(Math.sin(i / 8) + 0.6 * (i > 40 && i < 52 ? 1 : 0) + 0.18 * S.randn(r)); return a; })();
+var F1 = {
+  avg3: [[1 / 3, 1 / 3, 1 / 3], '移动平均把随机抖动抹平，保留了缓慢变化的<b>低频</b>形状。'],
+  avg7: [[1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7], '窗口更长，平滑更强，台阶的边缘也被抹钝了。'],
+  lap: [[1, -2, 1], '二阶差分对缓慢变化几乎没反应，只在剧烈变化处（噪声、台阶两端）出现尖峰——检测<b>高频</b>。'],
+  decay: [[1, 0.5, 0.25], '原书的例子：当前信号加上衰减后的历史信号，输出比输入大约放大 1.75 倍，略有平滑。'],
+  edge: [[-1, 0, 1], '一阶差分在台阶的上升沿出正峰、下降沿出负峰，是最简单的“边缘检测”。']
+};
+var f1Chart = S.chart($('#f1C'), { h: 240, x: [0, 80], y: [-2.5, 2.5], xt: [0, 20, 40, 60, 80], yt: [-2, -1, 0, 1, 2], xl: '时间 t' });
+function f1(k) {
+  var w = F1[k][0], K = w.length, y = [];
+  for (var t = K - 1; t < SIG.length; t++) { var s = 0; for (var j = 0; j < K; j++) s += w[j] * SIG[t - j]; y.push([t, s]); }
+  f1Chart({ curves: [{ pts: SIG.map(function (v, i) { return [i, v]; }), c: 'dim', w: 1.5, label: '输入 x' }, { pts: y, c: 'c2', label: '输出 y = w ∗ x' }] });
+  $('#f1W').innerHTML = F1[k][1] + ' 输出下标从 K = ' + K + ' 开始（窄卷积），所以比输入短 ' + (K - 1) + ' 个点。';
+}
+S.seg($('#f1S'), f1); f1('avg3');
+S.notes($('#n-c1d'), {
+  c: [
+    ['滤波器 / 卷积核', '卷积中的权重 w；网络中是可学习参数。'],
+    ['移动平均', 'w = [1/K, …, 1/K]：平滑、保留低频。'],
+    ['二阶差分', 'w = [1, −2, 1]：近似二阶微分、检测高频。']
+  ],
+  p: [
+    ['一维卷积', 'y_t = Σ_{k=1}^{K} w_k x_{t−k+1}'],
+    ['本质', '局部加权求和，K ≪ 信号长度。'],
+    ['二阶微分', 'x″(t) ≈ x(t+1) + x(t−1) − 2x(t)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 二维卷积 ---------- */
+var C2X = [[1, 1, 1, 1, 1], [-1, 0, -3, 0, 1], [2, 1, 1, -1, 0], [0, -1, 1, 2, 1], [1, 2, 1, 1, 1]], C2W = [[1, 0, 0], [0, 0, 0], [0, 0, -1]], c2Mode = 'conv', c2Pos = 0;
+function c2Draw(k) {
+  c2Pos = k;
+  var W = c2Mode === 'conv' ? C2W.map(function (r) { return r.slice().reverse(); }).reverse() : C2W;
+  var Y = [], i, j, u, v;
+  for (i = 0; i < 3; i++) { Y.push([]); for (j = 0; j < 3; j++) { var s = 0; for (u = 0; u < 3; u++) for (v = 0; v < 3; v++) s += W[u][v] * C2X[i + u][j + v]; Y[i].push(s); } }
+  var pi = Math.floor(k / 3), pj = k % 3;
+  var bx = $('#c2X'); bx.innerHTML = '';
+  for (i = 0; i < 5; i++) for (j = 0; j < 5; j++) h('span', { text: S.f(C2X[i][j], 0), class: i >= pi && i < pi + 3 && j >= pj && j < pj + 3 ? 'win' : '' }, bx);
+  var bw = $('#c2W'); bw.innerHTML = '';
+  for (u = 0; u < 3; u++) for (v = 0; v < 3; v++) h('span', { text: S.f(C2W[u][v], 0) }, bw);
+  var by = $('#c2Y'); by.innerHTML = '';
+  for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) h('span', { text: i * 3 + j <= k ? S.f(Y[i][j], 0) : '', class: i * 3 + j === k ? 'out' : '' }, by);
+  $('#c2Op').textContent = c2Mode === 'conv' ? '∗' : '⊗';
+  var terms = [];
+  for (u = 0; u < 3; u++) for (v = 0; v < 3; v++) if (W[u][v] !== 0) terms.push(S.f(W[u][v], 0) + '×' + S.f(C2X[pi + u][pj + v], 0));
+  $('#c2T').innerHTML = (c2Mode === 'conv' ? '卷积要先把核旋转 180°：右下角的 −1 转到左上角，左上角的 1 转到右下角。' : '互相关直接用原来的核滑动。') + ' 第 (' + (pi + 1) + ', ' + (pj + 1) + ') 个输出 = ' + terms.join(' + ') + ' = <b>' + S.f(Y[pi][pj], 0) + '</b>（核里其余位置是 0）。' + (k === 8 ? (c2Mode === 'conv' ? ' 结果与原书图 5.2 一致。' : ' 和卷积的结果正好差一个符号——因为这个核翻转后正好是自己的相反数。') : '');
+}
+var c2Go = S.stepper($('#c2S'), 9, c2Draw);
+S.seg($('#c2M'), function (v) { c2Mode = v; c2Draw(c2Pos); });
+var IMG = (function () {
+  var n = 56, a = [];
+  for (var i = 0; i < n; i++) { a.push([]); for (var j = 0; j < n; j++) {
+    var v = 0.15 + 0.25 * j / n;
+    if (i > 8 && i < 24 && j > 6 && j < 26) v = 0.85;
+    if ((i - 38) * (i - 38) + (j - 16) * (j - 16) < 90) v = 0.95;
+    if (Math.abs((i - 6) - (j - 30)) < 2 && j > 30 && j < 52) v = 0.9;
+    if (i > 32 && i < 50 && j > 34 && j < 50 && ((Math.floor(i / 4) + Math.floor(j / 4)) % 2)) v = 0.7;
+    a[i].push(v);
+  } }
+  var r = S.rng(4); for (var i2 = 0; i2 < n; i2++) for (var j2 = 0; j2 < n; j2++) a[i2][j2] += 0.04 * S.randn(r);
+  return a;
+})();
+var KS = {
+  gauss: [[1 / 16, 1 / 8, 1 / 16], [1 / 8, 1 / 4, 1 / 8], [1 / 16, 1 / 8, 1 / 16]],
+  lap: [[0, 1, 0], [1, -4, 1], [0, 1, 0]],
+  diag: [[0, 1, 1], [-1, 0, 1], [-1, -1, 0]],
+  sobel: [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
+};
+function paint(cv, M, signed, sc) {
+  var n = M.length, m = M[0].length, ctx = cv.getContext('2d');
+  cv.width = m; cv.height = n; cv.style.width = m * sc + 'px'; cv.style.height = n * sc + 'px';
+  var img = ctx.createImageData(m, n), mx = 0;
+  if (signed) M.forEach(function (r) { r.forEach(function (v) { mx = Math.max(mx, Math.abs(v)); }); });
+  var neg = hexc(S.css('--s1')), pos = hexc(S.css('--s2')), bg = hexc(S.css('--panel'));
+  for (var i = 0; i < n; i++) for (var j = 0; j < m; j++) {
+    var k = (i * m + j) * 4, v = M[i][j], c;
+    if (signed) { var a = Math.min(1, Math.abs(v) / (mx || 1)); var t = v >= 0 ? pos : neg; c = [bg[0] * (1 - a) + t[0] * a, bg[1] * (1 - a) + t[1] * a, bg[2] * (1 - a) + t[2] * a]; }
+    else { var g = Math.round(255 * S.clamp(v, 0, 1)); c = [g, g, g]; }
+    img.data[k] = c[0]; img.data[k + 1] = c[1]; img.data[k + 2] = c[2]; img.data[k + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function hexc(c) { c = c.replace('#', ''); return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]; }
+var imK = 'gauss';
+function im() {
+  var W = KS[imK], n = IMG.length, Y = [];
+  for (var i = 0; i < n - 2; i++) { Y.push([]); for (var j = 0; j < n - 2; j++) { var s = 0; for (var u = 0; u < 3; u++) for (var v = 0; v < 3; v++) s += W[u][v] * IMG[i + u][j + v]; Y[i].push(s); } }
+  paint($('#imIn'), IMG, false, 3.4);
+  paint($('#imOut'), Y, imK !== 'gauss', 3.6);
+  S.grid($('#imK'), W, { fmt: function (v) { return imK === 'gauss' ? '1/' + Math.round(1 / v) : S.f(v, 0); } });
+  $('#imCap').textContent = '输出特征图（' + (n - 2) + '×' + (n - 2) + '，窄卷积）';
+  $('#imW').innerHTML = imK === 'gauss' ? '高斯滤波器是加权平均（中心权重大），噪点被抹平、边缘略微变糊。' :
+    imK === 'lap' ? '拉普拉斯算子（二维二阶差分，对应习题 5-5）：平坦区域输出接近 0，只在亮度突变的轮廓处有响应，<span style="color:var(--s2)">橙</span>正<span style="color:var(--s1)">蓝</span>负。' :
+    imK === 'diag' ? '这个核对“左下暗、右上亮”的对角方向变化最敏感，不同方向的边缘响应强弱不同。' : '补充（非原书）：Sobel 竖直边缘核，只对左右方向的亮度变化有响应，横向边缘几乎消失。卷积网络第一层学出来的核常常就长这样。';
+}
+S.seg($('#imS'), function (v) { imK = v; im(); }); im();
+S.onTheme(im);
+S.notes($('#n-c2d'), {
+  c: [
+    ['特征图', '图像（或特征）经卷积提取后的结果。'],
+    ['互相关', '不翻转的卷积；深度学习框架里的“卷积”都是它。'],
+    ['卷积核翻转', '旋转 180°（上下、左右都颠倒）。'],
+    ['均值滤波', 'w_uv = 1/(UV)。']
+  ],
+  p: [
+    ['二维卷积', 'y_ij = Σ_u Σ_v w_uv x_{i−u+1, j−v+1}'],
+    ['互相关', 'y_ij = Σ_u Σ_v w_uv x_{i+u−1, j+v−1}'],
+    ['关系', 'W ⊗ X = rot180(W) ∗ X'],
+    ['为什么能互换', '核可学习时两者表示能力等价。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 尺寸与感受野 ---------- */
+function sz() {
+  var M = +$('#szMs').value, K = Math.min(+$('#szKs').value, M + 2 * +$('#szPs').value), S2 = +$('#szSs').value, P = +$('#szPs').value;
+  ['M', 'K', 'S', 'P'].forEach(function (k) { $('#sz' + k).textContent = $('#sz' + k + 's').value; });
+  var out = Math.floor((M - K + 2 * P) / S2) + 1;
+  $('#szO').textContent = out > 0 ? out : '无效';
+  var g = $('#szG'); g.innerHTML = '';
+  var tot = M + 2 * P, cw = Math.min(30, 420 / tot), x0 = (440 - tot * cw) / 2;
+  for (var i = 0; i < tot; i++) {
+    var pad = i < P || i >= P + M;
+    S.svg('rect', { x: x0 + i * cw + 1, y: 20, width: cw - 2, height: 26, rx: 3, fill: pad ? 'none' : 'var(--s1-soft)', stroke: pad ? 'var(--ink-3)' : 'var(--s1)', 'stroke-dasharray': pad ? '3 3' : '' }, g);
+    S.svg('text', { x: x0 + i * cw + cw / 2, y: 38, 'text-anchor': 'middle', text: pad ? '0' : 'x' + (i - P + 1), style: 'font-size:' + (cw < 26 ? 11 : 13) + 'px;fill:var(--ink-2);font-family:var(--f-num)' }, g);
+  }
+  for (var o = 0; o < out; o++) {
+    var st = o * S2, ox = x0 + (st + K / 2) * cw;
+    S.svg('path', { d: 'M' + (x0 + st * cw + 2) + ' 50 L' + ox + ' 98 L' + (x0 + (st + K) * cw - 2) + ' 50', fill: 'none', stroke: o % 2 ? 'var(--s2)' : 'var(--s3)', 'stroke-width': 1.2, opacity: 0.8 }, g);
+    S.svg('rect', { x: ox - 12, y: 100, width: 24, height: 24, rx: 3, fill: 'var(--s2-soft)', stroke: 'var(--s2)' }, g);
+    S.svg('text', { x: ox, y: 117, 'text-anchor': 'middle', text: 'y' + (o + 1), style: 'font-size:12px;fill:var(--ink);font-family:var(--f-num)' }, g);
+  }
+}
+['szMs', 'szKs', 'szSs', 'szPs'].forEach(function (id) { $('#' + id).addEventListener('input', sz); });
+S.$$('[data-p]').forEach(function (b) { b.addEventListener('click', function () {
+  var K = +$('#szKs').value, p = b.getAttribute('data-p');
+  $('#szSs').value = 1; $('#szPs').value = p === 'narrow' ? 0 : p === 'wide' ? K - 1 : Math.floor((K - 1) / 2); sz();
+}); });
+sz();
+S.guess($('#szGs'), { q: '原书习题 5-2：输入 32×32×3，64 个 3×3 卷积核，步长 1，零填充 1。这一层有多少参数（含偏置）？', unit: '个', ans: 1792, fmt: function (x) { return S.f(x, 0); }, why: '64 × 3 × 3 × 3 + 64 = 1792。输出大小 (32 − 3 + 2)/1 + 1 = 32，即 32×32×64；再接 2×2、步长 2 的最大汇聚，变成 16×16×64。' });
+function rf() {
+  var L = $('#rfIn').value.split(/[,，]/).map(function (s) { var p = s.trim().split('/'); return [+p[0], +(p[1] || 1)]; }).filter(function (p) { return p[0] > 0 && p[1] > 0; });
+  var r = 1, j = 1, rows = '<tr><td>层</td><td class="n">核 / 步长</td><td class="n">累计步长</td><td class="n">感受野</td></tr>', par = 0;
+  L.forEach(function (l, i) { r += (l[0] - 1) * j; j *= l[1]; par += l[0] * l[0]; rows += '<tr><td>第 ' + (i + 1) + ' 层</td><td class="n">' + l[0] + '×' + l[0] + ' / ' + l[1] + '</td><td class="n">' + j + '</td><td class="n">' + r + '×' + r + '</td></tr>'; });
+  rows += '<tr class="tot"><td>单通道参数量</td><td class="n"></td><td class="n"></td><td class="n">' + par + '（一层 ' + r + '×' + r + ' 要 ' + r * r + '）</td></tr>';
+  $('#rfT').innerHTML = rows;
+}
+$('#rfIn').addEventListener('input', rf); rf();
+S.guess($('#rfG'), { q: '习题 5-13：3×3/步长 1、3×3/步长 2、3×3/步长 1 三层叠起来，第三层一个输出单元的感受野边长是多少？', ans: 9, fmt: function (x) { return S.f(x, 0); }, why: '第一层 3；第二层 3 + 2×1 = 5，之后累计步长变成 2；第三层 5 + 2×2 = 9。所以是 9×9。三层（每通道 27 个参数）比一层 7×7（49 个）参数少、感受野还更大。' });
+S.notes($('#n-size'), {
+  c: [
+    ['步长', '卷积核每次滑动的间隔 S。'],
+    ['零填充', '输入两端各补 P 个 0。'],
+    ['窄 / 宽 / 等宽卷积', 'P = 0 / P = K − 1 / P = (K − 1)/2（S = 1）。'],
+    ['感受野', '深层神经元对应的输入区域大小。']
+  ],
+  p: [
+    ['输出尺寸', 'M′ = ⌊(M − K + 2P)/S⌋ + 1'],
+    ['窄 / 宽 / 等宽的输出', 'M − K + 1 / M + K − 1 / M'],
+    ['感受野递推', 'r ← r + (K − 1) × 之前步长之积'],
+    ['VGG 原则', '两层 3×3 = 一层 5×5 的感受野，参数 18 < 25。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 卷积层与汇聚 ---------- */
+var PLX = [[1, 1, 2, 0], [0, 1, 1, 2], [0, 0, 1, 3], [0, 0, 1, 1]], plMode = 'max', plSel = -1;
+function pl() {
+  var bx = $('#plX'), by = $('#plY'); bx.innerHTML = ''; by.innerHTML = '';
+  for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) {
+    var reg = Math.floor(i / 2) * 2 + Math.floor(j / 2);
+    h('span', { text: PLX[i][j], class: reg === plSel ? 'win' : '' }, bx);
+  }
+  for (var r = 0; r < 4; r++) {
+    var a = Math.floor(r / 2) * 2, b = (r % 2) * 2, vals = [PLX[a][b], PLX[a][b + 1], PLX[a + 1][b], PLX[a + 1][b + 1]];
+    var v = plMode === 'max' ? Math.max.apply(null, vals) : vals.reduce(function (s, x) { return s + x; }, 0) / 4;
+    var sp = h('span', { text: S.f(v, plMode === 'max' ? 0 : 2), class: r === plSel ? 'out' : '', style: 'cursor:pointer' }, by);
+    (function (rr) { sp.addEventListener('click', function () { plSel = rr; pl(); }); })(r);
+  }
+}
+S.seg($('#plS'), function (v) { plMode = v; pl(); }); pl();
+function lp() {
+  var M = +$('#lpMs').value, D = +$('#lpDs').value, P = +$('#lpPs').value, K = +$('#lpKs').value;
+  ['M', 'D', 'P', 'K'].forEach(function (k) { $('#lp' + k).textContent = $('#lp' + k + 's').value; });
+  var conv = P * D * K * K + P, Mo = M - K + 1 + (K - 1), fc = (M * M * D) * (Mo * Mo * P) + Mo * Mo * P;
+  $('#lpT').innerHTML = '<tr><td>卷积层（等宽，输出 ' + Mo + '×' + Mo + '×' + P + '）</td><td class="n">' + conv.toLocaleString() + '</td></tr>' +
+    '<tr><td>同样输入输出大小的全连接层</td><td class="n">' + (fc > 1e7 ? S.sci(fc, 2) : fc.toLocaleString()) + '</td></tr>' +
+    '<tr class="tot"><td>全连接 / 卷积</td><td class="n">' + S.sci(fc / conv, 1) + ' 倍</td></tr>' +
+    '<tr><td>输入边长改变时卷积参数</td><td class="n">不变（与 M × N 无关）</td></tr>';
+}
+['lpMs', 'lpDs', 'lpPs', 'lpKs'].forEach(function (id) { $('#' + id).addEventListener('input', lp); }); lp();
+S.notes($('#n-layer'), {
+  c: [
+    ['局部连接', '每个神经元只连前一层的局部窗口：M_l × K 条边。'],
+    ['权重共享', '同一卷积核用于所有位置，寻找同一种局部模式。'],
+    ['汇聚层', '对区域取 max 或 mean 下采样；降维、扩感受野、增强鲁棒性。'],
+    ['全局平均汇聚', '每个通道所有位置取平均，M × N × D → D。'],
+    ['1×1 卷积', '只在通道维上线性变换：升维、降维、通道重组。']
+  ],
+  p: [
+    ['卷积层', 'Z⁽ᵖ⁾ = Σ_d W⁽ᵖ,ᵈ⁾ ⊗ X⁽ᵈ⁾ + b⁽ᵖ⁾，Y⁽ᵖ⁾ = f(Z⁽ᵖ⁾)'],
+    ['参数量', 'P × D × U × V + P，与输入空间大小无关'],
+    ['典型汇聚', '2×2 不重叠最大汇聚；区域过大会丢太多信息。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 汇聚的误差回传 ---------- */
+var UPD = [[0.4, -0.2], [0.1, 0.8]], upMode = 'max';
+function up() {
+  var bx = $('#upX'), bd = $('#upD'), by = $('#upY'); bx.innerHTML = ''; bd.innerHTML = ''; by.innerHTML = '';
+  var Y = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], mark = [];
+  for (var r = 0; r < 4; r++) {
+    var a = Math.floor(r / 2) * 2, b = (r % 2) * 2, d = UPD[Math.floor(r / 2)][r % 2];
+    if (upMode === 'max') { var best = [a, b]; for (var i = a; i < a + 2; i++) for (var j = b; j < b + 2; j++) if (PLX[i][j] > PLX[best[0]][best[1]]) best = [i, j]; Y[best[0]][best[1]] = d; mark.push(best[0] * 4 + best[1]); }
+    else for (var i2 = a; i2 < a + 2; i2++) for (var j2 = b; j2 < b + 2; j2++) Y[i2][j2] = d / 4;
+  }
+  for (var i3 = 0; i3 < 4; i3++) for (var j3 = 0; j3 < 4; j3++) h('span', { text: PLX[i3][j3], class: mark.indexOf(i3 * 4 + j3) >= 0 ? 'win' : '' }, bx);
+  UPD.forEach(function (row) { row.forEach(function (v) { h('span', { text: S.f(v, 1), class: 'out' }, bd); }); });
+  for (var i4 = 0; i4 < 4; i4++) for (var j4 = 0; j4 < 4; j4++) h('span', { text: S.f(Y[i4][j4], upMode === 'max' ? 1 : 3), class: Y[i4][j4] === 0 ? 'dim' : 'out', style: 'width:44px' }, by);
+  $('#upW').innerHTML = upMode === 'max' ? '最大汇聚：每个区域的误差只传给前向时取到最大值的那个位置（左图高亮），其余 12 个位置梯度为 0。区域内有并列最大值时这里取第一个，框架实现各有约定。之后还要再乘该层激活函数的导数。' : '平均汇聚：每个误差平均分给区域内 4 个位置，各得 1/4。';
+}
+S.seg($('#upS'), function (v) { upMode = v; up(); }); up();
+S.notes($('#n-bp'), {
+  c: [
+    ['参数梯度累加', '共享的卷积核，梯度要累加所有位置的贡献。'],
+    ['上采样 up', '汇聚层误差回传：最大汇聚传给最大值位置，平均汇聚平均分配。'],
+    ['宽互相关', '两端补 K − 1 个零的互相关，用于卷积层的误差回传。']
+  ],
+  p: [
+    ['核的梯度', '∂ℒ/∂W⁽ˡ,ᵖ,ᵈ⁾ = δ⁽ˡ,ᵖ⁾ ⊗ X⁽ˡ⁻¹,ᵈ⁾'],
+    ['偏置的梯度', '∂ℒ/∂b⁽ˡ,ᵖ⁾ = Σ_ij [δ⁽ˡ,ᵖ⁾]_ij'],
+    ['经汇聚层', 'δ⁽ˡ,ᵖ⁾ = f′(Z⁽ˡ,ᵖ⁾) ⊙ up(δ⁽ˡ⁺¹,ᵖ⁾)'],
+    ['经卷积层', 'δ⁽ˡ,ᵈ⁾ = f′(Z⁽ˡ,ᵈ⁾) ⊙ Σ_p rot180(W⁽ˡ⁺¹,ᵖ,ᵈ⁾) ⊗̃ δ⁽ˡ⁺¹,ᵖ⁾']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 经典结构 ---------- */
+var ARCH = {
+  lenet: '<p class="say" style="margin-top:0"><strong>问题：能不能用“卷积 – 下采样 – 分类器”做实用的识别？</strong>LeNet-5 识别支票手写数字，20 世纪 90 年代被美国很多银行使用。输入 32 × 32，共 7 层，总参数约 6 万、连接约 34 万。</p><div class="tblw"><table class="cmpt"><thead><tr><th>层</th><th>结构</th><th>输出</th><th>可训练参数</th><th>连接数</th></tr></thead><tbody><tr><td>C1 卷积</td><td>6 个 5×5</td><td>6@28×28</td><td>156</td><td>122 304</td></tr><tr><td>S2 汇聚</td><td>2×2 平均 + 非线性</td><td>6@14×14</td><td>12</td><td>5 880</td></tr><tr><td>C3 卷积</td><td>连接表，60 个 5×5</td><td>16@10×10</td><td>1 516</td><td>151 600</td></tr><tr><td>S4 汇聚</td><td>2×2</td><td>16@5×5</td><td>32</td><td>2 000</td></tr><tr><td>C5 卷积</td><td>1 920 个 5×5</td><td>120@1×1</td><td>48 120</td><td>48 120</td></tr><tr><td>F6 全连接</td><td>84 个神经元</td><td>84</td><td>10 164</td><td>10 164</td></tr><tr><td>输出</td><td>10 个 RBF</td><td>10</td><td>—</td><td>—</td></tr></tbody></table></div><p class="cap">原书 5.4.1 节数据。C3 用<b>连接表</b>规定每个输出特征图只依赖部分输入特征图（不用连接表需要 96 个核）。平均汇聚、连接表、RBF 输出带有时代特征，现代网络用 Softmax 代替 RBF。</p>',
+  alex: '<p class="say" style="margin-top:0"><strong>问题：深层卷积网络能在大规模数据上赢吗？</strong>2012 年 ImageNet 冠军。意义不只在结构（5 个卷积层、3 个汇聚层、3 个全连接层，输入 224×224×3，输出 1000 类），更在于系统组合了后来通用的训练技术：<strong>GPU 并行训练、ReLU、Dropout、数据增强</strong>。网络太大放不进一块 GPU，于是拆成两半放两块 GPU，只在某些层通信——这其实就是分组卷积。第一层 11×11、步长 4；用了重叠的 3×3 最大汇聚，以及如今已不常用的局部响应规范化（LRN）。</p>',
+  vgg: '<p class="say" style="margin-top:0"><strong>问题：用更小的卷积核、更深的网络行不行？</strong>VGG 主要用连续的 3×3 卷积代替大卷积核：多个小核堆叠在保持较大感受野的同时减少参数（两层 3×3 = 一层 5×5，18 &lt; 25），而且多了非线性。结构规整：卷积块和汇聚层交替，最后接全连接。缺点是顶部全连接层参数多，整体计算和存储开销大。</p>',
+  incep: '<p class="say" style="margin-top:0"><strong>问题：卷积核该选多大？——都要。</strong>Inception 模块并行使用 1×1、3×3、5×5 卷积和 3×3 最大汇聚，在深度方向拼接，同一层捕捉多尺度特征。关键技巧是在 3×3、5×5 之前和汇聚之后先用 <strong>1×1 卷积降维</strong>。GoogLeNet（Inception v1，2014 年冠军，名字向 LeNet 致敬）由 9 个 Inception 模块组成，共 22 层，中间加两个<strong>辅助分类器</strong>缓解梯度消失。v3 用两层 3×3 代替 5×5、用 K×1 加 1×K 代替 K×K，并引入标签平滑和批量规范化。</p><div id="incG"></div>',
+  res: '<p class="say" style="margin-top:0"><strong>问题：网络很深之后，信息和梯度怎么传过去？</strong>残差网络给非线性单元加一条直连边：把目标函数 h(x) 拆成恒等函数 x 和残差函数 h(x) − x，让网络 f(x; θ) 只学残差，输出 f(x; θ) + x。最优映射接近恒等时，学残差比学完整映射容易得多；直连边也让梯度可以绕过非线性层直接传回去。维度不一致时用 1×1 卷积或带步长的投影；更深的 ResNet 用 1×1–3×3–1×1 的<strong>瓶颈结构</strong>。残差连接后来成了所有深度网络（包括 Transformer）的基础模块。</p>'
+};
+function ar(k) {
+  $('#arD').innerHTML = ARCH[k];
+  if (k === 'incep') S.guess($('#incG'), { q: '原书习题 5-6：输入 100×100×256，直接用 3×3 卷积输出 256 通道（等宽）的乘加次数约为 5.9 × 10⁹。如果先用 1×1 卷积降到 64 通道，再 3×3 卷积到 256，乘加次数大约是多少（单位：10⁹）？', unit: '× 10⁹', ans: 1.6384, fmt: function (x) { return S.f(x, 2); }, why: '1×1：100×100×256×64 = 0.164 × 10⁹；3×3：100×100×64×256×9 = 1.47 × 10⁹；合计 1.64 × 10⁹，约为原来的 28%。参数从 589 824 降到 163 840。这就是 Inception 和瓶颈结构里 1×1 卷积的作用。' });
+}
+S.seg($('#arB'), ar); ar('lenet');
+var rsChart = S.chart($('#rsC'), { h: 240, x: [1, 30], y: [-8, 1], xt: [1], yt: [-8, -6, -4, -2, 0], xl: '层号（右边是输出层）', yl: 'log₁₀‖δ⁽ˡ⁾‖', ml: 40 });
+function rs() {
+  var L = +$('#rsLs').value, sc = +$('#rsSs').value, n = 24;
+  $('#rsL').textContent = L; $('#rsS').textContent = S.f(sc, 2);
+  function run(res) {
+    var r = S.rng(9), Ws = [], zs = [], a = [];
+    for (var i = 0; i < n; i++) a.push(S.randn(r));
+    for (var l = 0; l < L; l++) {
+      var W = []; for (var i2 = 0; i2 < n; i2++) { var row = []; for (var j = 0; j < n; j++) row.push(S.randn(r) * sc / Math.sqrt(n)); W.push(row); }
+      Ws.push(W);
+      var z = W.map(function (row) { var s = 0; for (var j2 = 0; j2 < n; j2++) s += row[j2] * a[j2]; return s; });
+      zs.push(z);
+      a = z.map(function (v, i3) { return Math.tanh(v) + (res ? a[i3] : 0); });
+    }
+    var d = []; for (var k = 0; k < n; k++) d.push(S.randn(r) / Math.sqrt(n));
+    var out = [];
+    for (var l2 = L - 1; l2 >= 0; l2--) {
+      out[l2] = Math.log10(Math.sqrt(d.reduce(function (s, v) { return s + v * v; }, 0)) + 1e-30);
+      var g = d.map(function (v, i4) { var t = Math.tanh(zs[l2][i4]); return v * (1 - t * t); });
+      var nd = []; for (var j3 = 0; j3 < n; j3++) { var s2 = 0; for (var i5 = 0; i5 < n; i5++) s2 += Ws[l2][i5][j3] * g[i5]; nd.push(s2 + (res ? d[j3] : 0)); }
+      d = nd;
+    }
+    return out.map(function (v, i) { return [i + 1, v]; });
+  }
+  var p = run(false), q = run(true);
+  var lo = Math.min(-8, Math.floor(Math.min.apply(null, p.map(function (x) { return x[1]; }))));
+  var hi = Math.max(1, Math.ceil(Math.max.apply(null, q.map(function (x) { return x[1]; }))));
+  rsChart({ x: [1, L], xt: [1, Math.round(L / 2), L], y: [lo, hi], yt: [lo, Math.round((lo + hi) / 2), hi], curves: [{ pts: p, c: 'c2', label: '普通堆叠 a = tanh(Wa)' }, { pts: q, c: 'c1', label: '残差 a = a + tanh(Wa)' }] });
+  $('#rsW').innerHTML = '普通网络传到第 1 层时，误差项变成输出层的 10^' + S.f(p[0][1] - p[L - 1][1], 1) + '；残差网络是 10^' + S.f(q[0][1] - q[L - 1][1], 1) + '。残差的反向公式里多了一项“+ δ⁽ˡ⁺¹⁾”——<b>误差总能沿直连边原样传回去</b>，不会被一层层乘小。';
+}
+['rsLs', 'rsSs'].forEach(function (id) { $('#' + id).addEventListener('input', rs); }); rs();
+S.notes($('#n-arch'), {
+  c: [
+    ['LeNet-5', '早期“卷积–下采样–分类器”范式；约 6 万参数。'],
+    ['AlexNet', 'GPU、ReLU、Dropout、数据增强与深层卷积网络的系统结合。'],
+    ['VGG', '小卷积核（3×3）+ 深层网络。'],
+    ['Inception', '多尺度并行卷积拼接，1×1 卷积降维；辅助分类器。'],
+    ['ResNet', 'f(x; θ) + x：学残差，直连边让信息和梯度稳定传播。']
+  ],
+  p: [
+    ['现代卷积网络四趋势', '小核堆叠；步长卷积替汇聚；分组 / 深度可分离；GAP 替全连接。'],
+    ['瓶颈结构', '1×1 降维 – 3×3 – 1×1 升维。'],
+    ['四条设计原则', '局部性、层次性、参数共享、模块化。']
+  ]
+});
+
+/* ---------- 其他卷积 ---------- */
+function ds() {
+  var K = +$('#dsKs').value, D = +$('#dsDs').value, P = +$('#dsPs').value;
+  $('#dsK').textContent = K; $('#dsD').textContent = D; $('#dsP').textContent = P;
+  var std = K * K * D * P, dw = K * K * D, pw = D * P;
+  S.bars($('#dsBars'), [{ label: '标准卷积 K²DP', value: 1, text: std.toLocaleString(), cls: 'dim' }, { label: '逐通道 K²D', value: dw / std, text: dw.toLocaleString(), cls: 'alt' }, { label: '逐点 DP', value: pw / std, text: pw.toLocaleString(), cls: 'alt' }, { label: '深度可分离合计', value: (dw + pw) / std, text: (dw + pw).toLocaleString(), cls: 'ok' }]);
+  $('#dsW').innerHTML = '比值 = ' + S.f((dw + pw) / std, 3) + '，公式 1/P + 1/K² = ' + S.f(1 / P + 1 / (K * K), 3) + '。' + (K === 1 ? 'K = 1 时逐通道卷积没意义，反而更贵。' : '主要节省来自 1/K² 这一项。');
+}
+['dsKs', 'dsDs', 'dsPs'].forEach(function (id) { $('#' + id).addEventListener('input', ds); }); ds();
+S.guess($('#dsG'), { q: '习题 5-12：K = 3、D = 128、P = 256，深度可分离卷积的参数量是标准卷积的百分之几？', unit: '%', ans: 100 * (9 * 128 + 128 * 256) / (9 * 128 * 256), fmt: function (x) { return S.f(x, 1); }, why: '标准 9 × 128 × 256 = 294 912；可分离 9 × 128 + 128 × 256 = 1 152 + 32 768 = 33 920；比值约 11.5%（= 1/256 + 1/9）。逐点卷积占了大头。' });
+function dl() {
+  var K = +$('#dlKs').value, D = +$('#dlDs').value, E = K + (K - 1) * (D - 1);
+  $('#dlK').textContent = K; $('#dlD').textContent = D;
+  var g = $('#dlG'); g.innerHTML = ''; g.style.gridTemplateColumns = 'repeat(' + E + ',26px)';
+  for (var i = 0; i < E; i++) for (var j = 0; j < E; j++) { var on = i % D === 0 && j % D === 0; h('span', { class: on ? 'out' : 'dim', style: 'width:26px;height:24px', text: on ? 'w' : '' }, g); }
+  $('#dlE').textContent = E + '×' + E; $('#dlN').textContent = K * K; $('#dlPd').textContent = S.f((E - 1) / 2, 1);
+}
+['dlKs', 'dlDs'].forEach(function (id) { $('#' + id).addEventListener('input', dl); }); dl();
+S.grid($('#tcC'), [['w₁', 'w₂', 'w₃', 0, 0], [0, 'w₁', 'w₂', 'w₃', 0], [0, 0, 'w₁', 'w₂', 'w₃']], { fmt: function (v) { return v; }, cls: function (i, j, v) { return v === 0 ? 'dimc' : ''; } });
+S.grid($('#tcT'), [['w₁', 0, 0], ['w₂', 'w₁', 0], ['w₃', 'w₂', 'w₁'], [0, 'w₃', 'w₂'], [0, 0, 'w₃']], { fmt: function (v) { return v; }, cls: function (i, j, v) { return v === 0 ? 'dimc' : ''; } });
+S.notes($('#n-more'), {
+  c: [
+    ['转置卷积', '低维 → 高维的卷积型线性算子 x = Cᵀz；不是逆运算。'],
+    ['微步卷积', '步长 S > 1 卷积对应的转置卷积：输入间插 S − 1 个 0。'],
+    ['空洞卷积', '核元素间插空洞，不加参数扩大感受野。'],
+    ['分组卷积', '通道分组，组内连接，省参数和计算。'],
+    ['深度可分离卷积', '逐通道卷积（空间）+ 1×1 逐点卷积（通道）。']
+  ],
+  p: [
+    ['空洞有效大小', 'K′ = K + (K − 1)(D − 1)'],
+    ['可分离参数比', '(K²D + DP)/(K²DP) = 1/P + 1/K²'],
+    ['转置卷积输出', '插 D 个 0、补 K − 1：(D + 1)(M − 1) + K'],
+    ['棋盘伪影', '转置卷积上采样的副作用；可改用插值 + 卷积。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 参数为什么少', '局部连接（每个神经元只看 K 个输入）+ 权重共享（所有位置共用一个核）。卷积层参数 P × D × U × V + P，只取决于核大小和通道数，与输入图像大小无关。'],
+    ['② 卷积 vs 互相关、尺寸', '卷积翻转核、互相关不翻，核可学习时等价，框架都用互相关。输出 M′ = ⌊(M − K + 2P)/S⌋ + 1；感受野每层加 (K − 1) × 之前步长之积。'],
+    ['③ 结构演化', 'LeNet 定范式；AlexNet 把 GPU、ReLU、Dropout、数据增强结合起来；VGG 小核加深；Inception 多尺度 + 1×1 降维；ResNet 用直连边解决深层传播。1×1 卷积管通道、残差管深度、深度可分离管效率。']
+  ],
+  p: [
+    ['原书一句话', '卷积网络的发展，本质上是在表示能力、可训练性与计算效率三者之间不断寻找更优平衡。'],
+    ['卷积 vs 注意力', '卷积强调局部平移等变、参数和数据效率高；注意力擅长全局交互。ViT、ConvNeXt 说明是融合而非简单替代。'],
+    ['下一篇', '图像有空间结构，序列有时间结构：循环神经网络。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

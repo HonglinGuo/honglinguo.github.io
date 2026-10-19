@@ -1,0 +1,459 @@
+---
+title: 资源调度与运行环境：沙箱、调度与完整任务成本
+desc: 深入理解 AI Infra 学习笔记（十一）：用 Little 定律算环境内存、四种模板加载方式、暂停与每轮重建的成本门槛、资源碎片与抢占、RL 生成池扩容与权重分发、长尾验证的剩余时间、思考预算与前缀缓存、自建与按量的交点、恢复树下的成功任务成本，以及代码修复平台的四方案选择。
+kicker: <span>技术学习</span><span>深入理解 AI Infra · 11</span><span>对应原书第 11 章</span><span>约 40 分钟</span>
+h1: CPU 空着，<em>内存却不够</em>
+lead: 原书第 11 章的设计题是一个代码修复平台：每 0.1 秒来一个任务，每个任务三轮“模型 9 秒 + 工具 1 秒”，一台 48 核、358 GiB 的机器，要求 95% 在 24 秒内通过测试。算下来 CPU 只用了 62.5%，内存却要 168%——环境在等模型的 27 秒里一直占着 2 GiB。这一章从这里出发，讨论环境何时建、何时放、任务怎么排、模型怎么选、失败怎么恢复。
+nav: need|资源需求;env|环境生命周期;pool|共享资源池;rlpool|RL 资源配比;model|模型与付费;recover|恢复与成本;plan|四方案;back|三个问题
+---
+<style>
+.tl4 { margin-top: 10px; }
+.tl4 .row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; font-size: 15px; }
+.tl4 .lane { position: relative; height: 22px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; }
+.tl4 .b { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 12px; line-height: 18px; color: #fff; text-align: center; overflow: hidden; }
+.tl4 .m { background: var(--s1); } .tl4 .t { background: var(--s2); } .tl4 .e { background: var(--dim); } .tl4 .p { background: var(--s3); }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>为什么 Agent 平台常常是内存先不够？环境该一直留着，还是每轮重建？</li>
+  <li>多加生成卡、换更便宜的模型、用前缀缓存、自建还是按量，各自什么时候划算？</li>
+  <li>算上失败、重试和升级，一个“成功任务”到底花多少钱？</li>
+</ol></div>
+
+<section class="part" id="need">
+  <div class="part-head"><h2>资源需求：环境在等模型时也占着内存</h2><span class="meta">原书 11.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书先点出 Agent 与 RL 沙箱平台不能照搬通用云的三个理由：<strong>一个 RL 作业会同时申请上万个沙箱</strong>（统计复用削不平）；<strong>沙箱大部分时间在等模型</strong>，节奏由 GPU 决定，首先要避免昂贵的加速器空等；<strong>沙箱里跑的程序由正在训练的模型生成</strong>，训练会促使它找环境漏洞。</p>
+    <p>设计题：每 0.1 秒一个任务，三轮串行，每轮模型 9 秒（355 token × 25.3 ms，DeepSeek V4-Flash，每副本 4 张 B200 服务 32 个会话）+ 工具 1 秒（1 vCPU、2 GiB microVM），<strong>任务 30 秒</strong>；平台是一台 m5d.metal（48 核、约 358 GiB）。需求率 = 到达率 × 每任务需求：CPU 平均 <strong>30 核（62.5%）</strong>；模型平均 270 次调用在跑（320 个并发槽的 84%）；内存呢，环境整 30 秒都在，<strong>N̄<sub>env</sub> = λT̄ = 10 × 30 = 300 个 × 2 GiB = 600 GiB，是容量的 168%</strong>。358 GiB 最多同时放 178 个环境，每秒只能开始约 5.9 个任务。<strong>还空着 18 核，加 CPU 也解决不了</strong>。</p>
+    <p>模型一变慢问题更大：每次调用从 9 秒变 12 秒，任务 39 秒，内存要 780 GiB、模型并发 360（超过 320），而 CPU 仍然只要 30 核——<strong>模型响应变慢，也会增加工具平台的内存需求</strong>。</p>
+    <p>生产平台也一样。DeepSeek 的 DSec 一周记录：<strong>约九成容器和 microVM 平均只用到所申请 CPU 的 5% 以内</strong>，沙箱存活中位数约一刻钟、长的超过三小时，所以实行 CPU 超卖，单节点曾稳定运行 3,200 个容器或 800 个 microVM；再往上提，卡住的是等待期间一直占用的内存，和挤在同一物理核上的相互拖慢。</p>
+    <p class="go">先猜内存需求是容量的几倍，再改模型时长。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三种资源的占用比例</p>
+    <div id="ndG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>到达率（任务/s） <output id="ndL">10</output></span><input type="range" id="ndLs" min="1" max="30" value="10"></label>
+      <label class="ctl"><span>每次模型调用（s） <output id="ndM">9</output></span><input type="range" id="ndMs" min="1" max="20" step="0.5" value="9"></label>
+      <label class="ctl"><span>每个环境内存（GiB） <output id="ndE">2</output></span><input type="range" id="ndEs" min="0.5" max="8" step="0.5" value="2"></label>
+    </div>
+    <div class="selrow"><span>环境策略</span><div class="seg" id="ndS"><button data-v="keep" aria-pressed="true">始终驻留</button><button data-v="rebuild">每轮重建（准备 2 s）</button></div></div>
+    <div id="ndBars" class="wide"></div>
+    <p class="cap" id="ndW"></p>
+  </div>
+  <div class="notes" id="n-need"></div>
+</section>
+
+<section class="part" id="env">
+  <div class="part-head"><h2>环境生命周期：加载、暂停、每轮重建</h2><span class="meta">原书 11.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>隔离</strong>由弱到强：进程 → 容器（命名空间 + 资源控制，共享宿主内核）→ microVM（保留虚拟机隔离，精简设备）→ 完整虚拟机。DSec 按任务选后端：短小无状态的判题用预建复用的容器，仓库级任务用容器，安全相关用 microVM，要完整 Android 或图形渲染用完整虚拟机。还要<strong>防 agent 本身</strong>：DSec 记录到 agent 向平台代理的 socket 发伪造请求、翻查代理日志找答案、改写 <code>/bin/bash</code>；也有无意的——从根目录递归 grep 读到 <code>/proc</code> 某个文件触发内核缺陷整机崩溃，执行 <code>yes</code> 让平台记下数十 GB 输出。</p>
+    <p><strong>加载方式</strong>（原书例 11-2，100 个环境、模板 2 GiB、工具访问 512 MiB、修改 128 MiB、管理 4 MiB）：完整复制约 200 GiB；只加载访问到的 50 GiB；共享只读、只留脏页 13 GiB；再保留 256 MiB 热点页 38 GiB。DSec 抽查五类语言的镜像（4–12 GB），<strong>运行时只读到 4%–13%</strong>；数千容器同时启动时，按需加载和全部预缓存差不多快，先整份拉取镜像要慢约 1.7 倍。虚拟机里还有一层重复：宿主机 page cache 一份、每台 VM 自己再一份，DSec 用 virtio-pmem + DAX 让 VM 直接映射宿主缓存页，<strong>内存峰值降约四成</strong>；再用 balloon 空闲页报告 + DAMON 回收冷页，<strong>累计占用减约五分之一</strong>（峰值几乎不变）。</p>
+    <p><strong>暂停</strong>划不划算：E2B 文档里暂停每 GiB 约 4 秒、恢复约 1 秒，2 GiB 要 8 + 1 秒——<strong>正好吃满 9 秒的模型等待，一点没省</strong>。条件是 <strong>p<sub>M</sub>·M·G &gt; C<sub>transition</sub></strong>。但 RL 训练被抢占时等的是小时：DSec 一个作业最多 32K 个沙箱，按 2 GiB 算约 70 TB（集群单元约 250 TB 的四分之一以上），暂停两小时，<strong>空出的时间约是保存恢复期间照常占用的 800 倍</strong>，所以作业一被抢占就暂停全部沙箱。</p>
+    <p><strong>每轮重建</strong>：工作目录和结果已持久化，进程每轮新建。热路径（模板在本机）准备 2 秒，在模型调用的第 7 秒开始，第 9 秒执行工具，第 10 秒销毁。<strong>每任务内存从 60 降到 18 GiB·秒，平台从 600 降到 180 GiB</strong>；代价是每秒创建 30 个、CPU 从 30 涨到 33 核（Firecracker 论文报告单机每秒可建 150 个 microVM，够用）。重建与保留的盈亏点在等待 <strong>G ≈ 2.16 秒</strong>：等 6 秒该重建，等 2 秒就该保留。</p>
+    <p class="go">先猜每轮重建后平台平均要多少内存。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一个任务的时间线</p>
+      <div id="evG"></div>
+      <div class="seg" id="evS"><button data-v="keep" aria-pressed="true">始终驻留</button><button data-v="rebuild">每轮重建</button><button data-v="pause">暂停（2 GiB）</button></div>
+      <div class="tl4" id="evT"></div>
+      <div class="read"><div class="hl"><div class="v" id="evA">0</div><div class="k">每任务内存占用面积</div></div><div><div class="v" id="evP">0</div><div class="k">平台平均内存（10 任务/s）</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">保留还是重建：盈亏等待 G</p>
+      <label class="ctl"><span>两次工具之间等模型（s） <output id="gG">6</output></span><input type="range" id="gGs" min="0.5" max="20" step="0.5" value="6"></label>
+      <div class="read"><div><div class="v" id="gK">0</div><div class="k">保留的内存成本</div></div><div><div class="v" id="gR">0</div><div class="k">重建（内存 + CPU）</div></div></div>
+      <p class="verdict3" id="gW"></p>
+      <p class="note">E2B 沙箱单价：每 GiB·秒 0.0000045 美元、每 CPU·秒 0.000014 美元；重建占 2 GiB × 2 秒 + 0.1 CPU·秒。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-env"></div>
+</section>
+
+<section class="part" id="pool">
+  <div class="part-head"><h2>共享资源池：碎片、突发与抢占</h2><span class="meta">原书 11.3.1–11.3.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>碎片</strong>：作业要同节点的 4 张 H100 + 16 核。节点 1（DGX H100）剩 4 张 H100 但只有 8 核；节点 2（DGX A100）剩 32 核但卡是 A100。<strong>整个池子 H100 和 CPU 都够，就是没有一个节点同时满足</strong>。三种办法比完成时间：等原任务结束 12 s + 跑 20 s = 32 s；迁移原任务 4 s + 20 s = 24 s；跨节点分散准备 1 s + 跑 32 s = 33 s。迁移早 8 秒——但迁移要涨到 12 秒就和等待打平了。阿里巴巴 ASI 生产 GPU 集群的研究里，<strong>加入可抢占的低优先级作业后，GPU 分配比例从 68% 提到 93%</strong>。</p>
+    <p><strong>突发</strong>：同样 10 秒的工作，均匀到达没人排队，同时到达平均等 4.5 秒。80 次 1 秒工具调用同时到 48 核：32 项等 1 秒、平均 0.4 秒。但还要内存——80 个环境 160 GiB，始终驻留方案自己就要 600 GiB，根本腾不出；每轮重建方案平均 180 GiB，剩下 178 GiB 正好够。<strong>省下等待期间的内存，空闲 CPU 才能及时用上。</strong></p>
+    <p>DSec 峰值每秒建 5,000+ 个沙箱，摊到 160 个节点每个约 31 个/秒。负载汇总有延迟，<strong>每次挑"当前最空闲"的节点，同时到的一批就全挤到一个节点上</strong>。三招：随机抽几个节点挑最轻的（power-of-k-choices）；调度实例补记自己刚放下、汇总里还没有的；最终由节点自己决定接不接。</p>
+    <p><strong>优先级在硬件上不一定分得开</strong>：DSec 测得 BE 负载占到节点一半时，延迟敏感任务每步耗时增加约 45%，单靠 <code>SCHED_IDLE</code> 几乎没用——开了超线程后两类任务仍会跑在同一物理核的两个硬件线程上；<strong>再开 core scheduling（不让无关任务共用物理核），增幅降到约 17%</strong>。抢占还要算代价：在线任务最多等 2 秒、离线作业保存要 30 秒，那就必须另外预留能 2 秒内交出的资源。</p>
+    <p class="go">比较三种拿到资源的办法。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">等待、迁移还是分散</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>原任务剩余（s） <output id="fgW">12</output></span><input type="range" id="fgWs" min="0" max="60" value="12"></label>
+      <label class="ctl"><span>迁移耗时（s） <output id="fgM">4</output></span><input type="range" id="fgMs" min="0" max="40" value="4"></label>
+      <label class="ctl"><span>本地执行（s） <output id="fgR">20</output></span><input type="range" id="fgRs" min="5" max="60" value="20"></label>
+      <label class="ctl"><span>跨节点执行（s） <output id="fgS">32</output></span><input type="range" id="fgSs" min="5" max="90" value="32"></label>
+    </div>
+    <div id="fgBars" class="wide"></div>
+    <p class="cap" id="fgC"></p>
+  </div>
+  <div class="notes" id="n-pool"></div>
+</section>
+
+<section class="part" id="rlpool">
+  <div class="part-head"><h2>RL 资源配比：生成卡、权重分发、长尾验证</h2><span class="meta">原书 11.3.3–11.3.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>T<sub>iter</sub> = T<sub>generate</sub> + T<sub>verify</sub> + T<sub>update</sub> + T<sub>publish</sub></strong>。生成 40、验证 10、更新 30、发布 5，一轮 85 秒；生成翻倍降到 65 秒（1.3 倍），<strong>生成降到零也只有 1.9 倍</strong>。</p>
+    <p>临时加生成实例还要先拿到权重。Qwen3-8B BF16 共 16.38 GB，训练组经 200 Gbit/s 前端网卡发给六个 rollout 实例（各 50 Gbit/s）：<strong>T<sub>all</sub> ≥ max(16.38/6.25, 6×16.38/25) ≈ 3.93 s</strong>——共享出口才是瓶颈。TP=2 只是把实例内的计算分到两张卡，每个实例从外面接收的权重仍是 16.38 GB。可工作窗口 <strong>max(L − T₀, 0)</strong>：准备 8 秒、能用 20 秒就只剩 12 秒；只能用 5 秒，还没开工就被收回了。按 RLBoost 的历史价格（训练实例 84 美元/时、六个临时实例各 5.3），<strong>吞吐要到原来的 1.38 倍单位成本才下降</strong>；只到 1.2 倍时完成更快但成本涨到 1.15 倍。</p>
+    <p>被收回时保存生成前缀可以带走进度：PolyRL 把一组请求截到组内最短的已保存长度（4000 和 1000 → 各取 1000，较长那条的 3000 要重生成）。但原书本地对照里，<strong>保留前缀省了 96 个 token，总耗时 12.8 秒反而比从头重做的 11.6 秒慢</strong>——前缀重建和重新调度的开销超过了省下的生成。DeepSeek V4.1 起，agent 循环移到不会被抢占的 CPU 容器里，和沙箱一起保存完整 rollout 状态：<strong>状态放在存活时间最长的资源上</strong>。</p>
+    <p><strong>长尾验证</strong>：剩余时间要按条件期望估 <strong>E[S − e | S &gt; e]</strong>。九条各 1 秒、一条 100 秒，平均 10.9 秒；某条已跑 10 秒还没完，"10.9 − 10 = 0.9 秒"是错的——<strong>它必然是那条 100 秒的，还要 90 秒</strong>。缩减验证资源也要算账：少用 60 H100·秒却让 64 卡训练组多等 2 秒（128 H100·秒），系统净增 68；训练组只有 16 卡时反而净省 28。还有一条实测提醒：等待方返回超时后后台线程还跑了约 130 ms，主动终止子进程约 0.8 ms 就退出——<strong>只报超时不终止，两项任务就会同时用同一份资源</strong>。</p>
+    <p class="go">看生成加速的上限，和长尾的条件剩余时间。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">只加速生成阶段</p>
+      <label class="ctl"><span>生成加速倍数 <output id="rgS">2</output></span><input type="range" id="rgSs" min="1" max="20" step="0.5" value="2"></label>
+      <div class="read"><div class="hl"><div class="v" id="rgT">0</div><div class="k">一轮耗时</div></div><div><div class="v" id="rgA">0</div><div class="k">整体加速</div></div><div class="warn"><div class="v">1.89×</div><div class="k">生成降到零的上限</div></div></div>
+      <p class="note">生成 40、验证 10、更新 30、发布 5 秒（原书例）。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">长尾：已经跑了 e 秒还没完</p>
+      <div id="tlG"></div>
+      <label class="ctl"><span>已执行 e（s） <output id="tlE">10</output></span><input type="range" id="tlEs" min="0" max="99" value="10"></label>
+      <div class="read"><div class="warn"><div class="v" id="tlN">0</div><div class="k">错误估计：均值 − e</div></div><div class="hl"><div class="v" id="tlC">0</div><div class="k">E[S − e | S &gt; e]</div></div></div>
+      <p class="note">九条各 1 s、一条 100 s。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-rlpool"></div>
+</section>
+
+<section class="part" id="model">
+  <div class="part-head"><h2>模型服务：思考预算、缓存、路由与付费方式</h2><span class="meta">原书 11.4 节</span></div>
+  <div class="sec-lede">
+    <p>任务 30 秒超了 24 秒目标，要改的是关键路径上的模型调用：每副本同时服务的会话从 32 减到 16，每 token 从 25.3 降到 16.9 ms，<strong>一次调用 9 → 6 秒，三轮 21 秒</strong>。代价：每次调用的 GPU 时间从 4×9/32 = 1.125 增到 4×6/16 = 1.5 B200·秒，平均 180 次在跑，10 个副本 160 槽不够，<strong>要 12 个副本</strong>。</p>
+    <p><strong>思考预算</strong>：Claude Sonnet 5 价格（输入 2、生成 10 美元/百万 token），输入 10,000、可见输出 200，思考 1000 → 100 token，单次从 0.032 降到 0.023，<strong>思考少了 90%，总成本只少 28%</strong>（输入 0.020 和可见输出 0.002 没变）。而且如果 100 次里有 30 次因预算截断要重试（每次 0.032），<strong>省的 0.9 美元被重试的 0.96 美元吃掉，反而多 0.06</strong>。</p>
+    <p><strong>前缀缓存</strong>：按类拆分 <strong>C = (I<sub>u</sub>p<sub>u</sub> + I<sub>w</sub>p<sub>w</sub> + I<sub>h</sub>p<sub>h</sub> + Op<sub>o</sub>)/10⁶</strong>。8000 token 公共前缀 + 2000 新输入、十轮（创建 2.5、读取 0.2）：无缓存 0.20 美元，有缓存 0.0744；首次多付 0.004，<strong>第二次访问就收回</strong>。条件 n·p<sub>u</sub> &gt; p<sub>w</sub> + (n−1)p<sub>h</sub>。命中率要按 token 加权：一长一短各命中一次，请求命中率都是 50%，但读取占比可以是 10% 或 90%。</p>
+    <p><strong>路由</strong>：例 11-7，Haiku 4.5（A，单价是 B 的一半，但思考 1800、成功率 0.80）vs Sonnet 5（B，思考 100、成功率 0.98），19,000 前缀 + 1,000 新输入。A 每个成功任务 0.0161 美元；B 全命中 0.0088、未命中 0.0430 每次，<strong>命中率 h ≈ 79.5% 时两者相等</strong>；要求 90% 任务 6 秒内通过时，A 要 10 秒直接出局，B 要 0.98h ≥ 0.90 即 <strong>h ≥ 91.8%</strong>。</p>
+    <p><strong>自建 vs 按量</strong>：<strong>N &gt; F/(c − v)</strong>。同一模型、同一种 B200、同样 32 会话：Runpod Pod 预留（6.79 美元/卡时）4 张整月 F = 19,555.2 美元；Serverless 按秒计（8.64 美元/卡时），每项任务 0.0081 美元。交点约 <strong>241 万项</strong>，这组卡一月上限 307.2 万项，<strong>交点对应 78.6% 利用率——正好是两种单价之比 6.79/8.64</strong>。decode 提速两倍只把每 token 从 25.3 降到 17.4 ms（1.46 倍），因为还有 9.4 ms 的输入处理与上下文重建不受影响。</p>
+    <p class="go">先猜 B 的命中率要多高才比 A 便宜。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">A（Haiku 4.5）vs B（Sonnet 5）</p>
+      <div id="rtG"></div>
+      <label class="ctl"><span>B 的前缀命中率 h <output id="rtH">80%</output></span><input type="range" id="rtHs" min="0" max="100" value="80"></label>
+      <div id="rtBars" class="wide"></div>
+      <p class="verdict3" id="rtW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">预留 vs 按量（4 张 B200 一个月）</p>
+      <label class="ctl"><span>月任务量（万项） <output id="byN">241</output></span><input type="range" id="byNs" min="10" max="307" value="241"></label>
+      <div class="read"><div><div class="v" id="byR">0</div><div class="k">预留（固定）</div></div><div><div class="v" id="byS">0</div><div class="k">按量</div></div><div class="hl"><div class="v" id="byU">0</div><div class="k">利用率</div></div></div>
+      <p class="verdict3" id="byW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-model"></div>
+</section>
+
+<section class="part" id="recover">
+  <div class="part-head"><h2>恢复与成功任务成本</h2><span class="meta">原书 11.5.1–11.5.2 节</span></div>
+  <div class="sec-lede">
+    <p>控制器没收到确认时分不清"还没完成"和"完成了但确认丢了"。所以先查已持久化的结果、核对操作标识和输入文件版本，再决定是否重试。<strong>消息去重</strong>只解决结果被送两次（CPU 仍 3 秒）；<strong>真的再执行一次</strong>就是 6 秒——这要靠持久化结果和目标系统的幂等协议。外部付款、发消息这类操作，快照恢复也撤销不了。</p>
+    <p>"完成"要说清保证到哪一级：写进本地页缓存、本地 <code>fsync()</code>、还是收到云端持久化确认。原书举了一个异步上传的坑：三轮都写进本地 JSONL，第二轮上传失败、第三轮成功——<strong>云端的连续保存位置不能从第一轮跳到第三轮</strong>，否则换机器恢复就会撞上缺口；找不到完整依据时应返回 <code>incomplete</code>。把一轮"模型决策—工具执行—保存结果"作为一个整体提交，就是 Agent 事务（ACID）的思路。保存频率是取舍：100 个 200 ms 的请求，逐个提交多花 1000 ms、最多重做 0.2 s；每 10 个提交多花 280 ms、最多重做 2 s。</p>
+    <p>成本必须把失败尝试算进去：<strong>C̄<sub>q</sub> = C<sub>all</sub>/N<sub>q</sub>，C̄<sub>q,d</sub> = C<sub>all</sub>/N<sub>q,d</sub></strong>。十项任务花 1 美元成功五项，是 0.2 美元/项——只算成功那五次的 0.5 美元会得到 0.1，正好漏掉一半。</p>
+    <p class="go">走一遍例 11-8 的恢复树。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">恢复树（原书例 11-8，期限 20 s）</p>
+    <div id="rcG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>首次成功率 <output id="rcP">80%</output></span><input type="range" id="rcPs" min="40" max="99" value="80"></label>
+      <label class="ctl"><span>失败中进入局部修复的比例 <output id="rcF">60%</output></span><input type="range" id="rcFs" min="0" max="100" step="5" value="60"></label>
+      <label class="ctl"><span>局部修复条件成功率 <output id="rcR">60%</output></span><input type="range" id="rcRs" min="0" max="100" step="5" value="60"></label>
+    </div>
+    <div class="tblw"><table class="cmpt" id="rcT"></table></div>
+    <div class="read"><div><div class="v" id="rcS">0</div><div class="k">最终成功率</div></div><div class="hl"><div class="v" id="rcD">0</div><div class="k">按时成功率</div></div><div><div class="v" id="rcC">0</div><div class="k">每个成功任务成本</div></div><div class="warn"><div class="v" id="rcCD">0</div><div class="k">每个按时成功任务成本</div></div></div>
+    <p class="note">首次 Sonnet 5：0.010 美元、10 s；局部修复：+0.006、+4 s；升级到 Opus 5：+0.030、+8 s，条件成功率 98%。先修复再升级的路径要 22 s，超过 20 s 期限。</p>
+  </div>
+  <div class="notes" id="n-recover"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>四个方案：按期且装得下的只有一个</h2><span class="meta">原书 11.5.3 节</span></div>
+  <div class="sec-lede">
+    <p>先排除"只加 CPU"：三轮工具共 3 秒，就算降到零，普通服务仍要 27 秒。再看四个组合（两种服务通过率都是 95%）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>方案</th><th>完成</th><th>CPU·秒</th><th>每项 GiB·秒</th><th>平均内存</th><th>每千项成本</th><th>按时通过</th></tr></thead>
+      <tbody>
+        <tr><td>普通服务 + 始终驻留</td><td>30 s</td><td>3</td><td>60</td><td>600 GiB</td><td>6.68 美元</td><td>0</td></tr>
+        <tr><td>普通服务 + 每轮重建</td><td>30 s</td><td>3.3</td><td>18</td><td>180 GiB</td><td>6.49</td><td>0</td></tr>
+        <tr><td>快速服务 + 始终驻留</td><td>21 s</td><td>3</td><td>42</td><td>420 GiB（装不下）</td><td>8.72</td><td>95%</td></tr>
+        <tr class="on"><td>快速服务 + 每轮重建</td><td>21 s</td><td>3.3</td><td>18</td><td>180 GiB</td><td>8.61</td><td>95%</td></tr>
+      </tbody>
+    </table></div>
+    <p><strong>模型费用占 98% 以上</strong>，所以每轮重建的主要收益不在费用（每千项按时成功只从 9.18 降到 9.07 美元，约 1.2%），而在<strong>容量</strong>：快速服务 + 始终驻留要 420 GiB，这台机器装不下。最终方案：<strong>快速服务、每轮重建、在模型调用期间准备环境、模型副本 10 → 12</strong>——每轮第 4–6 秒准备、第 6–7 秒跑工具，每轮工具 10 核 + 准备 1 核，活跃环境最多约 90 个共 180 GiB，三阶段合计 180 次模型调用、12 个快速副本 192 个槽。</p>
+    <p>这里不加局部修复：正常在第 21 秒完成，剩 3 秒；失败后再修 4 秒会到第 25 秒。<strong>期限放宽到 25 秒，修复才有机会增加按时成功数。</strong>模型再加速时，等待窗口也会缩短，保留和重建的盈亏点在 G ≈ 2.16 秒，要重新比较。</p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">T_task = T_queue + T_prepare + Σ(T_model,r + T_tool,r) + T_commit</div>
+    <div class="fx">资源需求率 = 任务到达率 × 每任务平均需求；　N̄_env = λ·T̄_env</div>
+    <div class="fx">内存面积 A_M = ∫M(t)dt；　CPU·秒 W = ∫n_busy(t)dt</div>
+    <div class="fx">暂停划算：p_M·M·G &gt; C_transition；　取回下界 (V_fetch + V_install)/B</div>
+    <div class="fx">T_iter = T_gen + T_verify + T_update + T_publish；　可工作窗口 max(L − T₀, 0)</div>
+    <div class="fx">T_all ≥ max(单个接收方时间, Σ权重 / 共享出口带宽)</div>
+    <div class="fx">剩余时间 E[S − e | S &gt; e]；　T_batch ≥ max_i(a_i + c_i + g_i)</div>
+    <div class="fx">C_call = (I_u p_u + I_w p_w + I_h p_h + O p_o)/10⁶ + C_storage + C_tool</div>
+    <div class="fx">缓存划算：n·p_u &gt; p_w + (n−1)p_h；　自建划算：N &gt; F/(c − v)</div>
+    <div class="fx">C̄_q = C_all/N_q，　C̄_q,d = C_all/N_q,d；　E[C] = Σ_π p_π c_π</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>62.5% / 84% / 168%</b><span>CPU / 模型并发 / 内存的占用比例（始终驻留）</span></div>
+      <div><b>600 → 180 GiB</b><span>始终驻留 → 每轮重建的平台内存</span></div>
+      <div><b>≤ 5%</b><span>DSec 约九成沙箱平均用到的 CPU 比例</span></div>
+      <div><b>4%–13%</b><span>DSec 镜像运行时实际读到的比例</span></div>
+      <div><b>约四成 / 约五分之一</b><span>DAX 降内存峰值 / 回收冷页降累计占用</span></div>
+      <div><b>45% → 17%</b><span>开 core scheduling 前后 LS 任务的变慢</span></div>
+      <div><b>68% → 93%</b><span>ASI 加入可抢占作业后的 GPU 分配比例</span></div>
+      <div><b>3.93 s</b><span>六个 rollout 实例收齐 16.38 GB 权重</span></div>
+      <div><b>79.5% / 91.8%</b><span>B 的命中率：成本交点 / 6 秒期限门槛</span></div>
+      <div><b>78.6%</b><span>预留与按量的成本交点利用率</span></div>
+    </div>
+    <p class="src">数字均取自原书第 11 章。</p>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+function usd(x) { return x >= 1000 ? S.f(x, 0) + ' 美元' : S.f(x, x < 0.1 ? 4 : 2) + ' 美元'; }
+
+/* ---------- 资源需求 ---------- */
+var ndS = 'keep';
+function nd() {
+  var lam = +$('#ndLs').value, m = +$('#ndMs').value, e = +$('#ndEs').value;
+  $('#ndL').textContent = lam; $('#ndM').textContent = m; $('#ndE').textContent = e;
+  var T = 3 * (m + 1);
+  var cpu = lam * 3 * (ndS === 'rebuild' ? 1.1 : 1);
+  var envSec = ndS === 'keep' ? T : 3 * 3;
+  var mem = lam * envSec * e;
+  var calls = lam * 3 * m;
+  var rows = [['CPU（48 核）', cpu / 48, S.f(cpu, 0) + ' 核'], ['模型并发（320 槽）', calls / 320, S.f(calls, 0) + ' 次'], ['内存（358 GiB）', mem / 358, S.f(mem, 0) + ' GiB']];
+  S.bars($('#ndBars'), rows.map(function (r) { return { label: r[0], value: Math.min(1, r[1] / 2), text: S.pct(r[1], 1) + '（' + r[2] + '）', cls: r[1] > 1 ? 'alt' : 'ok' }; }));
+  var over = rows.filter(function (r) { return r[1] > 1; }).map(function (r) { return r[0].split('（')[0]; });
+  $('#ndW').innerHTML = '任务时长 ' + T + ' s。' + (over.length ? '<b>超出容量：' + over.join('、') + '</b>。' : '三种资源都在容量以内。') + (ndS === 'keep' ? ' 环境在等模型的 ' + (3 * m) + ' 秒里一直占着内存。' : ' 每轮只在准备 + 执行的 3 秒里占内存，CPU 多了 10% 的准备工作。');
+}
+S.seg($('#ndS'), function (v) { ndS = v; nd(); });
+['ndLs', 'ndMs', 'ndEs'].forEach(function (id) { $('#' + id).addEventListener('input', nd); }); nd();
+S.guess($('#ndG'), { q: '每秒 10 个任务、每个任务 30 秒、环境始终驻留占 2 GiB。平台平均要多少 GiB 内存？', unit: 'GiB', ans: 600, fmt: function (x) { return S.f(x, 0); }, why: '原书例 11-1：Little 定律 N̄ = λT̄ = 10 × 30 = 300 个环境，× 2 GiB = 600 GiB，是 358 GiB 的 168%。而 CPU 只用了 30 核（62.5%），还空着 18 核——加 CPU 解决不了。' });
+S.notes($('#n-need'), {
+  c: [
+    ['任务 vs 步骤', '任务要交付最终结果；一次模型请求或工具执行只是其中一步。'],
+    ['控制器 / 执行器 / 运行环境', '记录与决策 / 实际跑工具 / 承载文件、进程、内存。'],
+    ['N̄_env = λT̄', '平均同时存在的环境数。'],
+    ['超卖', '各沙箱申请的 CPU 合计远多于物理核数。']
+  ],
+  p: [
+    ['内存先不够', 'CPU 62.5%、模型 84%、内存 168%。'],
+    ['模型变慢也压内存', '调用 9 → 12 s，内存 600 → 780 GiB，CPU 不变。'],
+    ['错开启动', '四进程 RSS 峰值 320 → 80 MiB，整组从 0.10 拖到 0.54 s。'],
+    ['先定该保留什么', '丢了工作目录要重做 20 秒，不只是 2 秒工具计算。']
+  ]
+});
+
+/* ---------- 环境生命周期 ---------- */
+var evS = 'keep';
+function ev() {
+  var box = $('#evT'); box.innerHTML = ''; var T = 30;
+  function lane(name, segs) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: name }, r); var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { h('span', { class: 'b ' + s[2], style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%', text: s[3] }, l); });
+  }
+  lane('模型', [[0, 9, 'm', '9'], [10, 9, 'm', '9'], [20, 9, 'm', '9']]);
+  lane('工具', [[9, 1, 't', '1'], [19, 1, 't', '1'], [29, 1, 't', '1']]);
+  var area;
+  if (evS === 'keep') { lane('环境', [[0, 30, 'e', '2 GiB 一直占着']]); area = 60; }
+  else if (evS === 'rebuild') { lane('环境', [[7, 2, 'p', '准备'], [9, 1, 'e', ''], [17, 2, 'p', '准备'], [19, 1, 'e', ''], [27, 2, 'p', '准备'], [29, 1, 'e', '']]); area = 18; }
+  else { lane('环境', [[0, 10, 'e', ''], [10, 8, 'p', '保存 8 s'], [18, 1, 'p', ''], [19, 1, 'e', ''], [20, 8, 'p', '保存'], [28, 1, 'p', ''], [29, 1, 'e', '']]); area = 60; }
+  $('#evA').textContent = area + ' GiB·s'; $('#evP').textContent = (area * 10) + ' GiB';
+}
+S.seg($('#evS'), function (v) { evS = v; ev(); }); ev();
+S.guess($('#evG'), { q: '改成每轮重建环境（模型调用期间提前 2 秒准备、执行 1 秒后销毁），平台平均内存是多少 GiB？', unit: 'GiB', ans: 180, fmt: function (x) { return S.f(x, 0); }, why: '原书：每任务 3 轮 × (2 + 1) 秒 × 2 GiB = 18 GiB·秒，× 10 任务/秒 = 180 GiB，约为容量一半。代价是每秒创建 30 个环境、CPU 从 30 涨到 33 核。暂停则不行：2 GiB 要保存 8 秒 + 恢复 1 秒，正好吃满 9 秒等待，一点没省。' });
+function gk() {
+  var G = +$('#gGs').value; $('#gG').textContent = G;
+  var keep = 2 * G * 0.0000045, reb = 2 * 2 * 0.0000045 + 0.1 * 0.000014;
+  $('#gK').textContent = S.f(keep * 1e6, 1) + ' μ美元'; $('#gR').textContent = S.f(reb * 1e6, 1) + ' μ美元';
+  var w = $('#gW'); w.className = 'verdict3';
+  w.innerHTML = keep > reb ? '<b>重建更省</b>（等待 ' + G + ' s 超过盈亏点 2.16 s）。' : '<b>保留更省</b>（等待短于 2.16 s），而且准备已经占满可重叠的窗口了。';
+}
+$('#gGs').addEventListener('input', gk); gk();
+S.notes($('#n-env'), {
+  c: [
+    ['隔离层级', '进程 → 容器 → microVM → 完整虚拟机；越强越慢、开销越大。'],
+    ['四种加载', '完整复制 / 按需加载 / 共享只读留脏页 / 再留热点页。'],
+    ['暂停划算条件', 'p_M·M·G > C_transition。'],
+    ['每轮重建', '工作目录已持久化，进程每轮新建，准备藏在模型调用里。']
+  ],
+  p: [
+    ['防 agent 本身', '伪造 socket 请求、翻日志找答案、改写 /bin/bash；用 AppArmor 和 eBPF 堵。'],
+    ['只读 4%–13%', '按需加载 ≈ 全部预缓存，先整份拉取慢 1.7 倍。'],
+    ['峰值 vs 面积', '共享只读页降峰值，回收冷页降面积。'],
+    ['小时级暂停才值', 'RL 被抢占时暂停全部沙箱，空出时间约是保存恢复的 800 倍。']
+  ]
+});
+
+/* ---------- 共享资源池 ---------- */
+function fg() {
+  var w = +$('#fgWs').value, m = +$('#fgMs').value, r = +$('#fgRs').value, s = +$('#fgSs').value;
+  $('#fgW').textContent = w; $('#fgM').textContent = m; $('#fgR').textContent = r; $('#fgS').textContent = s;
+  var a = w + r, b = m + r, c = 1 + s, best = Math.min(a, b, c), mx = Math.max(a, b, c);
+  S.bars($('#fgBars'), [{ label: '等原任务结束', value: a / mx, text: a + ' s', cls: a === best ? 'ok' : 'dim' },
+    { label: '迁移原任务', value: b / mx, text: b + ' s', cls: b === best ? 'ok' : 'dim' },
+    { label: '跨节点分散（准备 1 s）', value: c / mx, text: c + ' s', cls: c === best ? 'ok' : 'dim' }]);
+  $('#fgC').innerHTML = '原书例 11-3：12 + 20 = 32、4 + 20 = 24、1 + 32 = 33，迁移早 8 秒。迁移耗时涨到等于原任务剩余时间时，两者打平。';
+}
+['fgWs', 'fgMs', 'fgRs', 'fgSs'].forEach(function (id) { $('#' + id).addEventListener('input', fg); }); fg();
+S.notes($('#n-pool'), {
+  c: [
+    ['资源碎片', '池子总量够，但没有一个节点同时满足卡型、CPU、同节点约束。'],
+    ['突发', '总工作量决定忙多久，到达时刻和顺序决定先等多久。'],
+    ['power-of-k-choices', '随机抽几个挑最轻的，同时做出的决定自然分散。'],
+    ['DRF', '按主导资源份额公平分配。']
+  ],
+  p: [
+    ['可抢占作业填碎片', 'ASI：GPU 分配 68% → 93%。'],
+    ['突发也要内存', '80 个环境 160 GiB，只有省下等待内存的方案腾得出。'],
+    ['超线程的干扰', 'SCHED_IDLE 几乎没用（45%），core scheduling 降到 17%。'],
+    ['抢占要算交还时间', '离线作业保存 30 秒，在线任务只等 2 秒，就得另外预留。']
+  ]
+});
+
+/* ---------- RL 资源配比 ---------- */
+function rgc() {
+  var s = +$('#rgSs').value; $('#rgS').textContent = s;
+  var t = 40 / s + 45; $('#rgT').textContent = S.f(t, 1) + ' s'; $('#rgA').textContent = S.f(85 / t, 2) + '×';
+}
+$('#rgSs').addEventListener('input', rgc); rgc();
+function tl() {
+  var e = +$('#tlEs').value; $('#tlE').textContent = e;
+  var vals = [1, 1, 1, 1, 1, 1, 1, 1, 1, 100];
+  var surv = vals.filter(function (v) { return v > e; });
+  var cond = surv.length ? surv.reduce(function (a, b) { return a + b; }, 0) / surv.length - e : 0;
+  $('#tlN').textContent = S.f(Math.max(0, 10.9 - e), 1) + ' s'; $('#tlC').textContent = S.f(cond, 1) + ' s';
+}
+$('#tlEs').addEventListener('input', tl); tl();
+S.guess($('#tlG'), { q: '九条验证各 1 秒、一条 100 秒。某条已经跑了 10 秒还没结束，它还要多少秒？', unit: '秒', ans: 90, fmt: function (x) { return S.f(x, 0); }, why: '原书：用均值 10.9 − 10 = 0.9 秒是错的。已经跑过 1 秒还没结束，它必然是那条 100 秒的，还要 90 秒。要按条件期望 E[S − e | S > e] 估，只在尚未结束的样本里取平均。' });
+S.notes($('#n-rlpool'), {
+  c: [
+    ['T_iter', '生成 + 验证 + 更新 + 发布；只加速生成有上限。'],
+    ['共享出口', '六个实例各要 16.38 GB，发送方 25 GB/s 出口要 3.93 s。'],
+    ['可工作窗口', 'max(L − T₀, 0)：准备时间从可用时间里扣。'],
+    ['条件剩余时间', 'E[S − e | S > e]。']
+  ],
+  p: [
+    ['生成降到零也只有 1.9×', '其余 45 秒不变。'],
+    ['成本门槛 1.38 倍', '吞吐不到这个倍数，加临时实例反而更贵。'],
+    ['前缀未必省时', '省了 96 token，总耗时 12.8 s 比从头的 11.6 s 还慢。'],
+    ['状态放在活得最久的资源上', 'V4.1 起 agent 循环移到不可抢占的 CPU 容器。']
+  ]
+});
+
+/* ---------- 模型服务 ---------- */
+function rt() {
+  var h2 = +$('#rtHs').value / 100; $('#rtH').textContent = Math.round(h2 * 100) + '%';
+  var A = 0.0129 / 0.8, B = (0.0088 * h2 + 0.0430 * (1 - h2)) / 0.98;
+  var mx = Math.max(A, B);
+  S.bars($('#rtBars'), [{ label: 'A：Haiku 4.5', value: A / mx, text: S.f(A, 4) + ' 美元', cls: A <= B ? 'ok' : 'dim' },
+    { label: 'B：Sonnet 5', value: B / mx, text: S.f(B, 4) + ' 美元', cls: B < A ? 'ok' : 'dim' }]);
+  var w = $('#rtW'); var ok6 = 0.98 * h2 >= 0.9;
+  w.className = 'verdict3' + (ok6 ? '' : ' bad');
+  w.innerHTML = (B < A ? 'B 更便宜' : 'A 更便宜') + '（交点 79.5%）。6 秒期限：A 要 10 秒直接出局；B 需要 h ≥ 91.8%，' + (ok6 ? '<b>当前满足</b>。' : '<b>当前不满足</b>。');
+}
+$('#rtHs').addEventListener('input', rt); rt();
+S.guess($('#rtG'), { q: 'Sonnet 5 单价是 Haiku 4.5 的两倍。前缀命中率至少多少，B 的成功任务成本才不高于 A？', unit: '%', ans: 79.5, fmt: function (x) { return S.f(x, 1); }, why: '原书例 11-7：A 思考 1800 token、成功率 0.80，每个成功任务 0.0161 美元；B 思考只要 100、成功率 0.98，全命中每次 0.0088、未命中 0.0430。h ≈ 79.5% 时相等。单价贵一倍，但生成量少、成功率高，高命中率下反而更省。' });
+function by() {
+  var N = +$('#byNs').value * 1e4; $('#byN').textContent = N / 1e4;
+  var F = 19555.2, c = 0.0081, sv = N * c, u = N / 3072000;
+  $('#byR').textContent = usd(F); $('#byS').textContent = usd(sv); $('#byU').textContent = S.pct(u, 1);
+  var w = $('#byW'); w.className = 'verdict3';
+  w.innerHTML = (sv < F ? '<b>按量更省</b>' : '<b>预留更省</b>') + '。交点约 241 万项、利用率 78.6%，正是两种单价之比 6.79/8.64。';
+}
+$('#byNs').addEventListener('input', by); by();
+S.notes($('#n-model'), {
+  c: [
+    ['快服务的代价', '每副本会话 32 → 16，每次调用 GPU 时间 1.125 → 1.5 B200·秒。'],
+    ['调用成本拆分', '普通输入、缓存创建、缓存读取、生成（思考 + 可见输出）。'],
+    ['缓存划算', 'n·p_u > p_w + (n−1)p_h；本例第二次访问就收回。'],
+    ['自建划算', 'N > F/(c − v)；c ≤ v 时按量永远更省。']
+  ],
+  p: [
+    ['思考少 90%，成本只少 28%', '输入和可见输出不变；截断重试还可能倒亏。'],
+    ['命中率按 token 加权', '请求命中率相同，读取占比可以是 10% 或 90%。'],
+    ['为缓存多等值不值', '命中省 450 ms，多排队 180 ms，净赚 270 ms。'],
+    ['decode 加速有上限', '9.4 ms 的输入处理与上下文重建不受影响，两倍只得 1.46 倍。']
+  ]
+});
+
+/* ---------- 恢复树 ---------- */
+function rc() {
+  var p0 = +$('#rcPs').value / 100, fr = +$('#rcFs').value / 100, rr = +$('#rcRs').value / 100;
+  $('#rcP').textContent = Math.round(p0 * 100) + '%'; $('#rcF').textContent = Math.round(fr * 100) + '%'; $('#rcR').textContent = Math.round(rr * 100) + '%';
+  var fail = 1 - p0, toRepair = fail * fr, toUp = fail * (1 - fr);
+  var rows = [
+    ['首次成功', p0, 0.010, 10, true],
+    ['首次 → 修复成功', toRepair * rr, 0.016, 14, true],
+    ['首次 → 修复 → 升级成功', toRepair * (1 - rr) * 0.98, 0.046, 22, true],
+    ['首次 → 修复 → 升级失败', toRepair * (1 - rr) * 0.02, 0.046, 22, false],
+    ['首次 → 升级成功', toUp * 0.98, 0.040, 18, true],
+    ['首次 → 升级失败', toUp * 0.02, 0.040, 18, false]
+  ];
+  var html = '<thead><tr><th>路径</th><th>概率</th><th>完整成本</th><th>时间</th><th>按时通过</th></tr></thead><tbody>';
+  var cost = 0, succ = 0, ont = 0;
+  rows.forEach(function (r) {
+    cost += r[1] * r[2]; if (r[4]) succ += r[1]; var od = r[4] && r[3] <= 20; if (od) ont += r[1];
+    html += '<tr' + (od ? ' class="on"' : '') + '><td>' + r[0] + '</td><td>' + S.f(r[1], 5) + '</td><td>' + r[2].toFixed(3) + '</td><td>' + r[3] + ' s</td><td>' + (od ? '是' : '否') + '</td></tr>';
+  });
+  $('#rcT').innerHTML = html + '</tbody>';
+  $('#rcS').textContent = S.pct(succ, 1); $('#rcD').textContent = S.pct(ont, 1);
+  $('#rcC').textContent = S.f(cost / succ, 4) + ' 美元'; $('#rcCD').textContent = S.f(cost / ont, 4) + ' 美元';
+}
+['rcPs', 'rcFs', 'rcRs'].forEach(function (id) { $('#' + id).addEventListener('input', rc); }); rc();
+S.guess($('#rcG'), { q: '加上局部修复和升级后，1000 项任务约花 14.6 美元、约 950 项按时成功。每个按时成功任务多少美元？', unit: '美元', ans: 0.0153, fmt: function (x) { return S.f(x, 4); }, why: '原书例 11-8：14.6/950 ≈ 0.0153。只做首次尝试是 10/800 = 0.0125，但成功率只有 80%；恢复把成功率提到 99.7%，其中约 4.7% 要到 22 秒才完成、超过 20 秒期限，花了钱却不计入按时完成数。' });
+S.notes($('#n-recover'), {
+  c: [
+    ['去重 vs 幂等', '消息送两次靠去重；真执行两次要靠持久化结果和幂等协议。'],
+    ['持久性语义', '页缓存 / 本地 fsync / 云端确认，保证的故障范围不同。'],
+    ['连续保存位置', '第二轮上传失败、第三轮成功时，云端不能跳到第三轮。'],
+    ['成功任务成本', 'C_all / N_q：失败尝试的支出也在分子里。']
+  ],
+  p: [
+    ['保存频率是取舍', '逐个提交多 1 s、最多重做 0.2 s；每 10 个多 0.28 s、最多重做 2 s。'],
+    ['外部操作撤不回', '快照恢复后先查询提交状态。'],
+    ['恢复提升成功率也提高单位成本', '80% → 99.7%，但有 4.7% 超期。'],
+    ['模型变快会暴露准备时间', '冷路径 2.7 s 原本藏在 6 s 生成里，生成降到 1 s 就要多等 1.7 s。']
+  ]
+});
+S.notes($('#n-plan'), {
+  c: [
+    ['筛选顺序', '先按期限排除，再按容量排除，最后比成本。'],
+    ['模型费占 98%', '每轮重建的收益主要在容量不在费用。'],
+    ['时间表验证', '每轮工具 10 核 + 准备 1 核，环境最多约 90 个、180 GiB；模型 180 次 / 192 槽。']
+  ],
+  p: [
+    ['只加 CPU 无效', '工具降到零，普通服务仍要 27 s。'],
+    ['期限决定能不能修复', '21 s + 4 s = 25 s，期限放宽到 25 s 修复才有用。'],
+    ['盈亏点 2.16 s', '模型继续加速后要重新比较保留与重建。']
+  ]
+});
+S.notes($('#n-back'), {
+  c: [
+    ['① 内存先不够', '工具大部分时间在等模型，CPU 闲着而环境占着内存：N̄ = λT̄ = 300 个、600 GiB。每轮重建把面积从 60 降到 18 GiB·秒、平台降到 180 GiB；暂停只有在等待以小时计时才值（9 秒等待正好被 8+1 秒吃满）。'],
+    ['② 各项何时划算', '只加生成卡上限 1.9 倍、吞吐要到 1.38 倍才省钱；压缩思考看它占成本多少（少 90% 只省 28%）；缓存第二次访问就回本；贵一倍的模型在命中率 79.5% 以上反而更省；自建在利用率超过两种单价之比（78.6%）时更省。'],
+    ['③ 成功任务成本', '全部支出 ÷ 按时成功数：恢复树把成功率从 80% 提到 99.7%，按时成功每项从 0.0125 涨到 0.0153 美元；设计题最终选“快速服务 + 每轮重建 + 12 副本”，每千项按时成功 9.07 美元，且是唯一装得下的方案。']
+  ],
+  p: [
+    ['方法', '把每项资源换算成“到达率 × 每任务需求”，再沿任务时间线看谁在等、谁占着。'],
+    ['下一篇', '把执行位置扩到端、边、云。']
+  ],
+  ph: '一句话'
+});

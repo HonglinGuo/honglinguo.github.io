@@ -1,0 +1,248 @@
+---
+title: 智能体设计模式：学习笔记
+desc: 开源书《Agentic Design Patterns 智能体设计模式》（Antonio Gulli 著）的七篇互动学习笔记：21 个模式的地图、闪卡复习、按问题找模式的选择器、易混模式索引，以及原书结论里的模式组合示例。
+kicker: <span>技术学习</span><span>系列 · 共 7 篇</span><span>21 个模式 + 附录</span><span>可当复习工具用</span>
+h1: 21 个模式，<em>一张地图</em>
+lead: 原书把构建智能体的常见难题整理成 21 个可复用的设计模式，作用类似传统编程里的软件设计模式。这个系列把它们按主题重新分成 7 篇；这一页是总入口，也是复习工具：先看地图，再用闪卡自测，遇到实际问题时用选择器反查该用哪个模式。
+credit: 原书版税全部捐给救助儿童会（Save the Children）；GitHub 上的中文翻译版开源。本系列不复述原书的 LangChain / ADK / CrewAI 代码，而是用统一格式的“模式卡”加小实验讲清每个模式；建议对照原书阅读。
+---
+<style>
+.howto { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.howto div { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; }
+.howto b { display: block; font-size: 17px; margin-bottom: 4px; }
+.howto p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+@media (max-width: 760px) { .howto { grid-template-columns: minmax(0, 1fr); } }
+.pmap { margin-top: 12px; }
+.pmap h4 { margin: 18px 0 8px; font-size: 16px; color: var(--ink-2); }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.pgrid a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; color: inherit; text-decoration: none; }
+.pgrid a:hover { border-color: var(--s1); }
+.pgrid a.hit { border-color: var(--s2); box-shadow: 0 0 0 2px var(--s2-soft); }
+.pgrid b { font-family: var(--f-num); color: var(--s1); font-size: 14px; }
+.pgrid strong { display: block; font-size: 17px; margin: 2px 0 4px; }
+.pgrid span { font-size: 14px; color: var(--ink-2); line-height: 1.55; display: block; }
+.flash { max-width: 680px; margin: 0 auto; }
+.flash .card { min-height: 190px; background: var(--panel); border: 1px solid var(--hair); border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; justify-content: center; }
+.flash .front { font-size: 18px; line-height: 1.7; color: var(--ink); }
+.flash .back { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--hair); font-size: 16px; color: var(--ink-2); }
+.flash .back strong { font-size: 20px; color: var(--s1); }
+.flash .meta2 { display: flex; justify-content: space-between; font-size: 14px; color: var(--ink-3); margin-top: 10px; flex-wrap: wrap; gap: 8px; }
+.sit { display: flex; flex-wrap: wrap; gap: 8px; }
+.sit button[aria-pressed="true"] { background: var(--s1); color: #fff; border-color: var(--s1); }
+.reco { margin-top: 14px; display: grid; gap: 8px; }
+.reco div { border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 8px 12px; background: var(--panel); font-size: 15px; }
+.reco div b { font-size: 16px; }
+.reco div em { font-style: normal; color: var(--ink-3); }
+.cflist { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.cflist li { padding: 10px 12px; border: 1px dashed var(--s2); border-radius: 8px; font-size: 15px; background: color-mix(in srgb, var(--s2-soft) 30%, transparent); }
+.cflist li a { color: var(--s2); font-weight: 600; }
+</style>
+===BODY===
+<section class="part" id="use">
+  <div class="part-head"><h2>这个系列怎么用</h2><span class="meta">三种用法</span></div>
+  <div class="howto">
+    <div><b>按篇读</b><p>每篇开头有“读完应该能回答的三个问题”，每个模式一张统一格式的模式卡（问题 / 做法 / 何时用 / 代价 / 相关），配一个小实验，节末“记下来”可以遮住解释自测，篇末回扣三问。</p></div>
+    <div><b>闪卡复习</b><p>下面的闪卡只给出“遇到了什么问题”，你先说出模式名再翻面。没想起来的卡会更快再出现，记录只存在你自己的浏览器里。</p></div>
+    <div><b>按问题反查</b><p>做项目时遇到具体困难，用“选择器”勾选症状，得到原书对应模式和所在篇目。易混的模式单独列了辨析索引。</p></div>
+  </div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>21 个模式的地图</h2><span class="meta">点卡片进入对应篇目</span></div>
+  <div class="sec-lede">
+    <p>原书按“核心模式、认知机制、容错与扩展、高级架构”四部分编排，相关的模式隔得比较远（反思在第 4 章，推理技术在第 17 章；工具在第 5 章，MCP 在第 10 章）。这个系列按主题重新组合，两种分法可以切换对照。</p>
+  </div>
+  <div class="seg" id="mapS"><button data-v="page" aria-pressed="true">按本系列七篇</button><button data-v="part">按原书四部分</button></div>
+  <div class="pmap" id="pmap"></div>
+</section>
+
+<section class="part" id="flash">
+  <div class="part-head"><h2>闪卡：看到问题，说出模式</h2><span class="meta">卡面取自各章“速览”的问题背景</span></div>
+  <div class="flash">
+    <div class="card"><div class="front" id="fcF"></div><div class="back" id="fcB" hidden></div></div>
+    <div class="ctrls" style="margin-top:12px"><button class="btn pri" type="button" id="fcShow">翻面</button><button class="btn" type="button" id="fcOk" disabled>想起来了</button><button class="btn" type="button" id="fcNo" disabled>没想起来</button><button class="btn" type="button" id="fcReset">清空记录</button></div>
+    <div class="meta2"><span id="fcPos"></span><span id="fcStat"></span></div>
+  </div>
+</section>
+
+<section class="part" id="chooser">
+  <div class="part-head"><h2>选择器：我遇到了……</h2><span class="meta">依据各章“实践建议”整理</span></div>
+  <div class="sec-lede">
+    <p>勾选你遇到的情况（可多选），下方列出原书建议的模式。模式很少单独使用，勾选多项时会把它们合在一起列出。</p>
+  </div>
+  <div class="sit" id="sit"></div>
+  <div class="reco" id="reco"></div>
+</section>
+
+<section class="part" id="combo">
+  <div class="part-head"><h2>原书结论：模式要组合起来用</h2><span class="meta">原书“结论”</span></div>
+  <div class="sec-lede">
+    <p>原书结论把模式归纳成四类核心能力：<strong>核心执行与任务分解</strong>（链、路由、并行、规划）、<strong>与外部环境交互</strong>（工具、RAG）、<strong>状态、学习与自我改进</strong>（记忆、反思与自我纠正、学习与适应）、<strong>协作与通信</strong>（多智能体、A2A、MCP）。它强调真正的力量来自组合，并用一个“自主 AI 研究助手”说明至少五个模式如何编织在一起。</p>
+    <p class="go">逐步看这个组合。</p>
+  </div>
+  <div class="lab">
+    <div id="cbStep"></div>
+    <div id="cbBody"></div>
+  </div>
+  <div class="sec-lede" style="margin-top:20px">
+    <p>原书对未来的展望有三点：更强的<strong>自主性与推理</strong>，从“人在环中”（智能体是副驾驶）走向“人在环上”（只在完成或出现关键异常时汇报）；<strong>生态与标准化</strong>，出现部署、发现、编排“智能体即服务”的开放市场，MCP 和 A2A 背后的原则成为交换上下文、目标和能力的行业标准；以及越发关键的<strong>安全、对齐与稳健性</strong>：如何保证智能体的学习不偏离初衷、如何抵御对抗攻击。原书说这需要一套新的“安全模式”和工程学科。</p>
+  </div>
+</section>
+
+<section class="part" id="confuse">
+  <div class="part-head"><h2>易混模式辨析索引</h2><span class="meta">散落在各篇里的对比框</span></div>
+  <ul class="cflist">
+    <li><a href="../2026-10-16-adp-4/#ltm">记忆管理 vs RAG</a>：都用语义检索；区别在谁写入。</li>
+    <li><a href="../2026-10-16-adp-4/#goal">目标监控 vs 反思 vs 规划</a>：到哪了 / 哪里不好 / 怎么走。</li>
+    <li><a href="../2026-10-16-adp-5/#eng">护栏 vs 异常处理</a>：行为不当 vs 出了故障。</li>
+    <li><a href="../2026-10-16-adp-5/#contract">反思 vs 目标监控 vs 评估与监控</a>：三种“检查”的范围与时机。</li>
+    <li><a href="../2026-10-16-adp-6/#adk">多智能体协作 vs A2A</a>：架构模式 vs 通信协议。</li>
+    <li><a href="../2026-10-16-adp-6/#prio">路由 vs 资源感知 vs 优先级</a>：交给谁 / 花多少 / 先做哪个。</li>
+    <li><a href="../2026-10-16-adp-1/#mix">提示词链 vs 规划</a>：步骤写死 vs 动态生成。</li>
+    <li><a href="../2026-10-16-adp-2/#tech">反思 vs 自我纠正</a>：工作流模式 vs 推理技术。</li>
+    <li><a href="../2026-10-16-adp-3/#map">工具 vs MCP vs RAG vs A2A</a>：各自连接哪两端。</li>
+    <li><a href="../2026-10-16-adp-7/#prompt">角色提示 vs 用户画像；自一致性 vs 思维树</a>。</li>
+  </ul>
+  <p class="xref">同一领域的另一个学习系列，侧重设计原理和工程细节：<a href="../2026-10-16-agent/">深入理解 AI Agent（十篇）</a>。两个系列可以交叉读：这边是“模式目录”，那边是“原理与实践”。</p>
+</section>
+
+<section class="part" id="all">
+  <div class="part-head"><h2>全系列速记</h2><span class="meta">每个模式一句话</span></div>
+  <div class="notes" id="n-all"></div>
+</section>
+===SCRIPT===
+var P = [
+  [1, '提示词链', 'Prompt Chaining', 1, 1, '多约束、多阶段的任务塞进一个提示词，模型忽略指令、偏离上下文、错误传播。', '拆成顺序子任务，上一步输出作为下一步输入，步骤间用结构化格式并插入校验。'],
+  [2, '路由', 'Routing', 1, 1, '输入五花八门，固定的线性流程无法为不同情况选择合适的工具或子流程。', '先分析意图或状态，再把控制流导向最合适的分支；LLM、嵌入、规则、分类器四种实现。'],
+  [3, '并行化', 'Parallelization', 1, 1, '多个互不依赖的外部调用排队执行，总耗时等于各步之和。', '并发执行独立子任务，在汇聚点合并结果。'],
+  [4, '反思', 'Reflection', 1, 2, '初稿常常不准确、不完整，工作流里没有发现并修正自身错误的环节。', '执行 → 评审 → 优化 → 迭代，最好分成生产者和评审者两个角色。'],
+  [5, '工具使用', 'Tool Use', 1, 3, '模型与外部世界断开：知识静态，取不到实时数据，也不能执行操作。', '向模型描述工具，模型生成结构化调用，由框架执行并返回结果。'],
+  [6, '规划', 'Planning', 1, 2, '复杂目标无法一步完成，缺少把高层目标拆成可执行步骤、处理依赖的方法。', '先生成计划再执行，遇阻时重新规划；方法已知时改用固定工作流。'],
+  [7, '多智能体协作', 'Multi-Agent Collaboration', 1, 6, '多领域任务超出单个智能体的技能和工具范围。', '分解给专门智能体，按交接、并行、层次、辩论、批评者等形式协作。'],
+  [8, '记忆管理', 'Memory Management', 2, 4, '没有记忆就无法维持对话上下文、跟踪多步任务或个性化。', '短期记忆在上下文窗口内，长期记忆在外部存储并按需检索。'],
+  [9, '学习与适应', 'Learning and Adaptation', 2, 4, '预编程逻辑应付不了未预料到的新情况，无法从经验中改进。', '集成学习机制：强化学习、偏好优化、SICA 自我修改、进化搜索。'],
+  [10, 'MCP', 'Model Context Protocol', 2, 3, '每接一个工具都要定制集成，不可复用、难以扩展。', '开放的客户端—服务器协议，服务器暴露资源 / 工具 / 提示，客户端可动态发现。'],
+  [11, '目标设定与监控', 'Goal Setting and Monitoring', 2, 4, '没有明确目标就只能被动反应，也无法判断行动是否成功。', '定义 SMART 目标和成功标准，持续监控进度，偏离时纠正或升级。'],
+  [12, '异常处理与恢复', 'Exception Handling and Recovery', 3, 5, '工具故障、网络问题、无效数据不可避免，智能体脆弱易崩。', '检测 → 处理（重试、回退、降级、通知）→ 恢复（回滚、自我纠正、升级）。'],
+  [13, '人机协同', 'Human-in-the-Loop', 3, 5, '高风险或需要细致判断的决策，完全交给 AI 后果严重。', '在关键节点安排人类监督、审批、反馈和干预，约定升级策略。'],
+  [14, '知识检索（RAG）', 'Knowledge Retrieval', 3, 3, '模型知识过时、不含私有领域数据，回答缺乏依据。', '先检索相关片段增强提示，再生成可引用的回答；可演进为 Agentic RAG。'],
+  [15, '智能体间通信（A2A）', 'Inter-Agent Communication', 4, 3, '不同框架做的智能体没有共同语言，无法互相委托任务。', '基于 HTTP 的开放协议：Agent 卡片发现能力，异步任务 + 四种交互机制。'],
+  [16, '资源感知优化', 'Resource-Aware Optimization', 4, 6, '每个任务都用同一个贵模型，成本和延迟失控。', '路由器按复杂度选模型或工具，批评者评估并改进路由，不可用时回退。'],
+  [17, '推理技术', 'Reasoning Techniques', 4, 2, '复杂问题需要分解、多步逻辑和策略，一次性回答容易出错。', 'CoT、ToT、自我纠正、PAL、ReAct、辩论等：推理时多花算力。'],
+  [18, '护栏 / 安全模式', 'Guardrails / Safety Patterns', 4, 5, '自主智能体可能输出有害内容、被越狱、越权使用工具。', '在输入、提示、工具、输出、外部审核、人工等多层设防。'],
+  [19, '评估与监控', 'Evaluation and Monitoring', 4, 5, '非确定性系统无法用传统测试保证质量，上线后还会漂移。', '定义准确性、延迟、token 等指标，评估轨迹，用 LLM 评判，持续监控。'],
+  [20, '优先级排序', 'Prioritization', 4, 6, '任务多、目标冲突、资源有限，不知道先做什么。', '按紧急性、重要性、依赖等标准评估排序，并随环境动态重排。'],
+  [21, '探索与发现', 'Exploration and Discovery', 4, 4, '静态知识应付不了开放式问题，只能优化已知而发现不了未知。', '多智能体模拟科学方法：生成假设、评审、排名、进化。']
+];
+var PAGE = { 1: '01 流程编排', 2: '02 反思与规划', 3: '03 连接外部', 4: '04 记忆与成长', 5: '05 稳健可信', 6: '06 协作与调度' };
+var PART = { 1: '第一部分 核心模式', 2: '第二部分 认知机制', 3: '第三部分 容错与扩展', 4: '第四部分 高级架构' };
+function link(p) { return '../2026-10-16-adp-' + p[4] + '/'; }
+var hits = [];
+function drawMap(mode) {
+  var box = $('#pmap'); box.innerHTML = '';
+  var groups = mode === 'page' ? PAGE : PART, idx = mode === 'page' ? 4 : 3;
+  Object.keys(groups).forEach(function (g) {
+    h('h4', { text: groups[g] }, box);
+    var grid = h('div', { class: 'pgrid' }, box);
+    P.filter(function (p) { return String(p[idx]) === g; }).forEach(function (p) {
+      h('a', { href: link(p), class: hits.indexOf(p[0]) >= 0 ? 'hit' : '', html: '<b>第 ' + p[0] + ' 章' + (mode === 'part' ? ' · 本系列 0' + p[4] : '') + '</b><strong>' + p[1] + '</strong><span>' + p[2] + '</span>' }, grid);
+    });
+  });
+  if (mode === 'page') { h('h4', { text: '07 附录速览' }, box); h('div', { class: 'pgrid', html: '<a href="../2026-10-16-adp-7/"><b>附录 A–G</b><strong>提示、界面、框架、编码智能体</strong><span>Prompting · GUI · Frameworks · CLI · Coding Agents</span></a>' }, box); }
+}
+var mapMode = 'page';
+S.seg($('#mapS'), function (v) { mapMode = v; drawMap(v); });
+drawMap('page');
+
+/* ---------- 闪卡 ---------- */
+var FK = 'adp-flash';
+function load() { try { return JSON.parse(S.store.get(FK) || '{}'); } catch (e) { return {}; } }
+var st = load();
+var deck = P.map(function (p) { return p[0]; });
+var r = S.rng(Date.now() % 100000);
+for (var i = deck.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+function weak(id) { var x = st[id] || {}; return (x.no || 0) - (x.ok || 0); }
+deck.sort(function (a, b) { return weak(b) - weak(a); });
+var seen = 0;
+function card() {
+  var p = P[deck[0] - 1];
+  $('#fcF').textContent = p[5];
+  $('#fcB').innerHTML = '<strong>' + p[1] + '</strong>（' + p[2] + '，原书第 ' + p[0] + ' 章）<br>' + p[6] + ' <a href="' + link(p) + '">去读这一篇</a>';
+  $('#fcB').hidden = true; $('#fcShow').disabled = false; $('#fcOk').disabled = true; $('#fcNo').disabled = true;
+  var ok = 0, no = 0; Object.keys(st).forEach(function (k) { ok += st[k].ok || 0; no += st[k].no || 0; });
+  $('#fcPos').textContent = '本轮已翻 ' + seen + ' 张';
+  $('#fcStat').textContent = '累计：想起来 ' + ok + ' 次，没想起来 ' + no + ' 次';
+}
+function mark(k) {
+  var id = deck.shift(); st[id] = st[id] || {}; st[id][k] = (st[id][k] || 0) + 1;
+  S.store.set(FK, JSON.stringify(st));
+  if (k === 'no') deck.splice(Math.min(3, deck.length), 0, id); else deck.push(id);
+  seen++; card();
+}
+$('#fcShow').addEventListener('click', function () { $('#fcB').hidden = false; $('#fcShow').disabled = true; $('#fcOk').disabled = false; $('#fcNo').disabled = false; });
+$('#fcOk').addEventListener('click', function () { mark('ok'); });
+$('#fcNo').addEventListener('click', function () { mark('no'); });
+$('#fcReset').addEventListener('click', function () { st = {}; S.store.set(FK, '{}'); seen = 0; card(); });
+card();
+
+/* ---------- 选择器 ---------- */
+var SIT = [
+  ['一个提示词搞不定，任务有好几个阶段', [1, 6]],
+  ['请求类型很多，要分给不同的处理流程', [2]],
+  ['好几个外部调用在排队，互不依赖', [3]],
+  ['质量和准确性比速度、成本更重要', [4, 19]],
+  ['需要实时数据、私有数据，或要真正执行操作', [5, 14]],
+  ['工具越来越多，来自不同团队，还可能换模型', [10]],
+  ['要跨会话记住用户和上下文', [8]],
+  ['环境在变，希望它越用越好', [9]],
+  ['要自主完成多步任务，并知道是否达标', [11]],
+  ['依赖的服务时好时坏', [12]],
+  ['涉及金钱、安全、法律等高风险决策', [13, 18]],
+  ['面向公众，担心有害输出或被越狱', [18]],
+  ['不同框架的智能体需要互相委托任务', [15, 7]],
+  ['单个智能体的技能或工具不够用', [7]],
+  ['预算紧或对延迟敏感', [16]],
+  ['任务多、目标冲突，不知道先做哪个', [20]],
+  ['问题需要多步推理，过程和答案同样重要', [17]],
+  ['开放式问题，要发现新东西而不是优化已知', [21]],
+  ['上线后担心效果悄悄变差', [19]]
+];
+var picked = [];
+SIT.forEach(function (s, k) {
+  var b = h('button', { class: 'btn', type: 'button', 'aria-pressed': 'false', text: s[0] }, $('#sit'));
+  b.addEventListener('click', function () {
+    var on = b.getAttribute('aria-pressed') !== 'true';
+    b.setAttribute('aria-pressed', String(on));
+    if (on) picked.push(k); else picked.splice(picked.indexOf(k), 1);
+    reco();
+  });
+});
+function reco() {
+  var ids = [];
+  picked.forEach(function (k) { SIT[k][1].forEach(function (x) { if (ids.indexOf(x) < 0) ids.push(x); }); });
+  hits = ids; drawMap(mapMode);
+  $('#reco').innerHTML = ids.length ? ids.sort(function (a, b) { return a - b; }).map(function (n) {
+    var p = P[n - 1];
+    return '<div><b><a href="' + link(p) + '">' + p[1] + '</a></b> <em>原书第 ' + p[0] + ' 章 · 本系列 0' + p[4] + '</em><br>' + p[6] + '</div>';
+  }).join('') : '<p class="cap">还没有勾选。勾选后，上面地图里对应的模式卡也会高亮。</p>';
+}
+reco();
+
+/* ---------- 组合 ---------- */
+var CB = [
+  ['规划', '规划器智能体接到“分析量子计算对网络安全格局的影响”，拆成多步研究计划：基础概念、常见加密算法、量子威胁的专家分析、综合成报告。'],
+  ['工具使用', '计划的每一步触发 Google 搜索或 vertex_ai_search；结构化数据则查 ArXiv、金融数据 API。'],
+  ['多智能体协作', '“研究员”执行搜索、收集原始信息，把摘要和来源链接交给“撰写者”，撰写者以初始计划为大纲起草。'],
+  ['反思', '“批评者”审查草稿中的逻辑不一致、事实错误、表达不清；撰写者据此自我纠正，产出更好的终稿。'],
+  ['记忆管理', '贯穿全程：保存研究计划状态、研究员收集的信息、撰写者的草稿和批评者的反馈，保持多步骤、多智能体流程的连贯。']
+];
+S.stepper($('#cbStep'), CB.length, function (i) {
+  $('#cbBody').innerHTML = '<div class="card2" style="margin-top:12px"><h3>' + (i + 1) + '. ' + CB[i][0] + '</h3><p style="margin:0;font-size:16px;color:var(--ink-2);line-height:1.75">' + CB[i][1] + '</p></div>';
+}, CB.map(function (c) { return c[0]; }));
+
+/* ---------- 速记 ---------- */
+S.notes($('#n-all'), {
+  c: P.slice(0, 11).map(function (p) { return [p[0] + '. ' + p[1], p[6]]; }),
+  p: P.slice(11).map(function (p) { return [p[0] + '. ' + p[1], p[6]]; }),
+  ph: '模式（续）'
+});

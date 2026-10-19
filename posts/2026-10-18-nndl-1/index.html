@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>绪论：从规则到表示，再到大模型</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（一）：人工智能的四个时期与两大流派、机器学习的特征工程瓶颈、表示学习与语义鸿沟、局部表示和分布式表示、为什么深度必须配非线性、贡献度分配与端到端学习、四种网络结构与神经网络的六个发展阶段、全书五条主线。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.pipe { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 4px; }
+.pipe span { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); font-size: 15px; color: var(--ink-2); }
+.pipe span.man { border-color: var(--s2); background: var(--s2-soft); color: var(--ink); }
+.pipe span.auto { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.pipe i { font-style: normal; color: var(--ink-3); }
+.swatch { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.swatch button { font: inherit; display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); border-radius: 6px; padding: 6px 10px; cursor: pointer; color: var(--ink); }
+.swatch button i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--rule); }
+.swatch button[aria-pressed="true"] { border-color: var(--s1); box-shadow: inset 0 0 0 1px var(--s1); }
+.vecs { font-family: var(--f-num); font-size: 15px; line-height: 1.9; overflow-x: auto; }
+.vecs b { font-family: var(--f-sans); }
+.nnsvg { width: 100%; max-width: 420px; height: auto; display: block; margin: 8px 0; }
+.nnsvg circle { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.6; }
+.nnsvg circle.hi { fill: var(--s1-soft); stroke: var(--s1); }
+.nnsvg path, .nnsvg line { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+.nnsvg .red { stroke: var(--s2); stroke-width: 2; }
+.nnsvg .dash { stroke-dasharray: 4 3; }
+.nnsvg text { font-size: 15px; fill: var(--ink-2); font-family: var(--f-num); }
+.fac { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.fac span { padding: 4px 10px; border-radius: 999px; font-size: 15px; border: 1px solid var(--hair); color: var(--ink-3); }
+.fac span.on { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.lines5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+@media (max-width: 760px) { .lines5 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lines5 button { font: inherit; text-align: left; background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink); }
+.lines5 button small { display: block; color: var(--ink-3); font-size: 15px; }
+.lines5 button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.chips16 { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.chips16 a { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--hair); font-size: 15px; color: var(--ink-3); text-decoration: none; }
+.chips16 a.on { border-color: var(--s1); color: var(--ink); background: var(--s1-soft); }
+</style>
+</head>
+<body data-series="nndl-series" data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 01</span><span>对应原书第 1 章（第 3–26 页）</span><span>约 30 分钟</span></p>
+  <h1>智能从哪里来：<em>规则、知识、数据、规模</em></h1>
+  <p class="lead">第 1 章没有公式，它要回答一个问题：为什么这一轮人工智能的主角是深度学习，而深度学习的主角又是神经网络？原书的答案是一条链：人工智能的目标催生了机器学习，机器学习卡在“特征要靠人设计”，于是有了表示学习；深度学习用多层模型把表示自动学出来，而神经网络配上反向传播，最好地解决了多层模型里“功劳该算给谁”的问题。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" aria-current="page" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#era">四个时期</a><a href="#rep">特征与表示</a><a href="#dist">两种表示</a><a href="#deep">深度与非线性</a><a href="#cap">贡献度分配</a><a href="#nn">神经网络</a><a href="#map">全书主线</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>人工智能、机器学习、表示学习、深度学习、神经网络，这五个词之间是什么关系？</li>
+  <li>为什么“好的表示”这么重要？一层层堆叠线性变换为什么没用？</li>
+  <li>深度学习要解决的核心难题是什么？神经网络凭什么成为深度学习的主角？</li>
+</ol></div>
+
+<section class="part" id="era">
+  <div class="part-head"><h2>四个时期：每次都在回答“智能从哪里来”</h2><span class="meta">原书 1.1 节 · 第 3–8 页</span></div>
+  <div class="sec-lede">
+    <p>原书先给人工智能一个朴素的定义：<strong>让机器具有人类的智能</strong>。图灵 1950 年用“隔着墙问答，分不出是人还是机器”绕开了“智能”难以定义的问题；1956 年达特茅斯会议正式确立了这个学科。要通过图灵测试，机器得会理解语言、学习、记忆、推理、决策，于是 AI 分出了感知、学习、认知、行动与交互四大方向——最后一项就是今天的智能体。</p>
+    <p>接下来是这一章最值得记住的一个视角：<strong>按“主要依靠什么来实现智能”划分，AI 经历了推理期、知识期、学习期和大模型期</strong>。原书特意强调，后一个时期并不是彻底替代前一个，而是研究者对“智能来自哪里”的侧重不同。每次狂热之后往往是低谷，1974–1980 和 1987–1993 是两次主要的“AI 冬天”。</p>
+    <p>另一条线是流派之争。<strong>符号主义</strong>假设信息可以用符号表示、符号可以用显式规则操作，可解释性强，推理期和知识期的主角是它；<strong>连接主义</strong>认为认知是大量简单神经元构成的网络中的信息处理，表示能力和数据驱动能力强，但内部难以解释——神经网络就属于这一派。两者并不严格对立，今天的方向之一正是二者融合的<strong>神经符号</strong>模型。</p>
+    <p class="go">点一个时期，看它把智能放在哪里；再把几种方法分到对应的流派里。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四个时期：智能来自哪里</p>
+    <div class="era" id="eraB">
+      <button data-v="0" aria-pressed="true"><b>推理期</b><small>1956 起</small></button>
+      <button data-v="1" aria-pressed="false"><b>知识期</b><small>1970 年代起</small></button>
+      <button data-v="2" aria-pressed="false"><b>学习期</b><small>1980 后成热门</small></button>
+      <button data-v="3" aria-pressed="false"><b>大模型期</b><small>2018 起</small></button>
+    </div>
+    <div class="twocol" style="margin-top:14px">
+      <div class="read" style="min-width:200px"><div class="hl"><div class="v" id="eraSrc">规则</div><div class="k">智能主要来自</div></div></div>
+      <div><p class="note" id="eraTxt" style="margin:0"></p></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分类：符号主义、连接主义，还是神经符号</p>
+    <div id="sortSym"></div>
+  </div>
+  <div class="confuse"><h4>易混辨析：提示、上下文学习、提示学习</h4>
+    <p><b>提示（prompting）</b>：用自然语言描述任务，是一种使用方式。</p>
+    <p><b>上下文学习（in-context learning）</b>：模型只靠输入里的几个示例或说明完成任务适配，参数不变。</p>
+    <p><b>提示学习（Prompt Learning）</b>：把提示本身设计成<strong>可学习的参数化结构</strong>，要训练。原书第 7 页专门把这三个区分开。</p>
+    <p><b>大模型 vs 基础模型</b>：大模型强调规模，基础模型强调通用性和可迁移性，高度相关但不等同。<b>模型 vs 智能体</b>：模型是能力载体；智能体是模型 + 工具调用 + 外部记忆 + 规划执行 + 环境反馈组成的系统。</p>
+  </div>
+  <div class="notes" id="n-era"></div>
+</section>
+
+<section class="part" id="rep">
+  <div class="part-head"><h2>机器学习的瓶颈：特征要靠人设计</h2><span class="meta">原书 1.2–1.3 节 · 第 8–10 页</span></div>
+  <div class="sec-lede">
+    <p><strong>机器学习</strong>是从有限的观测数据中学（或者说“猜”）出一般规律，再用它预测未知数据。一个系统分训练和推断两段，中间的核心要求是<strong>泛化</strong>：不能只记住训练样本，在没见过的数据上也要稳定。</p>
+    <p>传统机器学习的流程是：数据预处理 → 特征提取（比如图像的边缘、SIFT，文本去停用词）→ 特征转换（PCA、LDA 降维）→ 预测。原书把只学最后一步的做法叫<strong>浅层学习</strong>，支持向量机、Logistic 回归、决策树都属于此类。实践中不同预测模型的性能相差不多，<strong>真正决定上限的是前三步的特征处理</strong>，而这几步大多要靠人的经验，于是很多机器学习问题变成了“特征工程”问题。</p>
+    <p>为什么特征这么难设计？原书用<strong>语义鸿沟</strong>来解释：同样是“车”的图片，颜色形状各不相同，像素层面的差异可能非常大，但人是在抽象的语义层面理解它们的。预测模型如果直接建在底层特征上，对模型的要求就太高了。<strong>表示学习</strong>就是让算法自动学到能反映高层语义的特征，它要回答两个问题：什么是好的表示？怎样学到好的表示？</p>
+    <p class="go">切换两种流程，看哪些步骤靠人、哪些步骤被一起学出来。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">传统机器学习 vs 深度学习的数据处理流程</p>
+    <div class="seg" id="pipeS"><button data-v="shallow" aria-pressed="true">传统机器学习（图 1.2）</button><button data-v="deep">深度学习（图 1.4）</button></div>
+    <div class="pipe" id="pipeB"></div>
+    <p class="legend2"><span><i class="b"></i>人工设计、分开进行</span><span><i class="a"></i>由模型自动学习、和最终任务一起优化</span></p>
+    <p class="cap" id="pipeW"></p>
+  </div>
+  <div class="notes" id="n-rep"></div>
+</section>
+
+<section class="part" id="dist">
+  <div class="part-head"><h2>局部表示和分布式表示</h2><span class="meta">原书 1.3.1 节 · 第 10–12 页</span></div>
+  <div class="sec-lede">
+    <p>“好的表示”没有明确标准，但原书给了三条：<strong>表示能力强</strong>（同样长的向量装更多信息）、<strong>让后续任务变简单</strong>（含更高层的语义）、<strong>有一般性</strong>（能迁移到别的任务）。</p>
+    <p>原书用颜色举例。一种做法是给每种颜色一个名字，用 one-hot 向量表示——这叫<strong>局部表示</strong>（离散表示、符号表示）。它解释性好，稀疏向量配线性模型算得很快；但维数高、来一种新颜色就要加一维，而且<strong>任何两种颜色的相似度都是 0</strong>，分不出“红色和中国红”比“红色和黑色”更像。另一种做法是用 RGB 三个数表示，叫<strong>分布式表示</strong>：低维稠密，三维就能表示所有颜色，新颜色不用加维，相似度直接能算。据不完全统计颜色命名已有 1300 多种，one-hot 就要 1300 多维。</p>
+    <p>神经网络常把高维的局部表示映射到低维的分布式表示空间，这个过程叫<strong>嵌入</strong>（Embedding），目标是让语义相近的对象在向量空间里也靠近。自然语言里 one-hot 和词嵌入的关系，就和颜色例子里的两种表示一样。</p>
+    <p class="go">点两种颜色，比较两种表示下的相似度；再试试“加一种新颜色”。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">表 1.1 的四种颜色（另加两种作对照，标“示意”）</p>
+    <div class="swatch" id="swB"></div>
+    <div class="vecs" id="swV"></div>
+    <div class="read"><div><div class="v" id="swOH">0</div><div class="k">one-hot 内积（相似度）</div></div><div class="hl"><div class="v" id="swRGB">0</div><div class="k">RGB 空间相似度 1 − 距离/√3</div></div><div class="warn"><div class="v" id="swDim">4</div><div class="k">one-hot 维数 vs RGB 3 维</div></div></div>
+    <div class="ctrls"><button class="btn" type="button" id="swAdd">加一种新颜色</button><button class="btn" type="button" id="swReset">恢复</button></div>
+    <p class="cap" id="swW">先选两种颜色。</p>
+  </div>
+  <div class="notes" id="n-dist"></div>
+</section>
+
+<section class="part" id="deep">
+  <div class="part-head"><h2>深度为什么必须配非线性</h2><span class="meta">原书 1.3.2、1.4 节 · 第 12–13 页</span></div>
+  <div class="sec-lede">
+    <p>要从底层特征得到高层语义表示，通常需要<strong>多步非线性转换</strong>。原书在这里点出一个很容易被忽略的事实：如果每层都只做线性变换，<strong>f(x) = W₁W₂⋯Wₙx 就等价于一次线性变换 Wx</strong>（W = W₁W₂⋯Wₙ），叠多少层表达能力都不会增加。所以层与层之间必须插入非线性激活函数，深层结构才真正有用——它能复用中间特征，让表示能力指数级增长。</p>
+    <p>原书对“深度”的定义也值得记住：<strong>原始数据经过非线性特征转换的次数</strong>；把系统看成有向图的话，就是从输入到输出的最长路径长度。</p>
+    <p>还要分清两组概念：<strong>表示学习回答“希望学到什么”，深度学习回答“怎样用多层可学习结构把它学出来”</strong>。传统的 PCA、LDA 也学特征，但准则是人定的、和最终模型分开学，学到的特征不一定帮得上最终任务；深度学习的优势在于表示和任务<strong>联合优化</strong>。</p>
+    <p class="go">把一张方格纸送过两层变换：不加激活时，两层总能合成一个矩阵；加了 ReLU 或 tanh，方格就被折弯了。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">两层变换下的方格纸（示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>第一层旋转角 <output id="dpA">35°</output></span><input type="range" id="dpAs" min="-90" max="90" value="35"></label>
+      <label class="ctl"><span>第二层剪切 <output id="dpS">0.6</output></span><input type="range" id="dpSs" min="-1.5" max="1.5" step="0.1" value="0.6"></label>
+    </div>
+    <div class="selrow"><span>层间激活</span><div class="seg" id="dpAct"><button data-v="lin" aria-pressed="true">无（线性）</button><button data-v="relu">ReLU</button><button data-v="tanh">tanh</button></div></div>
+    <div class="lab-split">
+      <div class="box" id="dpG"></div>
+      <div><p class="note" id="dpW" style="margin-top:6px"></p><div id="dpM"></div></div>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析：表示学习 vs 深度学习 vs 神经网络</h4>
+    <p><b>表示学习</b>是目标：学到有用的表示。它不必然是深度学习，PCA 也算一种特征学习。</p>
+    <p><b>深度学习</b>是手段：用多层可学习结构自动学出多层次表示，并和最终任务联合优化。它是一种<strong>方法范式</strong>。</p>
+    <p><b>神经网络</b>是载体：深度学习最成功、最常用的模型。深度学习也可以用别的深层模型（比如和概率图模型相关的深度生成模型）。</p>
+  </div>
+  <div class="notes" id="n-deep"></div>
+</section>
+
+<section class="part" id="cap">
+  <div class="part-head"><h2>贡献度分配：功劳该算给谁</h2><span class="meta">原书 1.4–1.4.1 节 · 第 13–15 页</span></div>
+  <div class="sec-lede">
+    <p>浅层学习只有一个预测函数，错了就改它。深度模型由很多层组件复合而成，最终输出错了，<strong>该调哪一层、调多少？</strong>这就是<strong>贡献度分配问题</strong>（Credit Assignment Problem，Minsky 1961 年提出，也译作信用分配、功劳分配）。原书用围棋举例：一盘棋下完只知道输赢，哪几步导致了胜负？</p>
+    <p>深度学习和强化学习都面临这种“延迟归因”：内部步骤拿不到即时的监督信号，只能依赖后面的整体反馈。区别在于深度学习通常有明确的监督目标，强化学习面对的是环境反馈下的序列决策。<strong>神经网络之所以成为深度学习的主角，主要原因是它能用误差反向传播比较好地解决贡献度分配。</strong></p>
+    <p>与此相关的是<strong>端到端学习</strong>：不分模块、不分阶段训练，直接优化任务的总体目标。传统的自然语言理解要分词、词性标注、句法分析、语义分析，语音识别要特征提取、声学模型、语言模型、解码。分模块有两个问题：各模块的优化目标和总体目标未必一致；<strong>前一步的错误会传给后面</strong>。不过原书也提醒，端到端不等于没有模块——实际系统常在端到端模型外再接检索、工具调用、规划，形成“深度模型 + 系统工程”。</p>
+    <p class="go">先估一下管线式系统的错误会累积成什么样（数字为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">管线的错误传播（示意）</p>
+    <div id="cpG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>串联模块数 <output id="cpN">5</output></span><input type="range" id="cpNs" min="1" max="10" value="5"></label>
+      <label class="ctl"><span>每个模块单独的准确率 <output id="cpP">95%</output></span><input type="range" id="cpPs" min="80" max="99.5" step="0.5" value="95"></label>
+    </div>
+    <div id="cpBars" class="wide"></div>
+    <p class="cap" id="cpW"></p>
+  </div>
+  <div class="notes" id="n-cap"></div>
+</section>
+
+<section class="part" id="nn">
+  <div class="part-head"><h2>神经网络：四种结构、六个阶段</h2><span class="meta">原书 1.5 节 · 第 15–21 页</span></div>
+  <div class="sec-lede">
+    <p>人脑有近 860 亿个神经元，每个和上千个突触相连。神经元有兴奋和抑制两种状态，输入信号总和超过阈值就兴奋，产生电脉冲沿轴突传出。原书强调<strong>关键不在单个神经元，而在连接以及连接如何随经验改变</strong>——突触强度可变，叫可塑性。1949 年 Hebb 提出：两个神经元经常共同激活，它们的连接就加强（赫布规则），这影响了后来“通过调整连接权重来学习”的想法。</p>
+    <p>人工神经网络里，每个节点把输入按连接权重加权求和，再过一个激活函数得到新的活性值。原书在全书里把它<strong>主要当作一个可学习的函数</strong>来用：两层网络就能逼近任意函数，“网络容量”指它塑造复杂函数的能力。按信息怎么组织，常见结构有四种，实际网络大多是复合的。</p>
+    <p>神经网络的历史不是一路上升。原书把它分成六个阶段，并指出每次转折主要来自三个因素：<strong>模型结构是否足够有表达力、学习算法是否可行、计算与数据条件是否成熟</strong>。</p>
+    <p class="go">先切换四种结构看信息怎么流；再一步步走过六个阶段，看每次是哪个因素变了。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">四种网络结构（图 1.6）</p>
+      <div class="seg" id="arcS"><button data-v="ff" aria-pressed="true">前馈</button><button data-v="mem">记忆</button><button data-v="graph">图</button><button data-v="att">注意力</button></div>
+      <svg class="nnsvg" id="arcG" viewBox="0 0 420 190" role="img" aria-label="网络结构示意"></svg>
+      <p class="cap" id="arcW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">六个发展阶段</p>
+      <div id="hisS"></div>
+      <h3 id="hisT" style="margin:12px 0 4px;font-size:19px"></h3>
+      <div class="fac" id="hisF"><span data-f="0">表达力</span><span data-f="1">学习算法</span><span data-f="2">计算与数据</span></div>
+      <p class="note" id="hisW" style="margin:4px 0 0"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-nn"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>全书的五条主线</h2><span class="meta">原书 1.6–1.7 节 · 第 21–24 页</span></div>
+  <div class="sec-lede">
+    <p>原书说，全书的内容分布在三个互相联系的知识域里：<strong>机器学习</strong>提供问题定义和方法语言（模型、学习准则、优化算法三要素）；<strong>神经网络</strong>是主线，是一族归纳偏置各不相同、可组合可扩展的非线性函数；<strong>概率图模型</strong>提供另一种视角，强调随机变量之间的依赖关系，核心是模型表示、推断、学习三个问题。深度生成模型恰好在这几个知识域的交汇处。</p>
+    <p>如果按阅读路径而不是知识分类来看，全书交织着五条主线。点一条，看它覆盖哪几章——这也是这个系列的阅读地图。</p>
+    <p>深度学习框架（PyTorch、TensorFlow、JAX、飞桨、MindSpore）原书只简单介绍，并提醒<strong>重点不是记 API，而是几个共同的抽象：张量、计算图、自动微分、面向硬件加速的大规模数值计算</strong>。原书的算法都用与框架无关的数学形式写，这个系列的小实验也都是在浏览器里从零算的。</p>
+    <p class="go">点一条主线。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">五条主线 → 章节</p>
+    <div class="lines5" id="lnB">
+      <button data-v="0" aria-pressed="true">机器学习基础线<small>模型、准则、优化</small></button>
+      <button data-v="1" aria-pressed="false">神经网络结构线<small>如何组织信息</small></button>
+      <button data-v="2" aria-pressed="false">概率与生成线<small>概率建模与生成</small></button>
+      <button data-v="3" aria-pressed="false">决策与交互线<small>在环境中学习行动</small></button>
+      <button data-v="4" aria-pressed="false">现代基础模型线<small>Transformer、LLM、智能体</small></button>
+    </div>
+    <div class="chips16" id="lnC"></div>
+    <p class="cap" id="lnW"></p>
+  </div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="lab">
+    <p class="lab-t">小测：原书习题里的几个判断</p>
+    <div id="qz"></div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-18-nndl-2/"><small>下一篇</small><span>02 · 机器学习概述</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 四个时期 ---------- */
+var ERAS = [
+  ['规则', '达特茅斯会议后的黄金时期。研究者把人的经验归纳成逻辑规则写进程序，做出了几何定理证明器、语言翻译器。乐观到认为“二十年内机器能完成人能做的一切工作”，但规则过于简单、难度被低估，随后进入低谷。'],
+  ['知识', '研究者意识到知识的重要性，出现了专家系统：<strong>知识库 + 推理机</strong>。三要素是领域专家级知识、模拟专家思维、达到专家水平；主要工具是 Prolog。'],
+  ['数据', '语言理解、图像理解这类能力，人自己都说不清背后的“知识”，没法写成规则。于是转向让计算机从数据中自己学习。2010 年代中后期，深度神经网络取代线性模型成为主要的机器学习模型。'],
+  ['规模', '模型、数据、计算量同步扩大，性能持续提升——<strong>规模法则</strong>；后来扩展到推理阶段（推理时多花计算，比如生成更长的推理链）。Transformer 加自监督预训练催生了大语言模型，范式从“大量标注 + 任务工程”转向“预训练 + 少量示例或提示”，系统从静态预测走向交互式推理与行动。']
+];
+function era(i) {
+  $('#eraSrc').textContent = ERAS[i][0];
+  $('#eraTxt').innerHTML = ERAS[i][1];
+}
+S.seg($('#eraB'), function (v) { era(+v); }); era(0);
+S.sortGame($('#sortSym'), {
+  bins: [{ k: 's', t: '符号主义' }, { k: 'c', t: '连接主义' }, { k: 'n', t: '神经符号' }],
+  items: [
+    { t: '专家系统', k: 's', why: '知识库 + 推理机，用显式规则操作符号。' },
+    { t: 'Prolog 程序', k: 's', why: '基于逻辑的编程语言，知识期的主要工具。' },
+    { t: '感知器', k: 'c', why: '由神经元和可学习的连接权重构成。' },
+    { t: 'Transformer', k: 'c', why: '神经网络，属于连接主义模型。' },
+    { t: 'Hopfield 网络', k: 'c', why: '1983 年提出的联想记忆网络。' },
+    { t: '几何定理证明器', k: 's', why: '推理期的典型系统，基于逻辑规则。' },
+    { t: '用逻辑规则约束网络输出', k: 'n', why: '原书举的神经符号例子之一，另外两个是用网络学习符号结构、在网络上做可微推理。' },
+    { t: '在神经网络上做可微推理', k: 'n', why: '把推理过程变成可求导的网络计算，兼顾学习能力和可解释性。' }
+  ]
+});
+S.notes($('#n-era'), {
+  c: [
+    ['人工智能', '让机器具有人类的智能；1956 年达特茅斯会议确立。'],
+    ['图灵测试', '隔着屏障问答，长时间分不出是人还是机器，就认为机器有智能。'],
+    ['四个时期', '推理期（规则）→ 知识期（专家知识）→ 学习期（数据）→ 大模型期（规模）。'],
+    ['两大流派', '符号主义（显式规则、可解释）与连接主义（神经网络、表示能力强）。']
+  ],
+  p: [
+    ['四个研究方向', '感知、学习、认知、行动与交互（智能体）。'],
+    ['两次 AI 冬天', '1974–1980、1987–1993。'],
+    ['规模法则', '模型、数据、计算同步扩大，性能持续提升；也扩展到推理阶段。'],
+    ['范式转换', '大量标注 + 任务工程 → 大规模预训练 + 提示 / 少量示例。']
+  ]
+});
+
+/* ---------- 流程 ---------- */
+var PIPES = {
+  shallow: { s: [['原始数据', ''], ['数据预处理', 'man'], ['特征提取', 'man'], ['特征转换', 'man'], ['预测', 'auto'], ['结果', '']], w: '前三步“特征处理”大多靠人工经验，而且和预测<strong>分开进行</strong>；传统机器学习主要关注最后一步。原书：不同预测模型性能相差不多，前三步才是关键，所以很多机器学习问题变成了特征工程问题。' },
+  deep: { s: [['原始数据', ''], ['底层特征', 'auto'], ['中层特征', 'auto'], ['高层特征', 'auto'], ['预测', 'auto'], ['结果', '']], w: '经过多层特征转换，原始数据逐步变成更高层、更抽象的表示，<strong>前面的“表示学习”和最后的“预测”一起学</strong>。这样学到的表示能替代人工设计的特征，避免特征工程。代价是要解决贡献度分配问题。' }
+};
+function pipe(k) {
+  var b = $('#pipeB'); b.innerHTML = '';
+  PIPES[k].s.forEach(function (x, i) {
+    if (i) h('i', { text: '→' }, b);
+    h('span', { class: x[1], text: x[0] }, b);
+  });
+  $('#pipeW').innerHTML = PIPES[k].w;
+}
+S.seg($('#pipeS'), pipe); pipe('shallow');
+S.notes($('#n-rep'), {
+  c: [
+    ['机器学习', '从有限观测数据中学出一般规律，用来预测未知数据。'],
+    ['泛化', '在没见过的数据上仍然稳定，不能只记住训练样本。'],
+    ['浅层学习', '不涉及特征学习、只学预测函数的方法：SVM、Logistic 回归、决策树。'],
+    ['语义鸿沟', '底层特征（像素）和高层语义（“车”）之间的不一致。']
+  ],
+  p: [
+    ['传统流程', '预处理 → 特征提取 → 特征转换 → 预测；前三步靠人、分开做。'],
+    ['表示学习的两个问题', '什么是好的表示？怎样学到好的表示？'],
+    ['特征转换', '降维分特征抽取和特征选择两种途径（如 PCA、LDA）。']
+  ]
+});
+
+/* ---------- 颜色 ---------- */
+var COLS0 = [
+  ['琥珀色', [1, 0.75, 0], 1], ['天蓝色', [0, 0.5, 1], 1], ['中国红', [0.67, 0.22, 0.12], 1], ['咖啡色', [0.44, 0.31, 0.22], 1],
+  ['红色', [1, 0, 0], 0], ['黑色', [0, 0, 0], 0]
+];
+var EXTRA = [['橄榄绿', [0.5, 0.5, 0]], ['薰衣草紫', [0.71, 0.49, 0.86]], ['青色', [0, 1, 1]], ['米白', [0.96, 0.96, 0.86]]];
+var cols, picked;
+function swInit() { cols = COLS0.map(function (c) { return c.slice(); }); picked = [4, 2]; swDraw(); }
+function rgbCss(v) { return 'rgb(' + v.map(function (x) { return Math.round(x * 255); }).join(',') + ')'; }
+function swDraw() {
+  var b = $('#swB'); b.innerHTML = '';
+  cols.forEach(function (c, i) {
+    var bt = h('button', { type: 'button', 'aria-pressed': picked.indexOf(i) >= 0 ? 'true' : 'false', html: '<i style="background:' + rgbCss(c[1]) + '"></i>' + c[0] + (c[2] ? '' : '<small style="color:var(--ink-3)">（示意）</small>') }, b);
+    bt.addEventListener('click', function () {
+      if (picked.indexOf(i) >= 0) return;
+      picked = [picked[1], i]; swDraw();
+    });
+  });
+  var n = cols.length, a = picked[0], c2 = picked[1];
+  function oh(i) { var v = []; for (var k = 0; k < n; k++) v.push(k === i ? 1 : 0); return '[' + v.join(', ') + ']'; }
+  $('#swV').innerHTML = '<b>' + cols[a][0] + '</b>　one-hot ' + oh(a) + '　RGB [' + cols[a][1].map(function (x) { return S.f(x, 2); }).join(', ') + ']<br>' +
+    '<b>' + cols[c2][0] + '</b>　one-hot ' + oh(c2) + '　RGB [' + cols[c2][1].map(function (x) { return S.f(x, 2); }).join(', ') + ']';
+  var d = Math.sqrt(cols[a][1].reduce(function (s, x, k) { return s + Math.pow(x - cols[c2][1][k], 2); }, 0));
+  var sim = 1 - d / Math.sqrt(3);
+  $('#swOH').textContent = '0';
+  $('#swRGB').textContent = S.f(sim, 2);
+  $('#swDim').textContent = n + ' 维';
+  $('#swW').innerHTML = '不论选哪两种，one-hot 的内积都是 0——局部表示里所有颜色彼此“一样不像”。RGB 下 ' + cols[a][0] + ' 和 ' + cols[c2][0] + ' 的相似度是 <b>' + S.f(sim, 2) + '</b>。试试红色 vs 中国红，再试红色 vs 黑色。';
+}
+$('#swAdd').addEventListener('click', function () {
+  var e = EXTRA[(cols.length - COLS0.length) % EXTRA.length];
+  if (cols.length - COLS0.length >= EXTRA.length) { $('#swW').innerHTML = '再加下去 one-hot 就是 ' + (cols.length + 1) + ' 维……原书说颜色名有 1300 多种。RGB 一直是 3 维。'; return; }
+  cols.push([e[0], e[1], 0]); picked = [picked[1], cols.length - 1]; swDraw();
+  $('#swW').innerHTML += ' <b>新颜色让 one-hot 多了一维</b>，已有颜色的向量也都要改长；RGB 不用变。';
+});
+$('#swReset').addEventListener('click', swInit);
+swInit();
+S.notes($('#n-dist'), {
+  c: [
+    ['局部表示', 'one-hot：每个对象占一维。可解释、稀疏、配线性模型快。'],
+    ['分布式表示', '低维稠密向量：语义分散在多个维度上，能算相似度。'],
+    ['嵌入', '把高维离散符号映射到低维连续空间，让语义相近的对象靠近。'],
+    ['好表示的三条', '表示能力强、让后续任务简单、有一般性（可迁移）。']
+  ],
+  p: [
+    ['one-hot 的两个缺点', '维数高且不能扩展；任意两者相似度都为 0。'],
+    ['词嵌入', '自然语言里的分布式表示；one-hot 与词嵌入 ≈ 颜色名与 RGB。'],
+    ['表 1.1', '琥珀色 [1, 0.75, 0]、天蓝色 [0, 0.5, 1]、中国红 [0.67, 0.22, 0.12]、咖啡色 [0.44, 0.31, 0.22]。']
+  ]
+});
+
+/* ---------- 深度与非线性 ---------- */
+var dpAct = 'lin';
+var dpDraw = S.fit($('#dpG'), function (w) { return Math.min(w, 340); }, function (svg, w, H) {
+  var a = +$('#dpAs').value * Math.PI / 180, sh = +$('#dpSs').value;
+  var W1 = [[1.3 * Math.cos(a), -1.3 * Math.sin(a)], [1.3 * Math.sin(a), 1.3 * Math.cos(a)]];
+  var W2 = [[1, sh], [0, 1]];
+  var b1 = [0.3, -0.2];
+  function act(x) { return dpAct === 'relu' ? Math.max(0, x) : dpAct === 'tanh' ? Math.tanh(x) * 1.6 : x; }
+  function F(p) {
+    var z = [W1[0][0] * p[0] + W1[0][1] * p[1] + b1[0], W1[1][0] * p[0] + W1[1][1] * p[1] + b1[1]];
+    z = [act(z[0]), act(z[1])];
+    return [W2[0][0] * z[0] + W2[0][1] * z[1], W2[1][0] * z[0] + W2[1][1] * z[1]];
+  }
+  var S0 = Math.min(w, H), X = S.scale(-3, 3, (w - S0) / 2, (w + S0) / 2), Y = S.scale(-3, 3, H, 0);
+  S.svg('rect', { x: (w - S0) / 2, y: 0, width: S0, height: H, fill: 'var(--bg)', rx: 6 }, svg);
+  S.svg('line', { x1: X(-3), x2: X(3), y1: Y(0), y2: Y(0), stroke: 'var(--rule)' }, svg);
+  S.svg('line', { x1: X(0), x2: X(0), y1: Y(-3), y2: Y(3), stroke: 'var(--rule)' }, svg);
+  for (var k = -4; k <= 4; k++) {
+    [0, 1].forEach(function (dir) {
+      var pts = [];
+      for (var t = -1; t <= 1.0001; t += 0.025) {
+        var p = dir ? [k / 4, t] : [t, k / 4];
+        var q = F(p); pts.push([X(q[0]), Y(q[1])]);
+      }
+      S.svg('path', { d: S.path(pts), fill: 'none', stroke: k === 0 ? 'var(--s2)' : 'var(--s1)', 'stroke-width': k === 0 ? 2.2 : 1.2, opacity: k === 0 ? 1 : 0.75 }, svg);
+    });
+  }
+  var lin = dpAct === 'lin';
+  var W = [[W2[0][0] * W1[0][0] + W2[0][1] * W1[1][0], W2[0][0] * W1[0][1] + W2[0][1] * W1[1][1]], [W2[1][0] * W1[0][0] + W2[1][1] * W1[1][0], W2[1][0] * W1[0][1] + W2[1][1] * W1[1][1]]];
+  $('#dpW').innerHTML = lin ? '<b>直线还是直线，平行线还是平行。</b>两层线性变换（加偏置也一样）合起来就是一个仿射变换 Wx + b，下面这个矩阵 W = W₂W₁ 一步就能做到。再叠 100 层也一样。' :
+    '<b>方格被折弯、压扁了。</b>' + (dpAct === 'relu' ? 'ReLU 把负半轴压到 0，平面被“折”进第一象限后再变换——' : 'tanh 把远处压扁成饱和区——') + '这种变形任何一个矩阵都做不到，深度才开始有意义。';
+  if (lin) S.grid($('#dpM'), W, { fmt: function (v) { return S.f(v, 2); }, rl: ['W =', ''] }); else $('#dpM').innerHTML = '';
+}, 240);
+['dpAs', 'dpSs'].forEach(function (id) { $('#' + id).addEventListener('input', function () { $('#dpA').textContent = $('#dpAs').value + '°'; $('#dpS').textContent = S.f(+$('#dpSs').value, 1); dpDraw(); }); });
+S.seg($('#dpAct'), function (v) { dpAct = v; dpDraw(); });
+dpDraw();
+S.notes($('#n-deep'), {
+  c: [
+    ['深度', '原始数据经过非线性特征转换的次数；有向图上输入到输出的最长路径。'],
+    ['深度学习', '以多层可学习表示为核心的机器学习方法，表示与任务联合优化。'],
+    ['为什么要非线性', '多层线性 = 一层线性，表达能力不增加。']
+  ],
+  p: [
+    ['公式', 'W₁W₂⋯Wₙx = Wx，W = W₁W₂⋯Wₙ'],
+    ['深层的好处', '特征复用，表示能力指数级增加。'],
+    ['传统特征学习的问题', '准则人定、与预测模型分开学，学到的特征不一定帮得上最终任务。']
+  ],
+  ph: '公式与要点'
+});
+
+/* ---------- 贡献度分配 ---------- */
+function cp() {
+  var n = +$('#cpNs').value, p = +$('#cpPs').value / 100;
+  $('#cpN').textContent = n; $('#cpP').textContent = S.f(p * 100, 1) + '%';
+  var rows = [];
+  for (var i = 1; i <= n; i++) rows.push({ label: '前 ' + i + ' 个模块都对', value: Math.pow(p, i), text: S.pct(Math.pow(p, i)), cls: i === n ? 'alt' : 'dim' });
+  S.bars($('#cpBars'), rows);
+  var tot = Math.pow(p, n);
+  $('#cpW').innerHTML = '每个模块 ' + S.pct(p) + '，串 ' + n + ' 个后整条管线全对的比例只剩 <b>' + S.pct(tot) + '</b>（p<sup>n</sup>，假设各模块独立出错、错一步就全错，示意）。这就是原书说的“错误传播”；另一个问题是每个模块各自优化的目标和总体目标未必一致。';
+}
+['cpNs', 'cpPs'].forEach(function (id) { $('#' + id).addEventListener('input', cp); }); cp();
+S.guess($('#cpG'), { q: '一个自然语言理解系统由 5 个模块串联（分词、词性、句法、语义、推理），每个单独看准确率 95%。整条管线全对的比例大约是多少？', unit: '%', ans: 77.4, fmt: function (x) { return S.f(x, 1); }, why: '0.95⁵ ≈ 0.774。单看每个模块都“挺准”，串起来就少了近四分之一。端到端学习直接优化总体目标，避免了这种累积——但要付出解决贡献度分配问题的代价。（数字为示意，现实里错误不一定独立。）' });
+S.notes($('#n-cap'), {
+  c: [
+    ['贡献度分配问题', 'CAP：系统中各组件或参数对最终结果的贡献该如何分配。'],
+    ['延迟归因', '内部步骤拿不到即时监督，只能靠后面的整体反馈。'],
+    ['端到端学习', '不分模块、不分阶段，直接优化任务总体目标；训练数据就是输入—输出对。']
+  ],
+  p: [
+    ['深度学习 vs 强化学习', '都有延迟归因；前者有明确监督目标，后者是环境反馈下的序列决策。'],
+    ['神经网络为何是主角', '能用误差反向传播较好地解决贡献度分配。'],
+    ['管线式的两个问题', '模块目标与总体目标不一致；错误传播。'],
+    ['端到端 ≠ 无模块', '实际系统常是“深度模型 + 检索 / 工具 / 规划”。']
+  ]
+});
+
+/* ---------- 四种结构 ---------- */
+var ARC = {
+  ff: '信息<strong>单向</strong>逐层传播，有向无环图。可看作简单非线性函数的多次复合。代表：全连接前馈网络（第 4 章）、卷积网络（第 5 章）。',
+  mem: '神经元还接收<strong>自己的历史信息</strong>，不同时刻有不同状态；隐状态沿时间步传递。可看作一个程序，计算和记忆能力更强。代表：循环神经网络（第 6 章）。',
+  graph: '定义在图结构数据上，每个节点<strong>聚合邻居的消息</strong>（红色箭头）。适合知识图谱、社交网络、分子。代表：图神经网络（第 9 章）。',
+  att: '通过自注意力让序列中<strong>任意两个位置直接交互</strong>（红色虚线），并行计算，绕开了循环网络逐步传递的限制。代表：Transformer（第 8 章）。'
+};
+function arc(k) {
+  var g = $('#arcG'); g.innerHTML = '';
+  function c(x, y, r, cls) { return S.svg('circle', { cx: x, cy: y, r: r || 13, class: cls || '' }, g); }
+  function ln(x1, y1, x2, y2, cls) { return S.svg('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: cls || '' }, g); }
+  if (k === 'ff') {
+    var L = [[60, [40, 80, 120, 160]], [180, [50, 95, 140]], [300, [70, 120]], [390, [95]]];
+    for (var i = 0; i < L.length - 1; i++) L[i][1].forEach(function (y1) { L[i + 1][1].forEach(function (y2) { ln(L[i][0] + 13, y1, L[i + 1][0] - 13, y2); }); });
+    L.forEach(function (l, i) { l[1].forEach(function (y) { c(l[0], y, 13, i === 3 ? 'hi' : ''); }); });
+  } else if (k === 'mem' || k === 'att') {
+    var xs = [60, 160, 260, 360];
+    xs.forEach(function (x, i) {
+      ln(x, 145, x, 70);
+      c(x, 155, 13); c(x, 60, 15, 'hi');
+      S.svg('text', { x: x - 8, y: 186, text: 'x' + (i + 1) }, g);
+      if (k === 'mem' && i < 3) S.svg('path', { d: 'M' + (x + 15) + ' 60 L' + (xs[i + 1] - 15) + ' 60', class: 'red' }, g);
+    });
+    if (k === 'mem') S.svg('path', { d: 'M60 45 C 40 10, 80 10, 66 45', class: 'red' }, g);
+    if (k === 'att') { for (var a = 0; a < 4; a++) for (var b = a + 1; b < 4; b++) S.svg('path', { d: 'M' + xs[a] + ' 45 Q ' + (xs[a] + xs[b]) / 2 + ' ' + (10 - (b - a) * 6) + ' ' + xs[b] + ' 45', class: 'red dash' }, g); }
+  } else {
+    var P = [[210, 95], [110, 50], [110, 145], [320, 45], [330, 150], [210, 170], [40, 95]];
+    var E = [[0, 1], [0, 2], [0, 3], [0, 4], [1, 6], [2, 6], [2, 5], [4, 5], [3, 4]];
+    E.forEach(function (e) { ln(P[e[0]][0], P[e[0]][1], P[e[1]][0], P[e[1]][1], e[0] === 0 ? 'red' : ''); });
+    P.forEach(function (p, i) { c(p[0], p[1], 13, i === 0 ? 'hi' : ''); });
+  }
+  $('#arcW').innerHTML = ARC[k];
+}
+S.seg($('#arcS'), arc); arc('ff');
+var HIS = [
+  ['1943–1969　模型萌芽', [0], 'McCulloch 和 Pitts 提出 MP 模型（1943）；Rosenblatt 提出感知器及其学习算法（1958），神经网络第一次有了从数据中学习的雏形。回答了“神经网络是什么”，但没解决“多层网络怎么学”。'],
+  ['1969–1983　第一次低谷', [], 'Minsky《感知器》指出单层感知器连异或都表示不了，当时的计算机也撑不起大网络。但低谷里在酝酿：Werbos 提出反向传播（1974），福岛邦彦提出带卷积和子采样的新知机（1980）。'],
+  ['1983–1995　反向传播带来复兴', [1], 'Hopfield 网络（1983）、玻尔兹曼机（1984）；反向传播在多层网络上成功应用，PDP 模型让“分布式表示、连接存储知识”成为连接主义的重要观点；LeCun 把反向传播用到卷积网络识别手写体。同时也发现了<strong>梯度消失</strong>。'],
+  ['1995–2006　统计学习占优', [], '网络一大计算开销就迅速上升，数据、硬件、训练技巧都不够。支持向量机理论更清晰，在中小数据上更可靠，神经网络热度下降。'],
+  ['2006–2015　深度学习崛起', [1, 2], '关键不是全新的网络，而是<strong>学会了训练深层网络</strong>：Hinton 2006 年逐层预训练深度信念网络再微调。GPU、互联网数据、自动微分与框架同时成熟；语音识别（2012）、图像分类（2012）突破后，端到端训练逐步替代逐层预训练。'],
+  ['2018 至今　基础模型与大模型', [0, 1, 2], '三个趋势：<strong>结构统一</strong>到 Transformer；<strong>训练范式</strong>变成预训练 + 指令微调 + 对齐；<strong>系统化</strong>，与检索、工具、外部记忆、环境交互结合。神经网络从单任务预测模型变成可迁移、可适配、可组合的基础模型。']
+];
+S.stepper($('#hisS'), HIS.length, function (i) {
+  $('#hisT').textContent = HIS[i][0];
+  S.$$('#hisF span').forEach(function (s) { s.classList.toggle('on', HIS[i][1].indexOf(+s.getAttribute('data-f')) >= 0); });
+  $('#hisW').innerHTML = HIS[i][2] + (HIS[i][1].length ? '' : ' <span style="color:var(--ink-3)">（这一阶段三个因素都没有关键突破。）</span>');
+});
+S.notes($('#n-nn'), {
+  c: [
+    ['神经元', '加权求和输入，经激活函数得到活性值（兴奋或抑制）。'],
+    ['赫布规则', '两个神经元经常共同激活，连接就加强（Hebb，1949）。'],
+    ['网络容量', '神经网络塑造复杂函数的能力。'],
+    ['四种结构', '前馈、记忆（反馈）、注意力、图；实际网络多为复合。']
+  ],
+  p: [
+    ['三个转折因素', '模型表达力、学习算法、计算与数据条件。'],
+    ['反向传播', 'Werbos 1974 年提出，Rumelhart 等 1986 年推广。'],
+    ['第一次低谷的导火索', '单层感知器不能解决异或（Minsky，1969）。'],
+    ['2006 年转折', '逐层预训练 + 反向传播微调，缓解深层难训练。']
+  ]
+});
+
+/* ---------- 五条主线 ---------- */
+var LINES = [
+  [[2, 3], '回答“什么是模型、学习准则与优化算法”。先建立机器学习的语言。'],
+  [[4, 5, 6, 7, 8, 9, 10, 11], '回答“不同网络如何组织信息与归纳偏置”。全书主体。'],
+  [[14, 15, 16], '回答“如何从概率建模的角度理解学习与生成”。读深度生成模型之前，原书建议先看第 14 章的 EM、变分推断和采样。'],
+  [[12, 13], '回答“智能体如何在环境中学习和行动”（第 13 章取智能体相关内容）。'],
+  [[8, 13], '回答“为什么 Transformer、大语言模型与智能体代表新的阶段”。']
+];
+var NAMES = ['', '绪论', '机器学习概述', '线性模型', '前馈神经网络', '卷积神经网络', '循环神经网络', '网络优化与正则化', '注意力机制与 Transformer', '图神经网络', '无监督学习', '模型独立的学习方式', '深度强化学习', '大语言模型与智能体', '概率图模型', '深度信念网络', '深度生成模型'];
+function ln5(i) {
+  var b = $('#lnC'); b.innerHTML = '';
+  for (var k = 1; k <= 16; k++) h('a', { href: '../2026-10-18-nndl-' + k + '/', class: LINES[i][0].indexOf(k) >= 0 ? 'on' : '', text: k + ' ' + NAMES[k] }, b);
+  $('#lnW').innerHTML = LINES[i][1];
+}
+S.seg($('#lnB'), function (v) { ln5(+v); }); ln5(0);
+S.notes($('#n-map'), {
+  c: [
+    ['三个知识域', '机器学习（问题定义与方法语言）、神经网络（主线）、概率图模型（概率视角）。'],
+    ['机器学习三要素', '模型、学习准则、优化算法。'],
+    ['概率图模型三问题', '模型表示、推断、学习。']
+  ],
+  p: [
+    ['路线', '机器学习语言 → 主要网络结构 → 概率建模、生成与决策 → 大模型与智能体。'],
+    ['框架的共同抽象', '张量、计算图、自动微分、面向硬件加速的数值计算。'],
+    ['交汇处', '深度生成模型同时连着神经网络和概率图模型。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.quiz($('#qz'), [
+  { q: '下面哪个方法<strong>属于机器学习但不属于深度学习</strong>？', o: ['卷积神经网络', '支持向量机', 'Transformer', '深度信念网络'], a: 1, why: 'SVM 是典型的浅层学习：特征靠人设计，只学预测函数。其余三个都是多层表示学习。' },
+  { q: '把 10 层没有激活函数的全连接层叠起来，模型的表达能力相当于？', o: ['10 层非线性网络', '1 层线性变换', '2 层网络', '无法确定'], a: 1, why: 'W₁W₂⋯W₁₀ 乘出来还是一个矩阵。原书习题 5 让你证明这一点，并思考它对激活函数设计的启示。' },
+  { q: '“表示学习”和“深度学习”的关系，最准确的说法是？', o: ['两者是同义词', '表示学习是目标，深度学习是实现它的一种特别有效的手段', '深度学习是目标，表示学习是手段', '表示学习只用于自然语言'], a: 1, why: '原书：表示学习回答“希望学到什么”，深度学习回答“如何通过多层可学习结构把表示自动学出来”。' },
+  { q: '大模型带来的最重要变化之一是？', o: ['不再需要训练', '从“大量标注 + 任务工程”转向“预训练 + 少量示例或提示”', '彻底取代了符号方法', '模型变成了智能体'], a: 1, why: '原书称之为范式转换；同时提醒模型和智能体不等同，智能体是包含工具、记忆、规划的系统。' }
+]);
+S.notes($('#n-back'), {
+  c: [
+    ['① 五个词的关系', 'AI 的目标催生机器学习；机器学习的表示瓶颈推动表示学习；深度学习用多层模型自动学表示（方法范式）；神经网络是深度学习最主要的模型载体。'],
+    ['② 好表示与非线性', '好表示要能力强、让任务变简单、可迁移；分布式表示比 one-hot 能算相似度、可扩展。多层线性等于一层线性，所以每层之间必须有非线性。'],
+    ['③ 核心难题', '贡献度分配：多层组件里最终误差该分给谁。神经网络 + 反向传播 + 自动微分让多层模型可以端到端训练。']
+  ],
+  p: [
+    ['原书一句话', '人工智能的目标催生了机器学习，表示瓶颈推动了表示学习，深度学习与神经网络是自动学习多层次表示最成功的路径。'],
+    ['下一篇', '机器学习的三要素：模型、学习准则、优化算法，以及偏差—方差。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

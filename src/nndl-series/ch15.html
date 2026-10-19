@@ -1,0 +1,331 @@
+---
+title: 深度信念网络：玻尔兹曼机、受限玻尔兹曼机与逐层预训练
+desc: 神经网络与深度学习（第二版）学习笔记（十五）：玻尔兹曼机的能量函数与玻尔兹曼分布、全条件概率 σ(ΔE/T)、吉布斯采样、Hopfield 网络与模拟退火；参数学习的“数据期望减模型期望”与赫布规则；受限玻尔兹曼机的二分图结构、条件独立与块吉布斯采样、对比散度 CD-k 与 PCD、常见变体；深度信念网络的混合结构、逐层预训练、Wake-Sleep 微调与判别式微调，以及它在深度学习史上的位置。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 15</span><span>对应原书第 15 章（第 429–448 页）</span><span>约 45 分钟</span>
+h1: 能量越低，<em>越可能出现</em>
+lead: 原书开宗明义：这一类模型已经不是训练深层网络的常用工程路线，但它们推动了基于隐变量的表示学习和生成建模，还催生了“逐层预训练”——“先在无标注数据上预训练、再在下游任务上微调”的范式，后来在预训练语言模型里以新的形式延续。所以这一篇的重点不是工程细节，而是三件事：怎么定义一个未归一化的概率模型，精确推断不可行时怎么近似学习，怎么一层层地构造表示。
+nav: bm|玻尔兹曼机;sa|能量最小化;rbm|受限玻尔兹曼机;cd|对比散度;dbn|深度信念网络;back|三个问题
+---
+<style>
+.px3 { display: grid; grid-template-columns: repeat(3, 14px); gap: 2px; }
+.px3 i { width: 14px; height: 14px; border-radius: 2px; background: var(--hair); display: block; }
+.pxrow { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin: 8px 0; }
+.pxrow figure { margin: 0; text-align: center; }
+.pxrow figcaption { font-size: 15px; color: var(--ink-3); margin-top: 4px; font-family: var(--f-num); }
+.dbnsvg { width: 100%; max-width: 420px; height: auto; display: block; }
+.dbnsvg rect { fill: var(--panel); stroke: var(--ink-3); stroke-width: 1.5; rx: 6; }
+.dbnsvg rect.on { fill: var(--s2-soft); stroke: var(--s2); stroke-width: 2.4; }
+.dbnsvg rect.done { fill: var(--ok-soft); stroke: var(--ok); }
+.dbnsvg text { font-size: 15px; fill: var(--ink); text-anchor: middle; }
+.dbnsvg path { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+.dbnsvg path.und { stroke: var(--s1); stroke-width: 2.4; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>玻尔兹曼机用什么定义概率？为什么它的每个变量的条件概率正好是 Logistic 函数？</li>
+  <li>受限玻尔兹曼机“受限”在哪里，换来了什么？对比散度为什么能快速训练它？</li>
+  <li>深度信念网络怎么逐层预训练？这个思想后来去哪了？</li>
+</ol></div>
+
+<section class="part" id="bm">
+  <div class="part-head"><h2>玻尔兹曼机：能量与玻尔兹曼分布</h2><span class="meta">原书 15 章引言、15.1–15.1.1 节 · 第 429–433 页</span></div>
+  <div class="sec-lede">
+    <p><strong>玻尔兹曼机</strong>是一个随机动力系统，可以用无向图描述：所有变量都是二值的（分可观测 v 和隐变量 h），所有节点<strong>全连接</strong>，两两之间的影响<strong>对称</strong>。联合概率是<strong>玻尔兹曼分布</strong> p(x) = (1/Z) exp(−E(x)/T)，能量 E(x) = −(Σ<sub>i&lt;j</sub> w<sub>ij</sub>x<sub>i</sub>x<sub>j</sub> + Σ b<sub>i</sub>x<sub>i</sub>)，T 是温度。正权重让两个变量同时为 1 时能量降低、概率变大——如果把每个变量看成“接受 / 拒绝一个假设”，权重就是假设之间的<strong>弱约束</strong>：正的互相支持，负的不能同时成立。玻尔兹曼分布有个好性质：两个状态的概率比只取决于能量差，p<sub>α</sub>/p<sub>β</sub> = exp((E<sub>β</sub> − E<sub>α</sub>)/T)，<strong>配分函数约掉了</strong>。</p>
+    <p>Z 要对 2<sup>K</sup> 个状态求和，算不动，所以用吉布斯采样生成样本。<strong>定理 15.1</strong>：保持其他变量不变，x<sub>i</sub> 从 0 变 1 的能量差 ΔE<sub>i</sub> = Σ<sub>j</sub>w<sub>ij</sub>x<sub>j</sub> + b<sub>i</sub>，于是 <strong>p(x<sub>i</sub> = 1|x<sub>∖i</sub>) = σ(ΔE<sub>i</sub>/T)</strong>——和一个 Logistic 神经元一模一样，这也是它被称为“随机神经网络”的原因。吉布斯采样就是随机挑一个变量、按这个概率重设它；温度固定且运行足够久，会接近<strong>热平衡</strong>（热平衡仍是所有状态上的一个分布，不等于能量最低）。T → ∞ 时每次更新都像抛硬币，容易混合；T → 0 时变成确定性规则：ΔE ≥ 0 就设 1，否则设 0。</p>
+    <p class="go">拖动温度 T，看全条件概率怎么从“抛硬币”变成“阶跃”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">定理 15.1：p(x<sub>i</sub> = 1 | 其他) = σ(ΔE<sub>i</sub>/T)</p>
+      <label class="ctl"><span>温度 T（对数刻度） <output id="tmV">1.00</output></span><input type="range" id="tmS" min="-2" max="2" step="0.05" value="0"></label>
+      <div id="tmC"></div>
+      <p class="cap" id="tmW"></p>
+    </div>
+    <div class="lab"><p class="lab-t">概率比只看能量差</p><div id="tmG"></div></div>
+  </div>
+  <div class="notes" id="n-bm"></div>
+</section>
+
+<section class="part" id="sa">
+  <div class="part-head"><h2>能量最小化、模拟退火与参数学习</h2><span class="meta">原书 15.1.2–15.1.3 节 · 第 434–436 页</span></div>
+  <div class="sec-lede">
+    <p>玻尔兹曼机可以解两类问题：<strong>搜索</strong>（给定权重，找能量最低的状态）和<strong>学习</strong>（给定观测，学权重）。<strong>Hopfield 网络</strong>是确定性的动力系统：每次挑一个变量、设成让能量更低的值，能量单调下降，很快停在某个<strong>局部最优</strong>（对 Hopfield 网络来说这不是缺点——它正是靠局部最优点来存储记忆）。想找全局最优，就要允许“偶尔往高处走”：以 σ(ΔE/T) 的概率设 1。温度太高到处乱跑，太低又会卡住，折中办法是<strong>模拟退火</strong>：先高温达到热平衡，再慢慢降温。名字来自冶金：加热后缓慢冷却，晶格缺陷更少；在冷却足够慢等条件下，可以证明依概率收敛到全局最优。</p>
+    <p>学习时最大化可观测数据的对数似然。推导和第 14 篇无向图的“期望匹配”一样：∂ℒ/∂w<sub>ij</sub> = 𝔼<sub>p̂(v)</sub>𝔼<sub>p(h|v)</sub>[x<sub>i</sub>x<sub>j</sub>] − 𝔼<sub>p(v,h)</sub>[x<sub>i</sub>x<sub>j</sub>]。第一项把 v 钉在训练样本上、只对 h 吉布斯采样到平衡，得到 ⟨x<sub>i</sub>x<sub>j</sub>⟩<sub>data</sub>；第二项所有变量自由采样到平衡，得到 ⟨x<sub>i</sub>x<sub>j</sub>⟩<sub>model</sub>。更新 <strong>w<sub>ij</sub> ← w<sub>ij</sub> + α(⟨x<sub>i</sub>x<sub>j</sub>⟩<sub>data</sub> − ⟨x<sub>i</sub>x<sub>j</sub>⟩<sub>model</sub>)</strong>：每个权重只用到它连接的两个变量的统计量，是<strong>局部</strong>的，和<strong>赫布规则</strong>（一起激活的神经元连接加强）很像。代价是每更新一次权重都要把网络重新采样到平衡，非常慢。</p>
+    <p class="go">一个 14 个变量的全连接玻尔兹曼机（随机权重，示意），能量最低的状态可以穷举 2¹⁴ 个状态找到。比较三种运行方式各从 20 个随机初始状态出发、走 3000 步后，有几次正好停在全局最低点。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">确定性下降 vs 固定温度吉布斯 vs 模拟退火</p>
+    <div class="btnrow"><button class="btn pri" type="button" id="saGo">换一组初始状态再跑</button><span class="stepinfo" id="saI"></span></div>
+    <div class="lab-split">
+      <div id="saC"></div>
+      <div><div id="saB"></div><p class="cap" id="saW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-sa"></div>
+</section>
+
+<section class="part" id="rbm">
+  <div class="part-head"><h2>受限玻尔兹曼机</h2><span class="meta">原书 15.2–15.2.1 节 · 第 436–441 页</span></div>
+  <div class="sec-lede">
+    <p>全连接的玻尔兹曼机太难训练。<strong>受限玻尔兹曼机</strong>（RBM，最早叫“簧风琴模型”）把结构限制成<strong>二分图</strong>：可观测层 v 和隐藏层 h 之间全连接，<strong>同层之间没有连接</strong>，长得像两层全连接网络。能量 E(v, h) = −a<sup>T</sup>v − b<sup>T</sup>h − v<sup>T</sup>Wh。直观上，v 是数据，h 是潜在特征：给定数据，被激活的隐单元表示出现了哪些模式；给定隐状态，又能重构数据。</p>
+    <p>结构限制换来了关键性质：<strong>给定一层，另一层各变量条件独立</strong>。<strong>定理 15.2</strong>：p(h<sub>j</sub> = 1|v) = σ(b<sub>j</sub> + Σ<sub>i</sub>w<sub>ij</sub>v<sub>i</sub>)，p(v<sub>i</sub> = 1|h) = σ(a<sub>i</sub> + Σ<sub>j</sub>w<sub>ij</sub>h<sub>j</sub>)，向量形式 σ(W<sup>T</sup>v + b) 和 σ(Wh + a)。证明的关键一步是边际 p(v) 里对 h 的求和可以按分配律拆成每个 h<sub>j</sub> 各自求和：p(v) ∝ exp(a<sup>T</sup>v) Π<sub>j</sub>(1 + exp(b<sub>j</sub> + Σ<sub>i</sub>w<sub>ij</sub>v<sub>i</sub>))。所以采样时不必一个个变量来，可以<strong>整层并行</strong>：v⁰ → h⁰ → v¹ → h¹ → …（块吉布斯采样）。</p>
+    <p>参数学习的梯度同样是“数据期望减模型期望”：∂ℒ/∂w<sub>ij</sub> = 𝔼<sub>p̂(v)</sub>𝔼<sub>p(h|v)</sub>[v<sub>i</sub>h<sub>j</sub>] − 𝔼<sub>p(v,h)</sub>[v<sub>i</sub>h<sub>j</sub>]。第一项因为条件独立变得很好算；第二项仍要一条长长的吉布斯链。常见变体：伯努利—伯努利（上面这种）、高斯—伯努利（可观测层是连续值）、伯努利—高斯（隐层是连续值），各自换一个能量函数。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>玻尔兹曼机 vs 受限玻尔兹曼机</b>：所有节点全连接、只能逐个变量采样 vs 二分图、给定一层另一层条件独立、可以整层并行采样。</p>
+    <p><b>Hopfield 网络 vs 玻尔兹曼机</b>：确定性、能量只降不升 vs 随机性、以一定概率让能量上升；T → 0 时后者退化为前者。</p>
+    <p><b>热平衡 vs 能量最低</b>：热平衡是所有状态上的一个稳定分布，不是停在能量最低点。</p>
+  </div>
+  <div class="notes" id="n-rbm"></div>
+</section>
+
+<section class="part" id="cd">
+  <div class="part-head"><h2>对比散度：只走 k 步的近似梯度</h2><span class="meta">原书 15.2.2–15.2.3 节 · 第 440–442 页</span></div>
+  <div class="sec-lede">
+    <p><strong>对比散度</strong>（CD-k，Hinton 2002）的做法：吉布斯链不从随机状态出发，而是<strong>从训练样本出发</strong>，只交替采样 k 步就停，用第 k 步的 (v′, h′) 近似模型期望。CD-1（原书算法 15.1）：v̂ → 采 h → 重构 v′ → 再算 h′，更新 W ← W + α(v̂h<sup>T</sup> − v′h′<sup>T</sup>)，a ← a + α(v̂ − v′)，b ← b + α(h − h′)。原书强调这<strong>不是精确的对数似然梯度</strong>，而是一个计算高效、实践中通常够用的<strong>有偏近似</strong>：偏差来自链从数据分布起步、k 步后还没收敛到模型分布；k 越大偏差越小、代价越高。<strong>持续对比散度</strong>（PCD）让链在多次参数更新之间不重启，进一步减小偏差。</p>
+    <p class="go">在 9 像素的小图上训练 RBM（6 个隐单元）：训练集是 3 × 3 网格里的 6 种单条横杠或竖杠（示意数据）。模型很小，可以把 2⁹ 个可见状态全部枚举出来，<strong>精确</strong>算对数似然——看看 CD 这个近似梯度到底有没有把似然推上去。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">CD-k 训练 RBM：9 个可见单元、6 个隐单元</p>
+    <div class="training-ctl">
+      <div class="seg" id="rbK"><button data-v="1" aria-pressed="true">CD-1</button><button data-v="5">CD-5</button></div>
+      <div class="btnrow"><button class="btn pri" type="button" id="rbGo">训练 100 轮</button><button class="btn" type="button" id="rbR">重来</button><span class="stepinfo" id="rbI"></span></div>
+    </div>
+    <div class="lab-split">
+      <div id="rbC"></div>
+      <div>
+        <p class="cap"><b>训练集</b>（6 种图案）</p><div class="pxrow" id="rbD"></div>
+        <p class="cap"><b>各隐单元的权重</b>（红正蓝负，即它“喜欢”的图案）</p><div class="pxrow" id="rbW"></div>
+        <p class="cap"><b>从模型采样</b>（随机起点，块吉布斯 200 步）</p><div class="pxrow" id="rbS"></div>
+      </div>
+    </div>
+    <p class="cap" id="rbT"></p>
+  </div>
+  <div class="notes" id="n-cd"></div>
+</section>
+
+<section class="part" id="dbn">
+  <div class="part-head"><h2>深度信念网络：逐层预训练</h2><span class="meta">原书 15.3–15.4 节 · 第 442–448 页</span></div>
+  <div class="sec-lede">
+    <p><strong>深度信念网络</strong>（DBN）是多层的概率图模型：最底层可观测，其余是隐变量，层内无连接、相邻层全连接。注意它<strong>不是纯有向图</strong>：最顶上两层之间是无向的（一个 RBM），其余层是自上而下的有向连接，每层都是一个 Sigmoid 信念网络 p(h<sup>(l)</sup> = 1|h<sup>(l+1)</sup>) = σ(a<sup>(l)</sup> + W<sup>(l+1)</sup>h<sup>(l+1)</sup>)。和它名字相近的<strong>深度玻尔兹曼机</strong>（DBM）则所有相邻层都是无向连接，后验依赖更强、推断更难。生成样本时：先在顶层 RBM 上吉布斯采样到接近平衡，再自顶向下逐层采样到可观测层。</p>
+    <p>直接最大化 p(v) 很难：即使单层 Sigmoid 信念网络，给定 v 时隐变量的后验也<strong>不再相互独立</strong>（第 14 篇的解释消除），难以估计。Hinton 等（2006）的办法是把 DBN 看成一摞 RBM，<strong>自下而上逐层训练</strong>：先用数据训第 1 个 RBM；把每个样本经 p(h<sup>(1)</sup>|v) 映射到第 1 层，作为第 2 个 RBM 的训练集；依此类推（原书算法 15.2）。RBM 里后验是独立的，所以每一层都容易训练。之后再<strong>微调</strong>：作为生成模型，用 Contrastive <strong>Wake-Sleep</strong>——Wake 阶段用向上的认知权重推断各层，再改向下的生成权重让“想象”贴近“现实”；Sleep 阶段从顶层 RBM 生成“梦境”，再改认知权重让“梦”被正确识别。作为判别模型，只保留向上的权重，顶上加输出层，用反向传播微调（原书图 15.7）。</p>
+    <p>原书对它的历史定位很清楚：在优化技术不成熟、数据有限的年代，逐层预训练提供了更好的初始化；后来 ReLU、更好的初始化、批量规范化、残差连接让随机初始化的深层网络也能端到端训练，<strong>DBN 预训练不再常用</strong>。但“<strong>先在大量无标注数据上预训练、再在下游任务上微调</strong>”这个核心范式并没有消失，而是在自监督预训练语言模型里以新的目标和架构延续了下来。</p>
+    <p class="go">一步步看逐层预训练：每次只训练一个 RBM，下面的层固定不动。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 15.6：DBN 的逐层预训练</p>
+    <div class="lab-split">
+      <svg class="dbnsvg" id="dbG" viewBox="0 0 420 300" role="img" aria-label="DBN 逐层预训练"></svg>
+      <div><div id="dbS"></div><p class="cap" id="dbW"></p></div>
+    </div>
+  </div>
+  <div class="notes" id="n-dbn"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">玻尔兹曼机：p(x) = (1/Z) exp(−E(x)/T)，E(x) = −(Σ_{i&lt;j} w_ij x_i x_j + Σ b_i x_i)；p_α/p_β = exp((E_β − E_α)/T)</div>
+    <div class="fx">全条件概率：p(x_i = 1 | x_∖i) = σ((Σ_j w_ij x_j + b_i)/T)</div>
+    <div class="fx">学习：Δw_ij ∝ ⟨x_i x_j⟩_data − ⟨x_i x_j⟩_model</div>
+    <div class="fx">RBM：E(v,h) = −aᵀv − bᵀh − vᵀWh；p(h=1|v) = σ(Wᵀv + b)，p(v=1|h) = σ(Wh + a)</div>
+    <div class="fx">RBM 边际：p(v) ∝ exp(aᵀv) Π_j (1 + exp(b_j + Σ_i w_ij v_i))</div>
+    <div class="fx">CD-1：W ← W + α(v̂ hᵀ − v′ h′ᵀ)，a ← a + α(v̂ − v′)，b ← b + α(h − h′)</div>
+    <div class="fx">DBN：p(v, h⁽¹⁾…h⁽ᴸ⁾) = Π_{l=0}^{L−2} p(h⁽ˡ⁾|h⁽ˡ⁺¹⁾) · p(h⁽ᴸ⁻¹⁾, h⁽ᴸ⁾)</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 温度 ---------- */
+var tmChart = S.chart($('#tmC'), { h: 240, x: [-6, 6], y: [0, 1], xt: [-6, -4, -2, 0, 2, 4, 6], yt: [0, 0.5, 1], xl: '能量差 ΔE_i = Σ_j w_ij x_j + b_i' });
+function tm() {
+  var T = Math.pow(10, +$('#tmS').value); $('#tmV').textContent = S.f(T, 2);
+  tmChart({ curves: [{ f: function (d) { return S.sigmoid(d / T); }, c: 'c2', label: 'T = ' + S.f(T, 2) }, { f: function (d) { return S.sigmoid(d); }, c: 'dim', dash: 1, label: 'T = 1' }] });
+  $('#tmW').innerHTML = T > 5 ? '高温：无论能量差多大，概率都接近 0.5——每次更新都像抛硬币，状态很容易在各种组合之间“混合”，但几乎不受能量引导。' : T < 0.2 ? '低温：几乎变成阶跃函数，ΔE ≥ 0 就设 1、否则设 0——随机方法退化成确定性方法（Hopfield 网络式更新），能量只降不升，容易卡在局部最优。' : '中间温度：能量差越大，取 1 的概率越高，但始终留有“走错方向”的可能，这让系统有机会跳出局部最优。';
+}
+$('#tmS').addEventListener('input', tm); tm();
+S.guess($('#tmG'), { q: 'T = 1 时，状态 α 的能量比状态 β 低 2。p_α 是 p_β 的多少倍？', unit: '倍', ans: Math.exp(2), fmt: function (x) { return S.f(x, 2); }, why: 'p_α/p_β = exp((E_β − E_α)/T) = e² ≈ 7.39。完全不需要知道配分函数 Z。温度升到 T = 10 时只有 e^0.2 ≈ 1.22 倍；降到 T = 0.1 时是 e^20 ≈ 4.9 亿倍——低温下概率几乎全集中在能量最低的状态上。' });
+S.notes($('#n-bm'), {
+  c: [
+    ['玻尔兹曼机', '全连接、对称权重的二值随机动力系统。'],
+    ['能量函数', 'E(x) = −(Σ w_ij x_i x_j + Σ b_i x_i)。'],
+    ['玻尔兹曼分布', 'p(x) ∝ exp(−E(x)/T)，能量低概率高。'],
+    ['弱约束', '正权重：两个假设互相支持；负权重：不能同时接受。'],
+    ['热平衡', '长时间吉布斯采样后状态分布服从玻尔兹曼分布。'],
+    ['随机神经网络', '每个单元以 σ(ΔE/T) 的概率激活。']
+  ],
+  p: [
+    ['概率比', 'p_α/p_β = exp((E_β − E_α)/T)，Z 约掉'],
+    ['能量差', 'ΔE_i = E(x_i=0) − E(x_i=1) = Σ_j w_ij x_j + b_i'],
+    ['全条件概率', 'σ(ΔE_i/T)'],
+    ['T → ∞', '每次更新近似抛硬币'],
+    ['T → 0', '确定性：ΔE ≥ 0 设 1，否则设 0']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 模拟退火 ---------- */
+var SAK = 14, SAW = [], SAB = [];
+(function () { var r = S.rng(31); for (var i = 0; i < SAK; i++) { SAW.push(new Array(SAK).fill(0)); SAB.push(0.5 * S.randn(r)); } for (i = 0; i < SAK; i++) for (var j = i + 1; j < SAK; j++) SAW[i][j] = SAW[j][i] = S.randn(r); })();
+function saE(x) { var e = 0; for (var i = 0; i < SAK; i++) { e -= SAB[i] * x[i]; for (var j = i + 1; j < SAK; j++) e -= SAW[i][j] * x[i] * x[j]; } return e; }
+var saMin = (function () { var g = 1e9; for (var m = 0; m < (1 << SAK); m++) { var x = []; for (var i = 0; i < SAK; i++) x.push((m >> i) & 1); g = Math.min(g, saE(x)); } return g; })();
+function saRun(mode, sd, trace) {
+  var rr = S.rng(sd), x = [], steps = 3000, tr = []; for (var i = 0; i < SAK; i++) x.push(rr() < 0.5 ? 1 : 0);
+  for (var t = 0; t < steps; t++) {
+    var k = Math.floor(rr() * SAK), d = SAB[k]; for (var j = 0; j < SAK; j++) d += SAW[k][j] * x[j];
+    if (mode === 'det') x[k] = d >= 0 ? 1 : 0; else { var T = mode === 'gibbs' ? 1 : 3 * Math.pow(0.02 / 3, t / steps); x[k] = rr() < S.sigmoid(d / T) ? 1 : 0; }
+    if (trace && t % 10 === 0) tr.push([t, saE(x)]);
+  }
+  return trace ? tr : saE(x);
+}
+var saChart = S.chart($('#saC'), { h: 260, x: [0, 3000], y: [Math.floor(saMin) - 1, 6], xt: [0, 1000, 2000, 3000], yt: [Math.floor(saMin), Math.floor(saMin / 2), 0, 5], xl: '更新步数（每条是第 1 个初始状态的轨迹）', yl: '能量 E(x)' });
+var saRound = 0;
+function sa() {
+  var base = 100 + 20 * saRound, hit = { det: 0, gibbs: 0, sa: 0 };
+  for (var s = 0; s < 20; s++) ['det', 'gibbs', 'sa'].forEach(function (m) { if (saRun(m, base + s) < saMin + 1e-9) hit[m]++; });
+  saChart({ curves: [{ pts: saRun('det', base, true), c: 'dim', label: '确定性下降（Hopfield 式）' }, { pts: saRun('gibbs', base, true), c: 'c1', w: 1.2, label: '吉布斯 T = 1' }, { pts: saRun('sa', base, true), c: 'c2', label: '模拟退火 T: 3 → 0.02' }], hl: [{ y: saMin, c: 'ok', label: '全局最低 ' + S.f(saMin, 2) }] });
+  S.bars($('#saB'), [{ label: '确定性下降', value: hit.det / 20, text: hit.det + '/20', cls: 'dim' }, { label: '吉布斯 T = 1', value: hit.gibbs / 20, text: hit.gibbs + '/20', cls: 'c1' }, { label: '模拟退火', value: hit.sa / 20, text: hit.sa + '/20', cls: 'ok' }]);
+  $('#saI').textContent = '第 ' + (saRound + 1) + ' 组初始状态';
+  $('#saW').innerHTML = '确定性下降很快就停住了，停在哪个局部最优取决于起点；固定 T = 1 的吉布斯采样始终在热平衡附近游荡，最后一刻恰好在最低点的机会不大；模拟退火先在高温下自由探索，降温后逐渐“冻结”在低能量区域，大多数时候能找到全局最低（本页模拟结果）。';
+  saRound++;
+}
+$('#saGo').addEventListener('click', sa); sa();
+S.notes($('#n-sa'), {
+  c: [
+    ['搜索问题', '给定权重，找能量最低的状态（组合优化）。'],
+    ['学习问题', '给定观测数据，学习权重。'],
+    ['Hopfield 网络', '确定性动力系统，能量单调下降，用局部最优存储记忆。'],
+    ['模拟退火', '从高温逐渐降温，以较大概率跳出差的局部最优。'],
+    ['赫布规则', '一起激活的单元，连接加强。']
+  ],
+  p: [
+    ['学习的梯度', '⟨x_i x_j⟩_data − ⟨x_i x_j⟩_model'],
+    ['data 项怎么得', '把 v 钉在训练样本，只对 h 吉布斯采样到平衡'],
+    ['model 项怎么得', '所有变量自由吉布斯采样到平衡'],
+    ['局部性', '每个权重只依赖它连接的两个变量'],
+    ['主要代价', '每次更新都要重新采样到平衡，非常慢']
+  ]
+});
+S.notes($('#n-rbm'), {
+  c: [
+    ['受限玻尔兹曼机', '可观测层与隐藏层二分图连接，层内无连接。'],
+    ['条件独立', '给定一层，另一层的各变量相互独立。'],
+    ['块吉布斯采样', '整层并行采样，v → h → v → h …'],
+    ['高斯—伯努利 RBM', '可观测层为连续高斯变量。'],
+    ['伯努利—高斯 RBM', '隐藏层为连续高斯变量。']
+  ],
+  p: [
+    ['能量', 'E(v, h) = −aᵀv − bᵀh − vᵀWh'],
+    ['隐层条件概率', 'p(h = 1|v) = σ(Wᵀv + b)'],
+    ['可见层条件概率', 'p(v = 1|h) = σ(Wh + a)'],
+    ['边际的分解', 'p(v) ∝ exp(aᵀv) Π_j (1 + exp(b_j + Σ_i w_ij v_i))'],
+    ['梯度', '𝔼_data[v_i h_j] − 𝔼_model[v_i h_j]，第二项仍要长链']
+  ],
+  ph: '公式'
+});
+
+/* ---------- RBM CD-k ---------- */
+var RV = 9, RH = 6, RD = [];
+(function () { for (var i = 0; i < 3; i++) { var a = [], b = []; for (var j = 0; j < 9; j++) { a.push(Math.floor(j / 3) === i ? 1 : 0); b.push(j % 3 === i ? 1 : 0); } RD.push(a, b); } })();
+var rbW, rbA, rbB, rbEp, rbHist, rbRng, rbK = 1;
+function rbInit() { rbRng = S.rng(5); rbW = []; for (var i = 0; i < RV; i++) { rbW.push([]); for (var j = 0; j < RH; j++) rbW[i].push(0.1 * S.randn(rbRng)); } rbA = new Array(RV).fill(0); rbB = new Array(RH).fill(0); rbEp = 0; rbHist = [[0, rbLL()]]; }
+function rbF(v) { var s = 0, i, j; for (i = 0; i < RV; i++) s += rbA[i] * v[i]; for (j = 0; j < RH; j++) { var x = rbB[j]; for (i = 0; i < RV; i++) x += rbW[i][j] * v[i]; s += Math.log(1 + Math.exp(x)); } return s; }
+function rbLogZ() { var fs = []; for (var m = 0; m < 512; m++) { var v = []; for (var i = 0; i < 9; i++) v.push((m >> i) & 1); fs.push(rbF(v)); } var mx = Math.max.apply(null, fs); return mx + Math.log(fs.reduce(function (s, f) { return s + Math.exp(f - mx); }, 0)); }
+function rbLL() { var lz = rbLogZ(); return RD.reduce(function (s, v) { return s + rbF(v) - lz; }, 0) / RD.length; }
+function hGiven(v) { var p = [], h = []; for (var j = 0; j < RH; j++) { var x = rbB[j]; for (var i = 0; i < RV; i++) x += rbW[i][j] * v[i]; p.push(S.sigmoid(x)); h.push(rbRng() < p[j] ? 1 : 0); } return [p, h]; }
+function vGiven(h) { var p = [], v = []; for (var i = 0; i < RV; i++) { var x = rbA[i]; for (var j = 0; j < RH; j++) x += rbW[i][j] * h[j]; p.push(S.sigmoid(x)); v.push(rbRng() < p[i] ? 1 : 0); } return [p, v]; }
+function rbEpoch() {
+  RD.forEach(function (v0) {
+    var r0 = hGiven(v0), h = r0[1], v = v0, ph = r0[0];
+    for (var k = 0; k < rbK; k++) { v = vGiven(h)[1]; var r1 = hGiven(v); ph = r1[0]; h = r1[1]; }
+    for (var i = 0; i < RV; i++) { for (var j = 0; j < RH; j++) rbW[i][j] += 0.1 * (v0[i] * r0[0][j] - v[i] * ph[j]); rbA[i] += 0.1 * (v0[i] - v[i]); }
+    for (var j2 = 0; j2 < RH; j2++) rbB[j2] += 0.1 * (r0[0][j2] - ph[j2]);
+  });
+  rbEp++;
+}
+function px(vals, col) { return '<div class="px3">' + vals.map(function (v) { return '<i style="background:' + col(v) + '"></i>'; }).join('') + '</div>'; }
+var rbChart = S.chart($('#rbC'), { h: 260, x: [0, 600], y: [-6.5, -1.5], xt: [0, 200, 400, 600], yt: [-6, -5, -4, -3, -2], xl: '训练轮数', yl: '平均对数似然（精确值）' });
+function rbDraw() {
+  rbChart({ curves: [{ pts: rbHist, c: 'c2', label: 'CD-' + rbK + ' 训练中' }], hl: [{ y: Math.log(1 / 6), c: 'ok', label: '理想 log(1/6)' }, { y: Math.log(1 / 512), c: 'dim', label: '均匀 log(1/512)' }], x: [0, Math.max(600, rbEp)] });
+  $('#rbD').innerHTML = RD.map(function (v) { return '<figure>' + px(v, function (x) { return x ? S.css('--ink') : S.css('--hair'); }) + '</figure>'; }).join('');
+  var mx = 0.01; rbW.forEach(function (r) { r.forEach(function (w) { mx = Math.max(mx, Math.abs(w)); }); });
+  $('#rbW').innerHTML = [0, 1, 2, 3, 4, 5].map(function (j) { return '<figure>' + px(rbW.map(function (r) { return r[j]; }), function (w) { var a = Math.min(1, Math.abs(w) / mx); return 'rgba(' + (w > 0 ? '220,90,50,' : '40,80,220,') + (0.12 + 0.88 * a) + ')'; }) + '<figcaption>h' + (j + 1) + '</figcaption></figure>'; }).join('');
+  var sr = S.rng(1000 + rbEp), save = rbRng; rbRng = sr; var samples = [];
+  for (var s = 0; s < 8; s++) { var v = []; for (var i = 0; i < 9; i++) v.push(sr() < 0.5 ? 1 : 0); var pv; for (var t = 0; t < 200; t++) { var h = hGiven(v)[1]; var r = vGiven(h); pv = r[0]; v = r[1]; } samples.push(pv); }
+  rbRng = save;
+  $('#rbS').innerHTML = samples.map(function (p) { return '<figure>' + px(p, function (x) { return 'rgba(30,30,40,' + (0.08 + 0.92 * x) + ')'; }) + '</figure>'; }).join('');
+  var ll = rbHist[rbHist.length - 1][1], mass = Math.exp(ll) * 6;
+  $('#rbI').textContent = '已训练 ' + rbEp + ' 轮';
+  if (!rbEp) { $('#rbT').innerHTML = '还没训练：权重是小随机数，模型接近均匀分布，平均对数似然 ' + S.f(ll, 3) + '，约等于 log(1/512) = −6.238；采样出来的都是一片灰。点“训练 100 轮”。'; return; }
+  $('#rbT').innerHTML = '当前平均对数似然 <b>' + S.f(ll, 3) + '</b>，相当于模型把约 <b>' + S.pct(Math.min(1, mass), 0) + '</b> 的概率放在了这 6 种训练图案上（几何平均意义下；均匀分布只放 1.2%）。CD 用的是有偏的近似梯度，但精确的似然确实在上升；各隐单元的权重分化出各自偏好的像素组合（多个隐单元组合起来解释一条杠），采样出的图案也越来越像训练集（本页模拟结果）。';
+}
+$('#rbGo').addEventListener('click', function () { for (var e = 0; e < 100; e++) { rbEpoch(); if (rbEp % 10 === 0) rbHist.push([rbEp, rbLL()]); } rbDraw(); });
+$('#rbR').addEventListener('click', function () { rbInit(); rbDraw(); });
+S.seg($('#rbK'), function (v) { rbK = +v; rbInit(); rbDraw(); });
+rbInit(); rbDraw();
+S.notes($('#n-cd'), {
+  c: [
+    ['对比散度 CD-k', '从训练样本出发，只做 k 步吉布斯采样近似模型期望。'],
+    ['CD-1', 'v̂ → h → v′ → h′，用 v̂hᵀ − v′h′ᵀ 更新 W。'],
+    ['持续对比散度 PCD', '采样链在多次参数更新之间不重启。']
+  ],
+  p: [
+    ['CD 的本质', '计算高效的有偏近似，不是精确梯度'],
+    ['偏差来源', '链从数据分布起步，k 步后未收敛到模型分布'],
+    ['k 的取舍', 'k 越大偏差越小、代价越高'],
+    ['早期经验', 'k = 1 已能得到可用表示']
+  ]
+});
+
+/* ---------- DBN ---------- */
+var DBL = ['v（训练样本）', 'h⁽¹⁾', 'h⁽²⁾', 'h⁽³⁾'];
+function dbDraw(k) {
+  var g = $('#dbG'); g.innerHTML = '';
+  var ys = [255, 180, 105, 30];
+  for (var l = 0; l < 4; l++) {
+    var cls = l === 0 ? 'done' : (l < k ? 'done' : l === k ? 'on' : '');
+    if (l > k && k < 4) cls = '';
+    S.svg('rect', { x: 110, y: ys[l] - 20, width: 200, height: 40, class: cls }, g);
+    S.svg('text', { x: 210, y: ys[l] + 5, text: DBL[l] }, g);
+    if (l > 0) {
+      var cls2 = (k === 4 && l === 3) ? 'und' : (l === k ? 'und' : '');
+      S.svg('path', { d: 'M210 ' + (ys[l - 1] - 20) + ' L210 ' + (ys[l] + 20), class: cls2 }, g);
+      S.svg('text', { x: 255, y: (ys[l - 1] + ys[l]) / 2 + 5, text: 'W⁽' + l + '⁾' + (l === k && k < 4 ? '  ← 正在训练的 RBM' : '') }, g);
+    }
+  }
+}
+S.stepper($('#dbS'), 5, function (i) {
+  dbDraw(i);
+  $('#dbW').innerHTML = ['准备：训练集就是可观测层 v。', '<b>第 1 个 RBM</b>：在 (v, h⁽¹⁾) 上用对比散度训练 W⁽¹⁾。', '<b>第 2 个 RBM</b>：固定 W⁽¹⁾，把每个样本经 p(h⁽¹⁾|v) = σ(W⁽¹⁾ᵀv + b) 映射到第 1 层，得到的表示集合作为训练集，训练 W⁽²⁾。', '<b>第 3 个 RBM</b>：同理，把第 2 层的表示作为训练集训练 W⁽³⁾。', '<b>预训练完成</b>：最顶上两层保留为无向的 RBM（红线），下面各层变成自上而下的有向生成连接（Sigmoid 信念网络）。接着用 Wake-Sleep 做生成式微调，或者只取向上的权重、加输出层用反向传播做判别式微调。'][i];
+}, ['数据', 'RBM 1', 'RBM 2', 'RBM 3', '完成']);
+S.notes($('#n-dbn'), {
+  c: [
+    ['深度信念网络', '顶两层无向（RBM），其余层自上而下有向（Sigmoid 信念网络）。'],
+    ['深度玻尔兹曼机', '所有相邻层都是无向连接，推断更难。'],
+    ['逐层预训练', '自下而上，每次只训练一个 RBM。'],
+    ['Wake-Sleep', 'Wake 改生成权重贴合现实，Sleep 改认知权重识别梦境。'],
+    ['判别式微调', '只用向上的认知权重，加输出层做反向传播。']
+  ],
+  p: [
+    ['直接训练为何难', '有向层的后验不独立（解释消除），难以估计'],
+    ['为何用 RBM 堆叠', 'RBM 中给定可见层时隐变量后验独立，易于采样和学习'],
+    ['生成过程', '顶层 RBM 吉布斯采样到平衡，再逐层向下采样'],
+    ['为何不再常用', 'ReLU、好的初始化、BN、残差让端到端训练可行'],
+    ['留下来的东西', '“无标注预训练 + 下游微调”范式，延续到自监督预训练语言模型']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 能量定义概率', 'p(x) ∝ exp(−E(x)/T)，E 由成对权重和偏置组成；Z 算不动，但概率比只看能量差。改变一个变量的能量差 ΔE 正好给出 p(x_i = 1|其他) = σ(ΔE/T)，所以每个单元就是一个随机的 Logistic 神经元。'],
+    ['② RBM 与 CD', '限制成二分图后，给定一层另一层条件独立，可以整层并行采样，数据项也变得好算。对比散度从训练样本出发只走 k 步来近似模型期望——有偏但高效。'],
+    ['③ DBN 与预训练', '把 RBM 一层层堆起来、自下而上逐层训练，再用 Wake-Sleep 或反向传播微调。后来端到端训练变得可行，DBN 退出主流，但“无标注预训练 + 下游微调”的思想延续到了今天的大模型。']
+  ],
+  p: [
+    ['原书一句话', '本章不只是回顾一个历史模型，而是理解几个基本问题：如何定义未归一化概率模型，如何在难以精确推断时近似学习，如何利用无标注数据构造有用表示，以及如何把预训练得到的表示迁移到下游任务。'],
+    ['下一篇', '最后一篇：VAE、GAN、流模型、扩散模型与自回归生成——深度生成模型。']
+  ],
+  ph: '一句话'
+});

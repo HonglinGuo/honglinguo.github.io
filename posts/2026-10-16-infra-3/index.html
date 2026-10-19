@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推理与训练负载：工作何时到、谁在等、怎样算完成</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（三）：TTFT 与 p95、状态驻留面积、流体队列与突发积压、前缀复用与成功任务成本、Agent 的关键路径、视觉 token 与音频缓冲、训练每参数 18 字节与 6ND、RL 的有效样本、Scaling Law 与全生命周期成本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.qsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.qsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.qsvg .ax { stroke: var(--rule); }
+.qsvg .ln1 { stroke: var(--s2); stroke-width: 2.5; fill: none; }
+.qsvg .ln2 { stroke: var(--s1); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.qsvg .cut { stroke: var(--dim); stroke-dasharray: 3 3; }
+.atl { margin-top: 10px; }
+.atl .row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; font-size: 15px; }
+.atl .lane { position: relative; height: 22px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; }
+.atl .b { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 12px; line-height: 18px; color: #fff; text-align: center; overflow: hidden; }
+.atl .arr { background: var(--dim); } .atl .ply { background: var(--s1); } .atl .gap { background: var(--alert); }
+.togs { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; margin: 6px 0; }
+.togs label { display: flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body data-series="infra-series" data-part="3">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 03</span><span>对应原书第 3 章</span><span>约 35 分钟</span></p>
+  <h1>平均够用，<em>为什么还排队</em></h1>
+  <p class="lead">第 2 篇给出了一次调用要多少容量、运算和读取。这一章再加三个问题：工作什么时候到、哪些步骤必须等、什么才算任务完成。原书由此建立排队、状态驻留、关键路径和成功任务成本四个模型，再延伸到训练、强化学习和“训练 + 服务”的全生命周期成本。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" aria-current="page" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#metric">指标</a><a href="#queue">排队</a><a href="#agent">Agent 任务</a><a href="#mm">多模态</a><a href="#train">训练</a><a href="#rl">强化学习</a><a href="#budget">预算</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>平均处理能力足够，为什么请求还会大量积压？积压要多久才能排空？</li>
+  <li>一个 Agent 任务的时间和成本怎么算？缓存、并行工具、多采样各改变了哪一项？</li>
+  <li>训练一个 8B 模型要多少显存和算力？RL 为什么比看上去贵？“训练更久的小模型”何时划算？</li>
+</ol></div>
+
+<section class="part" id="metric">
+  <div class="part-head"><h2>先写清楚“什么算完成”，再决定统计什么</h2><span class="meta">原书 3.1.1–3.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>一次请求恢复 S 个上下文、处理 P 个新输入、返回 G 个 token，就是一次 prefill 加 G − 1 次 decode。prefill 一次处理 BP 行，decode 只有 B 行，这就是“prefill 常受算力限制、decode 常受带宽限制”的来由。时间线上标三个点：到达 t<sub>a</sub>、首 token t<sub>1</sub>、末 token t<sub>G</sub>，得到 <strong>TTFT = t<sub>1</sub> − t<sub>a</sub></strong>、完整请求时间 t<sub>G</sub> − t<sub>a</sub>、平均 token 间隔 (t<sub>G</sub> − t<sub>1</sub>)/(G − 1)。减少排队改善 TTFT，却不会缩短已开始生成后的间隔。</p>
+    <p>平均值会掩盖慢请求，原书用 <strong>p95</strong>，按最近秩法取第 ⌈0.95n⌉ 个观测：4 条请求的 p95 就是最大值，480 条是第 456 个。等待期间还占着状态：<strong>A<sub>M</sub> = ∫M(t)dt</strong>，1 GiB 驻留 10 秒是 10 GiB·s；任务以 λ/秒到达、各占 M<sub>0</sub>、平均等 τ 秒，稳定时这些等待任务的平均占用约 <strong>λ·M<sub>0</sub>·τ</strong>。工具等待由此变成容量问题。成本则用<strong>成功任务成本</strong>：所有尝试（含失败）的花费除以成功任务数。</p>
+    <p class="go">算一下练习 3-2 的工具等待：每秒 2 个任务进入等待，每个占 1 GiB。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">等待中的状态占用 λ·M<sub>0</sub>·τ</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>进入等待的速率 λ（个/秒） <output id="lmL">2</output></span><input type="range" id="lmLs" min="0.5" max="20" step="0.5" value="2"></label>
+      <label class="ctl"><span>每个任务的状态 M<sub>0</sub>（GiB） <output id="lmM">1</output></span><input type="range" id="lmMs" min="0.1" max="8" step="0.1" value="1"></label>
+      <label class="ctl"><span>平均等待 τ（秒） <output id="lmT">10</output></span><input type="range" id="lmTs" min="1" max="120" value="10"></label>
+    </div>
+    <div class="read"><div><div class="v" id="lmN">0</div><div class="k">平均同时等待的任务数 λτ</div></div><div class="warn"><div class="v" id="lmO">0</div><div class="k">平均状态占用</div></div></div>
+    <p class="note">等待从 10 秒延长到 30 秒，占用跟着变成三倍：状态没有变大，只是占得更久。</p>
+  </div>
+  <div class="notes" id="n-metric"></div>
+</section>
+
+<section class="part" id="queue">
+  <div class="part-head"><h2>排队：前一分钟的空闲，留不到后一分钟</h2><span class="meta">原书 3.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>例题 3-1：两分钟内到达 480 条请求（平均每秒 4 条），一半是“长输入”（8192 入 / 256 出），一半是“长输出”（1024 入 / 2048 出）。均匀混合时每秒需要 4,604 步 decode；若前一分钟两类比例 9:1、后一分钟 1:9，则前一分钟每秒 1,736.8 步、后一分钟 7,471.2 步，总量不变。</p>
+    <p>处理率从硬件下界算：RTX PRO 6000（1792 GB/s）上的 Qwen3-8B 同时跑 64 条序列，一步至少读 15.14 GB 权重加各序列的 KV（平均上下文约 2742 token），共 41.02 GB、22.89 ms，所以<strong>一张卡每秒最多约 2,795.66 步</strong>，两张约 5,591.33 步。用流体队列 <strong>Q<sub>k+1</sub> = max(0, Q<sub>k</sub> + A<sub>k</sub> − μ<sub>k</sub>Δt)</strong> 递推：后一分钟每秒多出约 1,879.87 步，60 秒积压约 112,792 步，停止到达后还要约 20.17 秒排空。一般地，突发速率 λ<sub>w</sub> 持续 τ 秒，积压 (λ<sub>w</sub> − μ)τ，排空时间 (λ<sub>w</sub> − μ)τ/μ。</p>
+    <p>原书还在一张卡上真实回放了这两种序列（vLLM 0.23，KV 池 24 GiB，最多 64 条）：完整请求 p95 都约 299.4 秒，但 TTFT p95 分别是 242.9 和 258.9 秒，抢占事件 62 和 24 次。一张卡每秒最多 2,796 步，本来就低于平均需求 4,604 步，两次都严重积压；而 <strong>KV 池填满时，即使计算单元有空，新请求也只能等已有请求释放状态</strong>。</p>
+    <p class="go">先估排空时间，再改卡数和到达模式。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">decode 积压的流体模型（原书例题 3-1 的数字）</p>
+    <div id="qG"></div>
+    <div class="selrow"><span>到达模式</span><div class="seg" id="qMode"><button data-v="u">均匀混合</button><button data-v="v" aria-pressed="true">前 9:1、后 1:9</button></div></div>
+    <label class="ctl"><span>decode 卡数（每张 2,795.66 步/秒） <output id="qC">2</output></span><input type="range" id="qCs" min="1" max="4" value="2"></label>
+    <div class="read"><div class="warn"><div class="v" id="qPk">0</div><div class="k">积压峰值（步）</div></div><div class="hl"><div class="v" id="qDr">0</div><div class="k">停止到达后的排空时间</div></div></div>
+    <svg class="qsvg" id="qSvg" viewBox="0 0 640 220" role="img" aria-label="积压随时间变化"></svg>
+    <p class="note">实线：选定模式；虚线：另一种模式。120 秒后停止到达。只算 decode，prefill 能力单独核算。</p>
+  </div>
+  <div class="notes" id="n-queue"></div>
+</section>
+
+<section class="part" id="agent">
+  <div class="part-head"><h2>Agent 任务：前缀复用、成功率、关键路径</h2><span class="meta">原书 3.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>前缀复用</strong>：第 i 轮输入 I<sub>i</sub>，可复用前缀 K<sub>i</sub>，则 P<sub>i</sub> = I<sub>i</sub> − K<sub>i</sub>、S<sub>i</sub> = K<sub>i</sub>。原书的四轮代码修复任务累计输入 5,297 token、命中 4,480，prefill 从 76.196 降到 11.976 TFLOPs；代价是旧状态要一直保留。缓存收益还取决于<strong>改动发生在哪里</strong>：末尾追加 100 token 只多 100 行；改动 2000 个 token 中的第 501 个，最长可复用前缀只剩 500。</p>
+    <p><strong>成功任务成本</strong>：每次尝试成本 c、成功率 p，C<sub>success</sub> = c/p；新方法更省的条件是 <strong>p<sub>2</sub>/p<sub>1</sub> &gt; c<sub>2</sub>/c<sub>1</sub></strong>。原书的简单假设：token 单价降到 1/10，每任务用量涨到 20 倍，成功率 50% → 80%，成功任务成本比 = 2 × 0.5/0.8 = <strong>1.25</strong>，单价降了、质量升了，成功任务反而更贵。原书还测了同一代码任务：关闭思考 12 轮、765 个输出 token、13.2 秒，仍未修好；开启思考 4 轮、2,733 个输出 token、76.3 秒，原定检查全部通过。</p>
+    <p><strong>关键路径</strong>：串行阶段相加，独立分支取最慢。模型 2 秒 → 工具 6 秒、10 秒 → 模型 3 秒：工具有依赖是 21 秒，独立是 15 秒，工具总工作仍是 16 秒。首轮 36.375 秒的模型计算减半，整任务从 76.510 降到 58.323 秒，Amdahl 加速约 1.31。原书还拆解了 Jev 决策模型：只做 prefill、不生成，所以快；但不确定的请求要转交 LLM，转交比例超过约 0.58%，转交费用就超过决策模型本身。</p>
+    <p class="go">比较两种策略的成功任务成本，再排一次工具依赖。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">成功任务成本 c / p</p>
+      <div id="csG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>旧：每次成本 c<sub>1</sub> <output id="c1">1</output></span><input type="range" id="c1s" min="0.1" max="5" step="0.1" value="1"></label>
+        <label class="ctl"><span>旧：成功率 p<sub>1</sub> <output id="p1">50%</output></span><input type="range" id="p1s" min="1" max="100" value="50"></label>
+        <label class="ctl"><span>新：每次成本 c<sub>2</sub> <output id="c2">2</output></span><input type="range" id="c2s" min="0.1" max="5" step="0.1" value="2"></label>
+        <label class="ctl"><span>新：成功率 p<sub>2</sub> <output id="p2">80%</output></span><input type="range" id="p2s" min="1" max="100" value="80"></label>
+      </div>
+      <div class="read"><div><div class="v" id="cs1">0</div><div class="k">旧方法 c₁/p₁</div></div><div class="hl"><div class="v" id="cs2">0</div><div class="k">新方法 c₂/p₂</div></div></div>
+      <p class="verdict3" id="csW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">工具有无依赖</p>
+      <div class="seg" id="tpS"><button data-v="s" aria-pressed="true">工具串行</button><button data-v="p">工具独立</button></div>
+      <div class="atl" id="tpT"></div>
+      <div class="read"><div class="hl"><div class="v" id="tpA">0</div><div class="k">任务总时间</div></div><div><div class="v" id="tpB">0</div><div class="k">工具等待期间 1 GiB 的占用</div></div></div>
+    </div>
+  </div>
+  <div class="notes" id="n-agent"></div>
+</section>
+
+<section class="part" id="mm">
+  <div class="part-head"><h2>多模态与实时：数一数 token，算一算缓冲</h2><span class="meta">原书 3.3 节</span></div>
+  <div class="sec-lede">
+    <p>视觉问答是 编码 E → prefill P → decode D。视觉 token 数 <strong>n<sub>v</sub> = H·W / (p<sub>patch</sub>²·r²)</strong>：Qwen3-VL-4B 的 640×640 图片按 16×16 切成 1600 块，再 2×2 合并成 400 个视觉 token。同一张截图在三个阶段大小不同：压缩文件 0.8 MB；编码结果 EC（含三组 DeepStack 中间层特征，共 4 × 2560 维 BF16）7.8125 MiB；进入语言模型后的 KV 56.25 MiB（每 token 144 KiB）。EC 只要图片和编码配置相同就能复用；KV 还依赖图片之前的上下文。图片边长加倍，视觉 token、EC、KV 都变四倍。</p>
+    <p>输出若是声音或图像，迭代方式又不同：Fish Audio S2 Pro 每帧要 10 次快速路径前向；Qwen-Image-2512 生成 1024×1024 图像 50 步去噪、true CFG 每步两支，共 100 次 DiT 前向，约 7.830×10<sup>15</sup> FLOPs，总量 = n<sub>s</sub>·n<sub>b</sub>·F<sub>step</sub>。</p>
+    <p>实时播放还要每块按时到：缓冲余量 B(t) = A(t) − P(t)。原书时间线：每 20 ms 一块（24 kHz 单声道 16 位，960 字节），模型 12 ms + 发送 1 ms + 网络 5 ms，第一块 38 ms 到；抖动缓冲 40 ms，于 78 ms 开播。第三块网络延迟 50 ms，123 ms 才到，错过 118 ms 的播放时刻，停顿 5 ms。缓冲加到 60 ms，停顿消失，首播推迟到 98 ms。若平均到达速度长期低于播放速度，有限缓冲终究会耗尽。</p>
+    <p class="go">左边数视觉 token，右边调缓冲。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一张图片的三种大小</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>边长（像素） <output id="vsP">640</output></span><input type="range" id="vsPs" min="128" max="2048" step="64" value="640"></label>
+        <label class="ctl"><span>图片数 <output id="vsN">1</output></span><input type="range" id="vsNs" min="1" max="8" value="1"></label>
+      </div>
+      <table class="calc" id="vsT"></table>
+      <p class="note">patch 16、2×2 合并、EC 4×2560 维 BF16、语言 KV 每 token 144 KiB，均按原书 Qwen3-VL-4B 配置。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">八块音频的播放时间线</p>
+      <label class="ctl"><span>抖动缓冲（ms） <output id="abB">40</output></span><input type="range" id="abBs" min="0" max="100" step="5" value="40"></label>
+      <label class="ctl"><span>第三块的网络延迟（ms） <output id="abJ">50</output></span><input type="range" id="abJs" min="5" max="120" step="5" value="50"></label>
+      <div class="atl" id="abT"></div>
+      <div class="read"><div class="hl"><div class="v" id="abF">0</div><div class="k">首次播放</div></div><div class="warn"><div class="v" id="abG">0</div><div class="k">累计停顿</div></div></div>
+    </div>
+  </div>
+  <div class="notes" id="n-mm"></div>
+</section>
+
+<section class="part" id="train">
+  <div class="part-head"><h2>训练：每参数 18 字节，和 6ND 漏掉的东西</h2><span class="meta">原书 3.4 节</span></div>
+  <div class="sec-lede">
+    <p>对 Y = XW，反向要算两种梯度：dX = dY·W<sup>T</sup>（传回前一层），dW = X<sup>T</sup>·dY（本层的调整方向），三次矩阵乘法各 2mkn，合计约前向的三倍，累计得 <strong>F<sub>train</sub> ≈ 6ND</strong>。冻结的矩阵可以省 dW，但只要更早的层还要训练，dX 照算。为了算 dW，前向的输入 X 要一直留到反向用完；优化器状态则要跨多次更新保留。</p>
+    <p>例题 3-3：Qwen3-8B 的 8,190,735,360 个参数，保存 BF16 权重 2 字节 + FP32 梯度 4 + FP32 主权重 4 + Adam 两个矩估计各 4，<strong>每参数 18 字节，共 147.433 GB</strong>，还没算激活就超过 H100（80 GB）、RTX PRO 6000（96 GB）乃至 H200（141 GB），是推理 BF16 权重的九倍。显存放不下完整 batch 时，可以拆成多个 micro-batch 累积梯度再更新一次。</p>
+    <p>6ND 只是粗算：Qwen3-8B、8192 token 一次前反向，6ND 给 402.591 TFLOPs，逐矩阵累计是 <strong>431.368</strong>，多出的主要是不对应参数的注意力 QK<sup>T</sup>、AV（前反向 59.381），而嵌入等参数又不该按 6ND 计入，两项相抵后高约 7.15%。这是第 1 篇说的“模型漏项”。只对 4096 个监督 token 算词表投影，可降到 416.074。序列组成也有影响：8192 token 拆成 4096 + 4096 和 7168 + 1024，一层注意力配对从 1678 万增到 2622 万，约多 56%。</p>
+    <p class="go">勾选要保存的训练状态，看要几张卡。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">全参数训练的参数相关状态（不含激活）</p>
+    <div id="trG"></div>
+    <label class="ctl"><span>参数量（十亿） <output id="trN">8.19</output></span><input type="range" id="trNs" min="0.5" max="72" step="0.01" value="8.190735360"></label>
+    <div class="togs" id="trT"></div>
+    <div class="read"><div class="warn"><div class="v" id="trM">0</div><div class="k">参数相关状态</div></div><div><div class="v" id="trB">0</div><div class="k">每参数字节</div></div><div class="hl"><div class="v" id="trC">0</div><div class="k">仅这部分就需要的 80 GB 卡数</div></div></div>
+  </div>
+  <div class="notes" id="n-train"></div>
+</section>
+
+<section class="part" id="rl">
+  <div class="part-head"><h2>强化学习：生成的样本和用上的样本不是一回事</h2><span class="meta">原书 3.5 节</span></div>
+  <div class="sec-lede">
+    <p>RL 把生成（rollout）、反馈（规则、测试、奖励模型或教师模型）、学习器更新、权重同步连成一个循环，任何一环慢了下游都要等。DeepSeek V4-Flash 先用 SFT + RL 训练领域专家，再用多教师的同策略蒸馏（OPD）合并，教师前向成了生成与更新之间的一项工作。</p>
+    <p>关键是区分<strong>生成的样本</strong>和<strong>进入更新的样本</strong>：保留 n<sub>keep</sub> 条、保留比例 a，平均要生成 <strong>n<sub>keep</sub>/a</strong> 条。采用组内相对优势时，同组回答奖励相同（比如全对），优势全为零，生成、评分、更新做了一遍，却没有学习信号。例题 3-4（Qwen3-8B，8 题 × 4 份，P = 1024，G = 256，保留 16 条）：rollout prefill 465.143 + decode 129.056 + 参考模型 634.944 + 策略更新 952.416 = <strong>2,181.559 TFLOPs</strong>。写成 F<sub>cycle</sub>(n) = n(f<sub>g</sub> + f<sub>r</sub>) + F<sub>u</sub>：保留比例从 1/2 降到 1/4，生成 64 条，总量 3,410.701，增加约 56.3%，多出的全部来自生成和参考模型。更新后还要把 16.381 GB 的权重发给每个生成副本，4 个副本独立发送约 65.5 GB。</p>
+    <p class="go">拖动保留比例。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">保留 16 条样本，一轮要多少计算</p>
+    <label class="ctl"><span>样本保留比例 a <output id="rlA">50%</output></span><input type="range" id="rlAs" min="5" max="100" step="5" value="50"></label>
+    <div class="read"><div><div class="v" id="rlN">0</div><div class="k">需生成的回答数</div></div><div class="warn"><div class="v" id="rlF">0</div><div class="k">一轮矩阵运算（TFLOPs）</div></div><div class="hl"><div class="v" id="rlP">0</div><div class="k">每条保留样本分摊</div></div></div>
+    <div id="rlBars" class="wide"></div>
+    <p class="note">每条回答的生成 + 参考模型前向 = (465.143 + 129.056 + 634.944)/32 ≈ 38.411 TFLOPs，更新固定 952.416 TFLOPs（原书例题 3-4）。</p>
+  </div>
+  <div class="notes" id="n-rl"></div>
+</section>
+
+<section class="part" id="budget">
+  <div class="part-head"><h2>预算：Scaling Law、GPU 小时和全生命周期成本</h2><span class="meta">原书 3.6 节</span></div>
+  <div class="sec-lede">
+    <p>固定训练预算 C = 6ND，损失 L(N, D) = E + A/N<sup>α</sup> + B/D<sup>β</sup>，求导得 <strong>N<sub>opt</sub> ∝ C<sup>β/(α+β)</sup>，D<sub>opt</sub> ∝ C<sup>α/(α+β)</sup></strong>；α = β 时预算翻四倍，参数和数据各翻两倍。Kaplan 早期拟合约 N ∝ C<sup>0.73</sup>，Chinchilla 认为两者应接近等比例增长（约每参数 20 token）。原书用 datablations 的 8 个 C4 观测做留出检验：6 个拟合、2 个大模型检验，均方根误差约 0.0193 nats/token。</p>
+    <p>但实际模型远超“计算最优”：7–8B 档的 D/N 从 Llama 1 的 149 增到 Qwen3 的约 4,500，比 Chinchilla 基准高一到两个数量级。原书强调这不是拟合错了，而是目标不同：<strong>计算最优</strong>只最小化固定预算下的损失，开发者还要计入上线后的服务成本，所以选更小、训练更久的模型。全生命周期：C<sub>life</sub> = C<sub>0</sub> + QΣw<sub>j</sub>c<sub>j</sub>；小模型多花 ΔC<sub>0</sub> 训练、每个成功任务省 Δc，交点 <strong>Q* = ΔC<sub>0</sub>/Δc</strong>。原书例：多训 10 万 H100 GPU 小时，每任务省 0.72 GPU 秒，Q* = 5 亿次。</p>
+    <p>GPU 小时换日历时间要除以卡数：Llama 1 65B 用 1,022,362 A100 小时，2048 卡约 20.8 天；Llama 3.1 405B 用 30.84M H100 小时，按 16,384 卡约 78.43 天。跨卡型比较要折算：一个 H100 / H800 小时按 BF16 峰值约等于 3.17 个 A100 小时。</p>
+    <p class="go">先算交点，再换卡数看日历时间。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">小模型多训的成本何时收回</p>
+      <div id="lfG"></div>
+      <label class="ctl"><span>额外训练（万 H100 GPU 小时） <output id="lfC">10</output></span><input type="range" id="lfCs" min="1" max="100" value="10"></label>
+      <label class="ctl"><span>每任务节省（GPU 秒） <output id="lfD">0.72</output></span><input type="range" id="lfDs" min="0.01" max="3" step="0.01" value="0.72"></label>
+      <div class="read"><div class="hl"><div class="v" id="lfQ">0</div><div class="k">交点 Q*（次任务）</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">GPU 小时 → 日历天数</p>
+      <div class="seg" id="ghS"><button data-v="1022362" aria-pressed="true">Llama 1 65B</button><button data-v="2664000">DeepSeek-V3 预训练</button><button data-v="30840000">Llama 3.1 405B</button></div>
+      <label class="ctl"><span>同时使用的卡数 <output id="ghN">2048</output></span><input type="range" id="ghNs" min="9" max="15" value="11"></label>
+      <div class="read"><div class="hl"><div class="v" id="ghD">0</div><div class="k">日历天数</div></div></div>
+    </div>
+  </div>
+  <div class="kvc">
+    <h3>同为 7–8B，每参数训练了多少 token（D/N）</h3>
+    <div id="dnBars" class="wide"></div>
+    <p class="src">原书 3.6.2 节表；Chinchilla 等比例基准约 20。</p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">TTFT = t₁ − t_a，　T_request = t_G − t_a，　T̄_token = (t_G − t₁)/(G − 1)</div>
+    <div class="fx">p95：第 ⌈0.95n⌉ 个观测；　A_M = ∫M(t)dt；　等待占用 ≈ λ·M₀·τ</div>
+    <div class="fx">Q_{k+1} = max(0, Q_k + A_k − μ_k·Δt)；　突发积压 (λ_w − μ)τ，排空 (λ_w − μ)τ/μ</div>
+    <div class="fx">P_i = I_i − K_i，　S_i = K_i</div>
+    <div class="fx">C_success = c / p；　新方法更省 ⇔ p₂/p₁ &gt; c₂/c₁；　决策 + 转交：c_dec + e·c_LLM</div>
+    <div class="fx">分支状态 = c_KV(H₀ + Σh_i)；　n_v = H·W / (p²·r²)；　B_audio = A(t) − P(t)</div>
+    <div class="fx">F_train ≈ 6ND；　全参数 + Adam：2 + 4 + 4 + 4 + 4 = 18 字节/参数</div>
+    <div class="fx">n_generate ≈ n_keep / a；　F_cycle(n) = n(f_g + f_r) + F_u</div>
+    <div class="fx">L = E + A/N^α + B/D^β；　N_opt ∝ C^{β/(α+β)}，D_opt ∝ C^{α/(α+β)}</div>
+    <div class="fx">T_calendar = H_GPU / n_GPU；　C_life = C₀ + Q·Σ w_j·c_j；　Q* = ΔC₀ / Δc</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>2,795.66 步/秒</b><span>一张 RTX PRO 6000 跑 Qwen3-8B、64 序列的 decode 上限</span></div>
+      <div><b>112,792 步 / 20.17 s</b><span>两卡时后一分钟的积压与排空时间</span></div>
+      <div><b>242.9 vs 258.9 s</b><span>真实回放的 TTFT p95：均匀 vs 时段变化</span></div>
+      <div><b>76.196 → 11.976 T</b><span>四轮代码任务的 prefill：全算 vs 复用前缀</span></div>
+      <div><b>1.25</b><span>单价 1/10、用量 20 倍、成功率 .5→.8 的成功成本比</span></div>
+      <div><b>400 token / 56.25 MiB</b><span>640×640 图片的视觉 token 与 KV</span></div>
+      <div><b>147.433 GB</b><span>Qwen3-8B 全参数训练状态（18 B/参数）</span></div>
+      <div><b>431.368 vs 402.591 T</b><span>Qwen3-8B 8K 前反向：逐项 vs 6ND</span></div>
+      <div><b>2,181.6 → 3,410.7 T</b><span>RL 一轮：保留比例 1/2 → 1/4</span></div>
+      <div><b>Q* = 5 亿</b><span>多训 10 万 GPU 小时、每任务省 0.72 GPU 秒</span></div>
+    </div>
+    <p class="src">数字均取自原书第 3 章。</p>
+  </div>
+  <div class="notes" id="n-budget"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-2/"><small>上一篇</small><span>02 · 模型架构</span></a><a class="nx" href="../2026-10-16-infra-4/"><small>下一篇</small><span>04 · 加速器架构</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 指标 ---------- */
+function lm() {
+  var l = +$('#lmLs').value, m = +$('#lmMs').value, t = +$('#lmTs').value;
+  $('#lmL').textContent = l; $('#lmM').textContent = m; $('#lmT').textContent = t;
+  $('#lmN').textContent = S.f(l * t, 1); $('#lmO').textContent = S.f(l * m * t, 1) + ' GiB';
+}
+['lmLs', 'lmMs', 'lmTs'].forEach(function (id) { $('#' + id).addEventListener('input', lm); }); lm();
+S.notes($('#n-metric'), {
+  c: [
+    ['三个时间', 'TTFT（首响应）、完整请求时间、平均 token 间隔；缩短哪段只改包含它的指标。'],
+    ['p95（最近秩法）', '排序后取第 ⌈0.95n⌉ 个；480 条取第 456 个。'],
+    ['A_M', '状态占用对时间的积分，单位 byte·s。'],
+    ['成功任务成本', '所有尝试（含失败、工具、环境）的花费 ÷ 成功任务数。']
+  ],
+  p: [
+    ['λ·M₀·τ', '每秒 2 个、各 1 GiB、等 10 秒 → 平均占 20 GiB；等 30 秒 → 60 GiB。'],
+    ['reasoning 的首响应', '首个内部 token ≠ 用户看到答案，要另记首个有用输出。']
+  ]
+});
+
+/* ---------- 排队 ---------- */
+var qm = 'v';
+function qsim(mode, cards) {
+  var mu = 2795.66 * cards, Q = 0, pts = [], peak = 0;
+  for (var t = 0; t <= 200; t++) {
+    pts.push([t, Q]);
+    var a = t < 120 ? (mode === 'u' ? 4604 : (t < 60 ? 1736.8 : 7471.2)) : 0;
+    Q = Math.max(0, Q + a - mu); if (Q > peak) peak = Q;
+  }
+  var drain = 0; var Qe = 0;
+  // 120 秒时的积压
+  Qe = pts[120][1];
+  drain = Qe / mu;
+  return { pts: pts, peak: peak, drain: drain, end: Qe };
+}
+function qdraw() {
+  var c = +$('#qCs').value; $('#qC').textContent = c;
+  var a = qsim(qm, c), b = qsim(qm === 'u' ? 'v' : 'u', c);
+  $('#qPk').textContent = Math.floor(a.peak).toLocaleString();
+  $('#qDr').textContent = a.end > 0 ? S.f(a.drain, 2) + ' s' : '无积压';
+  var g = $('#qSvg'); g.innerHTML = '';
+  var ymax = Math.max(a.peak, b.peak, 1000) * 1.1;
+  var X = S.scale(0, 200, 72, 630), Y = S.scale(0, ymax, 195, 10);
+  S.svg('line', { x1: 72, y1: 195, x2: 630, y2: 195, class: 'ax' }, g); S.svg('line', { x1: 72, y1: 195, x2: 72, y2: 10, class: 'ax' }, g);
+  [0, 60, 120, 180].forEach(function (t) { var tx = S.svg('text', { x: X(t), y: 212, 'text-anchor': 'middle' }, g); tx.textContent = t + ' s'; });
+  S.svg('line', { x1: X(120), y1: 10, x2: X(120), y2: 195, class: 'cut' }, g);
+  var yl = S.svg('text', { x: 68, y: 18, 'text-anchor': 'end' }, g); yl.textContent = S.big(ymax / 1.1);
+  S.svg('path', { d: S.path(b.pts.map(function (p) { return [X(p[0]), Y(p[1])]; })), class: 'ln2' }, g);
+  S.svg('path', { d: S.path(a.pts.map(function (p) { return [X(p[0]), Y(p[1])]; })), class: 'ln1' }, g);
+}
+S.seg($('#qMode'), function (v) { qm = v; qdraw(); });
+$('#qCs').addEventListener('input', qdraw); qdraw();
+S.guess($('#qG'), { q: '两张卡（共约 5,591 步/秒）、后一分钟每秒到达 7,471.2 步：120 秒停止到达后，还要多少秒才能排空积压？', unit: '秒', ans: 20.17, why: '原书：后一分钟每秒多出约 1,879.87 步，60 秒积压约 112,792 步，再除以 5,591.33 步/秒 ≈ 20.17 秒。前一分钟的空闲能力存不下来，这就是全局均值掩盖积压的原因。' });
+S.notes($('#n-queue'), {
+  c: [
+    ['流体队列', 'Q_{k+1} = max(0, Q_k + A_k − μΔt)；把离散生成近似成连续流量。'],
+    ['处理率来自下界', '一步读 15.14 GB 权重 + 64 条 KV，共 41.02 GB、22.89 ms → 2,795.66 步/秒/卡。'],
+    ['突发公式', '积压 (λ_w − μ)τ，排空 (λ_w − μ)τ/μ；持续时间加倍两者都加倍。']
+  ],
+  p: [
+    ['平均够 ≠ 不排队', '两分钟总量相同，组成随时间变化就会在后一分钟积压。'],
+    ['真实回放', '单卡本就不足；完整 p95 相同（299.4 s），TTFT p95 差 16 s。'],
+    ['两种排队原因', '处理速度不足，或 KV 池已满、要等已有请求释放状态。']
+  ]
+});
+
+/* ---------- Agent ---------- */
+function cs() {
+  var c1 = +$('#c1s').value, p1 = +$('#p1s').value / 100, c2 = +$('#c2s').value, p2 = +$('#p2s').value / 100;
+  $('#c1').textContent = c1; $('#p1').textContent = Math.round(p1 * 100) + '%'; $('#c2').textContent = c2; $('#p2').textContent = Math.round(p2 * 100) + '%';
+  var a = c1 / p1, b = c2 / p2;
+  $('#cs1').textContent = S.f(a, 2); $('#cs2').textContent = S.f(b, 2);
+  var w = $('#csW'); w.className = 'verdict3' + (b <= a ? '' : ' bad');
+  w.innerHTML = (b <= a ? '新方法更省' : '新方法更贵') + '：p₂/p₁ = ' + S.f(p2 / p1, 2) + '，c₂/c₁ = ' + S.f(c2 / c1, 2) + '。成本比 ' + S.f(b / a, 2) + '。';
+}
+['c1s', 'p1s', 'c2s', 'p2s'].forEach(function (id) { $('#' + id).addEventListener('input', cs); }); cs();
+S.guess($('#csG'), { q: 'token 单价降到 1/10，每任务用量涨到 20 倍，成功率 50% → 80%。新的成功任务成本是旧的几倍？', unit: '倍', ans: 1.25, why: '原书：单次成本变为 20 × 1/10 = 2 倍，成功率比 0.8/0.5 = 1.6，2/1.6 = 1.25。价格下降、质量提高、成功任务成本上升，可以同时发生。' });
+function tp(mode) {
+  var segs = mode === 's' ? [['模型', 0, 2, 'ply'], ['工具 A', 2, 6, 'arr'], ['工具 B', 8, 10, 'arr'], ['模型', 18, 3, 'ply']] : [['模型', 0, 2, 'ply'], ['工具 A', 2, 6, 'arr'], ['工具 B', 2, 10, 'arr'], ['模型', 12, 3, 'ply']];
+  var T = 21, box = $('#tpT'); box.innerHTML = '';
+  ['模型', '工具 A', '工具 B'].forEach(function (lane) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: lane }, r); var l = h('div', { class: 'lane' }, r);
+    segs.filter(function (s) { return s[0] === lane; }).forEach(function (s) { h('span', { class: 'b ' + s[3], style: 'left:' + s[1] / T * 100 + '%;width:' + s[2] / T * 100 + '%', text: s[2] + 's' }, l); });
+  });
+  var tot = mode === 's' ? 21 : 15, wait = mode === 's' ? 16 : 10;
+  $('#tpA').textContent = tot + ' s'; $('#tpB').textContent = wait + ' GiB·s';
+}
+S.seg($('#tpS'), tp); tp('s');
+S.notes($('#n-agent'), {
+  c: [
+    ['前缀复用', 'P_i = I_i − K_i；投影只算新增，注意力仍读完整前缀。'],
+    ['改动位置', '末尾追加只多新增行；中间改动让其后全部失效。'],
+    ['成功任务成本', 'c/p；更省的条件 p₂/p₁ > c₂/c₁。'],
+    ['关键路径', '串行相加、并行取最慢；并行缩短时间但不减少工作，还让更多分支同时占状态。']
+  ],
+  p: [
+    ['思考模式实测', '关闭：12 轮、13.2 s、未修好；开启：4 轮、76.3 s、原定检查全过。'],
+    ['Amdahl 再现', '首轮 36.375 s 减半，总时间 76.510 → 58.323 s。'],
+    ['Jev 的“快”', '只做 prefill，不逐 token 生成；转交率超过约 0.58% 时转交费用就超过决策模型本身。'],
+    ['CED 的动机', 'Agent 输入多输出少：8K 输入的专家层工作 40P → 20P + 20·min(P,128)，约 50.8%。']
+  ]
+});
+
+/* ---------- 多模态 ---------- */
+function vs() {
+  var p = +$('#vsPs').value, n = +$('#vsNs').value;
+  $('#vsP').textContent = p; $('#vsN').textContent = n;
+  var tok = Math.floor(p / 16) * Math.floor(p / 16) / 4, ec = tok * 10240 * 2, kv = tok * 147456;
+  $('#vsT').innerHTML = '<tr><td>patch 数（16×16）</td><td class="n">' + (tok * 4 * n).toLocaleString() + '</td></tr>' +
+    '<tr><td>视觉 token（2×2 合并）</td><td class="n">' + (tok * n).toLocaleString() + '</td></tr>' +
+    '<tr><td>编码结果 EC（4×2560 维 BF16）</td><td class="n">' + S.f(ec * n / Math.pow(2, 20), 4) + ' MiB</td></tr>' +
+    '<tr class="tot"><td>视觉 token 的语言 KV</td><td class="n">' + S.f(kv * n / Math.pow(2, 20), 2) + ' MiB</td></tr>';
+}
+['vsPs', 'vsNs'].forEach(function (id) { $('#' + id).addEventListener('input', vs); }); vs();
+function ab() {
+  var buf = +$('#abBs').value, jit = +$('#abJs').value;
+  $('#abB').textContent = buf; $('#abJ').textContent = jit;
+  var arr = [], play = [], gap = 0, t0;
+  for (var i = 0; i < 8; i++) arr.push(20 * (i + 1) + 12 + 1 + (i === 2 ? jit : 5));
+  t0 = arr[0] + buf; var cur = t0;
+  for (i = 0; i < 8; i++) { var start = Math.max(cur, arr[i]); gap += start - cur; play.push(start); cur = start + 20; }
+  var T = Math.max(cur, 260) + 10, box = $('#abT'); box.innerHTML = '';
+  var r1 = h('div', { class: 'row' }, box); h('span', { text: '到达' }, r1); var l1 = h('div', { class: 'lane' }, r1);
+  arr.forEach(function (a, i) { h('span', { class: 'b arr', style: 'left:' + a / T * 100 + '%;width:2px' }, l1); });
+  var r2 = h('div', { class: 'row' }, box); h('span', { text: '播放' }, r2); var l2 = h('div', { class: 'lane' }, r2);
+  play.forEach(function (p, i) {
+    var prevEnd = i ? play[i - 1] + 20 : p;
+    if (p > prevEnd) h('span', { class: 'b gap', style: 'left:' + prevEnd / T * 100 + '%;width:' + (p - prevEnd) / T * 100 + '%' }, l2);
+    h('span', { class: 'b ply', style: 'left:' + p / T * 100 + '%;width:' + 19 / T * 100 + '%', text: i + 1 }, l2);
+  });
+  $('#abF').textContent = t0 + ' ms'; $('#abG').textContent = gap + ' ms';
+}
+['abBs', 'abJs'].forEach(function (id) { $('#' + id).addEventListener('input', ab); }); ab();
+S.notes($('#n-mm'), {
+  c: [
+    ['E → P → D', '视觉编码、语言 prefill、decode 三段工作分别计算。'],
+    ['n_v', 'H·W/(p²r²)：640×640、16、2×2 → 400。'],
+    ['原图 / EC / KV', '0.8 MB / 7.8125 MiB / 56.25 MiB；三者也是三种可选的交接位置。'],
+    ['缓冲余量', 'B(t) = A(t) − P(t)；预缓冲增余量也推迟首播。']
+  ],
+  p: [
+    ['图片变大', '边长加倍 → 视觉 token、EC、KV 都 ×4；特征拼接只增宽度不增 token。'],
+    ['图像生成', '总量 n_s·n_b·F_step：50 步 × 2 支 = 100 次 DiT 前向。'],
+    ['打断', '设备静音、后端停止生成、释放状态是三个不同时刻。']
+  ]
+});
+
+/* ---------- 训练 ---------- */
+var trs = [['BF16 权重', 2, true], ['梯度（FP32）', 4, true], ['FP32 主权重', 4, true], ['Adam 一阶矩', 4, true], ['Adam 二阶矩', 4, true]];
+trs.forEach(function (s, i) {
+  var l = h('label', null, $('#trT')); var cb = h('input', { type: 'checkbox' }, l); cb.checked = s[2];
+  h('span', { text: s[0] + ' ' + s[1] + ' B' }, l);
+  cb.addEventListener('change', function () { s[2] = cb.checked; tr(); });
+});
+function tr() {
+  var N = +$('#trNs').value * 1e9; $('#trN').textContent = S.f(N / 1e9, 2);
+  var b = trs.reduce(function (a, s) { return a + (s[2] ? s[1] : 0); }, 0), m = N * b;
+  $('#trM').textContent = S.f(m / 1e9, 1) + ' GB'; $('#trB').textContent = b + ' B'; $('#trC').textContent = Math.ceil(m / 80e9);
+}
+$('#trNs').addEventListener('input', tr); tr();
+S.guess($('#trG'), { q: 'Qwen3-8B（约 81.9 亿参数）全参数训练，只算权重、梯度、主权重和 Adam 状态，需要多少 GB？', unit: 'GB', ans: 147.433, why: '原书例题 3-3：每参数 2 + 4 + 4 + 4 + 4 = 18 字节，共 147.433 GB（约 137.3 GiB），是推理 BF16 权重的 9 倍，还没算激活。所以训练必须把这些状态切开分给多张卡（第 10 篇）。' });
+S.notes($('#n-train'), {
+  c: [
+    ['三次矩阵乘法', '前向 Y = XW、dX = dY·Wᵀ、dW = Xᵀ·dY，各 2mkn，合计 6mkn。'],
+    ['6ND', '所有 token 经过同一组参数时的粗算；注意力配对和嵌入要单独修正。'],
+    ['生命周期', '激活留到对应反向用完；优化器状态跨多次更新。'],
+    ['micro-batch', '一次前反向处理的数据子集；累积若干个再更新一次。']
+  ],
+  p: [
+    ['18 字节/参数', 'Qwen3-8B 147.433 GB，超过 H200 的 141 GB。'],
+    ['431.368 vs 402.591', '逐项比 6ND 高约 7.15%：注意力 59.381 漏算，嵌入多算。'],
+    ['只投影监督 token', '4096 个监督 token 时降到 416.074 TFLOPs。'],
+    ['冻结 ≠ 不算', '冻结层省 dW，但更早层要训练时 dX 照算。']
+  ]
+});
+
+/* ---------- RL ---------- */
+var fgr = (465.143 + 129.056 + 634.944) / 32, Fu = 952.416;
+function rl() {
+  var a = +$('#rlAs').value / 100; $('#rlA').textContent = Math.round(a * 100) + '%';
+  var n = Math.ceil(16 / a), F = n * fgr + Fu;
+  $('#rlN').textContent = n; $('#rlF').textContent = S.f(F, 1); $('#rlP').textContent = S.f(F / 16, 1);
+  var gen = n * (465.143 + 129.056) / 32, ref = n * 634.944 / 32;
+  S.bars($('#rlBars'), [{ label: 'rollout（prefill + decode）', value: gen / F, text: S.f(gen, 0) }, { label: '参考模型前向', value: ref / F, text: S.f(ref, 0), cls: 'dim' }, { label: '策略更新（固定）', value: Fu / F, text: S.f(Fu, 0), cls: 'alt' }]);
+}
+$('#rlAs').addEventListener('input', rl); rl();
+S.notes($('#n-rl'), {
+  c: [
+    ['rollout', '当前策略生成回答；之后反馈、筛选、更新、同步权重。'],
+    ['生成 vs 保留', 'n_generate ≈ n_keep / a；生成和评分处理全部，更新只处理保留的。'],
+    ['组内相对优势', '同组奖励相同则优势为零，这组不提供学习信号。'],
+    ['OPD', '同策略蒸馏：学生自己生成，教师在这些位置给概率分布。']
+  ],
+  p: [
+    ['例题 3-4', '保留 16 条：生成 32 条共 2,181.6 T；生成 64 条共 3,410.7 T（+56.3%）。'],
+    ['权重同步', 'Qwen3-8B BF16 16.381 GB，4 个副本独立发送约 65.5 GB。'],
+    ['损失平均的分母', '对整个 batch 的有效 token 求平均，累积时要用全 batch 的有效 token 数。']
+  ]
+});
+
+/* ---------- 预算 ---------- */
+function lf() {
+  var c = +$('#lfCs').value, d = +$('#lfDs').value;
+  $('#lfC').textContent = c; $('#lfD').textContent = d;
+  $('#lfQ').textContent = S.big(c * 1e4 * 3600 / d);
+}
+['lfCs', 'lfDs'].forEach(function (id) { $('#' + id).addEventListener('input', lf); }); lf();
+S.guess($('#lfG'), { q: '小模型多训 10 万 H100 GPU 小时，每个成功任务省 0.72 GPU 秒。要服务多少亿次任务才能收回？', unit: '亿次', ans: 5, fmt: function (x) { return S.f(x, 1); }, why: '原书：10 万小时 = 3.6×10⁸ GPU 秒，÷ 0.72 = 5×10⁸ 次。预期需求低于它，多训的成本收不回；高于它，小模型更省。' });
+var gh = 1022362;
+function ghc() {
+  var n = Math.pow(2, +$('#ghNs').value); $('#ghN').textContent = n.toLocaleString();
+  $('#ghD').textContent = S.f(gh / n / 24, 2) + ' 天';
+}
+S.seg($('#ghS'), function (v) { gh = +v; ghc(); });
+$('#ghNs').addEventListener('input', ghc); ghc();
+S.magbars($('#dnBars'), [
+  { label: 'Chinchilla 基准', v: 20, text: '≈ 20', cls: 'dim' }, { label: 'Llama 1，6.7B', v: 149, text: '149' }, { label: 'Llama 2，约 7B', v: 286, text: '286' },
+  { label: 'Llama 3.1，约 8B', v: 1875, text: '约 1,875' }, { label: 'Qwen2.5，约 7B', v: 2571, text: '约 2,571' }, { label: 'Qwen3，约 8B', v: 4500, text: '约 4,500', cls: 'alt' }
+], { log: true });
+S.notes($('#n-budget'), {
+  c: [
+    ['Scaling Law', 'L = E + A/N^α + B/D^β，在 C = 6ND 下求最优分配。'],
+    ['计算最优', '只最小化固定训练预算下的损失，不计推理成本。'],
+    ['留出检验', '拟合点误差不能代替留出点误差；C4 例 RMSE 约 0.0193。'],
+    ['Q*', 'ΔC₀ / Δc：小模型多训的成本由多少次调用收回。']
+  ],
+  p: [
+    ['D/N 一路上涨', '149 → 4,500，远超约 20 的计算最优，因为计入了服务成本。'],
+    ['GPU 小时 ≠ 日历时间', '除以同期卡数；Llama 1 65B 在 2048 卡上约 20.8 天。'],
+    ['跨卡型折算', 'H100 / H800 小时 ≈ 3.17 A100 小时（按 BF16 峰值，假设利用率相近）。'],
+    ['MoE 的 6ND', '总参数影响容量；专家计算 = 18·n_L·h·f·(k_routed + k_shared)。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 为何积压', '空闲能力存不下来：两分钟总量相同，后一分钟 decode 需求 7,471 步/秒超过两卡 5,591，积压 112,792 步、再排 20 秒；KV 池满了也会让新请求等。'],
+    ['② Agent 怎么算', '时间看关键路径（串行加、并行取最慢），状态看驻留面积与 λM₀τ，成本看 c/p；缓存省重算但要留状态，并行省时间不省工作，多采样要成功率涨得比成本快。'],
+    ['③ 训练与 RL', '全参数 + Adam 每参数 18 B（8B 模型 147 GB），矩阵约 6ND 但要补注意力；RL 生成的远多于用上的；小模型多训在调用量超过 Q* = ΔC₀/Δc 后才划算。']
+  ],
+  p: [
+    ['负载要记什么', '到达时间、输入输出长度、前缀命中、工具依赖、分支、版本、样本保留数。'],
+    ['下一篇', '把这些需求放到加速器上：算力、片上存储和带宽怎么配合。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

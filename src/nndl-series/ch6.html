@@ -1,0 +1,497 @@
+---
+title: 循环神经网络：记忆、BPTT 与门控
+desc: 神经网络与深度学习（第二版）学习笔记（六）：延时神经网络、NARX 与循环神经网络三种记忆方式，简单循环网络与按时间展开，通用近似与图灵完备，序列分类 / 序列标注 / 自回归 / 条件生成四种模式与教师强制、暴露偏差，BPTT 与 RTRL，长程依赖与梯度消失 / 爆炸，LSTM 与 GRU，堆叠与双向 RNN，递归神经网络。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 06</span><span>对应原书第 6 章（第 148–172 页）</span><span>约 50 分钟</span>
+h1: 让网络记住刚才发生了什么，<em>以及记多久</em>
+lead: 前馈网络每次只看当前输入，句子、语音、时间序列却是一个接一个到来、彼此相关、长度不定。循环神经网络让隐状态在时间上传递，把历史压进一个向量里。难点也随之而来：误差要沿时间一步步往回传，传得越远越容易消失或爆炸，简单循环网络实际上只记得住短期。LSTM 和 GRU 的答案是门控——让网络自己决定写入什么、保留多久、何时读出。
+nav: mem|三种记忆;srn|简单循环网络;mode|四种模式;bptt|随时间反传;ltd|长程依赖;gate|LSTM 与 GRU;deep|深层与双向;back|三个问题
+---
+<style>
+.seqrow { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; align-items: center; }
+.seqrow span { min-width: 34px; height: 30px; padding: 0 4px; display: flex; align-items: center; justify-content: center; border-radius: 4px; border: 1px solid var(--hair); background: var(--bg); font-family: var(--f-num); font-size: 15px; color: var(--ink-3); }
+.seqrow span.on { background: var(--s1-soft); border-color: var(--s1); color: var(--ink); }
+.seqrow span.cur { background: var(--s2-soft); border-color: var(--s2); color: var(--ink); font-weight: 700; }
+.seqrow span.bad { background: var(--alert-soft); border-color: var(--alert); color: var(--alert); }
+.seqrow b { min-width: 6em; font-size: 15px; color: var(--ink-2); font-weight: 600; }
+.modesvg { width: 100%; max-width: 520px; height: auto; display: block; margin: 8px 0; }
+.modesvg rect { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.4; }
+.modesvg rect.h { fill: var(--s1-soft); stroke: var(--s1); }
+.modesvg rect.y { fill: var(--s2-soft); stroke: var(--s2); }
+.modesvg path { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+.modesvg path.dash { stroke-dasharray: 4 3; stroke: var(--s2); }
+.modesvg text { font-size: 15px; fill: var(--ink-2); font-family: var(--f-num); }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>循环神经网络的“记忆”在哪里？按时间展开后它和前馈网络是什么关系？</li>
+  <li>为什么简单循环网络学不会长距离依赖？梯度消失在这里具体指什么消失了？</li>
+  <li>LSTM 的三个门和 GRU 的两个门各管什么？为什么加法形式的记忆单元能缓解梯度消失？</li>
+</ol></div>
+
+<section class="part" id="mem">
+  <div class="part-head"><h2>给网络加记忆的三种办法</h2><span class="meta">原书 6.1 节 · 第 149–150 页</span></div>
+  <div class="sec-lede">
+    <p>前馈网络是静态的，一次计算只依赖当前输入，而且要求输入输出维数固定。原书列了三种让网络拥有短期记忆的做法。</p>
+    <p><strong>延时神经网络</strong>（TDNN）：在非输出层加延时器，记下最近 K 个时刻的活性值，h<sub>t</sub>⁽ˡ⁾ = f(h<sub>t</sub>⁽ˡ⁻¹⁾, …, h<sub>t−K</sub>⁽ˡ⁻¹⁾)。它在时间上共享权值，对序列来说<strong>相当于卷积网络</strong>。<strong>NARX</strong>（有外部输入的非线性自回归模型）：统计里的自回归模型用变量自己的历史预测自己，NARX 再加上外部输入，记录最近 K<sub>x</sub> 个输入和 K<sub>y</sub> 个输出。这两种的记忆都有<strong>固定窗口</strong>。</p>
+    <p><strong>循环神经网络</strong>用带自反馈的神经元：<strong>h<sub>t</sub> = f(h<sub>t−1</sub>, x<sub>t</sub>)</strong>，h₀ = 0。隐状态 h<sub>t</sub> 理论上汇总了到目前为止的全部历史，能处理任意长度的序列。数学上这是一个<strong>动力系统</strong>，所以 h<sub>t</sub> 也叫状态或隐状态。</p>
+    <p class="go">拖动当前时刻和窗口大小，看三种模型在时刻 t 能“看到”哪些输入。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">时刻 t 的输出能依赖哪些历史</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>当前时刻 t <output id="mT">9</output></span><input type="range" id="mTs" min="1" max="14" value="9"></label>
+      <label class="ctl"><span>延时窗口 K <output id="mK">3</output></span><input type="range" id="mKs" min="1" max="6" value="3"></label>
+    </div>
+    <div id="mRows"></div>
+    <p class="cap">TDNN 和 NARX 看得到的历史长度由超参数 K 写死；RNN 通过 h<sub>t−1</sub> 间接依赖从 x₁ 开始的全部输入——但“依赖”不等于“记得住”，这正是后面长程依赖问题的伏笔。</p>
+  </div>
+  <div class="notes" id="n-mem"></div>
+</section>
+
+<section class="part" id="srn">
+  <div class="part-head"><h2>简单循环网络：时间上共享参数的深层网络</h2><span class="meta">原书 6.2 节 · 第 150–153 页</span></div>
+  <div class="sec-lede">
+    <p><strong>简单循环网络</strong>（SRN，Elman 1990）只有一个隐藏层，但加了隐藏层到隐藏层的反馈连接：</p>
+    <p class="fx" style="margin:10px 0">h<sub>t</sub> = f(U h<sub>t−1</sub> + W x<sub>t</sub> + b)</p>
+    <p>U 是状态—状态权重，W 是状态—输入权重，f 通常是 Logistic 或 Tanh。<strong>把每个时刻看成前馈网络的一层，RNN 就是一个在时间维度上共享权值的深层网络</strong>（原书图 6.2）——这个“按时间展开”的视角既解释了它为什么能处理变长序列，也是后面训练算法的出发点。</p>
+    <p>理论上 RNN 的能力很强：<strong>通用近似定理</strong>——足够多 Sigmoid 型隐藏神经元的全连接循环网络，可以任意精度逼近一大类非线性动力系统（证明思路：前馈网络逼近单步状态转移，循环结构负责在时间上反复施加）；<strong>图灵完备</strong>——所有图灵机都能被这样的循环网络模拟。但原书提醒：理论表达能力和可学习性、计算效率、泛化能力是不同层面的问题。</p>
+    <p class="go">用一个只有 1 个隐藏单元的 RNN 感受“记忆”：在第 1 步给一个脉冲，之后输入全是 0，看它记多久。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">标量 RNN：h_t = tanh(u·h_{t−1} + w·x_t)（示意）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>自反馈权重 u <output id="sU">0.8</output></span><input type="range" id="sUs" min="-1.5" max="1.5" step="0.05" value="0.8"></label>
+      <label class="ctl"><span>输入权重 w <output id="sW">1.5</output></span><input type="range" id="sWs" min="0" max="3" step="0.1" value="1.5"></label>
+    </div>
+    <div class="selrow"><span>输入序列</span><div class="seg" id="sX"><button data-v="pulse" aria-pressed="true">第 1 步一个脉冲</button><button data-v="two">第 1、6 步两个脉冲</button><button data-v="const">持续输入 0.3</button></div></div>
+    <div id="sC"></div>
+    <p class="cap" id="sCap"></p>
+  </div>
+  <div class="notes" id="n-srn"></div>
+</section>
+
+<section class="part" id="mode">
+  <div class="part-head"><h2>四种应用模式，以及教师强制</h2><span class="meta">原书 6.3 节 · 第 153–157 页</span></div>
+  <div class="sec-lede">
+    <p>按输出形式和依赖结构，原书把 RNN 的用法归成四类（表 6.1）：<strong>序列分类</strong>（多对一：用最后时刻的 h<sub>T</sub>，或所有时刻的平均，交给分类器；文本分类、情感分析）；<strong>序列标注</strong>（多对多、等长对齐：每个时刻 ŷ<sub>t</sub> = g(h<sub>t</sub>)；词性标注、命名实体识别）；<strong>自回归序列建模</strong>（根据前缀逐步预测下一个符号，上一步的输出作为下一步的输入；语言模型）；<strong>条件序列生成</strong>（编码器读完输入序列，解码器自回归地生成另一个序列；机器翻译、语音识别）。</p>
+    <p>自回归模型有一个训练与生成不一致的细节。训练时通常把真实序列右移一位作为输入，让模型在每个位置预测下一个真实符号——这叫<strong>教师强制</strong>，好处是所有位置可以并行算损失，早期错误也不会污染后面的训练信号。生成时只能用自己已经生成的历史，一旦某步错了，后面都在错误的历史上继续展开。<strong>训练看真实历史、生成看自己历史</strong>，这种不一致叫<strong>暴露偏差</strong>。</p>
+    <p>编码器—解码器还有一个结构上的局限：要把整个输入序列压进一个或少数几个状态向量，输入很长时形成<strong>信息瓶颈</strong>。这正是第 8 篇注意力机制要解决的问题。</p>
+    <p class="go">切换四种模式看结构；下面的例子演示一次错误如何在生成中传下去。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">四种模式（原书图 6.3–6.6）</p>
+      <div class="seg" id="mdS"><button data-v="cls" aria-pressed="true">序列分类</button><button data-v="tag">序列标注</button><button data-v="ar">自回归</button><button data-v="s2s">条件生成</button></div>
+      <svg class="modesvg" id="mdG" viewBox="0 0 520 190" role="img" aria-label="应用模式结构图"></svg>
+      <p class="cap" id="mdW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">教师强制 vs 自由生成（示意：模型学会了“下一个字母 = 当前字母的后一个”）</p>
+      <label class="ctl"><span>在第几步犯一次错 <output id="tfE">3</output></span><input type="range" id="tfEs" min="1" max="7" value="3"></label>
+      <div id="tfRows"></div>
+      <p class="cap">训练时（教师强制），第 <span id="tfE2">3</span> 步的错误只影响这一步的损失，下一步仍拿真实字母作输入；生成时，错误的输出被喂回去当输入，后面全跟着错——这就是暴露偏差的直观含义。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-mode"></div>
+</section>
+
+<section class="part" id="bptt">
+  <div class="part-head"><h2>随时间反向传播（BPTT）</h2><span class="meta">原书 6.4 节 · 第 157–160 页</span></div>
+  <div class="sec-lede">
+    <p>以序列标注为例，每个时刻都有损失 ℒ<sub>t</sub>，整个序列 ℒ = Σ ℒ<sub>t</sub>。原书说参数学习要回答三个问题：每个时刻的误差怎么来？误差怎么沿时间传回更早的时刻？各时刻共享同一组参数，梯度怎么累加？</p>
+    <p><strong>BPTT</strong> 把 RNN 按时间展开成一个多层前馈网络，“每一层”对应“每个时刻”，然后照搬反向传播。定义误差项 δ<sub>t,k</sub> = ∂ℒ<sub>t</sub>/∂z<sub>k</sub>（第 t 时刻的损失对第 k 时刻净输入的导数），它满足：</p>
+    <p class="fx" style="margin:10px 0">δ<sub>t,k</sub> = diag(f′(z<sub>k</sub>)) Uᵀ δ<sub>t,k+1</sub>　　∂ℒ/∂U = Σ<sub>t</sub> Σ<sub>k≤t</sub> δ<sub>t,k</sub> h<sub>k−1</sub>ᵀ</p>
+    <p>每往回一步，就乘一次 diag(f′)Uᵀ——Uᵀ 来自前向时 z<sub>k+1</sub> = Uh<sub>k</sub> + … 对 h<sub>k</sub> 求导的转置，diag(f′) 来自激活函数。<strong>因为所有时刻共享 U，真实梯度是所有“展开层”梯度之和</strong>。W、b 的梯度同理（把 h<sub>k−1</sub>ᵀ 换成 x<sub>k</sub>ᵀ 或去掉）。</p>
+    <p>另一种算法 <strong>RTRL</strong>（实时循环学习）用前向模式：从第 1 步开始就同步前向计算 ∂h<sub>t</sub>/∂u<sub>ij</sub>，每个时刻都能实时更新参数，适合在线学习和无限长序列；但要维护状态对所有参数的偏导，开销很高。两者的关系，正是第 4 篇自动微分的反向模式和前向模式。</p>
+    <p class="go">看第 T 时刻的损失，从各个更早时刻收到多少梯度（标量 RNN，示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">|δ_{T,k}|：第 T 时刻的误差传到第 k 时刻还剩多少</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>自反馈权重 u <output id="bU">0.9</output></span><input type="range" id="bUs" min="0.1" max="2" step="0.05" value="0.9"></label>
+      <label class="ctl"><span>序列长度 T <output id="bT">20</output></span><input type="range" id="bTs" min="5" max="50" value="20"></label>
+    </div>
+    <div id="bC"></div>
+    <p class="cap" id="bW"></p>
+  </div>
+  <div class="tblw" style="margin-top:18px"><table class="cmpt">
+    <thead><tr><th></th><th>BPTT</th><th>RTRL</th></tr></thead>
+    <tbody>
+      <tr><td>链式法则的顺序</td><td>反向模式（沿时间逆序）</td><td>前向模式（沿时间顺序）</td></tr>
+      <tr><td>何时能更新</td><td>完整前向 + 反向之后</td><td>每个时刻实时</td></tr>
+      <tr><td>计算量</td><td>输出维度低时更小</td><td>维护 ∂h/∂θ，开销高</td></tr>
+      <tr><td>存储</td><td>要保存前向的中间状态</td><td>不必保存历史，但偏导矩阵大</td></tr>
+      <tr><td>适合</td><td>常规训练</td><td>在线学习、无限序列（实际多用近似 / 截断版）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="notes" id="n-bptt"></div>
+</section>
+
+<section class="part" id="ltd">
+  <div class="part-head"><h2>长程依赖问题</h2><span class="meta">原书 6.5 节 · 第 160–162 页</span></div>
+  <div class="sec-lede">
+    <p>把 δ 的递推展开：δ<sub>t,k</sub> = Π<sub>τ=k</sub><sup>t−1</sup> (diag(f′(z<sub>τ</sub>))Uᵀ) δ<sub>t,t</sub>。记 γ ≈ ‖diag(f′)Uᵀ‖，就有 <strong>δ<sub>t,k</sub> ≈ γ<sup>t−k</sup>δ<sub>t,t</sub></strong>。γ &gt; 1 时间隔越大梯度越大，<strong>梯度爆炸</strong>；γ &lt; 1 时趋于 0，<strong>梯度消失</strong>。更精确的判据是 U 的谱半径（最大特征值的模）是否大于 1。RNN 常用 Logistic 或 Tanh，导数都小于 1，‖U‖ 也不会太大，所以<strong>主要问题是梯度消失</strong>。</p>
+    <p>原书特别强调一个容易误解的点：<strong>RNN 的梯度消失不是 ∂ℒ<sub>t</sub>/∂U 消失了，而是 ∂ℒ<sub>t</sub>/∂h<sub>k</sub> 在间隔很大时消失了</strong>。U 的更新主要靠离 t 最近的几个状态，远处的状态对 U 几乎没有影响。于是简单循环网络理论上能建立长距离依赖，实际只学得到短期依赖——这叫<strong>长程依赖问题</strong>。</p>
+    <p>改进方向：梯度爆炸比较好办，用<strong>权重衰减</strong>（让 γ ≤ 1）或<strong>梯度截断</strong>。梯度消失要改模型：最极端是令 U = I、h<sub>t</sub> = h<sub>t−1</sub> + g(x<sub>t</sub>; θ)，线性依赖、权重为 1，梯度不消失也不爆炸，但丢了反馈边的非线性；折中是 <strong>h<sub>t</sub> = h<sub>t−1</sub> + g(x<sub>t</sub>, h<sub>t−1</sub>; θ)</strong>，和残差连接思想一致。它还剩两个问题：仍可能梯度爆炸；<strong>记忆容量</strong>——h 不断累加新信息会饱和。解决办法是引入门控。</p>
+    <p class="go">先估再算：γ 只差一点点，50 步之后差多少？</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">γ^(t−k)：一点点偏离 1，长距离后天差地别</p>
+    <div id="ltG"></div>
+    <label class="ctl"><span>γ <output id="ltR">0.90</output></span><input type="range" id="ltRs" min="0.5" max="1.5" step="0.01" value="0.9"></label>
+    <div id="ltC"></div>
+    <p class="cap" id="ltW"></p>
+  </div>
+  <div class="notes" id="n-ltd"></div>
+</section>
+
+<section class="part" id="gate">
+  <div class="part-head"><h2>LSTM 与 GRU：用门控制信息流</h2><span class="meta">原书 6.6 节 · 第 162–166 页</span></div>
+  <div class="sec-lede">
+    <p><strong>LSTM</strong> 在 h<sub>t</sub> = h<sub>t−1</sub> + g(·) 的基础上做了两处改进。一是引入新的<strong>内部状态</strong> c<sub>t</sub>，专门做线性的循环信息传递：<strong>c<sub>t</sub> = f<sub>t</sub> ⊙ c<sub>t−1</sub> + i<sub>t</sub> ⊙ c̃<sub>t</sub></strong>，再非线性地输出给外部状态 <strong>h<sub>t</sub> = o<sub>t</sub> ⊙ tanh(c<sub>t</sub>)</strong>，候选状态 c̃<sub>t</sub> = tanh(W<sub>c</sub>x<sub>t</sub> + U<sub>c</sub>h<sub>t−1</sub> + b<sub>c</sub>)。二是三个<strong>门</strong>（都是 σ(W x<sub>t</sub> + U h<sub>t−1</sub> + b)，取值 (0, 1) 的“软”门）：<strong>遗忘门</strong> f<sub>t</sub> 控制 c<sub>t−1</sub> 遗忘多少；<strong>输入门</strong> i<sub>t</sub> 控制候选状态写入多少；<strong>输出门</strong> o<sub>t</sub> 控制内部状态输出多少。f = 0、i = 1 时清空旧记忆、写入新内容；f = 1、i = 0 时原样复制旧记忆。</p>
+    <p><strong>LSTM 避免梯度消失的关键是记忆单元的加法更新</strong>：f<sub>t</sub> ≈ 1 时 ∂c<sub>t</sub>/∂c<sub>t−1</sub> ≈ 1，梯度可以近似恒等地传回很远；普通 RNN 是乘法形式，权重矩阵连乘容易消失或爆炸。所以训练时遗忘门偏置 b<sub>f</sub> 常初始化为正数（原书边注）。名字的含义也值得记住：h 每步都被重写，是<strong>短期记忆</strong>；网络参数是<strong>长期记忆</strong>；记忆单元 c 保存信息的周期介于两者之间，是“长的短期记忆”。</p>
+    <p><strong>GRU</strong> 更简洁，不要额外的记忆单元，用一个<strong>更新门</strong> z<sub>t</sub> 平衡“保留旧状态”和“写入新状态”：<strong>h<sub>t</sub> = z<sub>t</sub> ⊙ h<sub>t−1</sub> + (1 − z<sub>t</sub>) ⊙ h̃<sub>t</sub></strong>；<strong>重置门</strong> r<sub>t</sub> 控制候选状态 h̃<sub>t</sub> = tanh(W<sub>h</sub>x<sub>t</sub> + U<sub>h</sub>(r<sub>t</sub> ⊙ h<sub>t−1</sub>) + b<sub>h</sub>) 是否依赖历史。z = 0、r = 1 时退化为简单循环网络；z = 1 时原样复制。</p>
+    <p class="go">一个记忆任务：第 2 步给一个值，要求第 12 步把它读出来，中间全是干扰。用手工设定权重的 LSTM 单元和 SRN 比一比（示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">写入 → 保持 → 读出</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>要记住的值 <output id="gV">0.8</output></span><input type="range" id="gVs" min="-1" max="1" step="0.1" value="0.8"></label>
+      <label class="ctl"><span>LSTM 平时的遗忘门 f <output id="gF">0.98</output></span><input type="range" id="gFs" min="0.5" max="1" step="0.01" value="0.98"></label>
+      <label class="ctl"><span>SRN 的自反馈 u <output id="gU">0.9</output></span><input type="range" id="gUs" min="0.1" max="1.2" step="0.05" value="0.9"></label>
+    </div>
+    <div id="gC"></div>
+    <div class="read"><div class="hl"><div class="v" id="gL">0</div><div class="k">第 12 步 LSTM 读出</div></div><div class="warn"><div class="v" id="gS">0</div><div class="k">第 12 步 SRN 的状态</div></div></div>
+    <p class="cap" id="gW"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">GRU 的两个门：极端情形</p>
+      <div class="seg" id="grS"><button data-v="a" aria-pressed="true">z = 0, r = 1</button><button data-v="b">z = 0, r = 0</button><button data-v="c">z = 1</button><button data-v="d">0 &lt; z &lt; 1</button></div>
+      <p class="fx" id="grF" style="margin-top:10px"></p>
+      <p class="cap" id="grW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">原书表 6.2：SRN、LSTM、GRU</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th>模型</th><th>状态</th><th>门</th><th>特点</th></tr></thead>
+        <tbody>
+          <tr><td>SRN</td><td>h</td><td>无</td><td>结构简单，难以稳定建模长程依赖</td></tr>
+          <tr><td>LSTM</td><td>h, c</td><td>输入、遗忘、输出</td><td>控制细致，表达能力强，参数较多</td></tr>
+          <tr><td>GRU</td><td>h</td><td>更新、重置</td><td>结构紧凑，训练和实现较简单</td></tr>
+        </tbody>
+      </table></div>
+      <div id="lsG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-gate"></div>
+</section>
+
+<section class="part" id="deep">
+  <div class="part-head"><h2>深层、双向与递归</h2><span class="meta">原书 6.7–6.9 节 · 第 166–171 页</span></div>
+  <div class="sec-lede">
+    <p>RNN 既“深”又“浅”：按时间展开，长间隔状态之间的路径很长；但同一时刻从 x<sub>t</sub> 到 y<sub>t</sub> 的路径很短。所以可以在每个时间步内部继续加深：<strong>堆叠循环神经网络</strong>（SRNN）把第 l − 1 层的隐状态当作第 l 层的输入，h<sub>t</sub>⁽ˡ⁾ = f(U⁽ˡ⁾h<sub>t−1</sub>⁽ˡ⁾ + W⁽ˡ⁾h<sub>t</sub>⁽ˡ⁻¹⁾ + b⁽ˡ⁾)。</p>
+    <p>有些任务里一个时刻的输出还依赖<strong>后面</strong>的信息，比如词性要看上下文。<strong>双向循环神经网络</strong>（Bi-RNN）用两层输入相同、方向相反的 RNN，把两个方向的隐状态拼接：h<sub>t</sub> = h<sub>t</sub>⁽¹⁾ ⊕ h<sub>t</sub>⁽²⁾。</p>
+    <p>原书最后换了一个视角：把每个时刻的隐状态看作节点，RNN 就是在<strong>链</strong>上做“信息传递—状态更新—表示读出”。结构从链扩展到<strong>树</strong>，得到<strong>递归神经网络</strong>（RvNN），常按句法树组合短语语义，退化成链时就是简单循环网络；再扩展到一般的<strong>图</strong>，就是第 9 篇的图神经网络。</p>
+    <p class="go">看看单向和双向 RNN 在“苹果”这个词上能利用哪些信息（示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">“苹果”是公司还是水果？</p>
+    <div class="seg" id="biS"><button data-v="a" aria-pressed="true">苹果 发布 了 新 手机</button><button data-v="b">苹果 洗 干净 再 吃</button></div>
+    <div id="biRows" style="margin-top:10px"></div>
+    <p class="cap" id="biW"></p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>循环神经网络 vs 递归神经网络</b>：英文都缩写成 RNN。前者（Recurrent）在时间链上共享参数；后者（Recursive，RvNN）在树结构上组合，退化成链时等价于前者。</p>
+    <p><b>短期记忆 / 长短期记忆 / 长期记忆</b>：h 每步重写；c 可保留一段时间；网络参数存的是训练中学到的经验。</p>
+    <p><b>教师强制 vs 暴露偏差</b>：前者是训练方法（喂真实历史）；后者是它带来的训练 / 生成不一致。</p>
+    <p><b>BPTT vs RTRL</b>：反向模式 vs 前向模式自动微分在时间上的应用。</p>
+    <p><b>LSTM 遗忘门</b>：f = 1 是“不遗忘”，f = 0 才是“全忘”，名字容易让人想反。</p>
+  </div>
+  <div class="notes" id="n-deep"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">SRN：h_t = f(U h_{t−1} + W x_t + b)；按时间展开 = 时间上共享参数的深层网络</div>
+    <div class="fx">BPTT：δ_{t,k} = diag(f′(z_k)) Uᵀ δ_{t,k+1}；∂ℒ/∂U = Σ_t Σ_{k≤t} δ_{t,k} h_{k−1}ᵀ</div>
+    <div class="fx">长程依赖：δ_{t,k} ≈ γ^{t−k} δ_{t,t}，γ ≈ ‖diag(f′)Uᵀ‖</div>
+    <div class="fx">LSTM：c_t = f_t ⊙ c_{t−1} + i_t ⊙ c̃_t，h_t = o_t ⊙ tanh(c_t)，门 = σ(W x_t + U h_{t−1} + b)</div>
+    <div class="fx">GRU：h_t = z_t ⊙ h_{t−1} + (1 − z_t) ⊙ tanh(W_h x_t + U_h(r_t ⊙ h_{t−1}) + b_h)</div>
+    <div class="fx">Bi-RNN：h_t = h_t⁽¹⁾ ⊕ h_t⁽²⁾；RvNN：h_i = f(h_{π_i})</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 三种记忆 ---------- */
+function mem() {
+  var t = +$('#mTs').value, K = +$('#mKs').value;
+  $('#mT').textContent = t; $('#mK').textContent = K;
+  var box = $('#mRows'); box.innerHTML = '';
+  [['TDNN', function (j) { return j <= t && j >= t - K; }, '看 x<sub>t−K..t</sub>'], ['NARX', function (j) { return j <= t && j >= t - K; }, '看 x<sub>t−K..t</sub> 和 y<sub>t−K..t−1</sub>'], ['RNN', function (j) { return j <= t; }, '经 h<sub>t−1</sub> 依赖全部 x<sub>1..t</sub>']].forEach(function (m) {
+    var row = h('div', { class: 'seqrow' }, box);
+    h('b', { html: m[0] }, row);
+    for (var j = 1; j <= 14; j++) h('span', { text: 'x' + j, class: j === t ? 'cur' : m[1](j) ? 'on' : '' }, row);
+    h('small', { html: '　' + m[2], style: 'font-size:15px;color:var(--ink-3)' }, row);
+  });
+}
+['mTs', 'mKs'].forEach(function (id) { $('#' + id).addEventListener('input', mem); }); mem();
+S.notes($('#n-mem'), {
+  c: [
+    ['延时神经网络', '加延时器记录最近 K 个时刻的活性值；对序列相当于卷积网络。'],
+    ['自回归模型', '用变量自己的历史预测自己：y_t = w₀ + Σ w_k y_{t−k} + ε_t。'],
+    ['NARX', '自回归 + 外部输入，记录最近 K_x 个输入、K_y 个输出。'],
+    ['循环神经网络', 'h_t = f(h_{t−1}, x_t)：带自反馈，处理任意长度序列。']
+  ],
+  p: [
+    ['固定窗口 vs 状态', 'TDNN、NARX 窗口写死；RNN 用状态汇总全部历史。'],
+    ['动力系统', 'RNN 的状态按规律随时间变化，h_t 也叫状态。'],
+    ['h₀', '初始状态通常设为 0。']
+  ]
+});
+
+/* ---------- 标量 RNN ---------- */
+var sX = 'pulse';
+var sChart = S.chart($('#sC'), { h: 230, x: [1, 20], y: [-1.05, 1.05], xt: [1, 5, 10, 15, 20], yt: [-1, -0.5, 0, 0.5, 1], xl: '时刻 t' });
+function srn() {
+  var u = +$('#sUs').value, w = +$('#sWs').value; $('#sU').textContent = S.f(u, 2); $('#sW').textContent = S.f(w, 1);
+  var xs = []; for (var t = 1; t <= 20; t++) xs.push(sX === 'pulse' ? (t === 1 ? 1 : 0) : sX === 'two' ? (t === 1 || t === 6 ? 1 : 0) : 0.3);
+  var hh = 0, hs = [];
+  xs.forEach(function (x, i) { hh = Math.tanh(u * hh + w * x); hs.push([i + 1, hh]); });
+  sChart({ curves: [{ pts: xs.map(function (x, i) { return [i + 1, x]; }), c: 'dim', w: 1.5, label: '输入 x_t' }, { pts: hs, c: 'c1', label: '隐状态 h_t' }], dots: hs.map(function (p) { return { x: p[0], y: p[1], c: 'c1', r: 3.5 }; }) });
+  var at10 = hs[9][1];
+  $('#sCap').innerHTML = sX === 'const' ? '持续输入时 h 收敛到一个不动点 h* = tanh(u·h* + 0.3w)——这就是“动力系统”。' :
+    (Math.abs(u) < 1 ? '|u| &lt; 1：脉冲的影响按大约 u<sup>t</sup> 衰减，第 10 步还剩 ' + S.f(at10, 3) + '。记忆在“漏”。' : '|u| ≥ 1：状态不再衰减，甚至被推到 tanh 的饱和区（±1）后停住——记住了，但也无法再区分新的输入。') + (u < 0 ? ' u 为负时状态正负交替。' : '');
+}
+['sUs', 'sWs'].forEach(function (id) { $('#' + id).addEventListener('input', srn); });
+S.seg($('#sX'), function (v) { sX = v; srn(); }); srn();
+S.notes($('#n-srn'), {
+  c: [
+    ['简单循环网络', '只有一个隐藏层，加了隐藏层到自身的反馈连接（Elman，1990）。'],
+    ['按时间展开', '每个时刻看作一层：时间上共享权值的深层前馈网络。'],
+    ['RNN 通用近似', '足够多 Sigmoid 型神经元可逼近一大类非线性动力系统。'],
+    ['图灵完备', '所有图灵机都可被 Sigmoid 型全连接循环网络模拟。']
+  ],
+  p: [
+    ['更新公式', 'h_t = f(U h_{t−1} + W x_t + b)'],
+    ['参数', 'U ∈ ℝ^{D×D} 状态—状态，W ∈ ℝ^{D×M} 状态—输入'],
+    ['理论 ≠ 实践', '表达能力强不代表可学、高效、泛化好。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 四种模式 ---------- */
+var MD = {
+  cls: '多对一：只在最后（或对所有时刻平均后）输出一个类别 ŷ = g(h<sub>T</sub>) 或 g((1/T)Σh<sub>t</sub>)。',
+  tag: '多对多、等长对齐：每个时刻输出一个标签 ŷ<sub>t</sub> = g(h<sub>t</sub>)。',
+  ar: '每一步把上一步的输出（虚线）作为输入，逐个预测下一个符号；第 1 步输入开始符 ⟨BOS⟩。训练时虚线换成真实符号（教师强制）。',
+  s2s: '编码器读完输入（到 ⟨EOS⟩），把全部信息压进状态，再由解码器自回归生成。输入很长时这个状态是瓶颈。'
+};
+function md(k) {
+  var g = $('#mdG'); g.innerHTML = '';
+  function box(x, y, t, cls) { S.svg('rect', { x: x - 22, y: y - 15, width: 44, height: 30, rx: 5, class: cls || '' }, g); S.svg('text', { x: x, y: y + 5, 'text-anchor': 'middle', text: t }, g); }
+  function ar(x1, y1, x2, y2, cls) { S.svg('path', { d: 'M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y2, class: cls || '' }, g); }
+  var n = k === 's2s' ? 3 : 4, xs = [], i;
+  if (k !== 's2s') {
+    for (i = 0; i < 4; i++) xs.push(70 + i * 110);
+    xs.forEach(function (x, i) {
+      if (k === 'ar') { if (i === 0) box(x, 160, '⟨BOS⟩'); } else box(x, 160, 'x' + (i + 1));
+      if (!(k === 'ar' && i > 0)) ar(x, 145, x, 112);
+      box(x, 95, 'h' + (i + 1), 'h');
+      if (i < 3) ar(x + 22, 95, x + 88, 95);
+      if (k === 'tag' || k === 'ar' || (k === 'cls' && i === 3)) { ar(x, 80, x, 50); box(x, 33, k === 'cls' ? 'ŷ' : 'ŷ' + (i + 1), 'y'); }
+      if (k === 'ar' && i < 3) S.svg('path', { d: 'M' + (x + 22) + ' 33 C ' + (x + 60) + ' 33, ' + (x + 50) + ' 150, ' + (x + 88) + ' 112', class: 'dash' }, g);
+    });
+  } else {
+    for (i = 0; i < 6; i++) xs.push(45 + i * 86);
+    xs.forEach(function (x, i) {
+      if (i < 3) { box(x, 160, i < 2 ? 'x' + (i + 1) : '⟨EOS⟩'); ar(x, 145, x, 112); }
+      box(x, 95, 'h' + (i + 1), 'h');
+      if (i < 5) ar(x + 22, 95, x + 64, 95);
+      if (i >= 2) { ar(x, 80, x, 50); box(x, 33, 'ŷ' + (i - 1), 'y'); }
+      if (i >= 2 && i < 5) S.svg('path', { d: 'M' + (x + 22) + ' 33 C ' + (x + 50) + ' 33, ' + (x + 40) + ' 150, ' + (x + 64) + ' 112', class: 'dash' }, g);
+    });
+    S.svg('text', { x: 90, y: 186, 'text-anchor': 'middle', text: '编码器' }, g); S.svg('text', { x: 350, y: 186, 'text-anchor': 'middle', text: '解码器' }, g);
+  }
+  $('#mdW').innerHTML = MD[k];
+}
+S.seg($('#mdS'), md); md('cls');
+function tf() {
+  var e = +$('#tfEs').value; $('#tfE').textContent = e; $('#tfE2').textContent = e;
+  var L = 'ABCDEFGHIJ'.split(''), box = $('#tfRows'); box.innerHTML = '';
+  function row(name, cells) { var r = h('div', { class: 'seqrow' }, box); h('b', { text: name }, r); cells.forEach(function (c) { h('span', { text: c[0], class: c[1] || '' }, r); }); }
+  row('真实序列', L.slice(0, 9).map(function (c) { return [c]; }));
+  var tfo = [], gen = [], cur = 'A';
+  for (var t = 1; t <= 8; t++) {
+    var predT = t === e ? 'X' : L[t];
+    tfo.push([predT, t === e ? 'bad' : 'on']);
+    var nx = t === e ? 'X' : String.fromCharCode(cur.charCodeAt(0) + 1);
+    gen.push([nx, nx === L[t] ? 'on' : 'bad']);
+    cur = nx;
+  }
+  row('训练：输入真实', L.slice(0, 8).map(function (c) { return [c]; }));
+  row('训练：预测', tfo);
+  row('生成：预测', gen);
+}
+$('#tfEs').addEventListener('input', tf); tf();
+S.notes($('#n-mode'), {
+  c: [
+    ['序列分类', '多对一，ŷ = g(h_T) 或 g(平均 h_t)。'],
+    ['序列标注', '多对多等长对齐，ŷ_t = g(h_t)。'],
+    ['自回归序列建模', '上一步输出作下一步输入，逐步预测；语言模型。'],
+    ['条件序列生成', '编码器—解码器；机器翻译、语音识别。'],
+    ['教师强制', '训练时把真实序列右移一位作输入，可并行算损失。'],
+    ['暴露偏差', '训练看真实历史、生成看自己历史带来的不一致。']
+  ],
+  p: [
+    ['编码器—解码器', 'h_t = f₁(h_{t−1}, x_t)；h_{T+t} = f₂(h_{T+t−1}, ŷ_{t−1})；ŷ_t = g(h_{T+t})'],
+    ['信息瓶颈', '整个输入压成一个状态；催生注意力机制（第 8 篇）。'],
+    ['NTP', '下一个词元预测，自回归语言建模的形式。']
+  ]
+});
+
+/* ---------- BPTT ---------- */
+var bChart = S.chart($('#bC'), { h: 230, x: [1, 20], y: [-6, 2], xt: [1, 10, 20], yt: [-6, -4, -2, 0, 2], xl: '时刻 k', yl: 'log₁₀|δ_{T,k}|', ml: 40 });
+function bp() {
+  var u = +$('#bUs').value, T = +$('#bTs').value; $('#bU').textContent = S.f(u, 2); $('#bT').textContent = T;
+  var r = S.rng(5), hh = 0, zs = [];
+  for (var t = 1; t <= T; t++) { var z = u * hh + 0.8 * S.randn(r) * 0.5; zs.push(z); hh = Math.tanh(z); }
+  var d = 1, pts = [];
+  for (var k = T; k >= 1; k--) { var dd = d * (1 - Math.pow(Math.tanh(zs[k - 1]), 2)); pts.unshift([k, Math.log10(Math.abs(dd) + 1e-30)]); d = dd * u; }
+  var lo = Math.min(-6, Math.floor(Math.min.apply(null, pts.map(function (p) { return p[1]; })))), hi = Math.max(2, Math.ceil(Math.max.apply(null, pts.map(function (p) { return p[1]; }))));
+  bChart({ x: [1, T], xt: [1, Math.round(T / 2), T], y: [lo, hi], yt: [lo, Math.round((lo + hi) / 2), hi], curves: [{ pts: pts, c: 'c2' }], dots: pts.map(function (p) { return { x: p[0], y: p[1], c: 'c2', r: 3.5 }; }) });
+  var ratio = pts[0][1] - pts[T - 1][1];
+  $('#bW').innerHTML = '每往回一步乘一次 f′(z<sub>k</sub>)·u。传到第 1 步时变成第 T 步的 10^' + S.f(ratio, 1) + ' 倍。' + (ratio < -2 ? ' 远处的时刻几乎贡献不了梯度——U 的更新主要靠最近几步。' : ratio > 2 ? ' 越远的时刻梯度越大，训练会不稳定（梯度爆炸）。' : '') + ' ∂ℒ/∂U 是所有时刻贡献之和，所以它本身不会消失；消失的是远距离那几项。';
+}
+['bUs', 'bTs'].forEach(function (id) { $('#' + id).addEventListener('input', bp); }); bp();
+S.notes($('#n-bptt'), {
+  c: [
+    ['BPTT', '把 RNN 按时间展开成多层前馈网络，照搬反向传播。'],
+    ['δ_{t,k}', '第 t 时刻损失对第 k 时刻净输入 z_k 的导数。'],
+    ['RTRL', '前向模式实时计算 ∂h_t/∂θ，适合在线学习，但开销大。']
+  ],
+  p: [
+    ['递推', 'δ_{t,k} = diag(f′(z_k)) Uᵀ δ_{t,k+1}'],
+    ['U 的梯度', '∂ℒ/∂U = Σ_t Σ_{k≤t} δ_{t,k} h_{k−1}ᵀ'],
+    ['W、b 的梯度', 'Σ_t Σ_k δ_{t,k} x_kᵀ；Σ_t Σ_k δ_{t,k}'],
+    ['共享参数', '真实梯度 = 所有展开层梯度之和。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 长程依赖 ---------- */
+var ltChart = S.chart($('#ltC'), { h: 230, x: [0, 50], y: [-3, 3], xt: [0, 10, 20, 30, 40, 50], yt: [-3, -2, -1, 0, 1, 2, 3], xl: '间隔 t − k', yl: 'log₁₀ γ^(t−k)', ml: 40 });
+function lt() {
+  var g = +$('#ltRs').value; $('#ltR').textContent = S.f(g, 2);
+  ltChart({ curves: [{ f: function (n) { return n * Math.log10(0.9); }, c: 'dim', dash: 1, w: 1.5, label: 'γ = 0.9' }, { f: function (n) { return n * Math.log10(1.1); }, c: 'dim', dash: 1, w: 1.5, label: 'γ = 1.1' }, { f: function (n) { return n * Math.log10(g); }, c: 'c2', label: '当前 γ' }] });
+  var v = Math.pow(g, 50);
+  $('#ltW').innerHTML = 'γ = ' + S.f(g, 2) + ' 时，间隔 50 步后 γ<sup>50</sup> = <b>' + (v < 1e-3 || v > 1e3 ? S.sci(v, 2) : S.f(v, 3)) + '</b>。' + (Math.abs(g - 1) < 0.005 ? ' 正好为 1 时既不消失也不爆炸——这就是 h<sub>t</sub> = h<sub>t−1</sub> + g(·) 和 LSTM 加法记忆的思路。' : '');
+}
+$('#ltRs').addEventListener('input', lt); lt();
+S.guess($('#ltG'), { q: 'γ = 0.9 时，误差传回 50 步后剩下原来的多少？（γ = 1.1 时又是多少？）', ans: Math.pow(0.9, 50), fmt: function (x) { return S.f(x, 4); }, why: '0.9⁵⁰ ≈ 0.0052，只剩千分之五；而 1.1⁵⁰ ≈ 117，放大了一百多倍。γ 只差 0.2，结果差了四个数量级——这就是简单循环网络在长序列上训练不稳定、记不住远处信息的根源。' });
+S.notes($('#n-ltd'), {
+  c: [
+    ['长程依赖问题', '间隔很大的依赖关系，因梯度消失 / 爆炸而学不到。'],
+    ['谱半径判据', 'U 最大特征值的模 > 1 倾向爆炸，< 1 倾向消失。'],
+    ['什么消失了', '∂ℒ_t/∂h_k（间隔大时），不是 ∂ℒ_t/∂U。'],
+    ['记忆容量问题', 'h 不断累加新信息会饱和，存不下更多。']
+  ],
+  p: [
+    ['近似', 'δ_{t,k} ≈ γ^{t−k} δ_{t,t}'],
+    ['梯度爆炸的对策', '权重衰减（让 γ ≤ 1）、梯度截断。'],
+    ['梯度消失的对策', '改模型：h_t = h_{t−1} + g(x_t, h_{t−1}; θ)，再加门控。'],
+    ['残差的影子', '加法更新与残差连接思想一致。']
+  ]
+});
+
+/* ---------- LSTM 记忆任务 ---------- */
+var gChart = S.chart($('#gC'), { h: 240, x: [1, 14], y: [-1.1, 1.1], xt: [1, 2, 6, 10, 12, 14], yt: [-1, 0, 1], xl: '时刻 t（第 2 步写入，第 12 步读出）' });
+function gt() {
+  var V = +$('#gVs').value, F = +$('#gFs').value, U = +$('#gUs').value;
+  $('#gV').textContent = S.f(V, 1); $('#gF').textContent = S.f(F, 2); $('#gU').textContent = S.f(U, 2);
+  var r = S.rng(21), c = 0, hs = 0, cs = [], outs = [], ss = [], xs = [];
+  for (var t = 1; t <= 14; t++) {
+    var noise = 0.5 * S.randn(r), write = t === 2, read = t === 12;
+    var x = write ? V : noise; xs.push([t, x]);
+    var i = write ? 1 : 0.02, f = write ? 0 : F, o = read ? 1 : 0;
+    var ct = Math.tanh(1.2 * x);
+    c = f * c + i * ct; cs.push([t, c]);
+    outs.push([t, o * Math.tanh(c)]);
+    hs = Math.tanh(U * hs + 1.0 * x); ss.push([t, hs]);
+  }
+  gChart({ curves: [{ pts: xs, c: 'dim', w: 1.2, label: '输入 x_t（写入后是干扰）' }, { pts: cs, c: 'c1', label: 'LSTM 记忆单元 c_t' }, { pts: ss, c: 'c2', label: 'SRN 状态 h_t' }], vl: [{ x: 2, c: 'ok' }, { x: 12, c: 'ok' }] });
+  var out = Math.tanh(cs[11][1]), target = Math.tanh(Math.tanh(1.2 * V));
+  $('#gL').textContent = S.f(out, 3); $('#gS').textContent = S.f(ss[11][1], 3);
+  $('#gW').innerHTML = '第 2 步：输入门 i = 1、遗忘门 f = 0，清空并写入 c̃ = tanh(1.2 × ' + S.f(V, 1) + ')；之后输入门几乎关闭（i = 0.02），遗忘门保持 ' + S.f(F, 2) + '；第 12 步输出门 o = 1 读出。理想读出 ' + S.f(target, 3) + '，实际 ' + S.f(out, 3) + '（保留了 ' + S.pct(F > 0 ? Math.pow(F, 10) : 0, 0) + ' 左右）。SRN 的状态每步都被干扰重写，第 12 步已经和写入的值没什么关系了。门是人为设定的示意；真实 LSTM 的门由输入和 h<sub>t−1</sub> 算出、通过训练学会何时开关。';
+}
+['gVs', 'gFs', 'gUs'].forEach(function (id) { $('#' + id).addEventListener('input', gt); }); gt();
+var GR = {
+  a: ['h_t = h̃_t = tanh(W_h x_t + U_h h_{t−1} + b_h)', '更新门全开写入、重置门不重置：<b>退化为简单循环网络</b>。'],
+  b: ['h_t = tanh(W_h x_t + b_h)', '当前状态只和当前输入有关，与历史无关——相当于一个前馈层。'],
+  c: ['h_t = h_{t−1}', '原样复制上一时刻状态，和当前输入无关：完美的“保持”。'],
+  d: ['h_t = z ⊙ h_{t−1} + (1 − z) ⊙ h̃_t', '保留和写入是一组<b>互补</b>的权重（和为 1）——相当于把 LSTM 的遗忘门和输入门压成一个。']
+};
+S.seg($('#grS'), function (v) { $('#grF').textContent = GR[v][0]; $('#grW').innerHTML = GR[v][1]; });
+$('#grF').textContent = GR.a[0]; $('#grW').innerHTML = GR.a[1];
+S.guess($('#lsG'), { q: '输入维度 M = 100、隐状态 D = 128 的 LSTM 层有多少参数？（提示：4 组门 / 候选，每组 W、U、b）', unit: '个', ans: 4 * (128 * (100 + 128) + 128), fmt: function (x) { return Math.round(x).toLocaleString(); }, why: '原书式 6.59：W ∈ ℝ^{4D×(M+D)}，b ∈ ℝ^{4D}，共 4 × 128 × 228 + 512 = 117,248。GRU 是 3 组，约 3/4；SRN 只有 1 组，约 1/4。' });
+S.notes($('#n-gate'), {
+  c: [
+    ['内部状态 c', 'LSTM 专门做线性循环传递的记忆单元。'],
+    ['遗忘门 f', '控制 c_{t−1} 保留多少（f = 1 不遗忘）。'],
+    ['输入门 i', '控制候选状态 c̃_t 写入多少。'],
+    ['输出门 o', '控制 c_t 输出多少给 h_t。'],
+    ['更新门 z / 重置门 r', 'GRU：z 平衡保留与写入；r 控制候选是否依赖历史。']
+  ],
+  p: [
+    ['LSTM', 'c_t = f ⊙ c_{t−1} + i ⊙ c̃_t，h_t = o ⊙ tanh(c_t)'],
+    ['GRU', 'h_t = z ⊙ h_{t−1} + (1 − z) ⊙ h̃_t'],
+    ['为什么能缓解梯度消失', '加法更新，f ≈ 1 时 ∂c_t/∂c_{t−1} ≈ 1，梯度近似恒等传播。'],
+    ['训练技巧', '遗忘门偏置 b_f 初始化为正数。'],
+    ['参数规模', 'LSTM 4 组、GRU 3 组、SRN 1 组权重。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 双向 ---------- */
+var BI = {
+  a: [['苹果', '发布', '了', '新', '手机'], '公司', '前向 RNN 读到“苹果”时只看过“苹果”本身，分不清；后向 RNN 从句尾读回来，到“苹果”时已经看过“手机”“发布”——拼接后就能判断是公司。'],
+  b: [['苹果', '洗', '干净', '再', '吃'], '水果', '同样是句首的“苹果”，后向状态带着“洗”“吃”的信息，判断为水果。单向 RNN 在这个位置上两句话的状态完全一样。']
+};
+function bi(k) {
+  var s = BI[k], box = $('#biRows'); box.innerHTML = '';
+  function row(name, f) { var r = h('div', { class: 'seqrow' }, box); h('b', { text: name }, r); s[0].forEach(function (w, i) { h('span', { text: w, class: i === 0 ? 'cur' : f(i) ? 'on' : '' }, r); }); }
+  row('前向 h⁽¹⁾', function (i) { return i <= 0; });
+  row('后向 h⁽²⁾', function (i) { return i >= 0; });
+  $('#biW').innerHTML = '高亮是计算“苹果”位置的隐状态时用到的词。判断：<b>' + s[1] + '</b>。' + s[2];
+}
+S.seg($('#biS'), bi); bi('a');
+S.notes($('#n-deep'), {
+  c: [
+    ['堆叠循环神经网络', '多个 RNN 堆叠，第 l − 1 层隐状态作第 l 层输入；也叫循环多层感知器。'],
+    ['双向循环神经网络', '一正一反两层 RNN，隐状态拼接，利用上下文。'],
+    ['递归神经网络', 'RvNN：在树结构上组合子节点状态，h_i = f(h_{π_i})。'],
+    ['信息传递框架', '链（RNN）→ 树（RvNN）→ 图（GNN）。']
+  ],
+  p: [
+    ['RNN 既深又浅', '时间上路径长，单个时刻 x_t → y_t 路径短。'],
+    ['堆叠', 'h_t⁽ˡ⁾ = f(U⁽ˡ⁾h_{t−1}⁽ˡ⁾ + W⁽ˡ⁾h_t⁽ˡ⁻¹⁾ + b⁽ˡ⁾)'],
+    ['双向', 'h_t = h_t⁽¹⁾ ⊕ h_t⁽²⁾'],
+    ['新动向', 'Mamba 等状态空间模型以线性复杂度复兴循环思想。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 记忆在哪里', '在隐状态 h_t = f(U h_{t−1} + W x_t + b) 里。按时间展开后，RNN 就是一个每层共享同一组 U、W、b 的深层前馈网络，用 BPTT 训练，梯度是各时刻之和。'],
+    ['② 为什么学不会长依赖', '误差每往回一步乘一次 diag(f′)Uᵀ，δ_{t,k} ≈ γ^{t−k}δ_{t,t}；γ < 1 时远处的 ∂ℒ_t/∂h_k 消失（不是 ∂ℒ/∂U 消失），U 只能根据最近几步更新。'],
+    ['③ 门控', 'LSTM：遗忘门管保留、输入门管写入、输出门管读出；GRU：更新门平衡保留与写入、重置门管候选是否看历史。记忆单元是加法更新，f ≈ 1 时梯度近似恒等传播。']
+  ],
+  p: [
+    ['原书一句话', '序列建模的关键不只是“让状态循环起来”，更是“让哪些信息沿什么路径传播，并保留多久”。'],
+    ['下一篇', '训练深层网络的工程学：优化算法、初始化、规范化、正则化。']
+  ],
+  ph: '一句话'
+});

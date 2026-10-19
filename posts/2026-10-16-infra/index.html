@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深入理解 AI Infra：学习笔记</title>
+<meta name="description" content="开源书《深入理解 AI Infra：量化分析与系统设计》（李博杰 著）的十二篇互动学习笔记总览：前言里的五个问题与“从约束推导设计”、章节地图与阅读路径、一个贯穿全书的显存与 decode 速度估算器、数量级速记卡（可自测）和全系列公式速查。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.five { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.five button { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; cursor: pointer; color: var(--ink); }
+.five button b { display: block; font-size: 19px; }
+.five button span { font-size: 15px; color: var(--ink-3); }
+.five button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+@media (max-width: 760px) { .five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s, opacity .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap a.hl { border-color: var(--s1); box-shadow: inset 0 0 0 1px var(--s1); }
+.chap a.fade { opacity: .45; }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 6px; font-size: 19px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 112px; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.5; }
+.mcard .a { display: block; font-family: var(--f-num); font-size: 20px; font-weight: 700; color: var(--s1); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.fxl { margin-top: 12px; }
+.fxl h4 { margin: 18px 0 4px; font-size: 17px; }
+.fxl h4 a { color: inherit; }
+.fxl .fx { margin: 6px 0 0; }
+</style>
+</head>
+<body data-series="infra-series">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>系列 · 共 12 篇</span><span>以计算器为主</span><span>先估再算</span></p>
+  <h1>搬什么、搬多少、<em>谁必须等它</em></h1>
+  <p class="lead">这是开源书《深入理解 AI Infra：量化分析与系统设计》的学习笔记，按原书十二章拆成十二篇。原书不罗列技术名词，而是一路追问几个量：一项任务要算多少、读多少、存多少，经过哪些接口，哪一步必须等。这一页先讲清楚原书的方法，再给一张章节地图、一个把前几章公式串起来的估算器、一套数量级速记卡和全系列公式速查，方便以后回来复习。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/" aria-current="page"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么读</a><a href="#map">章节地图</a><a href="#est">综合估算器</a><a href="#mag">数量级速记</a><a href="#fx">公式速查</a><a href="#back">记下来</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>这一页要回答的 3 个问题</h3><ol>
+  <li>原书的方法是什么？“从约束推导设计”具体要检查哪几项？</li>
+  <li>十二章怎么组织，不同背景的读者该从哪里读起？</li>
+  <li>给一个模型和一块加速器，能不能几步算出放不放得下、一个 token 要多久？</li>
+</ol></div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么应用开发者也要懂 AI Infra</h2><span class="meta">原书前言</span></div>
+  <div class="sec-lede">
+    <p>原书作者的上一本书讲 Agent 的架构与工程，这一本讲支撑模型训练与推理的基础设施。类比很直接：大多数工程师不写操作系统、编译器和芯片，仍要学它们，因为申请内存、读文件、调函数各有资源和时间代价。基于模型开发应用也一样：选多大的模型、留多长上下文、允许多少请求同时执行、放本地还是云端，都会改变系统要完成的工作。作者认为<strong>编程抽象从操作系统迁移到模型上下文，是计算机系统领域数十年来最重要的变化之一</strong>——模型成了 LLM 时代的操作系统，AI Infra 成了 LLM 时代的计算机体系结构。</p>
+    <p>原书的方法是数量级估算（Jeff Dean 倡导的 back-of-the-envelope）：一项任务要多少计算、读写多少数据？要驻留的数据装得下吗？带宽能否供给？计算、读写和必须串行的步骤分别给出怎样的下界？作者说，不只人会算错，模型也会：<strong>只算权重读取，忘了 KV；算了读取时间，没检查放不放得下；按峰值算力推速度，没检查带宽；平均分给多张卡，漏了通信；吞吐很高，却没算串行依赖和往返延迟</strong>。漏任何一项都可能差几倍到几个数量级。所以贯穿全书的原则是<strong>从约束推导设计</strong>：先定任务和质量要求，列出计算、存储、通信和依赖，逐一检查容量、带宽和不可消除的等待，再讨论模型怎样分工、状态放哪、执行如何组织；估算不必一开始就精确，但必须知道自己算进了什么。</p>
+    <p>全书的线索是<strong>数据搬移</strong>。作者用“大楼和厕所”打比方：厕所都在一楼，楼上的人每次都要下楼；每层都建，距离短了，却占面积、要管道和维护。体系结构一直在做同样的取舍——哪些数据值得放得更近、准备多少、何时搬入、何时释放。由此原书反复追问<strong>五个问题</strong>，从片上存储到超节点、数据中心网络，再到端边云都适用。</p>
+    <p class="go">点一个问题，看它在哪几篇最突出；再做下面的“漏算了什么”小测。</p>
+  </div>
+  <div class="five" id="five">
+    <button data-v="what" aria-pressed="false"><b>搬什么</b><span>权重、KV、激活、梯度、截图还是特征</span></button>
+    <button data-v="much" aria-pressed="false"><b>搬多少</b><span>字节数、量化、压缩、缓存</span></button>
+    <button data-v="times" aria-pressed="false"><b>搬几次</b><span>复用、分块、融合、batch</span></button>
+    <button data-v="where" aria-pressed="false"><b>经过哪里</b><span>HBM、NVLink、网卡、广域网、空口</span></button>
+    <button data-v="wait" aria-pressed="false"><b>谁必须等它</b><span>依赖、同步、往返、长尾</span></button>
+  </div>
+  <p class="cap" id="fiveC">选一个问题。</p>
+  <div class="lab">
+    <p class="lab-t">漏算了什么？（原书前言列出的五类常见遗漏）</p>
+    <div id="pitQ"></div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>章节地图与阅读路径</h2><span class="meta">原书“全书结构”“如何阅读本书”</span></div>
+  <div class="sec-lede">
+    <p>十二章按“理解工作需求 → 认识执行资源 → 组织完整系统”展开。第一部分模型与负载（1–3 章）建立分析方法，说明计算量、数据量和依赖从哪来；第二部分芯片与系统（4–7 章）从单加速器走到多加速器协作；第三部分推理与训练系统（8–12 章）组织请求、状态和训练过程，延伸到任务环境与端边云部署。同一个问题会不断加入新条件：先只看权重容量，后来加上下文状态；先比较单次执行，后来面对并发、交接和故障恢复。</p>
+    <p>原书建议先读 1–3 章，再按背景选重点；不论哪条路径，<strong>看答案之前先自己估一下</strong>——结果不同时，先查条件是否相同，再找漏算或重复计算。每一篇的计算器都按这个习惯设计：先写下你的估计，再揭晓。</p>
+    <p class="go">选一条阅读路径，卡片会标出重点章节。</p>
+  </div>
+  <div class="selrow"><span>阅读路径</span><div class="seg" id="path"><button data-v="all" aria-pressed="true">从头建立认识</button><button data-v="app">模型与应用开发者</button><button data-v="sys">系统与网络工程师</button><button data-v="chip">芯片与体系结构</button></div></div>
+  <p class="cap" id="pathC"></p>
+  <p class="parthd">第一部分 · 模型与负载</p>
+  <div class="chap" id="chapA"></div>
+  <p class="parthd">第二部分 · 芯片与系统</p>
+  <div class="chap" id="chapB"></div>
+  <p class="parthd">第三部分 · 推理与训练系统</p>
+  <div class="chap" id="chapC"></div>
+</section>
+
+<section class="part" id="est">
+  <div class="part-head"><h2>综合估算器：放得下吗？一个 token 多久？</h2><span class="meta">串起第 1、2、4、8、12 章</span></div>
+  <div class="sec-lede">
+    <p>这是原书第 1 章那套方法，加上后面几章补的条件：<strong>先查容量</strong> M<sub>W</sub> + B·H·c<sub>KV</sub> + M<sub>work</sub> ≤ M<sub>cap</sub>（第 1、2、8 章）；<strong>再算两项下界</strong>，计算 B·F₁/Π 和读取 (R<sub>W</sub> + B·H·c<sub>KV</sub>)/β，较大的那项就是一步 decode 的下界（第 1、4、8 章）；<strong>batch 提吞吐，但不降单请求延迟</strong>，长上下文时 KV 读取在很小的 batch 就超过权重（第 2、8 章）。</p>
+    <p>模型和硬件参数都取自原书：Qwen3-8B 每步读权重 15.14 GB、常驻 16.38 GB、KV 147,456 bytes/token、每 token 线性 15.14 GFLOP + 注意力 589,824·H FLOP（8K 时合计约 20.0 G）；q4_0 常驻 4.61、每步读 4.26 GB（第 12 章）；70B 用第 1 章的 141.11 GB（BF16）、73.73 GB（分组 8 比特）、约 140 GFLOP/token，KV 取 8K 共 2.5 GiB，<strong>70B 的注意力 FLOPs 未计入</strong>。硬件取第 4 章的设备表，手机和 M3 Ultra 原书没给矩阵峰值，只算读取下界。<strong>工作区默认 2 GiB 为示意值</strong>；多卡按原书第 1 章的“理想均分”，<strong>未计卡间通信</strong>（见第 6、7 章）。</p>
+    <p>记住这是下界：原书在 RTX PRO 6000 上测得 batch 1、8K 的一步 25.83 ms，是读取下界 9.12 ms 的约 2.83 倍，多出的主要是每步固定开销（第 1、8、12 章）。</p>
+    <p class="go">先猜默认配置下一步 decode 的下界，再换设备、上下文和 batch。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">显存与 decode 下界</p>
+    <div id="esG"></div>
+    <div class="selrow"><span>模型</span><div class="seg" id="esM"><button data-v="q8" aria-pressed="true">Qwen3-8B BF16</button><button data-v="q4">Qwen3-8B q4_0</button><button data-v="l16">70B BF16</button><button data-v="l8">70B 8 比特</button></div></div>
+    <div class="selrow"><span>设备</span><div class="seg" id="esH"><button data-v="phone">手机</button><button data-v="r3090">RTX 3090</button><button data-v="r4090">RTX 4090</button><button data-v="r5090">RTX 5090</button><button data-v="pro" aria-pressed="true">RTX PRO 6000</button><button data-v="m3u">M3 Ultra 512G</button><button data-v="a100">A100</button><button data-v="h100">H100</button><button data-v="h200">H200</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>上下文 H（K token） <output id="esHc">8</output></span><input type="range" id="esHs" min="1" max="128" value="8"></label>
+      <label class="ctl"><span>batch B <output id="esBc">1</output></span><input type="range" id="esBs" min="1" max="256" value="1"></label>
+      <label class="ctl"><span>卡数（理想均分） <output id="esNc">1</output></span><input type="range" id="esNs" min="1" max="8" value="1"></label>
+      <label class="ctl"><span>每卡工作区 GiB（示意） <output id="esWc">2</output></span><input type="range" id="esWs" min="0" max="8" step="0.5" value="2"></label>
+    </div>
+    <div id="esMem" class="wide"></div>
+    <div class="read">
+      <div class="hl"><div class="v" id="esT">0</div><div class="k">一步 decode 下界</div></div>
+      <div><div class="v" id="esL">0</div><div class="k">瓶颈</div></div>
+      <div><div class="v" id="esR">0</div><div class="k">每请求 token/s 上限</div></div>
+      <div><div class="v" id="esA">0</div><div class="k">合计 token/s 上限</div></div>
+      <div><div class="v" id="esBm">0</div><div class="k">放得下的最大 batch</div></div>
+    </div>
+    <p class="verdict3" id="esW"></p>
+    <p class="lab-t" style="margin-top:14px">同一配置换到各设备（读取 / 计算下界中较大者）</p>
+    <div id="esDev" class="wide"></div>
+  </div>
+  <div class="notes" id="n-est"></div>
+</section>
+
+<section class="part" id="mag">
+  <div class="part-head"><h2>数量级速记卡</h2><span class="meta">取自各篇“关键数字”</span></div>
+  <div class="sec-lede">
+    <p>原书作者发现，不少从业者熟悉模型和框架，却还没有形成对容量、带宽、算力和延迟的数量级直觉；“能说出用了什么技术”和“能判断它是否可行、大致多快”是两种能力。下面这些数字都来自各篇的“关键数字”，按章节排列。打开自测模式后数值会被遮住，先在心里说出一个数，再点卡片翻开。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住数值</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="fx">
+  <div class="part-head"><h2>全系列公式速查</h2><span class="meta">各篇“本章公式卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾都有一张公式卡，这里把它们汇总在一起，写法与原书一致。可以按章节筛选，或输入关键词（如 KV、带宽、Little、AllReduce）查找。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="fxQ" type="search" placeholder="关键词，如 KV、B*、α" aria-label="搜索公式" style="max-width:260px"><div class="seg" id="fxP"><button data-v="0" aria-pressed="true">全部</button><button data-v="1">1–3 章</button><button data-v="2">4–7 章</button><button data-v="3">8–12 章</button></div></div>
+  <div class="fxl" id="fxL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a class="nx" href="../2026-10-16-infra-1/"><small>下一篇</small><span>01 · 初识 AI Infra</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var P = '../2026-10-16-infra-';
+
+/* ---------- 五个问题 ---------- */
+var fiveMap = {
+  what: ['2、3、9、12', '第 2 章区分权重、KV、激活和专家输入；第 9 章 PD 分离要搬 KV；第 12 章比较传图片、传特征还是传会话状态。'],
+  much: ['1、2、8、12', '第 1 章权重字节数；第 2 章 c_KV = 2·L·n_KV·d_h·b；第 8 章量化、压缩和前缀缓存；第 12 章截图压缩与 8.192 MB 的视觉特征。'],
+  times: ['4、5、8', '第 4 章算术强度与 Roofline；第 5 章分块、融合和 FlashAttention 把重复读写降下来；第 8 章 batch 让一次权重读取服务多个请求。'],
+  where: ['4、6、7、12', '第 4 章 HBM 与片上存储；第 6 章超节点互联；第 7 章数据中心网络与拥塞；第 12 章广域网和无线空口。'],
+  wait: ['3、5、10、11、12', '第 3 章 TTFT、排队与突发；第 5 章同步与提交开销；第 10 章流水线气泡与掉队者；第 11 章环境等模型；第 12 章逐轮往返和播放缓冲。']
+};
+S.seg($('#five'), function (v) { $('#fiveC').innerHTML = '<b>主要在第 ' + fiveMap[v][0] + ' 篇。</b>' + fiveMap[v][1]; });
+S.quiz($('#pitQ'), [
+  { q: '估算 decode 速度时，只用“权重字节 ÷ 带宽”。漏了什么？', o: ['KV 缓存的读取', '词表大小', '温度采样'], a: 0, why: '原书前言列出的第一类遗漏：注意力每步还要读全部旧 KV。Qwen3-8B 8K 时每步 KV 约 1.21 GB，batch 到 13 时 KV 读取就超过权重（第 2、8 章）。' },
+  { q: '算出读取时间很短，就认定方案可行。还要先查什么？', o: ['编译器版本', '模型的训练数据', '显存容量：权重 + KV + 工作区放不放得下'], a: 2, why: '原书：先查放不放得下，再算多快。24 GB 的 RTX 4090 跑 Qwen3-8B BF16，8K 上下文只能放 4 条请求（第 1、2 章）。' },
+  { q: '按峰值算力推算 batch 1 的生成速度。问题在哪？', o: ['峰值算力太保守', '没检查存储带宽能否持续供给数据', '没算 FP32'], a: 1, why: '原书：H100 读 70 GB 至少 20.90 ms，矩阵计算只要 0.14 ms，下界由读取决定；算力翻倍无效（第 1、4 章）。' },
+  { q: '把工作量平均分给 8 张卡，就按 8 倍速度估。漏了什么？', o: ['电源效率', '机房温度', '卡间通信'], a: 2, why: '原书：TP 每层都要归约，T(p) = T_local/p + 128·T_AR(p)；加卡收益要和多出的通信时间比（第 6、7 章）。' },
+  { q: '算出了很高的吞吐量，就说交互体验好。还缺什么？', o: ['更大的 batch', '串行依赖和通信往返带来的延迟', '更长的上下文'], a: 1, why: '原书：吞吐和延迟是两件事。截图 Agent 每轮都要等上一轮操作完成，剩余 20 轮里云端模型更快，往返和上传却让它比附近工作站慢约 20.6 秒（第 3、12 章）。' }
+]);
+S.notes($('#n-why'), {
+  c: [
+    ['模型即操作系统', '编程抽象上移到模型上下文；AI Infra 是 LLM 时代的体系结构。'],
+    ['从约束推导设计', '任务与质量 → 计算/存储/通信/依赖 → 容量、带宽、等待 → 分工与组织。'],
+    ['五个问题', '搬什么、搬多少、搬几次、经过哪里、谁必须等它。'],
+    ['先估再看答案', '不同时先查条件是否相同，再找漏算或重复计算。']
+  ],
+  p: [
+    ['五类常见遗漏', '漏 KV、不查容量、只看峰值、漏通信、忽略串行延迟。'],
+    ['约束来自比例变化', '片外读取跟不上计算 → FPGA 模型并行；需求增长快于单芯片 → 万卡互联。'],
+    ['应用与基础设施直接相连', '实时语音延迟从 5 s 降到约 0.5–0.6 s，靠的是逐段估算再优化。'],
+    ['跨层理解', '看到模型结构想到加速器要做什么；看到硬件能力想到怎样改模型。']
+  ]
+});
+
+/* ---------- 章节地图 ---------- */
+var chs = [
+  ['1', '初识 AI Infra', '如何认识系统全景，并用几个关键数字估算一次模型执行？', '六层分工 · Amdahl · 放得下吗 · 一步要多久 · 实测与下界'],
+  ['2', '模型架构', '模型的计算、参数和上下文状态如何形成资源需求？', '2mkn · 注意力配对 · c_KV · GQA/MLA/压缩 · MoE · 并发上限'],
+  ['3', '推理与训练负载', '请求到达、多轮调用、多模态输入和训练过程如何改变资源需求与等待？', 'TTFT/p95 · 排队与突发 · 前缀复用 · 成功成本 · 6ND · RL'],
+  ['4', '加速器架构', '芯片的计算、存储和数据通路如何配合，适合什么负载？', 'Roofline · 分块形状 · HBM · 在途事务 · 同步代价 · 能耗与 TCO'],
+  ['5', '算子与运行时', '如何组织算子与执行过程，减少重复读写、提交和等待？', '分块读写 · 占用率 · 融合 · 在线 Softmax · FlashAttention · CUDA Graph'],
+  ['6', '超节点', '模型如何在多个加速器间分工，协作规模应当多大？', 'TP 加卡门槛 · 环形 vs 树形 · EP 活跃专家 · PP 气泡 · UB'],
+  ['7', '数据中心网络', '数据如何跨加速器传输，交接规则、拥塞和故障如何影响计算？', '分层归约 · α 与交叉点 · 在途数 · incast · PFC/DCQCN · 多路径'],
+  ['8', '推理优化', '如何安排批处理、请求和缓存，提高给定加速器组合的服务效率？', 'batch 与 KV · 连续批处理 · 分页 · 换出 · 量化 · 投机解码 · 有效吞吐'],
+  ['9', '分布式推理', '计算与状态应当放在哪里，如何组织分工、共享和扩缩容？', 'MLA · PD 分离 · AF 分离 · EP 热点 · 副本回本 · 扩缩容'],
+  ['10', '训练系统', '如何安排训练状态、通信与恢复，在期限内取得有效训练进展？', '临界 batch · 16N · ZeRO · 重叠 · 1F1B · 检查点间隔 · 掉队者 · RL'],
+  ['11', '资源调度与运行环境', '如何把模型服务、工具环境和共享资源组织成完整的任务系统？', 'Little 定律 · 每轮重建 · 碎片与抢占 · 模型路由 · 自建 vs 按量 · 恢复树'],
+  ['12', '端边云协同', '如何结合实际传输与交互要求，选择任务在端、边、云的部署位置？', '完整交互时间 · 端侧下界 · 迁移回本 · 窗口/BBR/FEC · 空口 · 部署选择']
+];
+var paths = {
+  all: [['1', '2', '3'], '原书建议：先读第 1–3 章，学会估算一次执行，弄清模型与负载提出了哪些需求，再依次阅读后面两部分。'],
+  app: [['1', '2', '3', '8', '9', '11', '12'], '模型与应用开发者：重点第 8、9 章的推理服务和第 11、12 章的任务环境与部署；遇到容量、算子或通信问题，再回到第 4–7 章。'],
+  sys: [['1', '2', '3', '5', '6', '7', '9', '10'], '系统与网络工程师：重点第 5–7 章的执行与加速器协作，再看第 9、10 章这些机制如何影响分布式推理和训练。'],
+  chip: [['1', '2', '3', '4', '5', '6', '7'], '芯片与体系结构工程师：重点第 4–7 章，并结合后续章节的算例，看硬件指标如何转化为实际服务能力。']
+};
+var read = S.readList(), cards = {};
+chs.forEach(function (c) {
+  var n = +c[0], box = n <= 3 ? $('#chapA') : n <= 7 ? $('#chapB') : $('#chapC');
+  var a = h('a', { href: P + c[0] + '/', class: read.indexOf(c[0]) >= 0 ? 'done' : '' }, box);
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><p>' + c[2] + '</p><span class="tag">' + c[3] + (read.indexOf(c[0]) >= 0 ? ' · 已读' : '') + '</span>';
+  cards[c[0]] = a;
+});
+function pathSel(v) {
+  var on = paths[v][0];
+  Object.keys(cards).forEach(function (k) {
+    var hit = on.indexOf(k) >= 0;
+    cards[k].classList.toggle('hl', v === 'all' ? hit : hit && ['1', '2', '3'].indexOf(k) < 0);
+    cards[k].classList.toggle('fade', v !== 'all' && !hit);
+  });
+  $('#pathC').textContent = paths[v][1];
+}
+S.seg($('#path'), pathSel); pathSel('all');
+
+/* ---------- 综合估算器 ---------- */
+var MD = {
+  q8: { n: 'Qwen3-8B BF16', res: 16.38, rd: 15.14, kv: 147456, f: 15.137e9, fa: 589824 },
+  q4: { n: 'Qwen3-8B q4_0', res: 4.61, rd: 4.26, kv: 147456, f: 15.137e9, fa: 589824 },
+  l16: { n: '70B BF16', res: 141.11, rd: 141.11, kv: 2.5 * Math.pow(2, 30) / 8192, f: 140e9, fa: 0 },
+  l8: { n: '70B 分组 8 比特', res: 73.73, rd: 73.73, kv: 2.5 * Math.pow(2, 30) / 8192, f: 140e9, fa: 0 }
+};
+var HW = {
+  phone: { n: '手机', m: 24, b: 84.8, p: 0 }, r3090: { n: 'RTX 3090', m: 24, b: 936, p: 71.0 }, r4090: { n: 'RTX 4090', m: 24, b: 1008, p: 165.2 },
+  r5090: { n: 'RTX 5090', m: 32, b: 1792, p: 209.5 }, pro: { n: 'RTX PRO 6000', m: 96, b: 1792, p: 503.8 }, m3u: { n: 'M3 Ultra', m: 512, b: 819, p: 0 },
+  a100: { n: 'A100 80GB', m: 80, b: 2039, p: 312.0 }, h100: { n: 'H100 SXM', m: 80, b: 3350, p: 989.4 }, h200: { n: 'H200 SXM', m: 141, b: 4800, p: 989.5 }
+};
+var esM = 'q8', esH = 'pro';
+function calc(md, hw, H, B, n, ws) {
+  var kvB = B * H * md.kv / 1e9, wsG = ws * 1.073741824;
+  var perCard = (md.res + kvB) / n + wsG;
+  var bmax = Math.floor((n * (hw.m - wsG) - md.res) / (H * md.kv / 1e9));
+  var tm = (md.rd + kvB) / (n * hw.b);
+  var tc = hw.p ? B * (md.f + md.fa * H) / (n * hw.p * 1e12) : 0;
+  return { kvB: kvB, wsG: wsG, per: perCard, fit: perCard <= hw.m, bmax: bmax, tm: tm, tc: tc, t: Math.max(tm, tc) };
+}
+function ms(t) { return t >= 1 ? S.f(t, 2) + ' s' : S.f(t * 1000, t < 0.01 ? 2 : 1) + ' ms'; }
+function es() {
+  var H = +$('#esHs').value * 1024, B = +$('#esBs').value, n = +$('#esNs').value, ws = +$('#esWs').value;
+  $('#esHc').textContent = $('#esHs').value; $('#esBc').textContent = B; $('#esNc').textContent = n; $('#esWc').textContent = ws;
+  var md = MD[esM], hw = HW[esH], r = calc(md, hw, H, B, n, ws);
+  var cap = hw.m, rows = [
+    { label: '权重（每卡）', value: Math.min(1, md.res / n / cap), text: S.f(md.res / n, 2) + ' GB', cls: '' },
+    { label: 'KV（每卡）', value: Math.min(1, r.kvB / n / cap), text: S.f(r.kvB / n, 2) + ' GB', cls: 'alt' },
+    { label: '工作区（示意）', value: Math.min(1, r.wsG / cap), text: S.f(r.wsG, 2) + ' GB', cls: 'dim' },
+    { label: '合计 / 容量 ' + cap + ' GB', value: Math.min(1, r.per / cap), text: S.pct(r.per / cap, 0), cls: r.fit ? 'ok' : 'alt' }
+  ];
+  S.bars($('#esMem'), rows);
+  $('#esT').textContent = ms(r.t);
+  $('#esL').textContent = !hw.p ? '读取（无峰值数据）' : (r.tc > r.tm ? '计算' : '读取');
+  $('#esR').textContent = S.f(1 / r.t, 1); $('#esA').textContent = S.f(B / r.t, 0);
+  $('#esBm').textContent = r.bmax > 0 ? r.bmax : '放不下';
+  var w = $('#esW'), msg;
+  if (!r.fit) { w.className = 'verdict3 bad'; msg = '<b>放不下</b>：每卡需要 ' + S.f(r.per, 1) + ' GB，超过 ' + cap + ' GB。可以减 batch 或上下文、量化权重，或加卡（加卡要算通信）。'; }
+  else { w.className = 'verdict3'; msg = '<b>放得下</b>，每卡 ' + S.f(r.per, 1) + ' GB。'; }
+  var kvShare = (r.kvB) / (md.rd + r.kvB);
+  msg += ' 每步读取中 KV 占 ' + S.pct(kvShare, 0) + '。';
+  if (hw.p && md.fa) {
+    var F1 = md.f + md.fa * H, den = F1 * hw.b * 1e9 / (hw.p * 1e12) - H * md.kv;
+    msg += den > 0 ? ' 计算追平读取的 batch 约 ' + S.f(md.rd * 1e9 / den, 0) + '。' : ' 这个上下文下，batch 再大读取也一直是瓶颈（KV 随 batch 同步增长）。';
+  }
+  w.innerHTML = msg;
+  var devs = Object.keys(HW).map(function (k) { var x = calc(md, HW[k], H, B, n, ws); return { k: k, x: x }; });
+  var mx = Math.max.apply(null, devs.map(function (d) { return d.x.t; }));
+  S.bars($('#esDev'), devs.map(function (d) {
+    return { label: HW[d.k].n, value: d.x.t / mx, text: ms(d.x.t) + (d.x.fit ? '' : ' · 放不下'), cls: d.x.fit ? (d.k === esH ? 'ok' : 'dim') : 'alt' };
+  }));
+}
+S.seg($('#esM'), function (v) { esM = v; es(); }); S.seg($('#esH'), function (v) { esH = v; es(); });
+['esHs', 'esBs', 'esNs', 'esWs'].forEach(function (id) { $('#' + id).addEventListener('input', es); }); es();
+S.guess($('#esG'), { q: 'RTX PRO 6000（1,792 GB/s）上跑 Qwen3-8B BF16，单请求、8K 上下文。一步 decode 的读取下界是多少毫秒？', unit: 'ms', ans: 9.12, fmt: function (x) { return S.f(x, 2); }, why: '原书第 4 章：每步读权重 15.14 GB + KV 1.21 GB ≈ 16.345 GB，÷ 1,792 GB/s ≈ 9.12 ms，约 109.6 token/s。实测 batch 1 一步 25.83 ms，是下界的 2.83 倍，多出的主要是每步固定开销（第 8、12 章）。' });
+S.notes($('#n-est'), {
+  c: [
+    ['先容量后速度', 'M_W + B·H·c_KV + M_work ≤ M_cap，放不下就不用算多快。'],
+    ['两项下界取大', 'T_step ≈ max(B·F₁/Π, (R_W + B·H·c_KV)/β)。'],
+    ['常驻 ≠ 每步读取', 'Qwen3-8B 常驻 16.38 GB，每步读 15.14 GB（词嵌入只查一行）。'],
+    ['下界的含义', '超期一定不行；没超只说明尚未排除，实测常是下界的数倍。']
+  ],
+  p: [
+    ['batch 不降单请求延迟', '一步时间只增不减，合计吞吐才上去。'],
+    ['长上下文让 KV 主导', '8K 时 batch 13 起 KV 读取就超过权重。'],
+    ['量化同时改两处', '容量和每步读取一起变小：q4_0 手机约 15.5 token/s。'],
+    ['加卡要算通信', '这里是理想均分；TP 每层归约见第 6 篇。']
+  ]
+});
+
+/* ---------- 数量级速记卡 ---------- */
+var MG = [
+  ['1', 'H100 SXM BF16 稠密峰值 / HBM 带宽 / 容量', '989.4 TFLOP/s · 3.35 TB/s · 80 GB'],
+  ['1', 'H100 上读一遍 70 GB 权重的下界', '20.90 ms'],
+  ['1', 'H100、1 字节权重的计算 / 读取转折 batch', 'B* ≈ 148'],
+  ['1', 'Qwen3-8B 完整 BF16 权重', '16.38 GB'],
+  ['2', 'Qwen3-8B 每 token 全模型 KV（BF16）', '144 KiB'],
+  ['2', 'Qwen3-8B 8K prefill / 8K 后一步 decode 的 FLOPs', '133.6 T / 20.0 G'],
+  ['2', 'RTX 4090 跑 Qwen3-8B BF16、8K 的并发上限', '4 条'],
+  ['3', '全参数 + Adam 训练状态（每参数）', '18 字节'],
+  ['3', '640×640 图片的视觉 token 数', '400 个'],
+  ['4', 'Qwen3-8B 8K decode 每步读取', '16.345 GB'],
+  ['4', 'RTX PRO 6000 带宽 / BF16 峰值 / 容量', '1,792 GB/s · 503.8 TFLOP/s · 96 GB'],
+  ['5', 'FlashAttention 对比数学后端（8192 序列）', '2.6 ms → 80 μs'],
+  ['6', '八卡环形与树形 AllReduce 的交点', '680 KiB'],
+  ['6', 'TP8 一次 10 KiB 环形归约（几乎全是启动）', '11.55 μs'],
+  ['7', '5 μs 启动、50 GB/s 链路的消息交叉点', '约 244 KiB'],
+  ['7', 'PFC 一跳反馈 / DCQCN 端到端反馈', '0.33 μs / 20 μs'],
+  ['8', '2K / 8K 上下文下 KV 读取超过权重的 batch', '51 / 13'],
+  ['8', 'q8_0 / q4_0 实际压缩比（含 scale）', '34/64 · 18/64'],
+  ['9', '8K 上下文 KV：GQA vs 紧凑 MLA', '1.125 GiB vs 549 MiB'],
+  ['10', '混合精度 Adam 常驻状态；Qwen3-8B 合计', '16 字节/参数 · 131.1 GB'],
+  ['10', '1024 卡、c = 16.4 s 的最优检查点间隔', '965 s'],
+  ['11', '始终驻留时 CPU / 模型并发 / 内存占用比例', '62.5% / 84% / 168%'],
+  ['11', 'DSec 镜像运行时实际读到的比例', '4%–13%'],
+  ['12', '图片精修总时间 / 模型加速十倍省下的时间', '12.8 s / 0.27 s'],
+  ['12', '手机 Qwen3-8B BF16 / q4_0 decode 上限', '5.2 / 15.5 token/s'],
+  ['12', '14% 随机丢包下 Mathis 上界 vs BBR 理想', '0.155 vs 286 Mbit/s'],
+  ['12', '一次 Wi-Fi 数据交换 / 承载 ACK 的交换', '302 / 134 μs']
+];
+var order = MG.map(function (_, i) { return i; }), opened = {};
+function mgDraw() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var m = MG[i], b = h('button', { class: 'mcard' + (opened[i] ? ' open' : ''), type: 'button' }, g);
+    b.innerHTML = '<small>第 ' + m[0] + ' 篇</small><span class="q">' + m[1] + '</span><span class="a">' + m[2] + '</span>';
+    b.addEventListener('click', function () { opened[i] = !opened[i]; b.classList.toggle('open', !!opened[i]); mgCount(); });
+  });
+  mgCount();
+}
+function mgCount() {
+  var on = $('#mgG').classList.contains('test');
+  var k = Object.keys(opened).filter(function (x) { return opened[x]; }).length;
+  $('#mgC').textContent = on ? '已翻开 ' + k + ' / ' + MG.length + ' 张' : '共 ' + MG.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = !$('#mgG').classList.contains('test');
+  $('#mgG').classList.toggle('test', on); this.setAttribute('aria-pressed', on);
+  this.textContent = on ? '退出自测：显示全部' : '自测模式：遮住数值';
+  opened = {}; mgDraw();
+});
+$('#mgS').addEventListener('click', function () {
+  var r = S.rng(Date.now() % 100000);
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
+  mgDraw();
+});
+mgDraw();
+
+/* ---------- 公式速查 ---------- */
+var FX = {
+  1: ['Speedup = 1 / ((1 − f) + f / s)　　上限 1 / (1 − f)', 'M ≤ M_cap，　T_compute = F / Π，　T_memory = R / β', 'MFU = F / (Π·T)，　MBU = R / (β·T)', 'M_W + M_state + M_work ≤ M_cap，　M_W = N·b_W', 'M_W = R_W = b_W·N，　F ≈ 2BN，　T_step ≥ max(F/Π, R_W/β)', 'B* = b_W·Π / (2β)，　I = F / R_W = 2B / b_W（对比 Π/β）', 'T_step ≈ max(B·F₁/Π, (R_W + B·R_state,1)/β)', 'n_core = λ_packet / μ_core'],
+  2: ['N_W = kn，　F = 2mkn，　M_W = b_W·kn　　（m = BP）', 'N_pair = B(PS + P(P+1)/2)，　F_attn = 4·n_Q·d_h·N_pair', 'c_KV = 2·L·n_KV·d_h·b_KV，　M_KV = c_KV·H', 'B* = R_W / (c_KV·H)　　（上下文读取超过权重读取）', 'M_state(H) = M_fixed + c_state·H，　H* = M_fixed / c_state', 'F_expert = 2N_e·B·k_top，　R_expert = b_W·N_e·U', '推测解码有收益：ḡ &gt; (T_s + T_v) / T_d', 'B_max = ⌊(M_device − M_weight − M_workspace) / M_state/request⌋'],
+  3: ['TTFT = t₁ − t_a，　T̄_token = (t_G − t₁)/(G − 1)', 'Q_{k+1} = max(0, Q_k + A_k − μ_k·Δt)；　突发积压 (λ_w − μ)τ', 'C_success = c / p；　新方法更省 ⇔ p₂/p₁ &gt; c₂/c₁', 'F_train ≈ 6ND；　全参数 + Adam：18 字节/参数', 'L = E + A/N^α + B/D^β', 'T_calendar = H_GPU / n_GPU；　Q* = ΔC₀ / Δc'],
+  4: ['I(M) = 2KN / (2KN/M + 2(K+N))', 'P_attainable ≤ min(P, R·I)，　I* = P/R', '流水：τ ≥ max(T_matrix, T_smem, T_exp)；　双缓冲 T = t_l + t_c + (n−1)·max(t_l, t_c)', 'Little：R_eff ≤ min(R, N_o·s/L)，　N_o ≥ ⌈R·L/s⌉', 'T_edge = α + V/R，　V* = α·R', 'P_dyn ≈ αCV²f；　HBM 每堆 R = 1024·r/8'],
+  5: ['V = 2MK·(N/n) + 2KN·(M/m) + 2MN；　工作集 S = 2mk + 2kn + 4mn', '在途字节需求 = 带宽 × 延迟 / SM 数', 'T_pipe = t_m + (n−1)·max(t_m, t_c) + t_c', '在线 Softmax：m′ = max(m, max s)，ℓ′ = rℓ + Σp，u′ = ru + Σp·V', '图重放划算：2X / B &lt; 省下的提交时间', 'S_request = 1 / ((1−f) + f/s)'],
+  6: ['T(p) = T_local/p + 128·T_AR(p)；　加卡划算：128·[T_AR(2p) − T_AR(p)] &lt; T_local/(2p)', '环形：T = 2(n−1)α + 2(n−1)M/(nB)；　树形：T = 2log₂n·(α + M/B)', 'algbw = M/T；　busbw = 2(n−1)M/(nT)', 'E[E_active] = E·[1 − (1 − k/E)^m]', 'T_PP = (q + b − 1)t，　η_PP = b/(q + b − 1)', 'C_on-time = C_occupied / N_on-time'],
+  7: ['T_C = V_C / B_C；　超售比 r = d/u；　上联不瓶颈：f ≤ 1/r', 'T_msg = α + M/B；　交叉点 M = αB', 'MoE：dispatch + combine = 2·n·k·f·d', 'B_eff ≤ min(B_path, Nm/T, m/δ)', 'dQ/dt = λ(t) − B；　incast λ = (N−1)B', 'S = (T_c + T_n)/(T_c + T_n/s)', 'ε ≈ C/I + λ(I/2 + R)'],
+  8: ['M_w + M_KV + M_a + M_u ≤ C；　k = 2·L·n_KV·d_h·b', 'D(b,L) = D_w + bLk，　b_KV = ⌈D_w/(Lk)⌉', 'T_step ≈ max(bF/P, (D_w + bLk)/β)', '分页浪费 p⌈L/p⌉ − L ≤ p − 1', '换出门槛：p_h &gt; T_m/(T_r − T_f)；　先压再搬：R_dec &gt; B_link/(1 − r)', 'α(x) = min(1, p(x)/q(x))；　E[N_m] = 1 + Σ_j Π_{i≤j} a_i', 'n̄ = λT̄；　R_good = Σ Q_i D_i / T_obs'],
+  9: ['V_KV = 2nL·h_kv·d_h·b；　MLA：V = nL(d_c + d_r)b', 'μ_PD = min(μ_P, μ_D, B_net/V_KV)', '每卡时间 ≥ max(F_r/C_r, W_r/B_r)', 's_expert = max_j m_j / (nk/R)', 'N_min = ⌊T_copy/Δt⌋ + 1', 'μ − λ ≥ Q₀/T_remain；　C_effective = 总成本 / 合格请求数'],
+  10: ['B_noise = tr(HΣ)/(GᵀHG)；　B_crit = E_min/S_min', 'M_persistent = 16N；　T = F/(pPη)，稠密 F ≈ 6ND', 'ZeRO：M₀ = 16N，M₁ = 4N + 12N/d，M₂ = 2N + 14N/d，M₃ = 16N/d', 'T_wait = max(0, V/B − W)', 'T_pipe = (m + p − 1)(t_f + t_b)，　u = m/(m + p − 1)', 'L(τ) = c/τ + λτ/2 + λr，　τ* = √(2c/λ)', 'T_finish = T₀ + ⌈D/b⌉·t_s(1 + L)'],
+  11: ['资源需求率 = 到达率 × 每任务需求；　N̄_env = λ·T̄_env', '暂停划算：p_M·M·G &gt; C_transition', 'T_iter = T_gen + T_verify + T_update + T_publish；　窗口 max(L − T₀, 0)', '剩余时间 E[S − e | S &gt; e]', '缓存划算：n·p_u &gt; p_w + (n−1)p_h；　自建划算：N &gt; F/(c − v)', 'C̄_q = C_all/N_q，　C̄_q,d = C_all/N_q,d'],
+  12: ['T_serial = S_u/B_u + R + T_c + S_d/B_d', 'c_i = max(a_i, c_{i−1}) + m_i；　p_i = max(r_i, p_{i−1} + τ)', '迁移收益 G(N) = NΔt − M；　TP 启动 144α', 'B_useful ≤ min(B_path, W/R)；　Mathis：B_TCP ≤ (MSS/R)·C/√p', 'T_split = max(xS/B_1, (1−x)S/B_2)；　p_fail = q + (1−q)p_1 p_2', 'T_cloud(b) = 11.6 + 128/b']
+};
+var fxP = '0';
+function fxDraw() {
+  var q = $('#fxQ').value.trim().toLowerCase(), box = $('#fxL'); box.innerHTML = ''; var hits = 0;
+  chs.forEach(function (c) {
+    var n = +c[0], grp = n <= 3 ? '1' : n <= 7 ? '2' : '3';
+    if (fxP !== '0' && fxP !== grp) return;
+    var list = FX[n].filter(function (f) { return !q || f.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = h('h4', null, box); h('a', { href: P + n + '/#back', text: (n < 10 ? '0' : '') + n + ' · ' + c[1] }, hd);
+    list.forEach(function (f) { h('div', { class: 'fx', html: f }, box); hits++; });
+  });
+  if (!hits) h('p', { class: 'note', text: '没有匹配的公式。' }, box);
+}
+S.seg($('#fxP'), function (v) { fxP = v; fxDraw(); });
+$('#fxQ').addEventListener('input', fxDraw); fxDraw();
+
+S.notes($('#n-back'), {
+  c: [
+    ['① 原书的方法', '从约束推导设计：先列计算、存储、通信和依赖，逐一检查容量、带宽和不可消除的等待；五个问题——搬什么、搬多少、搬几次、经过哪里、谁必须等它。'],
+    ['② 怎么读', '先读 1–3 章建立估算方法；应用开发者重点 8、9、11、12，系统与网络 5–7、9、10，芯片与体系结构 4–7。看答案前先自己估。'],
+    ['③ 几步算出可行性', '先查 M_W + B·H·c_KV + M_work ≤ M_cap，再取 max(计算, 读取) 作为一步下界；记住实测常是下界的数倍，多卡还要算通信。']
+  ],
+  p: [
+    ['数量级直觉', '能说出用了什么技术，和能判断它可不可行、大致多快，是两种能力。'],
+    ['知道自己算进了什么', '估算不必精确，但要清楚漏掉了什么，再用测量校正。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

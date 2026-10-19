@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录速览：提示、界面、框架与编码智能体</title>
+<meta name="description" content="智能体设计模式学习笔记（七）：原书附录 A–G 与 FAQ 的速览。高级提示技术、GUI 与真实世界交互、智能体框架对比、AgentSpace、命令行智能体、推理引擎“自述”、人类主导的编码智能体团队。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5' fill='%232340D6'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.tagrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.tagrow span { font-size: 14px; padding: 3px 9px; border-radius: 999px; background: var(--panel); border: 1px solid var(--hair); color: var(--ink-2); }
+</style>
+</head>
+<body data-series="adp-series" data-part="7">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>智能体设计模式 · 07</span><span>对应原书附录 A–G、FAQ</span><span>约 20 分钟</span></p>
+  <h1>附录不是边角料：<em>落地时最常翻的几页</em></h1>
+  <p class="lead">原书正文讲模式，附录讲落地时绕不开的东西：提示怎么写、智能体怎么操作界面、选哪个框架、命令行里的编码智能体各有什么脾气、以及怎样带一支“AI 编码团队”。这一篇按“用得上的顺序”而不是附录顺序来排。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">Agentic Design Patterns 智能体设计模式</a>》（Antonio Gulli 著，xindoo 等中文翻译）的学习笔记。21 个模式按主题重新分成 7 篇。每个模式先讲它要解决的问题，再用一张统一格式的模式卡收住，最后配一个小实验；原书的 LangChain / ADK / CrewAI 代码不复述，建议对照原书阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-adp/"><b>总览</b>模式地图</a>
+  <a href="../2026-10-16-adp-1/" data-part="1"><b>01</b>流程编排</a>
+  <a href="../2026-10-16-adp-2/" data-part="2"><b>02</b>反思与规划</a>
+  <a href="../2026-10-16-adp-3/" data-part="3"><b>03</b>连接外部</a>
+  <a href="../2026-10-16-adp-4/" data-part="4"><b>04</b>记忆与成长</a>
+  <a href="../2026-10-16-adp-5/" data-part="5"><b>05</b>稳健可信</a>
+  <a href="../2026-10-16-adp-6/" data-part="6"><b>06</b>协作与调度</a>
+  <a href="../2026-10-16-adp-7/" aria-current="page" data-part="7"><b>07</b>附录速览</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#prompt">A 提示技术</a><a href="#fw">C 框架选型</a><a href="#cli">E 命令行智能体</a><a href="#team">G 编码智能体团队</a><a href="#gui">B 界面与环境</a><a href="#more">D、F 与 FAQ</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>原书说“指令优于约束”，什么时候又建议用负面示例？自一致性和思维树有什么区别？</li>
+    <li>什么情况下选 LangChain，什么情况下选 LangGraph？ADK 和 CrewAI 的抽象层级有什么不同？</li>
+    <li>附录 G 的“人类主导”编码团队，人负责什么、智能体负责什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>附录 A：高级提示技术</h2><span class="meta">原书附录 A</span></div>
+  <div class="sec-lede">
+    <p>原书先给了五条核心原则：<strong>清晰具体</strong>、<strong>简洁</strong>、<strong>善用动词</strong>（“总结以下文本”胜过“考虑总结一下”）、<strong>指令优于约束</strong>（说该做什么，比罗列不许做什么有效）、<strong>实验与迭代</strong>（温度、top-p、措辞都会影响结果，要记录）。基础技术是零样本、单样本、少样本：少样本通常给三到五个例子，例子要准确、多样；分类任务要<strong>打乱不同类别示例的顺序</strong>防止过拟合；长上下文模型还能做“多样本学习”，放几百个例子。</p>
+    <p>结构上有系统提示、角色提示、分隔符、上下文工程，以及结构化输出：要求 JSON，再用 Pydantic 解析校验，原书称之为在组件边界执行“解析而非验证”。推理类技术：零样本 / 少样本 <strong>CoT</strong>（答案放在推理之后；单一正确答案的任务把温度设为 0）；<strong>自一致性</strong>（高温度生成多条推理路径，多数投票，代价是多次调用）；<strong>后退提示</strong>（先问一般原则，如“好侦探故事的要素”，再做具体任务）；<strong>思维树</strong>。行动类：工具调用和 ReAct。高级类：<strong>APE / DSPy</strong>（用金标准集 + 目标函数，自动优化少样本示例和指令）、迭代改进、谨慎使用<strong>负面示例</strong>、类比、分解式认知、RAG、<strong>用户画像</strong>（描述受众，区别于给模型分配角色）、Google Gems、用 LLM 改进提示。</p>
+    <p class="go">把例子和技术对上号。</p>
+  </div>
+  <div class="lab"><div id="prSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：角色提示 vs 用户画像；自一致性 vs 思维树</h4>
+    <p><b>角色提示</b>告诉模型“你是谁”（经验丰富的旅行博主）；<b>用户画像</b>告诉模型“听众是谁”（没有物理基础的高中生）。</p>
+    <p><b>自一致性</b>是同一个问题独立跑多条完整推理，最后对答案投票；<b>思维树</b>是在一次推理过程中分叉、评估、回溯，探索中间步骤。前者在终点汇总，后者在过程中搜索。</p>
+  </div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="fw">
+  <div class="part-head"><h2>附录 C：框架怎么选</h2><span class="meta">原书附录 C</span></div>
+  <div class="sec-lede">
+    <p>原书把框架按抽象层级排开。<strong>LangChain</strong> 的核心是 LCEL，用管道符把组件连成链，面向<strong>有向无环</strong>的线性流程：简单 RAG、摘要、数据提取。<strong>LangGraph</strong> 构建在 LangChain 之上，把工作流定义成节点 + 边的图，<strong>支持循环</strong>，显式管理持久状态：多智能体、计划—执行—回看、等待人工输入。选择口诀：A → B → C 不回头就用 LangChain；要推理、规划、循环、反思就用 LangGraph。</p>
+    <p><strong>Google ADK</strong> 抽象掉了大部分底层建图工作，提供 SequentialAgent、ParallelAgent 这类预置模式，状态和会话管理更隐式；原书比喻 LangGraph 是设计单个机器人复杂接线的工具箱，ADK 是生产一整支协同机器人舰队的装配线。<strong>CrewAI</strong> 用智能体（角色、目标、背景故事）、任务、团队三个概念模拟人类团队，流程是顺序或层级型，开发者“设计团队章程”而不是写状态机。其他框架：AutoGen（对话驱动，路径较难预测）、LlamaIndex（数据框架，擅长摄取和检索）、Haystack（生产级搜索管道）、MetaGPT（按 SOP 模拟软件公司）、SuperAGI（全生命周期管理）、Semantic Kernel（插件 + 规划器，适合 .NET / Python 企业代码）、Strands Agents（AWS 轻量 SDK，原生 MCP）。</p>
+    <p class="go">按需求选框架。</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>特性</th><th>LangChain</th><th>LangGraph</th></tr></thead>
+    <tbody>
+      <tr><td>核心抽象</td><td>链（LCEL）</td><td>节点图</td></tr>
+      <tr><td>工作流</td><td>线性（DAG）</td><td>可循环</td></tr>
+      <tr><td>状态</td><td>通常单次运行无状态</td><td>显式、持久的状态对象</td></tr>
+      <tr><td>主要用途</td><td>简单、可预测的序列</td><td>复杂、动态、有状态的智能体</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书附录 C 对比表。</p>
+  <div class="lab" style="margin-top:16px"><div id="fwQ"></div></div>
+  <div class="notes" id="n-fw"></div>
+</section>
+
+<section class="part" id="cli">
+  <div class="part-head"><h2>附录 E：命令行里的四个编码智能体</h2><span class="meta">原书附录 E</span></div>
+  <div class="sec-lede">
+    <p>原书强调，这几个工具的很多用例彼此都能做，区别在于结果的质量、效率和精细度。<strong>Claude Code</strong>：对项目架构有全局理解，像结对编程一样先说明计划再执行，适合大规模重构（例如把会话 cookie 认证改成无状态 JWT）；深度集成 Git，通过 MCP 扩展自定义工具。<strong>Gemini CLI</strong>：开源，Gemini 2.5 Pro、超大上下文、多模态（看截图写组件），免费额度慷慨，内置 Google Cloud 集成。<strong>Aider</strong>：开源、与模型无关，直接改文件、跑测试、<strong>每个成功变更自动提交</strong>，适合 TDD 和精确修 bug。<strong>GitHub Copilot CLI</strong>：深度集成 GitHub，可以被分配 issue，自动建分支、写代码、提 PR。</p>
+    <p>评测方面，<strong>Terminal-Bench</strong> 用来衡量智能体在命令行中完成复杂任务的能力：初版 Terminal-Bench-Core-v0 有 80 个人工精选任务，用一个极简智能体 Terminus 作为不同模型的标准测试台。</p>
+    <p class="go">哪个工具的设计最贴合这个需求？</p>
+  </div>
+  <div class="lab"><div id="cliQ"></div></div>
+  <p class="xref">编码智能体的设计原理在另一个系列里更系统：<a href="../2026-10-16-agent-5/">深入理解 AI Agent · 05 Coding Agent</a>。</p>
+  <div class="notes" id="n-cli"></div>
+</section>
+
+<section class="part" id="team">
+  <div class="part-head"><h2>附录 G：人类主导的编码智能体团队</h2><span class="meta">原书附录 G</span></div>
+  <div class="sec-lede">
+    <p>原书认为 vibe 编码适合越过“空白页”、探索陌生 API、快速出原型，但构建稳健、可维护的软件需要更结构化的方式。它引用了 2025 年初 Sundar Pichai 的说法：Google 内部超过 30% 的新代码由 Gemini 辅助或生成。附录 G 的框架有三条原则：<strong>人类主导编排</strong>（人决定调用哪个智能体、提供上下文、对所有输出有最终裁决权）、<strong>上下文至上</strong>（人工准备完整的“任务简报”：相关代码、外部文档、目标与规范，避免黑盒式自动检索）、<strong>直接访问前沿模型</strong>（避免经过会截断上下文的中间平台）。</p>
+    <p>团队里的专门智能体其实是同一个前沿模型配不同的角色提示：<strong>脚手架</strong>（写新代码）、<strong>测试工程师</strong>、<strong>文档编写</strong>、<strong>优化 / 重构顾问</strong>、<strong>流程 / 质量监督</strong>（先做初步批判，再对自己的批判做“深度反思”，过滤琐碎意见，给人一份高层可执行摘要）。落地清单有四条：至少两家前沿模型的 API（便于对比、防单点）、本地上下文编排器（用 <code>context.toml</code> 之类的配置声明哪些文件进提示）、在仓库里建 <code>/prompts</code> 目录把提示当代码做版本管理、用 pre-commit 钩子自动触发审查智能体。</p>
+    <p class="go">按原书的框架给每件事找负责人。</p>
+  </div>
+  <div class="lab"><div id="teamSort"></div></div>
+  <div class="notes" id="n-team"></div>
+</section>
+
+<section class="part" id="gui">
+  <div class="part-head"><h2>附录 B：从操作界面到感知真实世界</h2><span class="meta">原书附录 B</span></div>
+  <div class="sec-lede">
+    <p>智能体—计算机界面（ACI）让 AI 像人一样通过 GUI 的“前门”操作软件，而不必依赖 API。四个阶段：<strong>视觉感知</strong>（截屏）→ <strong>GUI 元素识别</strong>（分清可点的按钮和静态横幅）→ <strong>上下文理解</strong>（放大镜图标代表搜索）→ <strong>动态执行与响应</strong>（控制鼠标键盘，持续观察加载状态、弹窗、报错）。代表产品：ChatGPT Operator、Google Project Mariner（Chrome 里的研究原型）、Anthropic 计算机使用、开源的 Browser Use（通过 DOM 控制浏览器）。</p>
+    <p>再往外是真实世界：Project Astra（通过摄像头和麦克风理解环境）、Gemini Live（低延迟语音、可打断、可共享摄像头和屏幕）、GPT-4o 与实时 API、ChatGPT Agent（浏览、执行代码、操作第三方应用，敏感操作需用户明确授权）、微软 Seeing AI（为视障用户描述环境）。附录 B 末尾还介绍了 <strong>vibe 编码</strong>：对话式提示、迭代精炼、AI 作为创意伙伴、关注“目标”而非“方法”、可选记忆库。</p>
+    <p class="go">走一遍 ACI 的四个阶段。</p>
+  </div>
+  <div class="lab">
+    <div id="aciStep"></div>
+    <ol class="flow2" id="aciFlow"></ol>
+  </div>
+  <div class="notes" id="n-gui"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>附录 D、F 与常见问题</h2><span class="meta">原书附录 D、F，FAQ</span></div>
+  <div class="sec-lede">
+    <p><strong>附录 D（AgentSpace）</strong>：Google 面向“智能体驱动型企业”的平台，对文档、邮件、数据库做统一搜索，构建企业知识图谱，提供无代码的 Agent Designer，可连接 Calendar、Gmail、Workday、Jira、Outlook、ServiceNow，智能体之间用 A2A 协作，带基于角色的访问控制和加密。</p>
+    <p><strong>附录 F（推理引擎内部）</strong>：作者向 Gemini、ChatGPT、Grok、Kimi、Claude、DeepSeek 提了同一个问题“请逐步解释你是如何推理的”，把回答原样列出。值得注意的是 Claude 的开场白：它说自己对自身运作的认知有限，就像人能描述思维过程却无法追踪每个神经突触。读这一附录时要记住：这些是模型的<strong>自我描述</strong>，不等于对内部机制的实证。</p>
+    <p><strong>FAQ</strong> 里有几条正文没展开、但很实用的区分：<strong>工具 vs 技能</strong>（工具是外部资源；技能是结合工具和推理的更集成的能力，如“订机票”）；反思的两种形式“<strong>工作自查</strong>”和“<strong>内部评审</strong>”；HITL 的四个典型介入点：<strong>计划审批、工具授权、歧义消解、最终输出审核</strong>；为非确定性系统写测试的办法：检查响应是否<strong>包含</strong>关键信息、是否以正确参数调用了某工具，并在测试环境用模拟工具；以及<strong>提示泄漏</strong>：系统提示内容意外出现在给用户的回答里，可以把推理和最终答案生成分开来防范。</p>
+    <p class="go">FAQ 小测。</p>
+  </div>
+  <div class="lab"><div id="faqQ"></div></div>
+  <div class="notes" id="n-more"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 指令优于约束，那何时用负面示例？自一致性 vs 思维树？</summary><p class="ans">一般优先告诉模型该做什么；需要明确边界、防止某类特定错误时，可以谨慎加入负面示例（原书例子：列巴黎景点但不要埃菲尔铁塔）。自一致性是多条完整推理后投票；思维树是推理过程中分叉、评估、回溯。</p></details>
+    <details><summary>2. LangChain vs LangGraph？ADK 与 CrewAI 的抽象层级？</summary><p class="ans">线性、无回环用 LangChain（LCEL）；需要循环、状态、规划反思用 LangGraph。ADK 提供预置的多智能体模式、隐式状态管理，是面向生产的“装配线”；CrewAI 用角色、任务、团队来模拟人类团队协作。</p></details>
+    <details><summary>3. 人类主导的编码团队里，人和智能体各负责什么？</summary><p class="ans">人：定目标和架构、准备完整任务简报、选择调用哪个智能体、对所有输出做最终裁决。智能体：脚手架编码、测试、文档、优化建议、质量审查（批判 + 反思摘要）。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-adp-6/"><small>上一篇</small><span>06 · 多智能体、资源感知与优先级</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">xindoo/agentic-design-patterns</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- A 提示 ---------- */
+S.sortGame($('#prSort'), {
+  bins: [{ k: 'fs', t: '少样本' }, { k: 'sb', t: '后退提示' }, { k: 'sc', t: '自一致性' }, { k: 'up', t: '用户画像' }, { k: 'neg', t: '负面示例' }, { k: 'ape', t: 'APE / DSPy' }],
+  items: [
+    { t: '给三条“评论 → POSITIVE / NEUTRAL / NEGATIVE”示例再让模型分类', k: 'fs', why: '原书示例；分类时要打乱类别顺序。' },
+    { t: '先问“好侦探故事的关键要素是什么”，再让它写小镇悬疑情节', k: 'sb', why: '先激活一般原则，再处理具体任务。' },
+    { t: '“所有鸟都会飞吗”高温跑三次，取多数结论', k: 'sc', why: '多条推理路径 + 多数投票。' },
+    { t: '“受众是没有物理基础的高中生，请用类比解释”', k: 'up', why: '描述的是听众，不是模型的角色。' },
+    { t: '“列出巴黎景点，不要包含埃菲尔铁塔”并附一个反例', k: 'neg', why: '明确边界、防止特定错误时谨慎使用。' },
+    { t: '用金标准集和评分函数，自动挑选最佳示例组合、改写指令', k: 'ape', why: 'DSPy 式程序化提示优化。' }
+  ]
+});
+S.notes($('#n-prompt'), {
+  c: [
+    ['五原则', '清晰具体、简洁、善用动词、指令优于约束、实验迭代。'],
+    ['零 / 单 / 少样本', '少样本通常 3–5 例；长上下文可“多样本学习”。'],
+    ['解析而非验证', '要求 JSON，再用 Pydantic 在组件边界解析成类型安全对象。'],
+    ['后退提示', '先问一般原则，再把回答当上下文做具体任务。'],
+    ['APE / DSPy', '金标准集 + 目标函数，自动优化示例与指令。']
+  ],
+  p: [
+    ['CoT 两条实践', '答案放在推理之后；单一正确答案任务温度设为 0。'],
+    ['自一致性代价', '同一查询多次调用，成本大幅上升。'],
+    ['提示当代码', '提示放在独立文件里做版本控制，配自动化测试评估。'],
+    ['模型更新', '新版本上要重测已有提示。']
+  ]
+});
+
+/* ---------- C 框架 ---------- */
+S.quiz($('#fwQ'), [
+  { q: '检索文档 → 拼提示 → 取答案，一条直线，没有回环。', o: ['LangChain', 'LangGraph', 'CrewAI'], a: 0, why: '原书：清晰可预测的线性步骤，选 LangChain（LCEL）。' },
+  { q: '智能体用工具、反思结果、失败就换策略再试。', o: ['LangChain', 'LangGraph', 'Haystack'], a: 1, why: '需要循环和有状态，选 LangGraph。' },
+  { q: '想快速用“研究员 / 作家 / 编辑”这样的角色组队协作。', o: ['CrewAI', 'LlamaIndex', 'LangChain'], a: 0, why: 'CrewAI 用角色、目标、背景故事定义智能体，模拟人类团队。' },
+  { q: '核心难题是把大量私有数据摄取、建索引、做检索。', o: ['MetaGPT', 'LlamaIndex', 'AutoGen'], a: 1, why: '原书：当核心挑战是数据检索与综合时，LlamaIndex 是最佳选择。' },
+  { q: '要和现有 .NET 企业代码库深度集成。', o: ['Semantic Kernel', 'Strands Agents', 'SuperAGI'], a: 0, why: '插件 + 规划器，与 .NET / Python 企业代码无缝集成。' }
+]);
+S.notes($('#n-fw'), {
+  c: [
+    ['LangChain', 'LCEL 管道，线性 DAG，通常无状态。'],
+    ['LangGraph', '节点 + 边的图，可循环，显式持久状态。'],
+    ['ADK', '预置多智能体模式，隐式状态，面向生产的“装配线”。'],
+    ['CrewAI', '智能体 + 任务 + 团队，顺序或层级流程，“设计团队章程”。']
+  ],
+  p: [
+    ['AutoGen', '对话驱动，灵活但路径较难预测。'],
+    ['MetaGPT', '按 SOP 模拟软件公司，专业但不通用。'],
+    ['Strands Agents', 'AWS 轻量 SDK，模型无关，原生 MCP，周边设施要自己搭。']
+  ]
+});
+
+/* ---------- E CLI ---------- */
+S.quiz($('#cliQ'), [
+  { q: '把整个代码库的认证从会话 cookie 迁移到无状态 JWT，要先看清全局再动手。', o: ['Claude Code', 'Aider', 'Copilot CLI'], a: 0, why: '原书示例：全局理解项目架构、先说明计划再执行的大规模重构。' },
+  { q: '给一张设计稿截图，让它写出外观一致的响应式组件。', o: ['Gemini CLI', 'Aider', 'Copilot CLI'], a: 0, why: '原书示例：多模态开发。' },
+  { q: '先写失败的测试，再写代码让测试通过，每次成功都自动提交。', o: ['Claude Code', 'Aider', 'Gemini CLI'], a: 1, why: '原书示例：Aider 的 TDD 与以 Git 为中心的自动提交。' },
+  { q: '把 issue #123 分给智能体，让它建分支、修复并提 PR。', o: ['Copilot CLI', 'Aider', 'Gemini CLI'], a: 0, why: '原书示例：与 GitHub 生态原生集成的自动化 issue 解决。' }
+]);
+S.notes($('#n-cli'), {
+  c: [
+    ['Claude Code', '全局架构理解，先计划后执行，Git 集成，MCP 扩展。'],
+    ['Gemini CLI', '开源，超大上下文，多模态，免费额度，Google Cloud 集成。'],
+    ['Aider', '开源、模型无关，直接改文件、跑测试、自动提交。'],
+    ['Copilot CLI', 'GitHub 原生：分配 issue、建分支、提 PR、仓库问答、shell 命令助手。']
+  ],
+  p: [
+    ['区别在哪', '很多任务都能做，差别在结果质量、效率、精细度。'],
+    ['Terminal-Bench', 'Core-v0 共 80 个人工精选任务，用 Terminus 做标准测试台。']
+  ]
+});
+
+/* ---------- G 团队 ---------- */
+S.sortGame($('#teamSort'), {
+  bins: [{ k: 'h', t: '人类开发者' }, { k: 'sc', t: '脚手架智能体' }, { k: 't', t: '测试工程师智能体' }, { k: 'r', t: '质量监督智能体' }],
+  items: [
+    { t: '定义目标和高层架构，对是否合入做最终裁决', k: 'h', why: '人类主导编排，是最终质量关口。' },
+    { t: '在 task-context/ 里准备任务简报', k: 'h', why: '上下文准备由人负责，避免黑盒检索。' },
+    { t: '按详细规范实现一个新功能', k: 'sc', why: '代码实施专家。' },
+    { t: '为新代码补单元、集成和端到端测试', k: 't', why: '质量守护者。' },
+    { t: '先列出缺陷，再对自己的批判做反思，给出高层摘要', k: 'r', why: '批判分析 + 深度反思。' }
+  ]
+});
+S.notes($('#n-team'), {
+  c: [
+    ['三原则', '人类主导编排、上下文至上、直接访问前沿模型。'],
+    ['五个专门智能体', '脚手架、测试、文档、优化、质量监督（批判 + 反思）。'],
+    ['vibe 编码的位置', '适合探索和原型；生产级软件需要结构化协作。']
+  ],
+  p: [
+    ['落地四件事', '两家以上模型 API、本地上下文编排器、/prompts 版本化、pre-commit 触发审查。'],
+    ['领导者原则', '坚守架构、精研任务简报、做最终质量关口、迭代对话而非一次性指令。']
+  ]
+});
+
+/* ---------- B GUI ---------- */
+var aci = [['视觉感知', '捕获屏幕画面，相当于截屏。'], ['GUI 元素识别', '把像素解读成有交互组件的结构化布局，分清按钮、文本框和静态横幅。'], ['上下文理解', 'ACI 模块把视觉元素放到任务背景里解释，例如放大镜代表搜索，交给 LLM 做计划。'], ['动态执行与响应', '程序化控制鼠标键盘：点击、输入、滚动、拖拽，并持续观察界面变化、加载、弹窗、报错。']];
+var af = $('#aciFlow');
+aci.forEach(function (d) { h('li', { html: d[0] + '<small>' + d[1] + '</small>' }, af); });
+S.stepper($('#aciStep'), aci.length, function (i) { S.$$('li', af).forEach(function (li, k) { li.className = k === i ? 'on' : (k < i ? 'done' : ''); }); }, aci.map(function (d) { return d[0]; }));
+S.notes($('#n-gui'), {
+  c: [
+    ['ACI', '智能体—计算机界面：通过 GUI 的“前门”操作软件，不依赖专用 API。'],
+    ['四阶段', '视觉感知 → 元素识别 → 上下文理解 → 动态执行与响应。'],
+    ['vibe 编码', '对话式、迭代、关注目标而非方法，可配记忆库。']
+  ],
+  p: [
+    ['界面类产品', 'ChatGPT Operator、Project Mariner、Claude 计算机使用、Browser Use（DOM）。'],
+    ['环境类产品', 'Project Astra、Gemini Live、GPT-4o 实时 API、ChatGPT Agent、Seeing AI。'],
+    ['ChatGPT Agent 的保障', '特定操作需用户明确授权，内容过滤。']
+  ]
+});
+
+/* ---------- D F FAQ ---------- */
+S.quiz($('#faqQ'), [
+  { q: '“订机票”算工具还是技能？', o: ['工具', '技能'], a: 1, why: 'FAQ：技能是结合工具使用与内部推理的更集成的能力，可能同时用到日历和航空 API。' },
+  { q: '智能体的回答不确定，怎么写可靠的测试？', o: ['要求逐字匹配标准答案', '检查是否包含关键信息、是否以正确参数调用了工具'], a: 1, why: 'FAQ：验证关键要素，并在测试环境用模拟工具。' },
+  { q: '系统提示里的工具定义出现在了给用户的回答里，这叫什么？', o: ['幻觉', '提示泄漏'], a: 1, why: '可把推理和最终答案生成分开来防范。' },
+  { q: '以下哪个不是 FAQ 列出的 HITL 典型介入点？', o: ['计划审批', '工具使用授权', '每一次 token 生成', '最终输出审核'], a: 2, why: 'HITL 要放在核心决策节点，而不是每一步；四个介入点是计划审批、工具授权、歧义消解、最终输出审核。' }
+]);
+S.notes($('#n-more'), {
+  c: [
+    ['AgentSpace', '企业统一搜索 + 知识图谱 + 无代码 Agent Designer + A2A 协作。'],
+    ['附录 F', '六个模型对“你如何推理”的自我描述，不等于内部机制的实证。'],
+    ['工具 vs 技能', '外部资源 vs 结合工具与推理的集成能力。']
+  ],
+  p: [
+    ['反思两形式', '工作自查（入门）、内部评审（独立评审者，更严密）。'],
+    ['好的系统提示', '角色与目标、工具规格、约束规则、流程指引、示范轨迹。'],
+    ['提示泄漏', '系统提示内容出现在最终回答中。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

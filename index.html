@@ -41,6 +41,9 @@
 .thumb-agent rect.env { stroke: var(--rule); stroke-dasharray: 6 6; }
 .thumb-agent rect.hi { fill: var(--s1); stroke: var(--s1); }
 .thumb-agent path { stroke: var(--ink); stroke-width: 3; fill: none; }
+.thumb-agent path.thin { stroke: var(--rule); stroke-width: 2; }
+.thumb-agent circle { fill: var(--bg); stroke: var(--ink); stroke-width: 3; }
+.thumb-agent circle.hi { fill: var(--s1); stroke: var(--s1); }
 @media (max-width: 760px) { .thumb-agent { height: 72px; max-width: 200px; order: -1; margin-bottom: 8px; } }
 .thumb-hex { width: 100%; height: 120px; padding-top: 6px; }
 .thumb-hex polygon { fill: none; stroke: var(--ink); stroke-width: 3; }
@@ -114,7 +117,7 @@
   </section>
 
   <section aria-labelledby="list-h">
-    <div class="list-head"><h2 id="list-h">文章</h2><span id="count">共 6 篇</span></div>
+    <div class="list-head"><h2 id="list-h">文章</h2><span id="count">共 9 篇</span></div>
     <div class="filter" role="group" aria-label="按类型筛选" id="filter">
       <button type="button" aria-pressed="true" data-k="all">全部</button>
       <button type="button" aria-pressed="false" data-k="learn">技术学习</button>
@@ -122,6 +125,39 @@
     </div>
     <ul class="posts">
       <!-- 新文章加在最上面；data-kind：learn 技术学习 / report 报告解读 -->
+      <li class="post" data-kind="learn">
+        <a href="posts/2026-10-18-nndl/">
+          <time datetime="2026-10-18">2026.10.18</time>
+          <div>
+            <h3>神经网络与深度学习（第二版）：十六篇互动学习笔记</h3>
+            <p>邱锡鹏教材第二版按章拆成十六篇：机器学习基础、线性模型、前馈 / 卷积 / 循环网络、优化与正则化、Transformer、图神经网络、无监督与自监督、集成 / 迁移 / 元学习、深度强化学习、大模型与智能体、概率图模型、深度信念网络、VAE / GAN / 扩散 / 流匹配。每节都有能拖动、能训练的小实验，总览页带阅读路径、概念速记卡、易混辨析索引和公式速查。</p>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>深度学习</span><span>教材</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><path class="thin" d="M48 24L110 18M48 24L110 60M48 24L110 102M48 60L110 18M48 60L110 60M48 60L110 102M48 96L110 18M48 96L110 60M48 96L110 102M110 18L172 40M110 60L172 40M110 102L172 40M110 18L172 80M110 60L172 80M110 102L172 80"/><circle cx="48" cy="24" r="9"/><circle cx="48" cy="60" r="9"/><circle cx="48" cy="96" r="9"/><circle cx="110" cy="18" r="9"/><circle cx="110" cy="60" r="9" class="hi"/><circle cx="110" cy="102" r="9"/><circle cx="172" cy="40" r="9" class="hi"/><circle cx="172" cy="80" r="9"/></svg>
+        </a>
+      </li>
+      <li class="post" data-kind="learn">
+        <a href="posts/2026-10-16-infra/">
+          <time datetime="2026-10-17">2026.10.17</time>
+          <div>
+            <h3>深入理解 AI Infra：十二篇估算式学习笔记</h3>
+            <p>开源书《深入理解 AI Infra》按章拆成十二篇：模型架构、推理与训练负载、加速器、算子与运行时、超节点、数据中心网络、推理优化、分布式推理、训练系统、调度与运行环境、端边云协同。以计算器为主，先估再算，每篇带公式卡和关键数字；总览页有综合估算器和数量级速记卡。</p>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>AI Infra</span><span>估算</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><rect x="70" y="22" width="80" height="76" rx="6"/><rect x="92" y="44" width="36" height="32" rx="3" class="hi"/><path d="M86 8V22M110 8V22M134 8V22M86 98V112M110 98V112M134 98V112M56 40H70M56 60H70M56 80H70M150 40H164M150 60H164M150 80H164"/></svg>
+        </a>
+      </li>
+      <li class="post" data-kind="learn">
+        <a href="posts/2026-10-16-adp/">
+          <time datetime="2026-10-16">2026.10.16</time>
+          <div>
+            <h3>智能体设计模式：21 个模式的七篇学习笔记</h3>
+            <p>开源书《Agentic Design Patterns》按主题重组为七篇：流程编排、反思与规划、工具 / MCP / RAG / A2A、记忆与学习、异常 / 护栏 / 评估、多智能体与调度、附录速览。每个模式一张模式卡，总览页带闪卡复习和“按问题找模式”的选择器。</p>
+            <div class="tags"><span class="cat">技术学习</span><span>系列</span><span>Agent</span><span>设计模式</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><rect x="8" y="14" width="24" height="26" rx="4" class="hi"/><rect x="38" y="14" width="24" height="26" rx="4"/><rect x="68" y="14" width="24" height="26" rx="4"/><rect x="98" y="14" width="24" height="26" rx="4"/><rect x="128" y="14" width="24" height="26" rx="4"/><rect x="158" y="14" width="24" height="26" rx="4"/><rect x="188" y="14" width="24" height="26" rx="4"/><rect x="8" y="46" width="24" height="26" rx="4"/><rect x="38" y="46" width="24" height="26" rx="4"/><rect x="68" y="46" width="24" height="26" rx="4"/><rect x="98" y="46" width="24" height="26" rx="4" class="hi"/><rect x="128" y="46" width="24" height="26" rx="4"/><rect x="158" y="46" width="24" height="26" rx="4"/><rect x="188" y="46" width="24" height="26" rx="4"/><rect x="8" y="78" width="24" height="26" rx="4"/><rect x="38" y="78" width="24" height="26" rx="4" class="hi"/><rect x="68" y="78" width="24" height="26" rx="4"/><rect x="98" y="78" width="24" height="26" rx="4"/><rect x="128" y="78" width="24" height="26" rx="4"/><rect x="158" y="78" width="24" height="26" rx="4" class="hi"/><rect x="188" y="78" width="24" height="26" rx="4"/></svg>
+        </a>
+      </li>
       <li class="post" data-kind="learn">
         <a href="posts/2026-10-16-agent/">
           <time datetime="2026-10-16">2026.10.16</time>

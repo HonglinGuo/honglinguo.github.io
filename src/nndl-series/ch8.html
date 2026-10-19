@@ -1,0 +1,621 @@
+---
+title: 注意力机制与 Transformer：从软选择到现代大模型块
+desc: 神经网络与深度学习（第二版）学习笔记（八）：聚焦式与显著性注意力、注意力分布与打分函数（加性 / 点积 / 缩放点积 / 双线性）、软 / 硬 / 键值对 / 多头注意力与指针网络、自注意力 QKV 与复杂度比较、多头自注意力、绝对 / 相对 / 旋转位置编码、编码器与解码器、因果掩码与交叉注意力、语言模型的数据流、三种架构范式，以及 Pre-Norm / RMSNorm / SwiGLU、FlashAttention、长上下文、线性注意力与 SSM、KV 缓存与 GQA、分页注意力与投机解码、MoE。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 08</span><span>对应原书第 8 章（第 219–248 页）</span><span>约 65 分钟</span>
+h1: 不压缩全部输入，<em>按需去取</em>
+lead: 循环网络把整篇文章压成一个向量，问题来了才发现关键细节早丢了。注意力机制换了一个思路：先不压缩，等知道要什么（查询）了，再按相关程度从所有输入里加权取用。把“查询从哪里来”换成输入自己，就得到自注意力；再配上位置编码、前馈网络、残差和规范化，就是 Transformer。原书第二版用了很大篇幅讲现代 Transformer 的演化——几乎每个零件都被重新设计过，但骨架没变。
+nav: att|注意力机制;var|注意力变体;self|自注意力;pe|位置编码;tf|Transformer 结构;flow|语言模型数据流;mod|现代优化;sys|推断与容量;back|三个问题
+---
+<style>
+.qk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .qk { grid-template-columns: minmax(0, 1fr); } }
+.toks2 { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.toks2 span { padding: 5px 9px; border-radius: 5px; border: 1px solid var(--hair); background: var(--bg); font-size: 15px; cursor: pointer; }
+.toks2 span.on { border-color: var(--s2); background: var(--s2-soft); font-weight: 700; }
+.flowsteps { list-style: none; padding: 0; margin: 8px 0; counter-reset: fs; }
+.flowsteps li { padding: 8px 12px 8px 40px; position: relative; border-left: 3px solid var(--hair); margin-bottom: 4px; font-size: 16px; color: var(--ink-3); }
+.flowsteps li::before { counter-increment: fs; content: counter(fs); position: absolute; left: 12px; top: 8px; font-family: var(--f-num); }
+.flowsteps li.on { border-left-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.flowsteps li.done { color: var(--ink-2); }
+.blocksvg { width: 100%; max-width: 520px; height: auto; display: block; }
+.blocksvg rect { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.4; }
+.blocksvg rect.n { fill: var(--s3-soft); stroke: var(--s3); }
+.blocksvg rect.a { fill: var(--s1-soft); stroke: var(--s1); }
+.blocksvg rect.f { fill: var(--s2-soft); stroke: var(--s2); }
+.blocksvg path { stroke: var(--ink-3); stroke-width: 1.5; fill: none; }
+.blocksvg text { font-size: 15px; fill: var(--ink); }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>注意力的两步是什么？为什么点积要除以 √D？自注意力和全连接层的关键区别在哪？</li>
+  <li>自注意力为什么需要位置编码？正弦编码、ALiBi、RoPE 分别把位置信息放在哪里？</li>
+  <li>现代大模型的 Transformer 块和原始版本比改了哪些地方？哪些优化改变数学结果、哪些只改实现？</li>
+</ol></div>
+
+<section class="part" id="att">
+  <div class="part-head"><h2>注意力机制：打分、归一化、加权平均</h2><span class="meta">原书 8.1–8.2 节 · 第 219–223 页</span></div>
+  <div class="sec-lede">
+    <p>原书从一个具体困难切入：阅读理解要先读文章再回答问题，编码时还不知道会问什么，用 RNN 把文章压成一个向量，必然丢细节。人脑的做法是<strong>注意力</strong>：<strong>聚焦式</strong>（自上而下、按任务主动选择）和<strong>显著性</strong>（自下而上、由刺激驱动），鸡尾酒会效应两者都有。神经网络主要借鉴前者，把它做成一种<strong>可微、可学习的信息选择与聚合机制</strong>；最大汇聚、门控可以近似看作显著性注意力。</p>
+    <p>注意力分两步。第一步，<strong>注意力分布</strong>：给一个与任务相关的<strong>查询向量</strong> q，用打分函数 s(x<sub>t</sub>, q) 衡量每个输入与它的相关性，过 softmax：α<sub>t</sub> = softmax(s(x<sub>t</sub>, q))。打分函数有四种：<strong>加性</strong> vᵀtanh(Wx + Uq)、<strong>点积</strong> xᵀq、<strong>缩放点积</strong> xᵀq/√D、<strong>双线性</strong> xᵀWq（可看作先分别线性变换再点积，引入非对称性）。第二步，<strong>加权平均</strong>：att(X, q) = Σ α<sub>t</sub>x<sub>t</sub> = 𝔼<sub>z∼p(z|X,q)</sub>[x<sub>z</sub>]——这叫<strong>软性注意力</strong>，输出是输入在注意力分布下的期望。</p>
+    <p>为什么要缩放？若 q、k 各分量独立、均值 0、方差 1，点积的<strong>方差是 D</strong>。D 大时打分差距被拉得很开，softmax 接近 one-hot，进入梯度很小的饱和区；除以 √D 把方差拉回 1。</p>
+    <p class="go">先估一下点积的方差，再拖动维度 D 看两种打分下的注意力分布（随机向量，示意）。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">点积 vs 缩放点积：D 越大越尖</p>
+      <div id="scG"></div>
+      <label class="ctl"><span>向量维度 D <output id="scD">64</output></span><input type="range" id="scDs" min="2" max="10" value="6"></label>
+      <div class="lab-split"><div><p class="lab-s">点积 xᵀq</p><div id="scA" class="wide"></div></div><div><p class="lab-s">缩放点积 xᵀq/√D</p><div id="scB" class="wide"></div></div></div>
+      <p class="cap" id="scW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">二维示意：转动查询，看谁被关注</p>
+      <div id="q2F"></div>
+      <label class="ctl"><span>查询方向 <output id="q2A">40°</output></span><input type="range" id="q2As" min="0" max="359" value="40"></label>
+      <div class="ctl-grid"><label class="ctl"><span>查询长度（越长越“尖”） <output id="q2L">2.0</output></span><input type="range" id="q2Ls" min="0.2" max="6" step="0.1" value="2"></label></div>
+      <div class="seg" id="q2S"><button data-v="soft" aria-pressed="true">软性注意力</button><button data-v="hard">硬性注意力</button></div>
+      <p class="cap" id="q2W"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-att"></div>
+</section>
+
+<section class="part" id="var">
+  <div class="part-head"><h2>注意力的变体：硬性、键值对、多头、指针</h2><span class="meta">原书 8.2.1 节 · 第 222–224 页</span></div>
+  <div class="sec-lede">
+    <p><strong>硬性注意力</strong>只取一个输入：概率最大的那个，或按分布随机采样一个。最大选择和采样不可导，难以直接反向传播，通常要借助强化学习，所以一般用软性注意力。<strong>键值对注意力</strong>把输入拆成键和值：键用来算分布，值用来加权聚合，att((K, V), q) = Σ α<sub>t</sub>v<sub>t</sub>；K = V 时退化为普通模式。<strong>多头注意力</strong>用多个查询并行选取多组信息，结果拼接。</p>
+    <p><strong>指针网络</strong>只用第一步：把注意力分布本身当作一个“指针”，指向输入中的位置。它的输出是输入序列的下标，比如把一组乱序数字排序：输入 20、5、10，从大到小排序后输出下标 1、3、2。解码的每一步用加性打分 s<sub>m,t</sub> = vᵀtanh(Wx<sub>t</sub> + Uh<sub>m</sub>) 在所有输入位置上算一个分布，取出概率最高的位置。</p>
+    <p class="go">一步步看指针网络如何“指出”下标（注意力分布为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 8.2：指针网络排序 20、5、10</p>
+    <div id="ptS"></div>
+    <div class="lab-split"><div id="ptB" class="wide"></div><div><p class="stepinfo" id="ptW"></p><div class="seqrow" id="ptO" style="display:flex;gap:6px"></div></div></div>
+  </div>
+  <div class="notes" id="n-var"></div>
+</section>
+
+<section class="part" id="self">
+  <div class="part-head"><h2>自注意力：让输入互相查询</h2><span class="meta">原书 8.3 节 · 第 224–228 页</span></div>
+  <div class="sec-lede">
+    <p>卷积和循环网络编码序列，本质上都是<strong>局部</strong>交互：卷积靠局部邻域，循环靠逐步递推（理论上能建远距离依赖，实际受路径长和梯度消失限制）。想直接连接任意两个位置，全连接网络又处理不了变长输入。<strong>自注意力</strong>的办法是：用注意力<strong>动态生成</strong>不同位置之间的连接权重（原书图 8.5：全连接层的权重是学出来的固定值，自注意力层的权重由输入内容即时算出）。</p>
+    <p>它采用<strong>查询—键—值</strong>（QKV）模式：每个输入 x<sub>i</sub> 线性映射成 q<sub>i</sub>、k<sub>i</sub>、v<sub>i</sub>，即 Q = W<sub>q</sub>X、K = W<sub>k</sub>X、V = W<sub>v</sub>X；然后每个查询 q<sub>t</sub> 对所有键做键值对注意力，得到输出 h<sub>t</sub> = Σ<sub>j</sub> α<sub>j,t</sub>v<sub>j</sub>。用缩放点积时可以一行写完：<strong>H = V softmax(KᵀQ/√D<sub>k</sub>)</strong>（按列 softmax）。原书提醒：这是“列向量为样本”的写法；按行组织时就是常见的 softmax(QKᵀ/√d<sub>k</sub>)V，两者等价。</p>
+    <p><strong>多头自注意力</strong>在 M 个不同的投影子空间里并行做自注意力，拼接后再乘输出矩阵 W<sub>o</sub>：不同的头可以关注不同的组合关系。和卷积、循环相比（原书表 8.1）：自注意力<strong>单层复杂度 O(T²D)、顺序操作 O(1)、任意两位置最大路径 O(1)</strong>——并行性强、路径最短；代价是要显式构造 T × T 的相关性矩阵。</p>
+    <p class="go">点一个词，看它作为查询时注意力分布在哪些词上（嵌入和权重为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">自注意力热力图：行是查询（第 t 个输出），列是键（第 j 个输入）</p>
+    <div class="selrow"><span>注意力头</span><div class="seg" id="saH"><button data-v="0" aria-pressed="true">头 1：找指代对象</button><button data-v="1">头 2：看前一个词</button><button data-v="2">头 3：看自己</button></div></div>
+    <div class="toks2" id="saT"></div>
+    <div class="lab-split"><div id="saM" style="overflow-x:auto"></div><div><div id="saB" class="wide"></div><p class="cap" id="saW"></p></div></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书表 8.1：循环、卷积、自注意力（数量级）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>序列长度 T <output id="cxT">1024</output></span><input type="range" id="cxTs" min="4" max="17" value="10"></label>
+      <label class="ctl"><span>表示维度 D <output id="cxD">512</output></span><input type="range" id="cxDs" min="5" max="13" value="9"></label>
+      <label class="ctl"><span>卷积核宽度 k <output id="cxK">3</output></span><input type="range" id="cxKs" min="2" max="9" value="3"></label>
+    </div>
+    <table class="calc" id="cxTab"></table>
+    <div id="cxG"></div>
+  </div>
+  <div class="notes" id="n-self"></div>
+</section>
+
+<section class="part" id="pe">
+  <div class="part-head"><h2>位置编码：绝对、相对、旋转</h2><span class="meta">原书 8.4.1 节 · 第 229–232 页</span></div>
+  <div class="sec-lede">
+    <p>自注意力的权重只看内容相关性，<strong>不含位置信息</strong>——把输入顺序打乱，每个位置的输出只是跟着换个位置，模型分不出“位置不同但内容相同”的两个词。所以要显式注入位置。原书把它看成一条演化主线：<strong>绝对位置编码 → 相对位置建模 → 面向长上下文的位置外推</strong>。</p>
+    <p><strong>绝对位置编码</strong>：输入表示 = 词嵌入 + 位置向量，位置向量可学习，也可用正弦—余弦：p<sub>t,2i</sub> = sin(t/10000<sup>2i/D</sup>)、p<sub>t,2i+1</sub> = cos(t/10000<sup>2i/D</sup>)。低维频率高、对邻近位置敏感，高维频率低、刻画大范围位置，相当于<strong>多尺度</strong>的位置表示；相对距离可以通过线性变换表示（习题 8-5）。局限：周期函数在极长序列上会近似重复、是固定先验不能自适应、只提供静态位置、长度外推不稳定。</p>
+    <p><strong>相对位置编码</strong>不给每个位置单独一个向量，而是在打分里加一个只与距离有关的修正：s<sub>j,t</sub> = k<sub>j</sub>ᵀq<sub>t</sub>/√d<sub>k</sub> + b<sub>j,t</sub>。<strong>ALiBi</strong> 让偏置随距离近似线性下降，把“越远越不容易被关注”直接写进打分，实现简单、外推更好。<strong>旋转位置编码 RoPE</strong> 不加到输入上，而是在算 q、k 时，对每一对相邻维度施加与位置相关的二维旋转 R(tθ<sub>i</sub>)，θ<sub>i</sub> = 10000<sup>−2i/D</sup>。由于旋转矩阵满足 R<sub>t</sub>ᵀR<sub>j</sub> = R<sub>j−t</sub>，得到 <strong>q<sub>t</sub>ᵀk<sub>j</sub> = q̃<sub>t</sub>ᵀR<sub>j−t</sub>k̃<sub>j</sub></strong>，打分天然只依赖相对位置 j − t，现代大模型广泛使用。</p>
+    <p class="go">左边看正弦编码的“频谱”（D = 64）；右边验证 RoPE：同时平移 t 和 j，点积不变。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">正弦—余弦位置编码（行 = 位置 t，列 = 维度）</p>
+      <canvas id="peC" style="width:100%;max-width:420px;border:1px solid var(--hair);border-radius:6px;display:block"></canvas>
+      <div id="peL"></div>
+      <p class="cap">左边（低维）条纹密、频率高；右边（高维）几乎不变、频率低。下图仿原书图 8.7 画 D = 512 的第 4、5、20 维：第 4、5 维是同一频率的 sin 和 cos，第 20 维频率低得多。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">RoPE：打分只依赖 j − t（一个二维子空间，示意）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>查询位置 t <output id="rpT">3</output></span><input type="range" id="rpTs" min="0" max="30" value="3"></label>
+        <label class="ctl"><span>键位置 j <output id="rpJ">7</output></span><input type="range" id="rpJs" min="0" max="30" value="7"></label>
+        <label class="ctl"><span>旋转频率 θ <output id="rpH">0.30</output></span><input type="range" id="rpHs" min="0.05" max="1" step="0.05" value="0.3"></label>
+      </div>
+      <svg class="cg" id="rpG" viewBox="0 0 300 220" style="width:100%;max-width:300px;height:auto"></svg>
+      <div class="read"><div class="hl"><div class="v" id="rpD">0</div><div class="k">q_tᵀk_j</div></div><div><div class="v" id="rpR">0</div><div class="k">相对位置 j − t</div></div></div>
+      <div class="btnrow"><button class="btn" type="button" id="rpShift">t、j 同时 +5</button></div>
+      <p class="cap" id="rpW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-pe"></div>
+</section>
+
+<section class="part" id="tf">
+  <div class="part-head"><h2>Transformer：编码器、解码器、三种范式</h2><span class="meta">原书 8.4.2–8.5 节 · 第 231–236 页</span></div>
+  <div class="sec-lede">
+    <p>原始 Transformer 是编码器—解码器结构，但用自注意力替代了循环。<strong>编码块</strong>（原始的 Post-Norm 写法）：Z = norm(H + SelfAttn(H))，H′ = norm(Z + FFN(Z))。“加与规范”就是<strong>残差连接</strong>（缓解梯度消失）加<strong>层规范化</strong>（稳定尺度）。<strong>逐位置前馈网络</strong> FFN(z) = W₂ReLU(W₁z + b₁) + b₂ 对每个位置做相同的变换，相当于核大小为 1 的卷积。</p>
+    <p><strong>解码块</strong>有三个子模块：<strong>掩码自注意力</strong>——用<strong>因果掩码</strong> M（j ≤ t 时为 0，j &gt; t 时为 −∞，加到打分上）让第 t 个位置看不到未来；<strong>交叉注意力</strong>——查询来自解码器当前状态，键和值来自编码器输出，负责从源序列检索相关信息；前馈网络。实际实现还要配合<strong>填充掩码</strong>忽略补齐位置。</p>
+    <p>三种<strong>架构范式</strong>：<strong>仅编码器</strong>（理解类：分类、序列标注、句子匹配）；<strong>仅解码器</strong>（带因果掩码，自回归生成，多数大语言模型）；<strong>编码器—解码器</strong>（条件生成：翻译、摘要、问答生成）。三者用的是同一种注意力计算，只是信息流方向和训练目标不同。</p>
+    <p class="go">在因果掩码矩阵上点一个查询位置，看它能看到哪些键。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 8.9：因果掩码 M（行 = 查询位置，列 = 键位置）</p>
+      <div id="cmM"></div>
+      <p class="cap" id="cmW">点任意一行。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">三种范式</p>
+      <div class="seg" id="pdS"><button data-v="enc" aria-pressed="true">仅编码器</button><button data-v="dec">仅解码器</button><button data-v="ed">编码器—解码器</button></div>
+      <div id="pdM" style="margin-top:10px"></div>
+      <p class="cap" id="pdW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-tf"></div>
+</section>
+
+<section class="part" id="flow">
+  <div class="part-head"><h2>语言模型的数据流</h2><span class="meta">原书 8.4.4 节 · 第 233–235 页</span></div>
+  <div class="sec-lede">
+    <p>原书第二版专门补了一节，把仅解码器语言模型的完整数据流串起来：<strong>分词器</strong>把文本变成词元编号 w<sub>1:T</sub>（粒度可以是字、词、子词或字节）；<strong>词元嵌入矩阵</strong> E 把编号映射成向量并加入位置信息（RoPE 则在算 q、k 时注入）；经过 L 个带因果掩码的 Transformer 块，h<sub>t</sub>⁽ᴸ⁾ 只依赖前缀 w<sub>1:t</sub>；<strong>输出层</strong>把它映射成词表大小的 <strong>logits</strong> z<sub>t</sub> = W<sub>o</sub>h<sub>t</sub> + b<sub>o</sub>；softmax 得到下一个词元的分布 p(w<sub>t+1</sub>|w<sub>1:t</sub>)。</p>
+    <p>训练时最小化逐位置交叉熵 ℒ = −Σ log p(w<sub>t+1</sub>|w<sub>1:t</sub>)，整段序列一次输入、所有位置并行算损失——就是第 6 篇的<strong>教师强制</strong>。推断时只能从已有前缀开始，每一步根据 z<sub>t</sub> 用贪心、温度采样、Top-k 或核采样选出下一个词元，追加到前缀后继续。所以原书说：Transformer 语言模型并不直接“生成文本”，而是反复执行“前缀 → 隐藏表示 → logits → 下一个词元”的循环。</p>
+    <p class="go">一步步走完数据流；下面调温度和 Top-k 看采样分布怎么变（logits 为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次生成的完整路径</p>
+    <div id="dfS"></div>
+    <ol class="flowsteps" id="dfL">
+      <li>文本“今天天气”→ 分词器 → 词元编号 [今天, 天气] = [1734, 2056]（编号示意）</li>
+      <li>嵌入：x<sub>t</sub> = E·𝕀<sub>w_t</sub> + p<sub>t</sub>，得到 D × 2 的矩阵</li>
+      <li>经过 L 个带因果掩码的 Transformer 块，得到 h₂⁽ᴸ⁾（只依赖“今天 天气”）</li>
+      <li>输出层：z₂ = W<sub>o</sub>h₂⁽ᴸ⁾ + b<sub>o</sub>，长度 = 词表大小 |𝒱|</li>
+      <li>softmax(z₂) → p(w₃ | 今天 天气)</li>
+      <li>按采样策略选出 w₃（比如“很”），追加到前缀，回到第 2 步</li>
+    </ol>
+  </div>
+  <div class="lab">
+    <p class="lab-t">采样策略：温度与 Top-k</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>温度 τ <output id="smT">1.0</output></span><input type="range" id="smTs" min="0.1" max="2.5" step="0.05" value="1"></label>
+      <label class="ctl"><span>Top-k（0 = 不限） <output id="smK">0</output></span><input type="range" id="smKs" min="0" max="8" value="0"></label>
+    </div>
+    <div id="smB" class="wide"></div>
+    <p class="cap" id="smW"></p>
+    <p class="xref">更详细的采样与语言模型原理，见本博客 <a href="../2026-10-15-llm-1/">LLM 入门 · 猜下一个词</a> 和 <a href="../2026-10-15-llm-5/">Transformer 拆开看</a>。</p>
+  </div>
+  <div class="notes" id="n-flow"></div>
+</section>
+
+<section class="part" id="mod">
+  <div class="part-head"><h2>现代 Transformer：块内结构与长上下文</h2><span class="meta">原书 8.6.1–8.6.3 节 · 第 236–242 页</span></div>
+  <div class="sec-lede">
+    <p>原书把现代演化归成四个层面：<strong>块内结构</strong>（位置编码、规范化、残差、前馈层）、<strong>长上下文</strong>（位置外推、连接模式、高效实现）、<strong>推断系统</strong>（KV 缓存、头共享、内存管理、解码策略）、<strong>容量扩展</strong>（MoE）。骨架“注意力 + 前馈 + 残差”没变，几乎每个零件都重做了。</p>
+    <p><strong>块内</strong>：原始用 Post-Norm Z′ = norm(f(X) + X)；大模型多用 <strong>Pre-Norm</strong> Z′ = X + f(norm(X))，给每个子层稳定的输入尺度、残差路径更通畅，更好训练。层规范化常换成 <strong>RMSNorm</strong>；前馈层换成 <strong>SwiGLU</strong> W₂(swish(W₁z) ⊙ W₃z)。典型现代块：Z = H + SelfAttn(norm(H))，H′ = Z + FFN<sub>gated</sub>(norm(Z))。这些改动不改变注意力的渐近复杂度。</p>
+    <p><strong>FlashAttention</strong>：标准实现要显式构造 T × T 的打分矩阵，瓶颈常常不是算术而是<strong>访存</strong>。FlashAttention 把 Q、K、V 分块，块内算局部打分、块间用<strong>在线 softmax</strong>（持续维护每行的最大值和归一化常数）累积输出，不保存完整注意力矩阵，结果和标准注意力<strong>完全一致</strong>。原书特别强调：它是<strong>精确实现优化</strong>，不是近似；局部窗口、稀疏、线性注意力才是改变连接模式或近似形式的优化。</p>
+    <p><strong>长上下文</strong>同时面临三个挑战：注意力的平方增长、位置外推、KV 缓存线性增长。位置外推方面，YaRN、LongRoPE 在 RoPE 基础上重新缩放或插值频率；原书提醒，更大的窗口首先只是“可访问范围”，能否有效利用还看训练数据和任务。连接模式方面有局部窗口、分块、稀疏注意力。<strong>线性注意力</strong>用核函数近似 softmax，可以写成 O(T) 的递推——数学上就是一种特殊的循环网络；<strong>状态空间模型</strong>（S4、Mamba）用 h<sub>t</sub> = Āh<sub>t−1</sub> + B̄x<sub>t</sub>、y<sub>t</sub> = Ch<sub>t</sub> 递推，Mamba 让参数依赖输入（选择性），达到同规模 Transformer 的效果且线性复杂度。三者的权衡：Transformer 用 O(T²) 换灵活的全局交互，后两者用固定大小的状态压缩历史，可能在精确回溯远处细节时受限，常见做法是混合使用。</p>
+    <p class="go">在线 softmax：把 8 个打分分成 4 块逐块处理，最后和一次性 softmax 对照。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">FlashAttention 的核心：分块 + 在线 softmax（打分与值为示意）</p>
+    <div id="osS"></div>
+    <div class="lab-split"><div><table class="calc" id="osT"></table></div><div><p class="stepinfo" id="osW"></p></div></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 8.12：原始块（Post-Norm）vs 现代块（Pre-Norm）</p>
+    <div class="seg" id="blS"><button data-v="post" aria-pressed="true">原始 Transformer 块</button><button data-v="pre">现代 Transformer 块</button></div>
+    <svg class="blocksvg" id="blG" viewBox="0 0 520 300" role="img" aria-label="块结构"></svg>
+    <p class="cap" id="blW"></p>
+  </div>
+  <div class="notes" id="n-mod"></div>
+</section>
+
+<section class="part" id="sys">
+  <div class="part-head"><h2>推断系统与容量扩展</h2><span class="meta">原书 8.6.4–8.7 节 · 第 241–246 页</span></div>
+  <div class="sec-lede">
+    <p>训练和推断的瓶颈不同。训练时目标序列已知，并行送入整段，主要压力是激活存储、注意力矩阵和反向传播，不需要 KV 缓存。推断分两个阶段：<strong>前缀填充</strong>（整段输入并行计算，写入各层的历史键值，接近训练的矩阵计算形态）和<strong>逐词元解码</strong>（每步只算一个新词元，高度依赖读取 KV 缓存，受显存带宽制约）。</p>
+    <p><strong>KV 缓存</strong>：第 t 步只需算新词元的 q、k、v，把 k、v 追加到缓存，再用 q<sub>t</sub> 对整个缓存做注意力，避免每步重算整个前缀。缓存会随上下文线性增长，于是有 <strong>MQA</strong>（所有查询头共享一组键值）和 <strong>GQA</strong>（M 个查询头分成 G 组，组内共享键值；G = M 是标准多头，G = 1 是 MQA），在尽量保持质量的同时显著减少缓存。<strong>分页注意力</strong>（PagedAttention）像操作系统分页一样管理 KV 缓存，减少碎片、提高并发利用率；<strong>投机解码</strong>让小草稿模型先提几个候选、大模型并行验证，在尽量保持输出分布的前提下降低延迟。</p>
+    <p><strong>混合专家 MoE</strong>：在前馈层位置放 E 个专家，路由器为每个位置选得分最高的 k 个，MoE(h) = Σ<sub>TopK</sub> α<sub>e</sub>(h)Expert<sub>e</sub>(h)。总参数可以很大，每个位置只激活少数专家，计算量不随总参数同比增长。新问题是负载不均衡、路由不稳定、多设备通信，常用共享专家、细粒度专家、负载均衡损失、专家选择词元等办法应对。它不是对注意力的优化，而是容量扩展的独立路线。</p>
+    <p class="go">先估一个 KV 缓存的大小，再调 GQA 的组数和上下文长度。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">KV 缓存 = 2 × 层数 × 键值头数 × 头维度 × 长度 × 批大小 × 字节数</p>
+      <div id="kvG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>层数 L <output id="kvL">32</output></span><input type="range" id="kvLs" min="8" max="96" step="4" value="32"></label>
+        <label class="ctl"><span>查询头数 M <output id="kvM">32</output></span><input type="range" id="kvMs" min="8" max="64" step="8" value="32"></label>
+        <label class="ctl"><span>键值组数 G <output id="kvGg">32</output></span><input type="range" id="kvGs" min="0" max="5" value="5"></label>
+        <label class="ctl"><span>上下文长度 T <output id="kvT">4096</output></span><input type="range" id="kvTs" min="9" max="17" value="12"></label>
+        <label class="ctl"><span>并发请求数 <output id="kvB">1</output></span><input type="range" id="kvBs" min="1" max="64" value="1"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="kvS">0</div><div class="k">KV 缓存（BF16，头维度 128）</div></div><div><div class="v" id="kvR">0</div><div class="k">相对标准多头</div></div></div>
+      <p class="xref">数字怎么影响推理速度和成本，见本博客 <a href="../2026-10-16-infra-8/">AI Infra · 推理优化</a>。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">MoE：总参数 vs 每个词元激活的参数（示意）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>专家数 E <output id="moE">64</output></span><input type="range" id="moEs" min="2" max="256" value="64"></label>
+        <label class="ctl"><span>每个词元激活 k <output id="moK">4</output></span><input type="range" id="moKs" min="1" max="16" value="4"></label>
+        <label class="ctl"><span>每个专家参数（亿） <output id="moP">1.0</output></span><input type="range" id="moPs" min="0.1" max="5" step="0.1" value="1"></label>
+        <label class="ctl"><span>共享部分参数（亿，注意力等） <output id="moS">20</output></span><input type="range" id="moSs" min="1" max="200" value="20"></label>
+      </div>
+      <div id="moB" class="wide"></div>
+      <p class="cap" id="moW"></p>
+    </div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>组成部分</th><th>标准形式</th><th>现代常见优化</th><th>改变数学结果吗</th></tr></thead>
+    <tbody>
+      <tr><td>整体架构</td><td>编码器—解码器</td><td>三种范式并存，LLM 多为仅解码器</td><td>—</td></tr>
+      <tr><td>位置编码</td><td>正弦 / 绝对位置</td><td>相对位置、ALiBi、RoPE、YaRN / LongRoPE</td><td>是</td></tr>
+      <tr><td>规范化与残差</td><td>Post-Norm</td><td>Pre-Norm、RMSNorm</td><td>是</td></tr>
+      <tr><td>前馈层</td><td>ReLU / GELU 两层</td><td>SwiGLU 等门控 FFN，或 MoE</td><td>是</td></tr>
+      <tr><td>注意力头组织</td><td>标准多头</td><td>MQA、GQA</td><td>是</td></tr>
+      <tr><td>长序列建模</td><td>全局全连接注意力</td><td>局部窗口、稀疏、线性注意力（改连接 / 近似）；FlashAttention（不改）</td><td>前者是，后者否</td></tr>
+      <tr><td>推断系统</td><td>朴素自回归</td><td>KV 缓存、分页注意力、投机解码、批处理调度</td><td>基本否（投机解码尽量保持分布）</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 8.2，最后一列为本笔记按原书 8.6 节的区分补充整理。</p>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>注意力 vs 自注意力</b>：前者的查询来自任务（如解码器状态）；后者的查询、键、值都来自同一输入序列。</p>
+    <p><b>自注意力 vs 交叉注意力</b>：交叉注意力的查询来自解码器，键值来自编码器。</p>
+    <p><b>FlashAttention vs 稀疏 / 线性注意力</b>：前者结果与标准注意力完全相同，只改实现；后者改变了连接模式或用近似。</p>
+    <p><b>MQA vs GQA vs MHA</b>：键值组数 G = 1 / 1 &lt; G &lt; M / G = M。</p>
+    <p><b>Pre-Norm vs Post-Norm</b>：先规范化再进子层（残差路径上不过规范化）vs 先加残差再规范化。</p>
+  </div>
+  <div class="notes" id="n-sys"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">α_t = softmax(s(x_t, q))；att(X, q) = Σ α_t x_t；键值对 att((K,V), q) = Σ α_t v_t</div>
+    <div class="fx">打分：加性 vᵀtanh(Wx + Uq)；点积 xᵀq；缩放点积 xᵀq/√D；双线性 xᵀWq</div>
+    <div class="fx">自注意力：Q = W_q X, K = W_k X, V = W_v X；H = V softmax(KᵀQ/√D_k)（行写法 softmax(QKᵀ/√d_k)V）</div>
+    <div class="fx">多头：MultiHead(H) = W_o[head₁; …; head_M]</div>
+    <div class="fx">正弦 PE：p_{t,2i} = sin(t/10000^{2i/D})；RoPE：q_tᵀk_j = q̃_tᵀ R_{j−t} k̃_j；ALiBi：s = kᵀq/√d_k + b_{j,t}</div>
+    <div class="fx">因果掩码 M_{j,t} = 0（j ≤ t），−∞（j > t）；LM 损失 ℒ = −Σ log p(w_{t+1}|w_{1:t})</div>
+    <div class="fx">Pre-Norm Z = H + Attn(norm(H))；SwiGLU = W₂(swish(W₁z) ⊙ W₃z)；MoE = Σ_{TopK} α_e Expert_e</div>
+    <div class="fx">KV 缓存 = 2 × L × G × d_head × T × B × 字节数</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 缩放点积 ---------- */
+function ent(p) { return -p.reduce(function (s, v) { return s + (v > 0 ? v * Math.log(v) : 0); }, 0); }
+function sc() {
+  var D = Math.pow(2, +$('#scDs').value); $('#scD').textContent = D;
+  var r = S.rng(11), q = [], ks = [];
+  for (var i = 0; i < D; i++) q.push(S.randn(r));
+  for (var t = 0; t < 6; t++) { var k = []; for (var i2 = 0; i2 < D; i2++) k.push(S.randn(r)); ks.push(k); }
+  var s = ks.map(function (k) { return k.reduce(function (a, v, i) { return a + v * q[i]; }, 0); });
+  var p1 = S.softmax(s), p2 = S.softmax(s.map(function (v) { return v / Math.sqrt(D); }));
+  S.bars($('#scA'), p1.map(function (v, i) { return { label: 'x' + (i + 1), value: v, text: S.f(v, 2), cls: v === Math.max.apply(null, p1) ? 'alt' : 'dim' }; }));
+  S.bars($('#scB'), p2.map(function (v, i) { return { label: 'x' + (i + 1), value: v, text: S.f(v, 2), cls: v === Math.max.apply(null, p2) ? 'alt' : 'dim' }; }));
+  var sd = Math.sqrt(s.reduce(function (a, v) { return a + v * v; }, 0) / s.length);
+  $('#scW').innerHTML = '这 6 个打分的标准差约 ' + S.f(sd, 1) + '（理论值 √D = ' + S.f(Math.sqrt(D), 1) + '）。不缩放时分布的熵 ' + S.f(ent(p1), 2) + '，缩放后 ' + S.f(ent(p2), 2) + '（最大 log 6 = 1.79）。' + (D >= 64 ? ' D 大时不缩放几乎是 one-hot：softmax 饱和、梯度很小。' : '');
+}
+$('#scDs').addEventListener('input', sc); sc();
+S.guess($('#scG'), { q: 'q、k 都是 D = 64 维，各分量独立、均值 0、方差 1。点积 qᵀk 的标准差大约是多少？', ans: 8, fmt: function (x) { return S.f(x, 1); }, why: '方差 = Σ var(q_i k_i) = D × 1 = 64，标准差 √64 = 8。所以打分常常相差十几甚至几十，softmax 后几乎只剩一个位置有概率。除以 √D = 8 后标准差回到 1（习题 8-2）。' });
+var Q2K = [[1.2, 0.3], [0.2, 1.1], [-0.9, 0.6], [-0.4, -1.0], [0.8, -0.8]], q2Mode = 'soft';
+var q2Field = S.field($('#q2F'), { xr: [-2, 2], yr: [-2, 2], res: 10, size: 300,
+  overlay: function (ctx, X, Y) {
+    var a = +$('#q2As').value * Math.PI / 180, L = +$('#q2Ls').value, q = [L * Math.cos(a), L * Math.sin(a)];
+    var s = Q2K.map(function (k) { return k[0] * q[0] + k[1] * q[1]; }), p = S.softmax(s);
+    if (q2Mode === 'hard') { var m = p.indexOf(Math.max.apply(null, p)); p = p.map(function (_, i) { return i === m ? 1 : 0; }); }
+    var out = [0, 0]; Q2K.forEach(function (k, i) { out[0] += p[i] * k[0]; out[1] += p[i] * k[1]; });
+    function arrow(v, col, w) { ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(v[0]), Y(v[1])); ctx.stroke(); ctx.beginPath(); ctx.arc(X(v[0]), Y(v[1]), 4, 0, 7); ctx.fill(); }
+    Q2K.forEach(function (k, i) { arrow(k, 'rgba(120,130,140,' + (0.25 + 0.75 * p[i]) + ')', 1 + 5 * p[i]); ctx.font = '15px ' + S.css('--f-num'); ctx.fillStyle = S.css('--ink'); ctx.fillText('x' + (i + 1) + ' ' + S.f(p[i], 2), X(k[0]) + 6, Y(k[1]) - 6); });
+    var qq = [q[0] / L * 1.6, q[1] / L * 1.6]; arrow(qq, S.css('--s1'), 2.5); ctx.fillStyle = S.css('--s1'); ctx.fillText('q', X(qq[0]) + 6, Y(qq[1]) + 14);
+    arrow(out, S.css('--s2'), 3); ctx.fillStyle = S.css('--s2'); ctx.fillText('输出', X(out[0]) + 6, Y(out[1]) + 16);
+  } });
+function q2() {
+  $('#q2A').textContent = $('#q2As').value + '°'; $('#q2L').textContent = S.f(+$('#q2Ls').value, 1);
+  q2Field({});
+  $('#q2W').innerHTML = q2Mode === 'soft' ? '灰色箭头是 5 个输入，粗细表示注意力权重；<span style="color:var(--s2)">橙色</span>输出是它们的加权平均（期望），落在输入之间。查询越长，打分差距越大，分布越尖，输出越靠近最相关的那个输入。' : '硬性注意力只取概率最大的一个，输出就是那个输入本身。转动查询时输出会突然跳变——这正是它不可导的直观原因。';
+}
+['q2As', 'q2Ls'].forEach(function (id) { $('#' + id).addEventListener('input', q2); });
+S.seg($('#q2S'), function (v) { q2Mode = v; q2(); }); q2();
+S.notes($('#n-att'), {
+  c: [
+    ['聚焦式 / 显著性注意力', '自上而下按任务选择 / 自下而上由刺激驱动。'],
+    ['查询向量', '与任务相关的表示，用来给每个输入打分。'],
+    ['注意力分布', 'α_t = softmax(s(x_t, q))。'],
+    ['软性注意力', '输出 = 输入在注意力分布下的期望。']
+  ],
+  p: [
+    ['四种打分', '加性、点积、缩放点积、双线性'],
+    ['为何缩放', '点积方差 = D，除以 √D 防 softmax 饱和'],
+    ['双线性', 'xᵀUᵀVq = (Ux)ᵀ(Vq)，非对称'],
+    ['两步', '算分布 → 加权平均']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 指针网络 ---------- */
+var PT = [[0.05, 0.05, 0.05], [0.82, 0.06, 0.12], [0.03, 0.12, 0.85], [0.02, 0.93, 0.05]];
+S.stepper($('#ptS'), 4, function (k) {
+  if (k === 0) { S.bars($('#ptB'), [20, 5, 10].map(function (v, i) { return { label: '位置 ' + (i + 1) + '：' + v, value: 0, text: '—', cls: 'dim' }; })); $('#ptW').innerHTML = '编码器读入 &lt; 20 5 10，得到 h₁…h₃；解码器收到 “&gt;” 开始输出。'; $('#ptO').innerHTML = ''; return; }
+  var p = PT[k], m = p.indexOf(Math.max.apply(null, p));
+  S.bars($('#ptB'), [20, 5, 10].map(function (v, i) { return { label: '位置 ' + (i + 1) + '：' + v, value: p[i], text: S.f(p[i], 2), cls: i === m ? 'alt' : 'dim' }; }));
+  $('#ptW').innerHTML = '第 ' + k + ' 步：s<sub>' + k + ',t</sub> = vᵀtanh(Wx<sub>t</sub> + Uh<sub>' + k + '</sub>)，softmax 后最大的是位置 <b>' + (m + 1) + '</b>（数字 ' + [20, 5, 10][m] + '）。注意力分布本身就是输出，不再做加权平均。';
+  var box = $('#ptO'); box.innerHTML = '';
+  [1, 3, 2].slice(0, k).forEach(function (v) { h('span', { text: v, style: 'padding:6px 12px;border:1px solid var(--s2);background:var(--s2-soft);border-radius:5px;font-family:var(--f-num)' }, box); });
+}, ['编码', '输出第 1 个', '输出第 2 个', '输出第 3 个']);
+S.notes($('#n-var'), {
+  c: [
+    ['硬性注意力', '只取一个输入（最大或采样），不可导，常借助强化学习。'],
+    ['键值对注意力', '键算分布、值做聚合；K = V 时退化为普通模式。'],
+    ['多头注意力', '多个查询并行选取多组信息，结果拼接。'],
+    ['指针网络', '只用注意力分布，把它当作指向输入位置的指针。']
+  ],
+  p: [
+    ['键值对', 'att((K,V), q) = Σ softmax(s(k_t, q)) v_t'],
+    ['多头', 'att((K,V), q₁) ⊕ … ⊕ att((K,V), q_M)'],
+    ['指针网络打分', 's_{m,t} = vᵀtanh(W x_t + U h_m)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 自注意力热力图 ---------- */
+var SA_T = ['小明', '把', '书', '给', '了', '他', '的', '同学'];
+var SA_H = [
+  function (t, j) { var m = { 5: 0, 6: 0, 7: 0, 2: 0, 3: 2 }; if (t in m && j === m[t]) return 3; return j === t ? 1 : 0; },
+  function (t, j) { return j === t - 1 ? 3.2 : j === t ? 1 : 0; },
+  function (t, j) { return j === t ? 3.5 : 0; }
+];
+var saH = 0, saQ = 5;
+function saAtt() { return SA_T.map(function (_, t) { return S.softmax(SA_T.map(function (_, j) { return SA_H[saH](t, j); })); }); }
+function sa() {
+  var A = saAtt(), tb = $('#saT'); tb.innerHTML = '';
+  SA_T.forEach(function (w, i) { var s = h('span', { text: w, class: i === saQ ? 'on' : '' }, tb); s.addEventListener('click', function () { saQ = i; sa(); }); });
+  S.grid($('#saM'), A, { rl: SA_T, cl: SA_T, heat: [0, 1], fmt: function (v) { return S.f(v, 2); }, cls: function (i) { return i === saQ ? 'on' : ''; } });
+  S.bars($('#saB'), A[saQ].map(function (v, j) { return { label: SA_T[j], value: v, text: S.f(v, 2), cls: v === Math.max.apply(null, A[saQ]) ? 'alt' : 'dim' }; }));
+  $('#saW').innerHTML = '“' + SA_T[saQ] + '”作为查询时的注意力分布（热力图第 ' + (saQ + 1) + ' 行，每行和为 1）。' + (saH === 0 ? '这个头让“他”“的”“同学”都把注意力放到“小明”上——学会了找指代对象。' : saH === 1 ? '这个头几乎只看前一个词，类似一个固定的局部窗口（卷积能做的事）。' : '这个头只看自己，相当于不交互。') + ' 真实模型里每个头学什么，由训练决定；原书称不同的头“可以关注不同的特征组合关系”。';
+}
+S.seg($('#saH'), function (v) { saH = +v; sa(); }); sa();
+function cx() {
+  var T = Math.pow(2, +$('#cxTs').value), D = Math.pow(2, +$('#cxDs').value), k = +$('#cxKs').value;
+  $('#cxT').textContent = T; $('#cxD').textContent = D; $('#cxK').textContent = k;
+  $('#cxTab').innerHTML = '<tr><td>模型</td><td class="n">单层计算 ~</td><td class="n">顺序操作</td><td class="n">最大路径长度</td></tr>' +
+    '<tr><td>循环网络</td><td class="n">T·D² = ' + S.sci(T * D * D, 1) + '</td><td class="n">' + T + '</td><td class="n">' + T + '</td></tr>' +
+    '<tr><td>卷积网络</td><td class="n">k·T·D² = ' + S.sci(k * T * D * D, 1) + '</td><td class="n">1</td><td class="n">⌈T/k⌉ = ' + Math.ceil(T / k) + '</td></tr>' +
+    '<tr class="tot"><td>自注意力</td><td class="n">T²·D = ' + S.sci(T * T * D, 1) + '</td><td class="n">1</td><td class="n">1</td></tr>';
+}
+['cxTs', 'cxDs', 'cxKs'].forEach(function (id) { $('#' + id).addEventListener('input', cx); }); cx();
+S.guess($('#cxG'), { q: '表示维度 D = 512 时，序列长度 T 超过多少，自注意力的单层计算量（T²D）就会超过循环网络（TD²）？', ans: 512, fmt: function (x) { return S.f(x, 0); }, why: 'T²D > TD² ⇔ T > D。所以短序列（T < D）时自注意力反而更省；长序列时平方项占主导，这正是长上下文优化要对付的瓶颈。' });
+S.notes($('#n-self'), {
+  c: [
+    ['自注意力', '查询、键、值都由同一输入映射而来；连接权重由内容动态生成。'],
+    ['QKV 模式', 'Q = W_q X，K = W_k X，V = W_v X。'],
+    ['多头自注意力', 'M 个投影子空间并行，拼接后乘 W_o。'],
+    ['与全连接层的区别', '全连接权重固定可学；自注意力权重随输入变化，能处理变长序列。']
+  ],
+  p: [
+    ['矩阵形式', 'H = V softmax(KᵀQ/√D_k)（列 softmax）'],
+    ['常见行写法', 'softmax(QKᵀ/√d_k) V'],
+    ['表 8.1', '自注意力 O(T²D)、顺序 O(1)、路径 O(1)'],
+    ['代价', '显式的 T × T 相关性矩阵']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 位置编码 ---------- */
+(function () {
+  var cv = $('#peC'), T = 100, D = 64, ctx = cv.getContext('2d');
+  function draw() {
+    cv.width = D; cv.height = T; var img = ctx.createImageData(D, T), a = hexc(S.css('--s1')), b = hexc(S.css('--s2')), bg = hexc(S.css('--panel'));
+    for (var t = 0; t < T; t++) for (var d = 0; d < D; d++) {
+      var i = Math.floor(d / 2), v = d % 2 === 0 ? Math.sin(t / Math.pow(10000, 2 * i / D)) : Math.cos(t / Math.pow(10000, 2 * i / D));
+      var c = v >= 0 ? b : a, al = Math.abs(v), k = (t * D + d) * 4;
+      img.data[k] = bg[0] * (1 - al) + c[0] * al; img.data[k + 1] = bg[1] * (1 - al) + c[1] * al; img.data[k + 2] = bg[2] * (1 - al) + c[2] * al; img.data[k + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0); cv.style.imageRendering = 'pixelated'; cv.style.height = Math.min(420, cv.clientWidth || 420) * T / D * 0.5 + 'px';
+  }
+  function hexc(c) { c = c.replace('#', ''); return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]; }
+  draw(); S.onTheme(draw);
+  var Dd = 512;
+  function pe(t, d) { var i = Math.floor(d / 2); return d % 2 === 0 ? Math.sin(t / Math.pow(10000, 2 * i / Dd)) : Math.cos(t / Math.pow(10000, 2 * i / Dd)); }
+  S.chart($('#peL'), { h: 200, x: [0, 100], y: [-1.05, 1.05], xt: [0, 25, 50, 75, 100], yt: [-1, 0, 1], xl: '位置 t（只画前 100 个位置）',
+    curves: [{ f: function (t) { return pe(t, 4); }, c: 'c1', label: 'dim 4' }, { f: function (t) { return pe(t, 5); }, c: 'c2', label: 'dim 5' }, { f: function (t) { return pe(t, 20); }, c: 'ok', label: 'dim 20' }] })();
+})();
+function rp() {
+  var t = +$('#rpTs').value, j = +$('#rpJs').value, th = +$('#rpHs').value;
+  $('#rpT').textContent = t; $('#rpJ').textContent = j; $('#rpH').textContent = S.f(th, 2);
+  var q0 = [1.4, 0.4], k0 = [0.9, 1.1];
+  function rot(v, a) { return [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)]; }
+  var q = rot(q0, t * th), k = rot(k0, j * th), dot = q[0] * k[0] + q[1] * k[1];
+  var g = $('#rpG'); g.innerHTML = '';
+  var cx = 150, cy = 110, s = 55;
+  S.svg('circle', { cx: cx, cy: cy, r: s * 1.6, fill: 'none', stroke: 'var(--hair)' }, g);
+  [[q, 'var(--s1)', 'q_t'], [k, 'var(--s2)', 'k_j']].forEach(function (v) { S.svg('line', { x1: cx, y1: cy, x2: cx + v[0][0] * s, y2: cy - v[0][1] * s, stroke: v[1], 'stroke-width': 3 }, g); S.svg('text', { x: cx + v[0][0] * s * 1.12, y: cy - v[0][1] * s * 1.12, text: v[2], fill: v[1], style: 'font-size:15px;font-family:var(--f-num)' }, g); });
+  $('#rpD').textContent = S.f(dot, 4); $('#rpR').textContent = j - t;
+  $('#rpW').innerHTML = 'q 按 t·θ 旋转、k 按 j·θ 旋转，它们之间的夹角只取决于 (j − t)·θ。点“同时 +5”：两个向量都转了 5θ，但点积 ' + S.f(dot, 4) + ' 一点不变——这就是 q<sub>t</sub>ᵀk<sub>j</sub> = q̃ᵀR<sub>j−t</sub>k̃。';
+}
+['rpTs', 'rpJs', 'rpHs'].forEach(function (id) { $('#' + id).addEventListener('input', rp); });
+$('#rpShift').addEventListener('click', function () { var t = +$('#rpTs').value, j = +$('#rpJs').value; if (Math.max(t, j) + 5 > 30) { $('#rpTs').value = Math.min(t, j) === t ? 0 : j - t > 0 ? 0 : t - j; $('#rpJs').value = +$('#rpTs').value + (j - t); } else { $('#rpTs').value = t + 5; $('#rpJs').value = j + 5; } rp(); });
+rp();
+S.notes($('#n-pe'), {
+  c: [
+    ['为何需要位置编码', '自注意力只看内容，打乱顺序后输出只是跟着换位置。'],
+    ['正弦—余弦编码', '多尺度：低维高频看局部，高维低频看全局。'],
+    ['相对位置编码', '在打分中加入只与距离有关的偏置 b_{j,t}。'],
+    ['ALiBi', '偏置随距离近似线性下降；简单、外推好。'],
+    ['RoPE', '对 q、k 的每对维度按位置旋转，点积只依赖 j − t。']
+  ],
+  p: [
+    ['正弦 PE', 'p_{t,2i} = sin(t/10000^{2i/D})，p_{t,2i+1} = cos(…)'],
+    ['RoPE 频率', 'θ_i = 10000^{−2i/D}'],
+    ['RoPE 性质', 'R_tᵀR_j = R_{j−t} ⇒ q_tᵀk_j = q̃_tᵀR_{j−t}k̃_j'],
+    ['正弦编码的局限', '极长时近似重复、固定先验、静态、外推不稳。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 因果掩码与范式 ---------- */
+var cmSel = 2;
+function cm() {
+  var T = 6, M = [];
+  for (var t = 0; t < T; t++) { var r = []; for (var j = 0; j < T; j++) r.push(j <= t ? '0' : '−∞'); M.push(r); }
+  var tb = S.grid($('#cmM'), M, { rl: ['1', '2', '3', '4', '5', '6'], cl: ['1', '2', '3', '4', '5', '6'], fmt: function (v) { return v; }, cls: function (i, j) { return i === cmSel && j <= i ? 'on' : (j > i ? 'dimc' : ''); } });
+  S.$$('tr', tb).forEach(function (tr, i) { if (i === 0) return; tr.style.cursor = 'pointer'; tr.addEventListener('click', function () { cmSel = i - 1; cm(); }); });
+  $('#cmW').innerHTML = '第 ' + (cmSel + 1) + ' 个查询位置只能看到键 1…' + (cmSel + 1) + '。−∞ 加到打分上，softmax 后这些位置的概率变成 0（习题 8-3）。这样训练时整段并行计算，每个位置也看不到“答案”。';
+}
+cm();
+var PD = {
+  enc: ['输入序列', '编码器（双向自注意力）', '每个位置的表示 → 分类 / 标注', '理解类：文本分类、序列标注、句子匹配。每个位置能看到整个输入（无因果掩码）。补充：BERT 是典型代表。'],
+  dec: ['输入前缀', '带因果掩码的解码器', '逐词元生成', '自回归生成，许多大语言模型采用。补充：GPT 系列是典型代表。'],
+  ed: ['源序列 → 编码器', '目标前缀 → 解码器（掩码自注意力 + 交叉注意力）', '条件生成输出', '条件生成：机器翻译、摘要、问答生成。补充：原始 Transformer、T5 是典型代表。']
+};
+S.seg($('#pdS'), function (v) { var p = PD[v]; $('#pdM').innerHTML = '<ol class="flow2"><li class="on">' + p[0] + '</li><li class="on">' + p[1] + '</li><li class="on">' + p[2] + '</li></ol>'; $('#pdW').textContent = p[3]; });
+(function () { var p = PD.enc; $('#pdM').innerHTML = '<ol class="flow2"><li class="on">' + p[0] + '</li><li class="on">' + p[1] + '</li><li class="on">' + p[2] + '</li></ol>'; $('#pdW').textContent = p[3]; })();
+S.notes($('#n-tf'), {
+  c: [
+    ['加与规范', '残差连接 + 层规范化。'],
+    ['逐位置前馈网络', 'W₂ReLU(W₁z + b₁) + b₂，每个位置相同，像 1×1 卷积。'],
+    ['掩码自注意力', '因果掩码让当前位置看不到未来。'],
+    ['交叉注意力', '查询来自解码器，键值来自编码器输出。'],
+    ['填充掩码', '忽略补齐（padding）位置。']
+  ],
+  p: [
+    ['Post-Norm 编码块', 'Z = norm(H + Attn(H))，H′ = norm(Z + FFN(Z))'],
+    ['掩码注意力', 'V softmax(KᵀQ/√D_k + M)'],
+    ['三种范式', '仅编码器（理解）、仅解码器（生成）、编码器—解码器（条件生成）']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 数据流与采样 ---------- */
+var dfItems = S.$$('#dfL li');
+S.stepper($('#dfS'), dfItems.length, function (i) { dfItems.forEach(function (li, k) { li.className = k === i ? 'on' : k < i ? 'done' : ''; }); });
+var SM_W = ['很', '不错', '真', '晴朗', '怎么样', '预报', '是', '了', '冷'], SM_Z = [3.1, 2.6, 2.2, 2.0, 1.6, 1.2, 0.8, 0.5, 0.2];
+function sm() {
+  var T = +$('#smTs').value, K = +$('#smKs').value; $('#smT').textContent = S.f(T, 2); $('#smK').textContent = K || '不限';
+  var p = S.softmax(SM_Z, T), order = p.map(function (v, i) { return i; }).sort(function (a, b) { return p[b] - p[a]; });
+  if (K) { var keep = order.slice(0, K), s = 0; keep.forEach(function (i) { s += p[i]; }); p = p.map(function (v, i) { return keep.indexOf(i) >= 0 ? v / s : 0; }); }
+  S.bars($('#smB'), p.map(function (v, i) { return { label: SM_W[i] + '（z = ' + SM_Z[i] + '）', value: v, text: S.pct(v, 1), cls: v === 0 ? 'dim' : i === 0 ? 'alt' : '' }; }));
+  $('#smW').innerHTML = 'softmax(z/τ)：τ &lt; 1 让分布更尖（接近贪心），τ &gt; 1 更平（更多样也更容易胡言乱语）。Top-k 只保留概率最高的 k 个再归一化。熵 = ' + S.f(ent(p), 2) + '。';
+}
+['smTs', 'smKs'].forEach(function (id) { $('#' + id).addEventListener('input', sm); }); sm();
+S.notes($('#n-flow'), {
+  c: [
+    ['分词器', '文本 → 词元编号；粒度可为字、词、子词或字节。'],
+    ['词元嵌入矩阵', 'E ∈ ℝ^{D×|𝒱|}，把编号映射为向量。'],
+    ['logits', '词表大小的未归一化分数 z_t = W_o h_t + b_o。'],
+    ['教师强制', '训练时整段输入、右移目标、并行算所有位置的损失。']
+  ],
+  p: [
+    ['嵌入', 'x_t = E 𝕀_{w_t} + p_t'],
+    ['下一词分布', 'p(w_{t+1}|w_{1:t}) = softmax(z_t)'],
+    ['损失', 'ℒ = −Σ_{t} log p(w_{t+1}|w_{1:t})'],
+    ['解码策略', '贪心、温度采样、Top-k、核采样']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 在线 softmax ---------- */
+var OS_S = [1.2, 3.0, 0.4, 2.2, 4.1, 0.9, 2.8, 1.5], OS_V = [1, 2, 3, 4, 5, 6, 7, 8];
+S.stepper($('#osS'), 5, function (k) {
+  var m = -Infinity, l = 0, o = 0, rows = '<tr><td>处理到第几块</td><td class="n">运行最大值 m</td><td class="n">归一化和 l</td><td class="n">累积输出 o/l</td></tr>';
+  for (var b = 0; b < Math.min(k, 4); b++) {
+    var blk = OS_S.slice(2 * b, 2 * b + 2), vb = OS_V.slice(2 * b, 2 * b + 2), mb = Math.max.apply(null, blk), mn = Math.max(m, mb);
+    var scale = isFinite(m) ? Math.exp(m - mn) : 0;
+    l = l * scale + blk.reduce(function (s, x) { return s + Math.exp(x - mn); }, 0);
+    o = o * scale + blk.reduce(function (s, x, i) { return s + Math.exp(x - mn) * vb[i]; }, 0);
+    m = mn;
+    rows += '<tr' + (b === k - 1 ? ' class="tot"' : '') + '><td>块 ' + (b + 1) + '（打分 ' + blk.join(', ') + '）</td><td class="n">' + S.f(m, 2) + '</td><td class="n">' + S.f(l, 4) + '</td><td class="n">' + S.f(o / l, 4) + '</td></tr>';
+  }
+  var p = S.softmax(OS_S), ref = p.reduce(function (s, x, i) { return s + x * OS_V[i]; }, 0);
+  rows += '<tr><td>一次性 softmax 的标准结果</td><td class="n"></td><td class="n"></td><td class="n">' + S.f(ref, 4) + '</td></tr>';
+  $('#osT').innerHTML = rows;
+  $('#osW').innerHTML = k === 0 ? '8 个键的打分和对应的值（这里值取标量 1…8）。标准做法先算完 8 个打分再 softmax；FlashAttention 每次只把 2 个键值块读进片上缓存。' :
+    k < 4 ? '读入第 ' + k + ' 块。如果新块的最大值更大，先用 e^{m_旧 − m_新} 把之前累积的 l 和 o <b>重新缩放</b>，再加上新块的贡献。全程只保存 m、l、o 三个数，不保存完整的打分向量。' :
+    '四块处理完，o/l 和一次性 softmax 的结果<b>完全相同</b>——FlashAttention 不是近似，只是换了计算顺序，把中间存储从 O(T²) 压到接近 O(T)、大幅减少显存读写。';
+}, ['开始', '第 1 块', '第 2 块', '第 3 块', '第 4 块']);
+var BLK = {
+  post: [['输入 H', ''], ['自注意力', 'a'], ['残差相加', ''], ['LayerNorm', 'n'], ['FFN（ReLU / GELU）', 'f'], ['残差相加', ''], ['LayerNorm', 'n'], ['输出 H′', '']],
+  pre: [['输入 H', ''], ['RMSNorm（Pre-Norm）', 'n'], ['注意力（RoPE、GQA 等）', 'a'], ['残差相加', ''], ['RMSNorm（Pre-Norm）', 'n'], ['SwiGLU FFN / MoE', 'f'], ['残差相加', ''], ['输出 H′', '']]
+};
+function bl(k) {
+  var g = $('#blG'); g.innerHTML = '';
+  BLK[k].slice().reverse().forEach(function (b, i) {
+    var y = 10 + i * 36;
+    S.svg('rect', { x: 140, y: y, width: 240, height: 28, rx: 5, class: b[1] }, g);
+    S.svg('text', { x: 260, y: y + 19, 'text-anchor': 'middle', text: b[0] }, g);
+    if (i < 7) S.svg('path', { d: 'M260 ' + (y + 28) + ' L260 ' + (y + 36) }, g);
+  });
+  if (k === 'post') { S.svg('path', { d: 'M140 262 C 90 262, 90 200, 140 200', class: '' }, g); S.svg('path', { d: 'M140 154 C 90 154, 90 92, 140 92' }, g); }
+  else { S.svg('path', { d: 'M140 262 C 80 262, 80 164, 140 164' }, g); S.svg('path', { d: 'M140 154 C 80 154, 80 56, 140 56' }, g); }
+  $('#blW').innerHTML = k === 'post' ? 'Post-Norm：残差相加之后再过 LayerNorm——残差这条“直通路”上也有规范化，层数很深时梯度传播不够顺畅。' : 'Pre-Norm：规范化放在子层之前，残差路径（左侧曲线）从输入直通输出，不经过任何规范化，深层训练更稳。同时 LayerNorm → RMSNorm、ReLU FFN → SwiGLU，注意力里用 RoPE 和 GQA。';
+}
+S.seg($('#blS'), bl); bl('post');
+S.notes($('#n-mod'), {
+  c: [
+    ['Pre-Norm', 'Z′ = X + f(norm(X))；大模型常用，更易训练。'],
+    ['FlashAttention', '分块 + 在线 softmax，精确结果、减少访存。'],
+    ['位置外推', 'YaRN、LongRoPE 在 RoPE 上缩放 / 插值频率。'],
+    ['线性注意力', '核近似去掉 softmax 耦合，O(T)，可写成递推（特殊 RNN）。'],
+    ['状态空间模型', 'h_t = Āh_{t−1} + B̄x_t，y_t = Ch_t；Mamba 加选择性。']
+  ],
+  p: [
+    ['现代块', 'Z = H + Attn(norm(H))，H′ = Z + FFN_gated(norm(Z))'],
+    ['在线 softmax', '维护 m、l、o；新块最大值更大时先乘 e^{m_旧 − m_新}'],
+    ['长上下文三挑战', '平方增长、位置外推、KV 缓存增长'],
+    ['精确 vs 近似', 'FlashAttention 不改结果；窗口、稀疏、线性注意力改了。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- KV 缓存与 MoE ---------- */
+function kv() {
+  var L = +$('#kvLs').value, M = +$('#kvMs').value, G = Math.min(M, Math.pow(2, +$('#kvGs').value)), T = Math.pow(2, +$('#kvTs').value), B = +$('#kvBs').value;
+  $('#kvL').textContent = L; $('#kvM').textContent = M; $('#kvGg').textContent = G + (G === M ? '（标准多头）' : G === 1 ? '（MQA）' : '（GQA）'); $('#kvT').textContent = T; $('#kvB').textContent = B;
+  var bytes = 2 * L * G * 128 * T * B * 2;
+  $('#kvS').textContent = bytes >= 1073741824 ? S.f(bytes / 1073741824, 2) + ' GiB' : S.f(bytes / 1048576, 0) + ' MiB';
+  $('#kvR').textContent = S.f(G / M * 100, 1) + '%';
+}
+['kvLs', 'kvMs', 'kvGs', 'kvTs', 'kvBs'].forEach(function (id) { $('#' + id).addEventListener('input', kv); }); kv();
+S.guess($('#kvG'), { q: '32 层、32 个头、头维度 128、上下文 4096、单个请求、BF16（2 字节），标准多头注意力的 KV 缓存有多大？', unit: 'GiB', ans: 2, fmt: function (x) { return S.f(x, 2); }, why: '2（K 和 V）× 32 × 32 × 128 × 4096 × 2 字节 = 2 GiB。改成 8 组的 GQA 就是 0.5 GiB，MQA 只有 64 MiB。并发 32 个请求时标准多头就要 64 GiB——这就是 GQA 和分页注意力存在的原因。' });
+function mo() {
+  var E = +$('#moEs').value, K = Math.min(+$('#moKs').value, E), P = +$('#moPs').value, Sh = +$('#moSs').value;
+  $('#moE').textContent = E; $('#moK').textContent = K; $('#moP').textContent = S.f(P, 1); $('#moS').textContent = Sh;
+  var tot = Sh + E * P, act = Sh + K * P;
+  S.bars($('#moB'), [{ label: '总参数', value: 1, text: S.f(tot, 0) + ' 亿', cls: 'dim' }, { label: '每个词元激活', value: act / tot, text: S.f(act, 0) + ' 亿', cls: 'alt' }]);
+  $('#moW').innerHTML = '激活比例 ' + S.pct(act / tot, 1) + '：计算量大致按激活参数算，存储和通信按总参数算。代价是负载均衡、路由稳定性和跨设备通信。';
+}
+['moEs', 'moKs', 'moPs', 'moSs'].forEach(function (id) { $('#' + id).addEventListener('input', mo); }); mo();
+S.notes($('#n-sys'), {
+  c: [
+    ['前缀填充 / 逐词元解码', '前者整段并行、计算密集；后者单步小、受 KV 读取带宽制约。'],
+    ['KV 缓存', '缓存历史 k、v，每步只算新词元。'],
+    ['MQA / GQA', '多个查询头共享键值，减少缓存。'],
+    ['分页注意力', '分页管理 KV 缓存，减少碎片、提高并发利用率。'],
+    ['投机解码', '小模型起草、大模型并行验证，降低延迟。'],
+    ['MoE', '多个专家 + 路由器选 Top-k，总参数大、激活少。']
+  ],
+  p: [
+    ['KV 追加', 'K̄_{1:t} = [K̄_{1:t−1}, k_t]，h_t = Att(q_t, K̄_{1:t}, V̄_{1:t})'],
+    ['GQA', 'head_m = Att(Q_m, K_{g(m)}, V_{g(m)})；G = M 为 MHA，G = 1 为 MQA'],
+    ['MoE', 'MoE(h) = Σ_{e∈TopK} α_e(h) Expert_e(h)'],
+    ['MoE 的难点', '负载不均、路由不稳、通信开销。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 两步与缩放、和全连接的区别', '先用查询给每个输入打分并 softmax 得分布，再按分布加权平均。点积方差为 D，除以 √D 防饱和。自注意力的连接权重由输入内容即时算出，全连接层的权重是固定学好的，所以前者能处理变长序列、任意两位置路径为 O(1)。'],
+    ['② 位置编码', '自注意力本身不看顺序。正弦编码加在输入上（绝对、多尺度）；ALiBi 把距离偏置加在打分上（相对）；RoPE 旋转 q、k，让点积只依赖 j − t（相对、易与缩放点积结合）。'],
+    ['③ 现代块与两类优化', 'Pre-Norm + RMSNorm + SwiGLU（或 MoE）+ RoPE + GQA。改变数学结果的：位置编码、规范化、门控 FFN、GQA、窗口 / 稀疏 / 线性注意力；只改实现的：FlashAttention、KV 缓存、分页注意力（投机解码尽量保持分布）。']
+  ],
+  p: [
+    ['原书一句话', 'Transformer 的成功不只是因为“注意力”，更在于它用统一、可堆叠、易并行的方式组织了序列中的全局交互。'],
+    ['下一篇', '把注意力从序列推广到图：图神经网络与消息传递。']
+  ],
+  ph: '一句话'
+});

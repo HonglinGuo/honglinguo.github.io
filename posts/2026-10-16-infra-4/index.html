@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>加速器架构：算力、片上存储和数据通路怎样配合</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（四）：Q 投影的算术强度与 Roofline 转折点、七款 GPU 在 decode / prefill 上的比较、补零与注意力流水、Little 定律与在途事务、双缓冲与槽位、跨 SM / 跨 die / 跨卡交接、每字节能耗与功率封顶、固定权重 ROM 与专用化回本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .rf { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.rsvg .pt { fill: var(--s2); }
+.rsvg .gl { stroke: var(--hair); }
+.togs { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; margin: 6px 0; }
+.togs label { display: flex; gap: 6px; align-items: center; }
+.slot { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.slot button { font: inherit; font-size: 15px; padding: 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.slot button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+</style>
+</head>
+<body data-series="infra-series" data-part="4">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 04</span><span>对应原书第 4 章</span><span>约 35 分钟</span></p>
+  <h1>算力翻倍，<em>为什么不一定变快</em></h1>
+  <p class="lead">原书开篇一个小算例：100 μs 里矩阵占 60 μs，矩阵提速一倍总时间变 70 μs；若矩阵只占 10 μs，同样的改动只省 5 μs。专用矩阵单元就是在“神经网络时间都花在矩阵上”之后出现的。这一章沿同一套方法看 GPU、昇腾和 Apple：列出计算与数据依赖，分给硬件单元，算各级接口流量，最后用时间线查等待与重叠。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" aria-current="page" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#ai">算术强度</a><a href="#roof">Roofline</a><a href="#cmp">选卡</a><a href="#unit">计算单元</a><a href="#mem">存储与并发</a><a href="#move">搬移与交接</a><a href="#energy">能耗</a><a href="#spec">专用化</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>同一个投影，为什么 1 行时受带宽限制、256 行时受算力限制？转折点在哪？</li>
+  <li>3090、4090、5090、A100、H100、H200 换来换去，decode 和 prefill 各能快多少？</li>
+  <li>为什么说数据搬移同时是时间问题、并发问题和能耗问题？</li>
+</ol></div>
+
+<section class="part" id="ai">
+  <div class="part-head"><h2>算术强度：同一份权重被多少行复用</h2><span class="meta">原书 4.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书用 Qwen3-8B 的 Q 投影 Y = XW<sub>Q</sub>（4096×4096）贯穿全章。M 行输入时计算量 <strong>F = 2MKN = 33,554,432·M</strong> FLOPs；BF16 输入、权重各读一次、输出写一次，访问量 <strong>V = 2MK + 2KN + 2MN = 33,554,432 + 16,384·M</strong> 字节。第一项是固定的 32 MiB 权重，第二项随行数增长。M = 1 时算术强度约 1 FLOP/字节；M = 256 时约 228。行数涨 256 倍，访问只涨约八分之一。</p>
+    <p>同除以 M：<strong>I(M) = 2KN / (2KN/M + 2(K+N))</strong>，M 越大每行分摊的权重越少，但输入输出项不变，所以 I 趋近 2048 FLOP/字节，继续加 batch 收益递减。一个加速器由主机（CPU 提交）、片外内存、共享缓存、局部缓冲、矩阵单元、累加存储、向量单元组成。NVIDIA 把 Tensor Core、寄存器、共享内存放在 SM 里；昇腾 DaVinci 用 Cube（矩阵）、Vector、Scalar、MTE（搬移）分工，L0A/L0B/L0C、UB 各有用途；软件要安排的事比 GPU 更早暴露出来。</p>
+    <p class="go">先猜 M 很大时的极限，再拖动 M。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">4096×4096 Q 投影（BF16）</p>
+    <div id="aiG"></div>
+    <label class="ctl"><span>本次处理的 token 数 M <output id="aiM">1</output></span><input type="range" id="aiMs" min="0" max="14" value="0"></label>
+    <div class="read"><div><div class="v" id="aiF">0</div><div class="k">计算量 F</div></div><div><div class="v" id="aiV">0</div><div class="k">访问量 V</div></div><div class="hl"><div class="v" id="aiI">0</div><div class="k">算术强度 I = F/V（FLOP/字节）</div></div><div><div class="v" id="aiW">0</div><div class="k">每行分摊的权重读取</div></div></div>
+  </div>
+  <div class="notes" id="n-ai"></div>
+</section>
+
+<section class="part" id="roof">
+  <div class="part-head"><h2>Roofline：一条斜线、一条平线</h2><span class="meta">原书 4.8.1 节</span></div>
+  <div class="sec-lede">
+    <p>同一硬件单元上的工作时间相加（T<sub>r</sub> = Σ w/p），独立单元可以重叠（T ≥ max T<sub>r</sub>），有依赖的阶段只能先后进行。原书的小例子：第一阶段矩阵 10 μs、内存 1 μs，第二阶段反过来，总共 20 μs，而只汇总资源会得到 11 μs，差的 9 μs 来自依赖。</p>
+    <p>计算和访问充分重叠时，可达吞吐 <strong>P<sub>attainable</sub> ≤ min(P, R·I)</strong>：斜线 R·I 是带宽能喂饱多少运算，平线 P 是矩阵单元的上限，交点 <strong>I* = P/R</strong>。任何实测点都在折线之下，离折线的距离就是利用率：强度高于交点看 MFU，低于交点看 MBU。对 Q 投影，I(M) = Md/(d + 2M)，令它等于 I* 得 <strong>M* = I*·d / (d − 2I*)</strong>。RTX 4090（165.2 TFLOP/s、1.008 TB/s）I* ≈ 164，M* ≈ 178.1：从 179 行起矩阵时间超过读取时间。原书也提醒要选对速率：4090 的 FP16 累加峰值约 330，FP32 累加约 165，速率选错会翻转结论。</p>
+    <p class="go">换卡、拖 M，看点落在斜线还是平线上。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Q 投影的 Roofline（BF16 输入、FP32 累加、稠密峰值）</p>
+    <div id="rfG"></div>
+    <div class="seg" id="rfGpu"></div>
+    <label class="ctl" style="margin-top:8px"><span>M <output id="rfM">1</output></span><input type="range" id="rfMs" min="0" max="14" value="0"></label>
+    <svg class="rsvg" id="rfSvg" viewBox="0 0 640 260" role="img" aria-label="Roofline"></svg>
+    <div class="read"><div><div class="v" id="rfT1">0</div><div class="k">矩阵时间 F/P</div></div><div><div class="v" id="rfT2">0</div><div class="k">读取时间 V/R</div></div><div class="hl"><div class="v" id="rfMs2">0</div><div class="k">转折行数 M*</div></div></div>
+  </div>
+  <div class="notes" id="n-roof"></div>
+</section>
+
+<section class="part" id="cmp">
+  <div class="part-head"><h2>用同一模型比较候选加速器</h2><span class="meta">原书 4.6、4.8.2 节</span></div>
+  <div class="sec-lede">
+    <p>固定 Qwen3-8B、BF16、单请求、8K 上下文：一步 decode 要读 <strong>16.345 GB</strong>（权重 15.137 + KV 1.208），矩阵 19.97 GFLOPs；4K prefill 矩阵约 <strong>61.85 TFLOPs</strong>。代入原书的硬件表，结论很清楚：3090 → 4090，decode 读取下界只快约 7.1%，prefill 却快约 57%；A100 → H100，读取快 39.1%、矩阵快 68.5%；H100 → H200 只有读取变快。5090 和 RTX PRO 6000 带宽相同，后者矩阵更快、容量更大。</p>
+    <p>容量决定能不能选：单请求预算约 19.737 GB，24 GB 卡放得下；八条 8K 请求约 28.193 GB，就只能上 5090 以上。Apple 统一内存把这个问题推到极端：Qwen3-235B-A22B 4-bit 加单请求 8K 约 126.867 GB，只有 M3 Ultra（256/512 GB、819 GB/s）和 H200 能单机驻留；每步读选中专家约 13.697 GB，M3 Ultra 约 16.72 ms，H200 约 2.85 ms。<strong>容量决定能不能跑，带宽决定跑多快</strong>：M3 Ultra 从 256 GB 换 512 GB，同一任务的 V/R 一点不变。</p>
+    <p class="go">选指标，比较各卡。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Qwen3-8B BF16 在各卡上的下界（原书 4.6.1 节参数表）</p>
+    <div id="cmG"></div>
+    <div class="seg" id="cmS"><button data-v="d" aria-pressed="true">8K decode 读取下界</button><button data-v="p">4K prefill 矩阵下界</button><button data-v="c">显存容量</button></div>
+    <div id="cmBars" class="wide" style="margin-top:10px"></div>
+    <p class="cap" id="cmW"></p>
+  </div>
+  <div class="notes" id="n-cmp"></div>
+</section>
+
+<section class="part" id="unit">
+  <div class="part-head"><h2>计算单元：补零、向量和注意力流水</h2><span class="meta">原书 4.2 节</span></div>
+  <div class="sec-lede">
+    <p>矩阵单元按固定块执行，不足的部分补零：<strong>η<sub>shape</sub> = MNK / (⌈M/m<sub>t</sub>⌉m<sub>t</sub>·⌈N/n<sub>t</sub>⌉n<sub>t</sub>·⌈K/k<sub>t</sub>⌉k<sub>t</sub>)</strong>。行方向最小块为 16 时，单行输入只有 1/16 有效。MoE 更明显：64 个 token 各选 8 个专家（512 次分派），均匀覆盖 256 个专家时每个专家只有 2 行，补齐后执行 4096 行；集中到 8 个专家时每个 64 行，只执行 512 行。增加乘加器只会把补零也一起算快。</p>
+    <p>注意力是 QK（矩阵）→ Softmax（向量：求最大值、指数、求和，归约要 log₂n 轮依次进行）→ PV（矩阵）。FlashAttention-4 分析 B200 一个 SM 处理 128×128、头宽 128 的块：矩阵 1024 周期、共享内存读取 768 周期、指数 1024 周期。流水稳定后相邻块间隔 <strong>τ ≥ max(T<sub>matrix</sub>, T<sub>smem</sub>, T<sub>exp</sub>)</strong>：只把矩阵翻倍，τ 不变；再把指数翻倍，τ 降到 768，瓶颈换成共享内存。这正是 Rubin 把指数吞吐提高 2–4 倍的原因。</p>
+    <p>低精度：<strong>V<sub>W</sub> = nb/8 + (n/g)·s</strong>。4096×4096 权重用 4 bit、每 32 个共享 1 字节 scale：8 + 0.5 = 8.5 MiB，约 BF16 的 1/3.8；每 16 个共享则 9 MiB。可以先展开成 BF16 再算（多一份 32 MiB 副本），也可以直接用低精度指令。原书实测（INT8 分组、单 token decode）：分组直接算 2.81 ms、峰值显存 11.4 MiB；先展开 2.52 ms、35.2 MiB。</p>
+    <p class="go">逐个打开“×2”，找下一个瓶颈。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">注意力块的流水间隔（B200 单 SM，单位：周期）</p>
+      <div class="togs" id="faT"></div>
+      <div id="faBars" class="wide"></div>
+      <div class="read"><div class="hl"><div class="v" id="faTau">0</div><div class="k">相邻块完成间隔 τ</div></div><div><div class="v" id="faB">—</div><div class="k">当前瓶颈</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">低精度权重的存储量</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>每值位数 b <output id="lpB">4</output></span><input type="range" id="lpBs" min="2" max="16" step="2" value="4"></label>
+        <label class="ctl"><span>分组大小 g <output id="lpG">32</output></span><input type="range" id="lpGs" min="0" max="5" value="1"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="lpV">0</div><div class="k">权重 + scale（4096×4096）</div></div><div><div class="v" id="lpR">0</div><div class="k">相对 BF16 32 MiB</div></div></div>
+      <p class="note">scale 取 1 字节；分组越细误差越小，但 scale 越多。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-unit"></div>
+</section>
+
+<section class="part" id="mem">
+  <div class="part-head"><h2>存储层次：容量、带宽和延迟各管什么</h2><span class="meta">原书 4.3 节</span></div>
+  <div class="sec-lede">
+    <p>容量回答“放不放得下”，带宽回答“一秒传多少”，延迟回答“一次要等多久”。片上存储要占面积：TPU v1 的数据缓冲约占芯片面积 37%，比计算单元的 30% 还多，因为阵列要反复使用输入、权重和部分和。算块 128×128×64 时，BF16 输入和权重共 32 KiB，FP32 累加器 64 KiB，V100 的 96 KiB 共享内存刚好用满；要再预取下一对操作数就要 128 KiB。同一份数据要分清三个量：数据本身多大、各块请求了多少、某一级接口实际传了多少。</p>
+    <p>要维持带宽，必须同时有足够多的请求在路上，这就是 Little 定律：<strong>R<sub>effective</sub> ≤ min(R<sub>interface</sub>, N<sub>o</sub>·s / L)</strong>，维持目标需要 N<sub>o</sub> ≥ ⌈R·L/s⌉。例 4-2：读 8K 上下文的 KV（1.125 GiB），每事务 128 字节、延迟 500 ns。维持 4090 的 1,008 GB/s 需要 3,938 个在途事务；只有 128 个时有效带宽仅 32.8 GB/s、要 36.9 ms。换 5090（1,792 GB/s）而在途事务仍是 4,096，带宽提高 78% 吞吐只涨约 4%。下一个地址依赖上一次读取结果时，队列再深也填不满。RTX PRO 6000 上一次 L2 往返约 340–390 周期（约 120–135 ns）。</p>
+    <p class="go">调在途事务数和延迟。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">在途事务与有效带宽</p>
+    <div id="lgG"></div>
+    <div class="selrow"><span>接口</span><div class="seg" id="lgI"><button data-v="1008" aria-pressed="true">RTX 4090 · 1,008 GB/s</button><button data-v="1792">RTX 5090 · 1,792 GB/s</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>在途事务数 N<sub>o</sub> <output id="lgN">4096</output></span><input type="range" id="lgNs" min="5" max="14" value="12"></label>
+      <label class="ctl"><span>访问延迟 L（ns） <output id="lgL">500</output></span><input type="range" id="lgLs" min="100" max="1500" step="50" value="500"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="lgR">0</div><div class="k">有效带宽</div></div><div class="warn"><div class="v" id="lgT">0</div><div class="k">读 1.125 GiB KV</div></div><div><div class="v" id="lgNeed">0</div><div class="k">用满接口需要的在途事务</div></div></div>
+    <p class="note">每事务 128 字节。原书注：Mess 在 H100 上测得显存空载延迟 363 ns，接近饱和时升到 699–1,433 ns。</p>
+  </div>
+  <div class="notes" id="n-mem"></div>
+</section>
+
+<section class="part" id="move">
+  <div class="part-head"><h2>搬移与交接：槽位、同步层级、跨 die、跨卡</h2><span class="meta">原书 4.4–4.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>双缓冲</strong>：n 块、每块加载 t<sub>l</sub>、计算 t<sub>c</sub>，串行 n(t<sub>l</sub> + t<sub>c</sub>)，流水 <strong>t<sub>l</sub> + t<sub>c</sub> + (n−1)·max(t<sub>l</sub>, t<sub>c</sub>)</strong>：8 块、加载 2 μs、计算 1 μs，从 24 μs 降到 17 μs；计算再快一倍只到 16.5 μs。原书把加载拆成发起间隔（64 tick）和就绪延迟（192 tick），算出一个 QK 块序列（4 块、每块算 128 tick）需要几个输入槽：1 槽 1280 tick，2 槽 768，3 槽就达到下界 192 + 4×128 = 704，第 4 个槽没有收益。矩阵翻倍后目标变成 448，3 槽又不够了。</p>
+    <p><strong>跨 SM 交接只能经 L2</strong>：生产者写数据 → fence → 写标志，消费者轮询标志再读数据。RTX PRO 6000 上 SM 内栅栏约 7 ns，簇内约 130 ns，一对一经 L2 约 370 ns（fence 约占 600 周期），全部 188 个 SM 汇合并送达激活约 1 μs。这个代价与 kernel 怎么提交无关，图重放和 persistent kernel 也消不掉。</p>
+    <p><strong>跨 die / 跨卡</strong>：B200 两颗 die 间 NV-HBI 10 TB/s，比每颗 die 本地 4 TB/s 还快，计算放哪边都一样；昇腾 910C die 间每方向 270 GB/s，只有本地 1.6 TB/s 的约 17%，跨 die 读 32 GiB 权重要约 127 ms，应该把计算搬到权重所在的 die。主机到卡：4090 的 PCIe 4.0 x16 每方向 32 GB/s，上传 64 MiB 约 2.1 ms，是显存读取的 31.5 倍，复用 32 次以上才摊平。卡间：<strong>T = α + V/R</strong>，H100 NVLink 每方向 450 GB/s、α 取 2 μs，转折点 <strong>V* = αR ≈ 879 KiB</strong>，小于它时合并传输比加带宽更有用。</p>
+    <p class="go">先选槽数，再看卡间传输的两项。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">QK 四块需要几个输入槽（B200 SM，tick）</p>
+      <div class="slot" id="slS"><button data-v="1">1 槽</button><button data-v="2">2 槽</button><button data-v="3" aria-pressed="true">3 槽</button><button data-v="4">4 槽</button></div>
+      <div class="seg" id="slX" style="margin-top:8px"><button data-v="128" aria-pressed="true">原矩阵速率（每块 128）</button><button data-v="64">矩阵翻倍（每块 64）</button></div>
+      <div class="read"><div class="hl"><div class="v" id="slT">0</div><div class="k">完成时间</div></div><div><div class="v" id="slMin">0</div><div class="k">下界 192 + 4·t_c</div></div><div><div class="v" id="slBuf">0</div><div class="k">输入缓冲</div></div></div>
+      <p class="note">每块输入 16 KiB，传输 64 tick，发起后 192 tick 就绪；槽从发起读取一直占到该块算完。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">卡间点对点：α + V/R</p>
+      <div class="seg" id="lkS"><button data-v="450" aria-pressed="true">H100 NVLink 450 GB/s</button><button data-v="300">A100 NVLink 300 GB/s</button></div>
+      <label class="ctl"><span>激活行数 M（[M,4096] BF16） <output id="lkM">1</output></span><input type="range" id="lkMs" min="0" max="12" value="0"></label>
+      <label class="ctl"><span>固定开销 α（μs） <output id="lkA">2</output></span><input type="range" id="lkAs" min="0.5" max="25" step="0.5" value="2"></label>
+      <div class="read"><div class="hl"><div class="v" id="lkT">0</div><div class="k">传输时间</div></div><div><div class="v" id="lkV">0</div><div class="k">转折数据量 V* = αR</div></div></div>
+    </div>
+  </div>
+  <div class="kvc">
+    <h3>一次同步要多久（RTX PRO 6000 实测，对数刻度）</h3>
+    <div id="syBars" class="wide"></div>
+  </div>
+  <div class="notes" id="n-move"></div>
+</section>
+
+<section class="part" id="energy">
+  <div class="part-head"><h2>能耗：搬一个字节比算一次贵得多</h2><span class="meta">原书 4.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>动态功耗 <strong>P<sub>dyn</sub> ≈ αCV²f</strong>，先进工艺下电容 C 主要来自连线，信号走得越远越耗电。原书汇总了各层每字节能耗：KB 级局部 SRAM 1.25 pJ，MB 级片上 SRAM 12.5 pJ，NVLink-C2C 10.4 pJ，HBM2 31.76 pJ，LPDDR 160 pJ，而 16 位浮点乘加只要 0.75 pJ/FLOP。（数值来自不同工艺和年份，用于量级比较。）</p>
+    <p>代入一步 Qwen3-8B 8K decode：读权重 15.137 GB × 31.76 pJ ≈ <strong>0.481 J</strong>，KV 0.038 J，计算 19.97 GFLOPs × 0.75 pJ ≈ 0.015 J，合计 0.534 J，<strong>九成花在读权重上</strong>。带宽翻倍只让这一步变快，不改变能量；省能量只有两条路：从更近的层次取，或让同一份字节服务更多 token。batch 为 B 时每 token 约 0.481/B + 0.038 + 0.015，B = 32 时约 0.068 J；B 超过 32 后，权重搬移能耗才低于计算能耗。这个转折由每字节与每 FLOP 能耗之比决定，和按时间算的 B* 不同。</p>
+    <p>功率封顶：H100 TDP 700 W，HBM 满带宽约 106 W，留给计算 594 W，除以 989.4 TFLOP/s，峰值下每 FLOP 预算 <strong>b ≈ 0.60 pJ</strong>。实际能耗 e 超过 b 时降频：电压不变时频率为峰值的 b/e，电压同步下降时为 (b/e)<sup>1/3</sup>；e = 1.5b 时分别为 0.67 和 0.87。HBM 每堆带宽 <strong>1024·r/8</strong>：H100 五堆、引脚 5.24 Gbit/s，合 3,350 GB/s。</p>
+    <p class="go">调 batch 看每 token 能耗，调 e/b 看降频。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">每 token 能耗（Qwen3-8B，8K，BF16）</p>
+      <div id="enG"></div>
+      <label class="ctl"><span>batch B <output id="enB">1</output></span><input type="range" id="enBs" min="0" max="8" value="0"></label>
+      <div id="enBars" class="wide"></div>
+      <div class="read"><div class="hl"><div class="v" id="enT">0</div><div class="k">每 token 合计</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">功率封顶下的持续频率</p>
+      <label class="ctl"><span>e / b <output id="pcE">1.5</output></span><input type="range" id="pcEs" min="0.5" max="3" step="0.1" value="1.5"></label>
+      <div class="read"><div><div class="v" id="pcA">0</div><div class="k">电压不变：b/e</div></div><div class="hl"><div class="v" id="pcB">0</div><div class="k">电压随频率降：(b/e)^⅓</div></div></div>
+      <p class="note">持续算力随频率等比例下降。功率封顶时，衡量利用率应以持续算力为分母。</p>
+    </div>
+  </div>
+  <div class="kvc">
+    <h3>每字节能耗（对数刻度）</h3>
+    <div id="ebBars" class="wide"></div>
+    <p class="src">原书 4.1.3 节表：Horowitz ISSCC 2014、Dally Hot Chips 2023、NVIDIA 2022、MICRO 2017。</p>
+  </div>
+  <div class="notes" id="n-energy"></div>
+</section>
+
+<section class="part" id="spec">
+  <div class="part-head"><h2>专用化：固定权重，和回本算账</h2><span class="meta">原书 4.7、4.8.4 节</span></div>
+  <div class="sec-lede">
+    <p>专用化的四个层次：算子是否专用、单元之间路径是否固定、数据是否必须放在指定局部存储、权重是否可写。TPU v1 用 256×256 的乘加阵列；Groq 由编译器预排张量的生成、传输和使用时刻；Graphcore 由大量带局部存储的 tile 组成；Cerebras WSE-3 片上 SRAM 44 GB。把权重放在片上省掉了权重读取，但 KV 照样增长：Groq 每芯片 220 MiB SRAM，Qwen3-8B 一条 8K 请求的 KV 要 6 颗芯片，8 条要 42 颗，8 条 32K 要 168 颗。</p>
+    <p>原书作者的 OpenTallas 项目研究把不可变权重放进掩模 ROM：权重从独立 ROM 读，HBM 只读写 KV。HBM 读取量之比 <strong>S<sub>HBM</sub> = 1 + W/(BK)</strong>：B = 1 时从 16.3 GB 降到 1.21 GB（约 1/13.5）；B = 16 时只有约 1/1.8；B ≈ 12.5 时 KV 读取追平权重。若目标单用户 10,000 token/s，每 token 只有 100 μs，仅 1.21 GB KV 就要 12.1 TB/s 的 HBM。</p>
+    <p>值不值得做，看回本：<strong>V* = F<sub>0</sub>/Δc</strong>。例 4-3：多投入 2,000 万美元，每百万 token 省 0.5 美元，回本要 40 万亿 token；100 台、每台 10,000 token/s、利用率 50%，一年只产出约 15.8 万亿，至少要 254 台才能在一年模型寿命内回本；寿命减半或利用率减半，都要 508 台。按时间计费时，A 比 B 便宜的条件是 c<sub>A</sub>/c<sub>B</sub> &lt; t<sub>B</sub>/t<sub>A</sub>。</p>
+    <p class="go">代入例 4-3。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">专用化在模型寿命内能否回本</p>
+    <div id="pbG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>固定投入（百万美元） <output id="pbF">20</output></span><input type="range" id="pbFs" min="1" max="100" value="20"></label>
+      <label class="ctl"><span>每百万 token 节省（美元） <output id="pbD">0.5</output></span><input type="range" id="pbDs" min="0.05" max="3" step="0.05" value="0.5"></label>
+      <label class="ctl"><span>机器数 <output id="pbN">100</output></span><input type="range" id="pbNs" min="10" max="1000" step="10" value="100"></label>
+      <label class="ctl"><span>利用率 <output id="pbU">50%</output></span><input type="range" id="pbUs" min="5" max="100" step="5" value="50"></label>
+      <label class="ctl"><span>模型寿命（月） <output id="pbL">12</output></span><input type="range" id="pbLs" min="1" max="36" value="12"></label>
+    </div>
+    <div class="read"><div><div class="v" id="pbV">0</div><div class="k">回本所需 token</div></div><div><div class="v" id="pbP">0</div><div class="k">寿命内产出（每台 10,000 token/s）</div></div><div class="hl"><div class="v" id="pbM">0</div><div class="k">寿命内回本至少要几台</div></div></div>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">Q 投影：F = 2MKN，　V = 2MK + 2KN + 2MN，　I(M) = 2KN / (2KN/M + 2(K+N))</div>
+    <div class="fx">T_r = Σ w/p（共享资源相加）；　T ≥ max_r T_r（独立资源重叠）</div>
+    <div class="fx">P_attainable ≤ min(P, R·I)，　I* = P/R，　M* = I*·d / (d − 2I*)</div>
+    <div class="fx">η_shape = MNK / (⌈M/m_t⌉m_t·⌈N/n_t⌉n_t·⌈K/k_t⌉k_t)</div>
+    <div class="fx">流水：τ ≥ max(T_matrix, T_smem, T_exp)；　双缓冲 T = t_l + t_c + (n−1)·max(t_l, t_c)</div>
+    <div class="fx">V_W = nb/8 + (n/g)·s；　B_max = ⌊(C − W − M_ws) / (S·m_KV)⌋</div>
+    <div class="fx">Little：R_eff ≤ min(R, N_o·s/L)，　N_o ≥ ⌈R·L/s⌉</div>
+    <div class="fx">T_edge = α + V/R，　V* = α·R；　H2D 复用 R 次每次分摊 T_H2D / R</div>
+    <div class="fx">P_dyn ≈ αCV²f；　b = (TDP − P_mem) / F_peak；　持续频率 b/e 或 (b/e)^⅓</div>
+    <div class="fx">HBM 每堆：R = 1024·r/8；　S_HBM = 1 + W/(BK)；　V* = F₀/Δc；　A 更省 ⇔ c_A/c_B &lt; t_B/t_A</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>1 → 228 → 2048</b><span>Q 投影算术强度：M=1、M=256、极限（FLOP/字节）</span></div>
+      <div><b>M* ≈ 178</b><span>RTX 4090 上 Q 投影计算追平读取的行数</span></div>
+      <div><b>16.345 GB / 61.85 T</b><span>Qwen3-8B 8K decode 读取 / 4K prefill 矩阵</span></div>
+      <div><b>1024 / 768 / 1024</b><span>FA4 B200 单 SM：矩阵 / 共享内存 / 指数周期</span></div>
+      <div><b>3,938</b><span>维持 1,008 GB/s（500 ns、128 B）所需在途事务</span></div>
+      <div><b>7 ns → 1 μs</b><span>SM 内栅栏 → 全 SM 汇合并送达</span></div>
+      <div><b>879 KiB</b><span>H100 NVLink（α = 2 μs）的传输转折点</span></div>
+      <div><b>0.481 / 0.534 J</b><span>8K decode 一步：读权重 / 合计能耗</span></div>
+      <div><b>0.60 pJ/FLOP</b><span>H100 峰值下每 FLOP 能量预算</span></div>
+      <div><b>254 台</b><span>例 4-3 一年寿命内回本所需机器数</span></div>
+    </div>
+    <p class="src">数字均取自原书第 4 章。</p>
+  </div>
+  <div class="notes" id="n-spec"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-3/"><small>上一篇</small><span>03 · 推理与训练负载</span></a><a class="nx" href="../2026-10-16-infra-5/"><small>下一篇</small><span>05 · 算子与运行时</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+function us(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' ms' : x >= 1 ? S.f(x, 2) + ' μs' : S.f(x * 1000, 0) + ' ns'; }
+function msF(x) { return S.f(x, 2) + ' ms'; }
+var Ms = [1, 2, 4, 8, 16, 32, 64, 128, 178, 256, 512, 1024, 4096, 16384, 65536];
+var K = 4096, N = 4096;
+function proj(M) { var F = 2 * M * K * N, V = 2 * M * K + 2 * K * N + 2 * M * N; return { F: F, V: V, I: F / V }; }
+function bytesF(x) { return x >= Math.pow(2, 30) ? S.f(x / Math.pow(2, 30), 2) + ' GiB' : x >= Math.pow(2, 20) ? S.f(x / Math.pow(2, 20), 2) + ' MiB' : S.f(x / 1024, 1) + ' KiB'; }
+function flopsF(x) { return x >= 1e12 ? S.f(x / 1e12, 2) + ' T' : x >= 1e9 ? S.f(x / 1e9, 2) + ' G' : S.f(x / 1e6, 1) + ' M'; }
+
+/* ---------- 算术强度 ---------- */
+function ai() {
+  var M = Ms[+$('#aiMs').value], p = proj(M);
+  $('#aiM').textContent = M.toLocaleString();
+  $('#aiF').textContent = flopsF(p.F); $('#aiV').textContent = bytesF(p.V); $('#aiI').textContent = S.f(p.I, p.I < 10 ? 2 : 0);
+  $('#aiW').textContent = bytesF(2 * K * N / M);
+}
+$('#aiMs').addEventListener('input', ai); ai();
+S.guess($('#aiG'), { q: '这个 Q 投影的算术强度，M 无限增大时趋近多少 FLOP/字节？', unit: 'FLOP/字节', ans: 2048, fmt: function (x) { return S.f(x, 0); }, why: '原书：I(M) 的分母里权重项 2KN/M → 0，只剩输入输出 2(K+N)，极限 2KN / 2(K+N) = 4096²/8192 = 2048。继续加 batch，收益越来越小。' });
+S.notes($('#n-ai'), {
+  c: [
+    ['F 与 V', 'F = 2MKN；V = 2MK + 2KN + 2MN，权重项固定。'],
+    ['算术强度', 'I = F/V；M = 1 约 1，M = 256 约 228，极限 2048。'],
+    ['主机与设备', 'CPU 提交算子与地址；数据驻留在设备后可反复使用同一地址。'],
+    ['DaVinci 分工', 'Cube 矩阵、Vector 向量、Scalar 控制、MTE 搬移；L0A/L0B/L0C、UB 各有用途。']
+  ],
+  p: [
+    ['复用', '行数 ×256，运算 ×256，访问只 +1/8。'],
+    ['GPU vs 昇腾', 'GPU 普通 load 可交给缓存；昇腾更早暴露 L1/UB/L0 的容量与搬移阶段。']
+  ]
+});
+
+/* ---------- Roofline ---------- */
+var GP = [
+  ['RTX 3090', 71.0, 936, 24], ['RTX 4090', 165.2, 1008, 24], ['RTX 5090', 209.5, 1792, 32], ['RTX PRO 6000', 503.8, 1792, 96],
+  ['A100 80GB', 312.0, 2039, 80], ['H100 SXM', 989.4, 3350, 80], ['H200 SXM', 989.5, 4800, 141]
+];
+var gsel = 1;
+GP.forEach(function (g, i) { h('button', { 'data-v': i, 'aria-pressed': String(i === 1), text: g[0] }, $('#rfGpu')); });
+S.seg($('#rfGpu'), function (v) { gsel = +v; rf(); });
+function rf() {
+  var g = GP[gsel], P = g[1] * 1e12, R = g[2] * 1e9, M = Ms[+$('#rfMs').value], p = proj(M);
+  $('#rfM').textContent = M.toLocaleString();
+  var Is = P / R, Mstar = Is * K / (K - 2 * Is);
+  $('#rfT1').textContent = us(p.F / P * 1e6); $('#rfT2').textContent = us(p.V / R * 1e6);
+  $('#rfMs2').textContent = Mstar > 0 ? S.f(Mstar, 1) : '∞';
+  var svg = $('#rfSvg'); svg.innerHTML = '';
+  var lx = S.scale(0, 4, 60, 620), ly = S.scale(Math.log10(5e11), Math.log10(1.2e15), 230, 15);
+  function X(i) { return lx(Math.log10(i)); } function Y(v) { return ly(Math.log10(v)); }
+  [1, 10, 100, 1000, 10000].forEach(function (i) { S.svg('line', { x1: X(i), y1: 15, x2: X(i), y2: 230, class: 'gl' }, svg); var t = S.svg('text', { x: X(i), y: 248, 'text-anchor': 'middle' }, svg); t.textContent = i; });
+  [1e12, 1e13, 1e14, 1e15].forEach(function (v) { S.svg('line', { x1: 60, y1: Y(v), x2: 620, y2: Y(v), class: 'gl' }, svg); var t = S.svg('text', { x: 55, y: Y(v) + 4, 'text-anchor': 'end' }, svg); t.textContent = (v / 1e12) + ' T'; });
+  var pts = []; for (var e = 0; e <= 4; e += 0.05) { var I = Math.pow(10, e); pts.push([X(I), Y(Math.min(P, R * I))]); }
+  S.svg('path', { d: S.path(pts), class: 'rf' }, svg);
+  var att = Math.min(P, R * p.I);
+  S.svg('circle', { cx: X(Math.max(1, p.I)), cy: Y(att), r: 6, class: 'pt' }, svg);
+  var lab = S.svg('text', { x: X(Math.max(1, p.I)) + 8, y: Y(att) - 8 }, svg); lab.textContent = 'M=' + M + '，I=' + S.f(p.I, p.I < 10 ? 1 : 0);
+  var xl = S.svg('text', { x: 620, y: 228, 'text-anchor': 'end' }, svg); xl.textContent = '算术强度 FLOP/字节';
+}
+$('#rfMs').addEventListener('input', rf); rf();
+S.guess($('#rfG'), { q: 'RTX 4090（165.2 TFLOP/s、1.008 TB/s）上，Q 投影从多少行起矩阵时间超过读取时间？', unit: '行', ans: 178.1, fmt: function (x) { return S.f(x, 0); }, why: '原书：I* = P/R ≈ 164，代入 M* = I*·d/(d − 2I*) ≈ 178.1，所以从整数 179 行起转为计算受限。M = 1 时读取 33.3 μs 远大于计算 0.2 μs；M = 256 时计算 52 μs 超过读取 37.4 μs。' });
+S.notes($('#n-roof'), {
+  c: [
+    ['三种时间关系', '共享单元相加、独立单元取最大、有依赖的阶段先后进行。'],
+    ['Roofline', 'min(P, R·I)：斜线是带宽喂得动的运算，平线是矩阵上限。'],
+    ['I* 与 M*', 'I* = P/R；M* = I*·d/(d − 2I*)，4090 约 178。']
+  ],
+  p: [
+    ['利用率', '高于交点用 MFU，低于交点用 MBU；实测点都在折线之下。'],
+    ['选对速率', '4090 FP16 累加约 330、FP32 累加约 165 TFLOP/s，选错会翻转结论。'],
+    ['依赖的代价', '两阶段各 10 μs 先后执行是 20 μs，只汇总资源会得到 11 μs。']
+  ]
+});
+
+/* ---------- 选卡 ---------- */
+var CMP = GP.concat([['M3 Ultra', 0, 819, 256], ['M4 Max', 0, 546, 128]]);
+function cm(k) {
+  var rows = CMP.filter(function (g) { return k !== 'p' || g[1] > 0; }).map(function (g) {
+    var v = k === 'd' ? 16.345e9 / (g[2] * 1e9) * 1e3 : k === 'p' ? 61.85e12 / (g[1] * 1e12) * 1e3 : g[3];
+    return { label: g[0], v: v, text: k === 'c' ? v + ' GB' : msF(v), cls: k === 'c' ? (v >= 28.193 ? 'ok' : 'dim') : '' };
+  });
+  S.magbars($('#cmBars'), rows, { log: false });
+  $('#cmW').textContent = { d: '16.345 GB ÷ 带宽。越短越好；数值即每步读取下界，1000 除以它就是单请求 token/s 上限。', p: '61.85 TFLOPs ÷ BF16 稠密峰值（Apple 未列）。越短越好。', c: '绿色：能放下 8 条 8K 请求的约 28.193 GB 预算；单请求约 19.737 GB。' }[k];
+}
+S.seg($('#cmS'), cm); cm('d');
+S.guess($('#cmG'), { q: '从 RTX 3090 换到 RTX 4090，Qwen3-8B 单请求 8K decode 的读取下界缩短百分之几？', unit: '%', ans: 7.1, fmt: function (x) { return S.f(x, 1); }, why: '原书：带宽只从 936 提到 1,008 GB/s，读取下界缩短约 7.1%；而 4K prefill 的矩阵时间缩短约 57.0%（71.0 → 165.2 TFLOP/s）。同一次换卡，对两个阶段的收益完全不同。' });
+S.notes($('#n-cmp'), {
+  c: [
+    ['decode 看带宽', '16.345 GB ÷ R：5090、H200 的带宽增量直接缩短每步。'],
+    ['prefill 看算力', '61.85 TFLOPs ÷ P：4090、H100 的矩阵增量缩短长输入。'],
+    ['容量看能不能放', '单请求 19.737 GB；8 条 8K 约 28.193 GB。']
+  ],
+  p: [
+    ['代际变化', 'H100 vs A100：算力 3.17×、带宽 1.64×；H200 vs H100：只加容量和带宽。'],
+    ['Apple 统一内存', 'M3 Ultra 容量让 235B MoE 单机能跑；819 GB/s 决定每步 16.72 ms。'],
+    ['MoE 两面', '全部权重决定容量，选中专家决定每步读取。']
+  ]
+});
+
+/* ---------- 计算单元 ---------- */
+var fa = { m: 1, s: 1, e: 1 };
+[['m', '矩阵 ×2'], ['s', '共享内存 ×2'], ['e', '指数 ×2']].forEach(function (x) {
+  var l = h('label', null, $('#faT')); var cb = h('input', { type: 'checkbox' }, l); h('span', { text: x[1] }, l);
+  cb.addEventListener('change', function () { fa[x[0]] = cb.checked ? 2 : 1; faC(); });
+});
+function faC() {
+  var t = [['矩阵 QK + PV', 1024 / fa.m], ['共享内存读取', 768 / fa.s], ['指数', 1024 / fa.e]];
+  var mx = Math.max.apply(null, t.map(function (x) { return x[1]; }));
+  S.bars($('#faBars'), t.map(function (x) { return { label: x[0], value: x[1] / 1024, text: x[1] + ' 周期', cls: x[1] === mx ? 'alt' : 'dim' }; }));
+  $('#faTau').textContent = mx + ' 周期';
+  $('#faB').textContent = t.filter(function (x) { return x[1] === mx; }).map(function (x) { return x[0]; }).join('、');
+}
+faC();
+var Gs = [16, 32, 64, 128, 256, 1024];
+function lp() {
+  var b = +$('#lpBs').value, g = Gs[+$('#lpGs').value], n = K * N;
+  $('#lpB').textContent = b; $('#lpG').textContent = g;
+  var v = n * b / 8 + n / g * 1;
+  $('#lpV').textContent = S.f(v / Math.pow(2, 20), 2) + ' MiB'; $('#lpR').textContent = '1/' + S.f(32 * Math.pow(2, 20) / v, 2);
+}
+['lpBs', 'lpGs'].forEach(function (id) { $('#' + id).addEventListener('input', lp); }); lp();
+S.notes($('#n-unit'), {
+  c: [
+    ['补零效率', 'η_shape：行方向最小 16 时，单行只有 1/16 有效。'],
+    ['MoE 的补零', '512 次分派：分散到 256 专家执行 4096 行，集中到 8 专家只执行 512 行。'],
+    ['归约是串行轮次', '128 个元素二叉归约 7 轮，加单元只缩短每轮。'],
+    ['注意力流水', 'QK → Softmax → PV；τ ≥ 三项最大值。']
+  ],
+  p: [
+    ['瓶颈会转移', '矩阵 ×2 → τ 仍 1024；再加指数 ×2 → 768，轮到共享内存。'],
+    ['V_W', '4 bit + 每 32 个 1 字节 scale = 8.5 MiB，约 BF16 的 1/3.8。'],
+    ['展开 vs 直接算', '实测 2.52 ms / 35.2 MiB vs 2.81 ms / 11.4 MiB：时间与显存反向。'],
+    ['RoPE 表', '1024 位置 × 64 对 cos/sin，BF16 只要 256 KiB，各头共享。']
+  ]
+});
+
+/* ---------- Little ---------- */
+var lgR = 1008;
+function lg() {
+  var No = Math.pow(2, +$('#lgNs').value), L = +$('#lgLs').value;
+  $('#lgN').textContent = No.toLocaleString(); $('#lgL').textContent = L;
+  var eff = Math.min(lgR, No * 128 / L);
+  $('#lgR').textContent = S.f(eff, eff < 100 ? 1 : 0) + ' GB/s';
+  $('#lgT').textContent = S.f(1.125 * Math.pow(2, 30) / (eff * 1e9) * 1e3, 2) + ' ms';
+  $('#lgNeed').textContent = Math.ceil(lgR * 1e9 * L * 1e-9 / 128).toLocaleString();
+}
+S.seg($('#lgI'), function (v) { lgR = +v; lg(); });
+['lgNs', 'lgLs'].forEach(function (id) { $('#' + id).addEventListener('input', lg); }); lg();
+S.guess($('#lgG'), { q: '延迟 500 ns、每事务 128 字节，只允许 128 个在途事务，有效带宽是多少 GB/s？', unit: 'GB/s', ans: 32.768, fmt: function (x) { return S.f(x, 1); }, why: '原书例 4-2：128 × 128 B / 500 ns ≈ 32.8 GB/s，读 1.125 GiB KV 至少 36.9 ms。要用满 4090 的 1,008 GB/s 需要 3,938 个在途事务。' });
+S.notes($('#n-mem'), {
+  c: [
+    ['容量 / 带宽 / 延迟', '放不放得下 / 一秒传多少 / 一次等多久。'],
+    ['Little 定律', '在途请求数 = 完成速率 × 延迟；N_o ≥ ⌈R·L/s⌉。'],
+    ['三个量', '数据大小、各块请求的字节、某级接口实际传的字节。'],
+    ['L2 的位置', '片外数据进入芯片的入口，也是簇以外 SM 交换数据的唯一途径。']
+  ],
+  p: [
+    ['TPU v1 面积', '数据缓冲约 37%，计算单元约 30%。'],
+    ['带宽升级不一定有用', '在途事务不足时，5090 比 4090 带宽高 78%，吞吐只高约 4%。'],
+    ['依赖链', '下一地址取决于上一读取时，队列再深也填不满。']
+  ]
+});
+
+/* ---------- 搬移 ---------- */
+var sl = { n: 3, c: 128 };
+function slot() {
+  var n = sl.n, c = sl.c, issue = [], ready = [], start = [], end = [], free = [];
+  for (var s = 0; s < n; s++) free.push(0);
+  var lastIssue = -64;
+  for (var i = 0; i < 4; i++) {
+    free.sort(function (a, b) { return a - b; });
+    var t = Math.max(free[0], lastIssue + 64); lastIssue = t;
+    issue.push(t); ready.push(t + 192);
+    var st = Math.max(ready[i], i ? end[i - 1] : 0); start.push(st); end.push(st + c);
+    free[0] = st + c;
+  }
+  $('#slT').textContent = end[3] + ' tick'; $('#slMin').textContent = (192 + 4 * c) + ' tick'; $('#slBuf').textContent = (16 * n) + ' KiB';
+}
+S.seg($('#slS'), function (v) { sl.n = +v; slot(); });
+S.seg($('#slX'), function (v) { sl.c = +v; slot(); });
+slot();
+var lkR = 450;
+function lk() {
+  var M = Math.pow(2, +$('#lkMs').value), a = +$('#lkAs').value, V = 8192 * M;
+  $('#lkM').textContent = M; $('#lkA').textContent = a;
+  $('#lkT').textContent = us(a + V / (lkR * 1e9) * 1e6);
+  var vs = a * 1e-6 * lkR * 1e9; $('#lkV').textContent = S.f(vs / 1024, 0) + ' KiB（M≈' + S.f(vs / 8192, 0) + '）';
+}
+S.seg($('#lkS'), function (v) { lkR = +v; lk(); });
+['lkMs', 'lkAs'].forEach(function (id) { $('#' + id).addEventListener('input', lk); }); lk();
+S.magbars($('#syBars'), [
+  { label: 'SM 内栅栏', v: 7, text: '≈ 7 ns', cls: 'ok' }, { label: '线程块簇内', v: 130, text: '≈ 130 ns' },
+  { label: 'L2 往返（依赖链）', v: 127, text: '120–135 ns', cls: 'dim' }, { label: '一对一经 L2 交接', v: 370, text: '≈ 370 ns' },
+  { label: 'PDL 每个边界', v: 366, text: '≈ 366 ns' }, { label: '188 SM 汇合 + 送达', v: 1000, text: '≈ 1 μs', cls: 'alt' }
+], { log: true });
+S.notes($('#n-move'), {
+  c: [
+    ['双缓冲', '以空间换重叠：t_l + t_c + (n−1)·max(t_l, t_c)。'],
+    ['输入槽', '从发起读取占到算完；先求下界，再找满足下界的最少槽数。'],
+    ['跨 SM 交接', '写数据 → fence → 写标志；读标志 → 读数据（release / acquire）。'],
+    ['α + V/R', '固定开销 + 序列化；V* = αR 以下合并传输更有效。']
+  ],
+  p: [
+    ['槽数例子', '1 槽 1280、2 槽 768、3 槽 704（下界）、4 槽 704 tick。'],
+    ['跨 die', 'B200 链路/本地 = 2.5，放哪都行；910C 约 0.17，计算要跟着权重走。'],
+    ['H2D', '4090 上传 64 MiB 约 2.1 ms，是显存读取的 31.5 倍；复用 ≥ 32 次才摊平。'],
+    ['同步消不掉', '图重放与 persistent kernel 消掉提交开销，消不掉跨 SM 依赖的 L2 往返。']
+  ]
+});
+
+/* ---------- 能耗 ---------- */
+function en() {
+  var B = Math.pow(2, +$('#enBs').value); $('#enB').textContent = B;
+  var w = 0.481 / B, k = 0.038, c = 0.015, t = w + k + c;
+  S.bars($('#enBars'), [{ label: '权重读取 0.481/B', value: w / 0.534, text: S.f(w, 4) + ' J', cls: w > c ? 'alt' : 'dim' }, { label: 'KV 读取', value: k / 0.534, text: '0.038 J', cls: 'dim' }, { label: '矩阵计算', value: c / 0.534, text: '0.015 J' }]);
+  $('#enT').textContent = S.f(t, 3) + ' J';
+}
+$('#enBs').addEventListener('input', en); en();
+S.guess($('#enG'), { q: '单请求一步 8K decode 约 0.534 J。读权重占其中百分之几？', unit: '%', ans: 0.481 / 0.534 * 100, fmt: function (x) { return S.f(x, 0); }, why: '原书：权重 0.481 J，约 90%；计算只有 0.015 J。带宽翻倍不改变这 0.534 J，只有从更近处取数或让更多 token 共享这次读取才省能量。' });
+function pc() {
+  var e = +$('#pcEs').value; $('#pcE').textContent = e.toFixed(1);
+  $('#pcA').textContent = S.f(Math.min(1, 1 / e), 2); $('#pcB').textContent = S.f(Math.min(1, Math.pow(1 / e, 1 / 3)), 2);
+}
+$('#pcEs').addEventListener('input', pc); pc();
+S.magbars($('#ebBars'), [
+  { label: '16 位乘加（每 FLOP）', v: 0.75, text: '0.75 pJ', cls: 'ok' }, { label: 'KB 级局部 SRAM', v: 1.25, text: '1.25 pJ' },
+  { label: 'NVLink-C2C 链路', v: 10.4, text: '10.4 pJ' }, { label: 'MB 级片上 SRAM', v: 12.5, text: '12.5 pJ' },
+  { label: 'HBM2', v: 31.76, text: '31.76 pJ', cls: 'alt' }, { label: 'LPDDR DRAM', v: 160, text: '160 pJ', cls: 'alt' }
+], { log: true });
+S.notes($('#n-energy'), {
+  c: [
+    ['动态功耗', 'αCV²f；C 主要来自连线，走得越远越耗电。'],
+    ['能量分账', '8K decode 一步：权重 0.481 + KV 0.038 + 计算 0.015 = 0.534 J。'],
+    ['功率预算 b', '(TDP − P_mem)/峰值算力；H100 ≈ 0.60 pJ/FLOP。'],
+    ['HBM 堆', '1024 根引脚 × 引脚速率 / 8；H100 5 堆 × 670 GB/s。']
+  ],
+  p: [
+    ['带宽 ≠ 能量', '带宽翻倍只省时间，0.534 J 不变。'],
+    ['复用首先是能耗问题', 'B = 32 时每 token 约 0.068 J，是单请求的 1/8。'],
+    ['降频', 'e = 1.5b：电压不变 0.67，电压同降 0.87。'],
+    ['LogicFolding', '电压 0.85 → 0.55 V 使动态功耗降到 0.42；面积降得比功耗多时功率密度反升。']
+  ]
+});
+
+/* ---------- 专用化 ---------- */
+function pb() {
+  var F = +$('#pbFs').value * 1e6, d = +$('#pbDs').value, n = +$('#pbNs').value, u = +$('#pbUs').value / 100, L = +$('#pbLs').value;
+  $('#pbF').textContent = F / 1e6; $('#pbD').textContent = d; $('#pbN').textContent = n; $('#pbU').textContent = Math.round(u * 100) + '%'; $('#pbL').textContent = L;
+  var V = F / (d / 1e6), per = 10000 * u * 31536000 * L / 12, P = n * per;
+  $('#pbV').textContent = S.big(V); $('#pbP').textContent = S.big(P);
+  $('#pbM').textContent = Math.ceil(V / per).toLocaleString();
+}
+['pbFs', 'pbDs', 'pbNs', 'pbUs', 'pbLs'].forEach(function (id) { $('#' + id).addEventListener('input', pb); }); pb();
+S.guess($('#pbG'), { q: '例 4-3：多投入 2,000 万美元、每百万 token 省 0.5 美元。回本需要多少万亿 token？', unit: '万亿', ans: 40, fmt: function (x) { return S.f(x, 0); }, why: '原书：2×10⁷ ÷ (0.5/10⁶) = 4×10¹³ = 40 万亿。100 台一年只产出约 15.8 万亿，至少 254 台才能在一年内回本。' });
+S.notes($('#n-spec'), {
+  c: [
+    ['专用化四层次', '算子专用、路径固定、数据指定局部存储、权重可否写。'],
+    ['片上权重的代价', '权重省了，KV 照涨：Groq 8 条 32K 请求的 KV 要 168 颗芯片。'],
+    ['S_HBM', '1 + W/(BK)：权重移到 ROM 后 HBM 读取减少的倍数。'],
+    ['回本', 'V* = F₀/Δc；再比模型寿命内的产出 D·u·q·L。']
+  ],
+  p: [
+    ['ROM 的收益随 batch 递减', 'B = 1 约 1/13.5；B = 16 约 1/1.8；B ≈ 12.5 时 KV 追平权重。'],
+    ['100 μs/token', '单用户 10,000 token/s 时，1.21 GB KV 就要 12.1 TB/s。'],
+    ['按时间计费', 'A 更省 ⇔ c_A/c_B < t_B/t_A；换成功率就是比能耗。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 为何有转折', '权重读一次、被 M 行复用：I(M) 从 1 涨到 2048；与卡的 I* = P/R 比较，4090 上 M* ≈ 178，低于它读取占上风，高于它计算占上风。'],
+    ['② 换卡收益', 'decode 看带宽（16.345 GB ÷ R），prefill 看算力（61.85 T ÷ P），能不能跑看容量；3090 → 4090 decode 只快 7%、prefill 快 57%。'],
+    ['③ 搬移三重身份', '时间：Roofline 与 α + V/R；并发：Little 定律要足够的在途请求和槽位；能耗：读权重占 decode 一步的 90%，复用首先省的是能量。']
+  ],
+  p: [
+    ['方法', '列依赖 → 分到单元 → 算各级流量 → 用时间线查重叠与等待。'],
+    ['下一篇', '编译器和算子怎样把这些安排写成分块、融合、流水和提交。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

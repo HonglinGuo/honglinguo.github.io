@@ -1,0 +1,538 @@
+---
+title: 算子与运行时：分块、融合、提交与重放
+desc: 深入理解 AI Infra 学习笔记（五）：kernel launch 与 stream/event、占用率与延迟隐藏、输出块大小与重复读取、bank padding 与归约拆分、算子融合、FlashAttention 的在线 Softmax 与块形状、编译器的候选筛选、CUDA Graph 与动态形状分桶、persistent kernel，以及局部加速放回完整请求。
+kicker: <span>技术学习</span><span>深入理解 AI Infra · 05</span><span>对应原书第 5 章</span><span>约 35 分钟</span>
+h1: 同样的乘加，<em>怎么排很重要</em>
+lead: 本章的矩阵乘只要 103 GFLOPs，三份矩阵加起来 128 MiB，可一种分块实现的读写量却有约 3 GiB。把输出块从 64×64 扩到 128×128，读写减半，但每块的局部存储从 24 KiB 涨到 80 KiB，同时驻留的块从 4 个掉到 1 个。这一章就是在这类取舍里打转：分块、布局、融合、提交方式，改的都不是算什么，而是怎么排。
+nav: launch|提交与同步;occ|占用率;tile|分块;layout|布局与归约;fuse|融合;flash|FlashAttention;rt|运行时;req|放回请求;back|三个问题
+---
+<style>
+.tl2 { margin-top: 10px; }
+.tl2 .row { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; font-size: 15px; }
+.tl2 .lane { position: relative; height: 22px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; }
+.tl2 .b { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 12px; line-height: 18px; color: #fff; text-align: center; overflow: hidden; }
+.tl2 .cpu { background: var(--dim); } .tl2 .cp { background: var(--s3); } .tl2 .kn { background: var(--s1); } .tl2 .vec { background: var(--s2); }
+.bank { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; margin: 8px 0; }
+.bank span { height: 20px; border-radius: 3px; background: var(--dim-soft); font-size: 11px; line-height: 20px; text-align: center; font-family: var(--f-num); color: var(--ink-3); }
+.bank span.hit { background: var(--s1); color: #fff; }
+.bank span.hot { background: var(--alert); color: #fff; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>128 MiB 的矩阵乘，为什么会读写 3 GiB？块开多大才合适？</li>
+  <li>融合、FlashAttention、CUDA Graph 各省掉了什么，又在什么时候不划算？</li>
+  <li>一个 kernel 快了 2.6 倍，整个请求能快多少？</li>
+</ol></div>
+
+<section class="part" id="launch">
+  <div class="part-head"><h2>提交、复制与同步：结果什么时候能用</h2><span class="meta">原书 5.1.1–5.1.4 节</span></div>
+  <div class="sec-lede">
+    <p>三个层次要分清：<strong>算子</strong>描述数学工作，<strong>kernel</strong> 在加速器上完成它，<strong>launch</strong> 是 CPU 发起这次执行。一个矩阵乘可以由多个 kernel 完成，几个逐元素算子也能合进一个 kernel。launch 是异步的，CPU 提交完就能准备下一项；只有要用结果或要覆盖加速器还在用的数据时才等待。</p>
+    <p><strong>stream</strong> 是一串顺序执行的加速器任务，把 H2D 和读它的 kernel 放进同一条流就自动排序；跨流用 <strong>event</strong>。四块缓冲各有不同的“最后使用者”：H2D 的主机源缓冲（复制引擎读完 CPU 就能写下一批）、GPU 输入缓冲（kernel 读完才能被覆盖）、D2H 的两端。漏记其中一个事件，程序就会卡住而不是变慢——每次等待都指向一个具体事件，排查时先看被等的一侧是否还在前进。</p>
+    <p>例 5-2：CPU 提交 3 μs，H2D 8 μs，kernel 20 μs，D2H 4 μs，结果第 35 μs 可用；把 kernel 缩到 5 μs，总共 20 μs，整次加速只有约 1.8 倍——剩下 15 μs 是提交和复制。首次调用还可能要编译：编译 100 ms、每次执行 1 ms，调 1 次 101 ms，调 100 次平均 2 ms。</p>
+    <p class="go">拖动各段，看结果什么时候可用。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次调用的时间线</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>CPU 提交（μs） <output id="tlC">3</output></span><input type="range" id="tlCs" min="0" max="30" value="3"></label>
+      <label class="ctl"><span>H2D（μs） <output id="tlH">8</output></span><input type="range" id="tlHs" min="0" max="40" value="8"></label>
+      <label class="ctl"><span>kernel（μs） <output id="tlK">20</output></span><input type="range" id="tlKs" min="1" max="60" value="20"></label>
+      <label class="ctl"><span>D2H（μs） <output id="tlD">4</output></span><input type="range" id="tlDs" min="0" max="30" value="4"></label>
+    </div>
+    <div class="tl2" id="tlT"></div>
+    <div class="read"><div class="hl"><div class="v" id="tlR">0</div><div class="k">结果可用时刻</div></div><div><div class="v" id="tlS">0</div><div class="k">kernel 占比</div></div><div><div class="v" id="tlU">0</div><div class="k">kernel 缩到 1/4 的整体加速</div></div></div>
+  </div>
+  <div class="notes" id="n-launch"></div>
+</section>
+
+<section class="part" id="occ">
+  <div class="part-head"><h2>占用率：谁限制了驻留，在途字节够不够</h2><span class="meta">原书 5.1.5 节</span></div>
+  <div class="sec-lede">
+    <p>线程块要驻留在 SM 上，必须同时分到线程槽、寄存器和共享内存；<strong>驻留块数取各类资源的最小值</strong>。原书的算例（输出块 128×128、K 步 64，工作集 96 KiB，256 线程、每线程 128 寄存器）在 H100 上：线程槽允许 8 块，寄存器允许 2 块，共享内存（228 KB，每块另留 1 KiB）允许 2 块 → 驻留 2 块、16 个 warp，<strong>占用率 25%</strong>。把累加器从共享内存挪到寄存器，共享内存降到 32 KiB 可容 6 块，但每线程多 64 个寄存器，寄存器仍只允许 2 块——限制项只是换了一个。</p>
+    <p>占用率之所以重要，是因为<strong>在途访存请求都来自驻留的 warp</strong>。按 Little 定律，H100 整卡要 3.35 TB/s × 600 ns ≈ 2.01 MB 在途，平摊到 132 个 SM 约 15.2 KB；而 16 个 warp × 每 warp 4 条未完成加载 × 每条 512 字节 = 32 KiB，是需求的 2.15 倍。翻转条件：延迟升到 1000 ns、每 warp 只能挂 2 条加载时，需求涨到 25.4 KB 而供给降到 16 KiB，25% 的占用率就不够了。</p>
+    <p class="go">改资源配置，看谁卡住了驻留。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">H100 一个 SM 的驻留与在途字节</p>
+    <div id="ocG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每块线程数 <output id="ocT">256</output></span><input type="range" id="ocTs" min="5" max="10" value="8"></label>
+      <label class="ctl"><span>每线程寄存器 <output id="ocR">128</output></span><input type="range" id="ocRs" min="32" max="255" step="8" value="128"></label>
+      <label class="ctl"><span>每块共享内存（KiB） <output id="ocSm">96</output></span><input type="range" id="ocSms" min="8" max="200" step="8" value="96"></label>
+      <label class="ctl"><span>显存延迟（ns） <output id="ocL">600</output></span><input type="range" id="ocLs" min="200" max="1500" step="50" value="600"></label>
+    </div>
+    <table class="calc" id="ocT2"></table>
+    <p class="verdict3" id="ocV"></p>
+  </div>
+  <div class="notes" id="n-occ"></div>
+</section>
+
+<section class="part" id="tile">
+  <div class="part-head"><h2>分块：块越大读得越少，驻留也越少</h2><span class="meta">原书 5.2.1–5.2.2 节</span></div>
+  <div class="sec-lede">
+    <p>算例是 Qwen3-8B FFN 的一支投影：C = AW，M = 1024、K = 4096、N = 12288，BF16 下 A 8 MiB、W 96 MiB、C 24 MiB。各读一次、写一次只要 <strong>128 MiB</strong>，运算 2MKN ≈ 103 GFLOPs。但如果每个输出块独立读自己的输入：</p>
+    <p class="fx" style="margin:10px 0">V = 2MK·(N/n) ＋ 2KN·(M/m) ＋ 2MN　　S = 2mk ＋ 2kn ＋ 4mn</p>
+    <p>64×64 块（k = 32）：192 个列块各读一遍 8 MiB 的 A，16 个行块各读一遍 96 MiB 的 W，加 24 MiB 输出，共 <strong>3096 MiB</strong>——这就是开头那 3 GiB。换成 128×128：1560 MiB，读取几乎减半，但工作集从 24 KiB 涨到 80 KiB。在 RTX PRO 6000 的一个 SM（100 KB 共享内存、每块另留 1 KiB）上，24 KiB 能驻留 4 块，80 KiB 只能驻留 1 块。所以时间比是 <strong>T₁₂₈/T₆₄ = (1560/3096)·(B₆₄/B₁₂₈)</strong>：带宽不变时接近减半，大块只拿到四成带宽时反而慢 26%。</p>
+    <p>还有一条要记：这三种块的算术强度分别只有 15.9、31.7、63.0 FLOP/字节，都远低于 H100 的 295，<strong>光靠这一级分块跨不过 Roofline 的交点</strong>，MFU 上限只有 5%、11%、21%，其余复用要靠更靠近计算单元的层次。</p>
+    <p class="go">先猜 64×64 的读写量，再调块形状。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">输出块大小 → 读写量与驻留</p>
+    <div id="tiG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>输出块行 m <output id="tiM">64</output></span><input type="range" id="tiMs" min="5" max="8" value="6"></label>
+      <label class="ctl"><span>输出块列 n <output id="tiN">64</output></span><input type="range" id="tiNs" min="5" max="8" value="6"></label>
+      <label class="ctl"><span>K 步长 k <output id="tiK">32</output></span><input type="range" id="tiKs" min="4" max="7" value="5"></label>
+    </div>
+    <table class="calc" id="tiT"></table>
+    <div class="read"><div class="warn"><div class="v" id="tiV">0</div><div class="k">跨接口读写</div></div><div><div class="v" id="tiI">0</div><div class="k">算术强度</div></div><div class="hl"><div class="v" id="tiB">0</div><div class="k">一个 SM 能驻留几块</div></div></div>
+    <p class="note">对照：三份矩阵各过一次 = 128 MiB；RTX PRO 6000 一个 SM 共享内存 100 KB，每块另留 1 KiB。</p>
+  </div>
+  <div class="notes" id="n-tile"></div>
+</section>
+
+<section class="part" id="layout">
+  <div class="part-head"><h2>布局与归约：让请求分散，让任务变多</h2><span class="meta">原书 5.2.3–5.2.4 节</span></div>
+  <div class="sec-lede">
+    <p>共享内存分 32 个 bank，bank 号 = 字地址 mod 32。32×32 的 FP32 块里，一个 warp 的 32 个 lane 读同一行时请求分散到 32 个 bank（一轮完成），读同一列时全部落在同一个 bank（要 32 轮）。<strong>行末补一个字</strong>（padding）把行跨度改成 33，同列相邻行的 bank 号依次加一，一轮搞定，空间只多 3.1%。不想多占空间就用 <strong>swizzle</strong>：把第 r 行第 c 列放到第 c⊕r 列，代价是每次访问多算一次列号。</p>
+    <p>并行任务太少时改布局也没用，要把计算拆开。RMSNorm 一组处理一行时有 1024 组，decode 单请求只有 1 组。把每行分成 8 段：第一阶段任务从 1024 增到 8192，但归一化阶段要<strong>重读一遍输入</strong>，访问量从 24 MiB 涨到 32.1 MiB，kernel 从 1 个变 3 个；好处是每组临时数据从 16 KiB 降到 2 KiB。</p>
+    <p>原书在这里提了一个容易忽略的后果：<strong>切法改变浮点结果</strong>。一行 4096 个 BF16 元素求平方和，一组一行时累加器长到 2038，每次只加 0.5，末位反复被舍，比精确值小 175.2 个 ULP；分 8 段后只差 9.2 个 ULP。固定这 8 个局部和，40320 种合并次序给出 3 个不同的 FP32 结果。<strong>用原子加累加，到达顺序由调度决定，同一份输入两次运行可能不同</strong>。要让输出只由输入决定，段数和合并次序都不能随 batch 变化。</p>
+    <p class="go">看 bank 冲突，再比较切法的精度。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一个 warp 读一列时落在哪些 bank（示意：画 16 个 lane）</p>
+      <div class="seg" id="bkS"><button data-v="32" aria-pressed="true">行跨度 32 字</button><button data-v="33">补齐到 33 字</button></div>
+      <div class="bank" id="bkB"></div>
+      <p class="cap" id="bkW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">RMSNorm 拆成几段</p>
+      <label class="ctl"><span>段数 <output id="rmS">8</output></span><input type="range" id="rmSs" min="0" max="5" value="3"></label>
+      <div class="read"><div><div class="v" id="rmP">0</div><div class="k">第一阶段并行任务（1024 行）</div></div><div class="warn"><div class="v" id="rmV">0</div><div class="k">总访问量</div></div><div class="hl"><div class="v" id="rmU">0</div><div class="k">与精确平方和的距离（ULP）</div></div></div>
+      <p class="note">ULP 一列只有原书给出的 1 段（175.2）和 8 段（9.2）两个实测值，其余档位标“—”。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-layout"></div>
+</section>
+
+<section class="part" id="fuse">
+  <div class="part-head"><h2>融合：省掉中间张量的写回和重读</h2><span class="meta">原书 5.3.1–5.3.2 节</span></div>
+  <div class="sec-lede">
+    <p>FFN 的激活链：G = XW<sub>g</sub>、U = XW<sub>u</sub>，Z = SiLU(G) ⊙ U，各 24 MiB。分开执行：算 T = SiLU(G) 读 G 写 T（48 MiB），再算 Z 读 T、U 写 Z（72 MiB），共 <strong>120 MiB</strong>；融合后只要 <strong>72 MiB</strong>，省的正是 T 的一写一读。按带宽模型时间比 0.6，<strong>实测从 14.2 μs 降到 7.7 μs，加速约 1.8 倍</strong>。再加一步量化：三步全分开 156 MiB，融合前两步 108 MiB，三步全融合 60 MiB。</p>
+    <p>注意容量和访问量是两回事：独立执行 SiLU 时 G、U、T 同时在内存里，峰值 72 MiB；三步融合峰值 60 MiB。<strong>读写少了 96 MiB，峰值只少 12 MiB</strong>，因为同一块空间可以反复读写。</p>
+    <p>双缓冲的上限也很明确：<strong>T<sub>pipe</sub> = t<sub>m</sub> + (n−1)·max(t<sub>m</sub>, t<sub>c</sub>) + t<sub>c</sub></strong>。H100 一个 SM 上每块搬 1.29 μs、算 0.28 μs，四块串行 6.28 μs，双缓冲 5.44 μs，只少 13%；<strong>加第三个槽没用</strong>——搬移器已经连续工作了，加快计算也没用。只有每块搬移时间不稳定，或一次搬移延迟长于一块计算时间，额外 stage 才补得上空档。要继续缩短，只能减少每块要搬的字节。</p>
+    <p class="go">调搬移和计算的比例，看槽数什么时候才有用。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">双缓冲：T = t_m + (n−1)·max(t_m, t_c) + t_c</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>块数 n <output id="dbN">4</output></span><input type="range" id="dbNs" min="2" max="32" value="4"></label>
+      <label class="ctl"><span>每块搬移 t<sub>m</sub>（μs） <output id="dbM">1.29</output></span><input type="range" id="dbMs" min="0.1" max="3" step="0.01" value="1.29"></label>
+      <label class="ctl"><span>每块计算 t<sub>c</sub>（μs） <output id="dbC">0.28</output></span><input type="range" id="dbCs" min="0.1" max="3" step="0.01" value="0.28"></label>
+    </div>
+    <div class="read"><div><div class="v" id="dbS">0</div><div class="k">串行</div></div><div class="hl"><div class="v" id="dbP">0</div><div class="k">双缓冲</div></div><div class="good"><div class="v" id="dbG">0</div><div class="k">节省</div></div></div>
+    <div class="tl2" id="dbT"></div>
+    <p class="cap" id="dbW"></p>
+  </div>
+  <div class="notes" id="n-fuse"></div>
+</section>
+
+<section class="part" id="flash">
+  <div class="part-head"><h2>FlashAttention：在线 Softmax，和块形状的两难</h2><span class="meta">原书 5.3.3 节</span></div>
+  <div class="sec-lede">
+    <p>一个头、L = 8192、d = 128：Q/K/V/O 各 2 MiB，各读一次写一次共 8 MiB；但完整 S、P 用 FP32 各 256 MiB，一写一读就是 <strong>1 GiB</strong>，而且随序列长度平方增长。逐元素融合在这里不管用，因为 Softmax 的分母是整行指数和。</p>
+    <p>解法是只保留三个量：最大分数 m、以 m 为基准的指数和 ℓ、加权值和 u。新块到来时：</p>
+    <p class="fx" style="margin:10px 0">m′ = max(m, max s)，　r = exp(m − m′)，　p_j = exp(s_j − m′)<br>ℓ′ = rℓ + Σp_j，　u′ = ru + Σp_j·V_j</p>
+    <p>旧块的贡献全在 ℓ 和 u 里，不用读回旧分数。块形状则是另一个取舍：在 RTX PRO 6000 的 99 KB 共享内存里，<strong>S = 2ad + 2bd + 4ab + 4ad + 12a ≤ 101376</strong>。b = 64 时能放 a = 82 行 Q，扫 100 遍 K/V，读 404 MiB，状态更新 12800 次；b = 1 时 a = 128、扫 64 遍、读 260 MiB，但更新次数暴涨到 524288 次（约 41 倍），而且矩阵乘的一个维度太小。</p>
+    <p>实测对照（RTX PRO 6000、BF16、8192 因果、CUDA Graph）：数学后端约 <strong>2.6 ms</strong>、新增显存约 <strong>848 MiB</strong>；FlashAttention 后端约 <strong>80 μs</strong>、约 <strong>22 MiB</strong>，加速比约 33。</p>
+    <p class="go">走一遍在线 Softmax，再调块形状。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">在线 Softmax（原书例 5-6：分数 [0, ln2]，值 [1, 3]）</p>
+      <div id="osStep"></div>
+      <table class="calc" id="osT"></table>
+    </div>
+    <div class="lab">
+      <p class="lab-t">FlashAttention 的块形状（L = 8192、d = 128）</p>
+      <label class="ctl"><span>K/V 块行数 b <output id="faB2">64</output></span><input type="range" id="faBs2" min="0" max="7" value="4"></label>
+      <div class="read"><div><div class="v" id="faA">0</div><div class="k">可容纳的 Q 行数 a</div></div><div class="warn"><div class="v" id="faV">0</div><div class="k">跨接口访问</div></div><div class="hl"><div class="v" id="faU">0</div><div class="k">状态更新次数</div></div></div>
+      <p class="note">按 S = 2ad + 2bd + 4ab + 4ad + 12a ≤ 101376 反解 a；对照：保存完整 S、P 要 1 GiB。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-flash"></div>
+</section>
+
+<section class="part" id="rt">
+  <div class="part-head"><h2>运行时：图重放、分桶特化、persistent kernel</h2><span class="meta">原书 5.4.6–5.5 节</span></div>
+  <div class="sec-lede">
+    <p>例 5-10 把主机瓶颈说得很清楚：100 段工作、主机准备和加速器各 20 μs，串行 4000 μs，流水 2020 μs；<strong>把加速器缩到 5 μs，只降到 2005 μs</strong>——CPU 提交速度没变，GPU 算得越快等得越久。vLLM v0.6.0 就是实例：剖析显示单张 H100 跑 Llama 3 8B 时，API 服务器占 33%、调度占 29%、加速器执行只占 38%（API 服务器和引擎在同一个 Python 进程里抢 GIL）。拆进程、多步调度、异步输出处理三项改完，8B 吞吐提到 2.7 倍、70B 提到 1.8 倍，<strong>没有动任何 kernel，也没换硬件</strong>。</p>
+    <p><strong>CUDA Graph</strong> 把任务序列记录下来重复提交：3 次 FFN 从 18 次 launch 降到 3 次 graph launch，加速器仍执行 18 个 kernel（融合才把它减到 15 个）。但图按记录的地址读输入，上游若写在别处就要多一次复制：省 15 μs 的前提是 2X/B &lt; 15 μs，在 1792 GB/s 下 <strong>X &lt; 12.8 MiB</strong>；2 MiB 的输入划算（省 12.7 μs），16 MiB 就反而亏。<strong>FlashInfer</strong> 的 plan/run 分离是另一种复用：同一步 36 层共用一份计划后，注意力从约 2.0–2.4 ms 降到 0.72–0.75 ms，H2D 复制从 144 次降到 4 次，加速器 kernel 数不变。</p>
+    <p><strong>动态形状</strong>三选一：通用、分桶（补齐到少数代表形状）、逐形状特化。原书例 5-12：10 次 FFN 共 5632 行，分到 512/2048 两个桶要算 8192 行（多算 45%），但 MFU 从 20% 提到 40%，每组仍从 17.0 ms 降到 12.4 ms；特化 6.8 ms。准备时间分别 100/400/900 ms，于是 1–64 组通用最省、65–89 组分桶最省、90 组起特化最省。</p>
+    <p class="go">先算图重放的临界输入，再比较三种策略。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">CUDA Graph 什么时候不划算</p>
+      <div id="cgG"></div>
+      <label class="ctl"><span>图省下的提交时间（μs） <output id="cgS">15</output></span><input type="range" id="cgSs" min="1" max="40" value="15"></label>
+      <label class="ctl"><span>图输入（MiB） <output id="cgX">2</output></span><input type="range" id="cgXs" min="0" max="7" value="1"></label>
+      <div class="read"><div><div class="v" id="cgC">0</div><div class="k">输入复制耗时（读 + 写）</div></div><div class="hl"><div class="v" id="cgL">0</div><div class="k">临界输入大小</div></div></div>
+      <p class="verdict3" id="cgW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">通用 / 分桶 / 特化：跑多少组才回本</p>
+      <label class="ctl"><span>组数 r <output id="spR">70</output></span><input type="range" id="spRs" min="1" max="300" value="70"></label>
+      <div id="spBars" class="wide"></div>
+      <p class="cap" id="spW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-rt"></div>
+</section>
+
+<section class="part" id="req">
+  <div class="part-head"><h2>放回完整请求：1152 次调用，省下 1.3 ms</h2><span class="meta">原书 5.6 节</span></div>
+  <div class="sec-lede">
+    <p>局部加速要放回请求：<strong>S = 1 / ((1−f) + f/s)</strong>。热点占 20% 时加速一倍只有 1.11，加速十倍 1.22，即使归零上限也只有 1.25。有并行分支时还要看关键路径：准备 10 + max(A 60, B 40) + 收尾 10 = 80 μs，把 A 加速四倍到 15 μs 只降到 60 μs，<strong>A 省 45 μs，请求只省 20 μs</strong>，因为 B 接替成了关键路径；A 降到 40 μs 就到头了。更糟的情况是 A 的新实现大量占带宽把 B 拖到 90 μs，请求反而变成 110 μs。</p>
+    <p>原书的实测案例：RTX PRO 6000 上 Qwen3-8B，输入 7239 token、输出 32 个，36 层，SwiGLU 激活共调用 1152 次（prefill 36 次、decode 1116 次）。换一个 kernel 后：prefill 约 11.2 ms 不变（甚至多 0.03 ms），decode 从 2.4 ms 降到 0.92 ms（约 2.6 倍）。但激活总共才 13.6 ms，占 851 ms 采集区间的 1.6%，所以整个请求预计只省约 1.4 ms——<strong>11 对交错测量的配对差中位数约 1.3 ms，占请求的 0.16%</strong>，9 对变快、2 对变慢。</p>
+    <p>原书还提醒：容量的节省不会原样变成读取的节省。V4.1 让 38 个全局注意力层共享 4 份全局 KV，<strong>驻留降到 V4-Flash 的约四分之一，逐层逻辑读取却只少约 9%</strong>，而且读取量超过了驻留量——共享状态不必每层存一份，但用到它的每层仍要读它。</p>
+    <p class="go">代入自己的热点占比和加速比。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">热点加速 → 请求加速</p>
+      <div id="amG"></div>
+      <label class="ctl"><span>热点占比 f <output id="am2F">1.6%</output></span><input type="range" id="am2Fs" min="1" max="990" value="16"></label>
+      <label class="ctl"><span>热点加速比 s <output id="am2S">2.6</output></span><input type="range" id="am2Ss" min="1.1" max="20" step="0.1" value="2.6"></label>
+      <div class="read"><div class="hl"><div class="v" id="am2R">0</div><div class="k">请求加速比</div></div><div><div class="v" id="am2M">0</div><div class="k">s → ∞ 的上限</div></div><div><div class="v" id="am2T">0</div><div class="k">851 ms 请求能省</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">并行分支：优化 A 的收益到哪为止</p>
+      <label class="ctl"><span>分支 A（μs） <output id="dgA">60</output></span><input type="range" id="dgAs" min="5" max="90" value="60"></label>
+      <label class="ctl"><span>分支 B（μs） <output id="dgB">40</output></span><input type="range" id="dgBs" min="5" max="120" value="40"></label>
+      <div class="tl2" id="dgT"></div>
+      <div class="read"><div class="hl"><div class="v" id="dgR">0</div><div class="k">请求时间（准备 10 + 收尾 10）</div></div><div><div class="v" id="dgK">—</div><div class="k">关键路径</div></div></div>
+    </div>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">分块读写：V = 2MK·(N/n) + 2KN·(M/m) + 2MN；　工作集 S = 2mk + 2kn + 4mn</div>
+    <div class="fx">驻留块数 = min(线程槽, 寄存器, 共享内存, 块数上限) 各自向下取整</div>
+    <div class="fx">在途字节：需求 = 带宽 × 延迟 / SM 数；　供给 = warp 数 × 每 warp 挂起数 × 每条字节</div>
+    <div class="fx">T_pipe = t_m + (n−1)·max(t_m, t_c) + t_c</div>
+    <div class="fx">在线 Softmax：m′ = max(m, max s)，r = exp(m−m′)，ℓ′ = rℓ + Σp，u′ = ru + Σp·V</div>
+    <div class="fx">FA 容量：2ad + 2bd + 4ab + 4ad + 12a ≤ 共享内存</div>
+    <div class="fx">图重放划算：2X / B &lt; 省下的提交时间</div>
+    <div class="fx">T_total = P + r·T（准备 + 每组执行）</div>
+    <div class="fx">S_request = 1 / ((1−f) + f/s)；　有分支时沿依赖图取最长路径</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>128 MiB → 3096</b><span>同一矩阵乘：各过一次 vs 64×64 分块</span></div>
+      <div><b>25%</b><span>原书算例在 H100 一个 SM 上的占用率</span></div>
+      <div><b>15.2 KB vs 32 KiB</b><span>每 SM 在途字节：需求 vs 16 warp 的供给</span></div>
+      <div><b>120 → 72 MiB</b><span>激活链融合；实测 14.2 → 7.7 μs</span></div>
+      <div><b>1 GiB</b><span>8192 序列完整 S、P 的中间读写</span></div>
+      <div><b>2.6 ms → 80 μs</b><span>数学后端 vs FlashAttention（848 vs 22 MiB）</span></div>
+      <div><b>12.8 MiB</b><span>CUDA Graph 还划算的输入上限（省 15 μs、1792 GB/s）</span></div>
+      <div><b>2.7×</b><span>vLLM v0.6.0 主机侧改动带来的 8B 吞吐提升</span></div>
+      <div><b>2.0 → 0.72 ms</b><span>FlashInfer 36 层共用一份 plan</span></div>
+      <div><b>1.3 ms / 0.16%</b><span>kernel 快 2.6 倍后整请求的实测节省</span></div>
+    </div>
+    <p class="src">数字均取自原书第 5 章。</p>
+  </div>
+  <div class="notes" id="n-req"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+function us2(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' ms' : S.f(x, 2) + ' μs'; }
+function mib(x) { return x >= 1024 ? S.f(x / 1024, 2) + ' GiB' : S.f(x, x >= 100 ? 0 : 1) + ' MiB'; }
+
+/* ---------- 时间线 ---------- */
+function tl() {
+  var c = +$('#tlCs').value, hh = +$('#tlHs').value, k = +$('#tlKs').value, d = +$('#tlDs').value;
+  $('#tlC').textContent = c; $('#tlH').textContent = hh; $('#tlK').textContent = k; $('#tlD').textContent = d;
+  var tot = c + hh + k + d, T = Math.max(tot, 1), box = $('#tlT'); box.innerHTML = '';
+  function lane(name, segs) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: name }, r); var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { if (s[1] > 0) h('span', { class: 'b ' + s[2], style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%', text: s[3] }, l); });
+  }
+  lane('CPU', [[0, c, 'cpu', '提交']]);
+  lane('复制', [[c, hh, 'cp', 'H2D'], [c + hh + k, d, 'cp', 'D2H']]);
+  lane('计算', [[c + hh, k, 'kn', 'kernel']]);
+  $('#tlR').textContent = tot + ' μs'; $('#tlS').textContent = S.pct(k / tot);
+  $('#tlU').textContent = S.f(tot / (c + hh + k / 4 + d), 2) + '×';
+}
+['tlCs', 'tlHs', 'tlKs', 'tlDs'].forEach(function (id) { $('#' + id).addEventListener('input', tl); }); tl();
+S.notes($('#n-launch'), {
+  c: [
+    ['算子 / kernel / launch', '数学工作 / 加速器上的执行 / CPU 发起这次执行。'],
+    ['异步提交', 'launch 返回只表示提交完成；要用结果或覆盖在用数据时才等。'],
+    ['stream 与 event', '同流顺序执行；跨流用事件表达依赖。'],
+    ['锁页内存', '普通内存要先复制到锁页缓冲，才由复制引擎搬移。']
+  ],
+  p: [
+    ['四块缓冲四个事件', '漏记一个，程序会卡住而不是变慢。'],
+    ['三种计时', '提交耗时、加速器耗时、完整调用耗时，取决于在哪里开始和结束。'],
+    ['首次编译', '编译 100 ms、每次 1 ms：调 100 次平均 2 ms。']
+  ]
+});
+
+/* ---------- 占用率 ---------- */
+function occ() {
+  var t = Math.pow(2, +$('#ocTs').value), r = +$('#ocRs').value, sm = +$('#ocSms').value, L = +$('#ocLs').value;
+  $('#ocT').textContent = t; $('#ocR').textContent = r; $('#ocSm').textContent = sm; $('#ocL').textContent = L;
+  var byThread = Math.floor(2048 / t), byReg = Math.floor(65536 / (t * r)), bySm = Math.floor(233472 / ((sm + 1) * 1024)), lim = Math.min(byThread, byReg, bySm, 32);
+  var warps = lim * t / 32, occv = warps / 64;
+  var names = []; if (byThread === lim) names.push('线程槽'); if (byReg === lim) names.push('寄存器'); if (bySm === lim) names.push('共享内存');
+  $('#ocT2').innerHTML = '<tr><td>线程槽 2048 ÷ ' + t + '</td><td class="n">' + byThread + ' 块</td></tr>' +
+    '<tr><td>寄存器 64K ÷ (' + t + ' × ' + r + ')</td><td class="n">' + byReg + ' 块</td></tr>' +
+    '<tr><td>共享内存 228 KB ÷ (' + sm + ' + 1) KiB</td><td class="n">' + bySm + ' 块</td></tr>' +
+    '<tr class="tot"><td>驻留块数 / warp 数 / 占用率</td><td class="n">' + lim + ' / ' + warps + ' / ' + S.pct(occv, 0) + '</td></tr>';
+  var need = 3.35e12 * L * 1e-9 / 132, have = warps * 4 * 512;
+  var v = $('#ocV'); v.className = 'verdict3' + (have >= need ? '' : ' bad');
+  v.innerHTML = '在途字节：需求 ' + S.f(need / 1024, 1) + ' KB，供给 ' + S.f(have / 1024, 1) + ' KiB（覆盖率 ' + S.f(have / need, 2) + '）。限制驻留的是 <b>' + (names.join('、') || '块数上限') + '</b>。' + (have >= need ? '' : ' 在途字节不足，有效带宽降为供给 ÷ 延迟 ≈ ' + S.f(have / (L * 1e-9) / 1e9, 0) + ' GB/s（单 SM 份额之外还要乘 SM 数）。');
+}
+['ocTs', 'ocRs', 'ocSms', 'ocLs'].forEach(function (id) { $('#' + id).addEventListener('input', occ); }); occ();
+S.guess($('#ocG'), { q: '原书算例（256 线程、每线程 128 寄存器、96 KiB 工作集）在 H100 一个 SM 上的占用率是多少？', unit: '%', ans: 25, fmt: function (x) { return S.f(x, 0); }, why: '原书：线程槽允许 8 块、寄存器 2 块、共享内存 2 块，取最小值 2 块 = 16 warp，16/64 = 25%。寄存器和共享内存同时卡住驻留，只改一项不够。' });
+S.notes($('#n-occ'), {
+  c: [
+    ['warp', '32 个线程一起发射；256 线程的块 = 8 个 warp。'],
+    ['驻留', '线程槽、寄存器、共享内存各自允许的块数取最小值。'],
+    ['占用率', '驻留 warp 数 ÷ SM 最大驻留 warp 数。'],
+    ['延迟隐藏', '在途请求来自驻留的 warp；不足时有效带宽 = 在途字节 ÷ 延迟。']
+  ],
+  p: [
+    ['换位置不等于解除限制', '累加器挪进寄存器，共享内存松了，寄存器又卡住。'],
+    ['MMA 粒度', '16×8×16 一条指令 4096 FLOPs；128×128×64 的块要发 512 条。'],
+    ['warp specialization', '一个 warp 只发复制、其余只计算，用“满/空”两个栅栏交接。'],
+    ['栅栏的作用域', 'SM 内放行只要几十个周期；跨 SM 要经 L2，高一到两个数量级。']
+  ]
+});
+
+/* ---------- 分块 ---------- */
+var Mt = 1024, Kt = 4096, Nt = 12288;
+function tile() {
+  var m = Math.pow(2, +$('#tiMs').value), n = Math.pow(2, +$('#tiNs').value), k = Math.pow(2, +$('#tiKs').value);
+  $('#tiM').textContent = m; $('#tiN').textContent = n; $('#tiK').textContent = k;
+  var A = 2 * Mt * Kt * (Nt / n), W = 2 * Kt * Nt * (Mt / m), C = 2 * Mt * Nt, V = A + W + C;
+  var Sb = 2 * m * k + 2 * k * n + 4 * m * n, F = 2 * Mt * Kt * Nt;
+  $('#tiT').innerHTML = '<tr><td>A 重复读取（' + (Nt / n) + ' 个列块 × 8 MiB）</td><td class="n">' + mib(A / 1048576) + '</td></tr>' +
+    '<tr><td>W 重复读取（' + (Mt / m) + ' 个行块 × 96 MiB）</td><td class="n">' + mib(W / 1048576) + '</td></tr>' +
+    '<tr><td>C 写出</td><td class="n">' + mib(C / 1048576) + '</td></tr>' +
+    '<tr class="tot"><td>合计 / 工作集</td><td class="n">' + mib(V / 1048576) + ' / ' + S.f(Sb / 1024, 0) + ' KiB</td></tr>';
+  $('#tiV').textContent = mib(V / 1048576); $('#tiI').textContent = S.f(F / V, 1);
+  $('#tiB').textContent = Math.floor(102400 / (Sb + 1024));
+}
+['tiMs', 'tiNs', 'tiKs'].forEach(function (id) { $('#' + id).addEventListener('input', tile); }); tile();
+S.guess($('#tiG'), { q: '三份矩阵一共才 128 MiB。64×64 输出块、每块独立读输入时，跨接口读写一共多少 MiB？', unit: 'MiB', ans: 3096, fmt: function (x) { return S.f(x, 0); }, why: '原书：192 个列块各读一遍 8 MiB 的 A（1536）+ 16 个行块各读一遍 96 MiB 的 W（1536）+ 24 MiB 输出 = 3096 MiB，约 24 倍。换成 128×128 降到 1560 MiB，但工作集从 24 KiB 涨到 80 KiB，一个 SM 从驻留 4 块变成 1 块。' });
+S.notes($('#n-tile'), {
+  c: [
+    ['重复读取', '每个输出块独立读输入时，A 读 N/n 遍、W 读 M/m 遍。'],
+    ['工作集', '2mk + 2kn + 4mn：累加器是 FP32，涨得最快。'],
+    ['时间比', '(1560/3096)·(B₆₄/B₁₂₈)：带宽不变近似减半，带宽掉到四成反而慢 26%。']
+  ],
+  p: [
+    ['跨不过交点', '三种块的强度 15.9 / 31.7 / 63.0，远低于 295，MFU 上限 5% / 11% / 21%。'],
+    ['循环顺序', 'i、k、j 顺序让一次连续传输的数据立刻参与计算，但要同时保存一段输出。'],
+    ['先排除再比较', '按容量排除、按访问量缩小范围、最后实测。']
+  ]
+});
+
+/* ---------- bank & 归约 ---------- */
+function bk(stride) {
+  var box = $('#bkB'); box.innerHTML = '';
+  var counts = {};
+  for (var i = 0; i < 16; i++) { var b = (i * stride) % 32; counts[b] = (counts[b] || 0) + 1; }
+  for (var j = 0; j < 32; j++) {
+    var c = counts[j] || 0;
+    h('span', { class: c > 1 ? 'hot' : c === 1 ? 'hit' : '', text: j }, box);
+  }
+  var distinct = Object.keys(counts).length;
+  $('#bkW').innerHTML = '16 个 lane 读同一列，落在 <b>' + distinct + '</b> 个不同 bank 上，需要 <b>' + (16 / distinct) + '</b> 轮。' + (stride === 32 ? '行跨度 32 字时全部挤在 bank 0。' : '补一个字后依次错开，一轮完成，空间只多 3.1%。');
+}
+S.seg($('#bkS'), function (v) { bk(+v); }); bk(32);
+var Segs = [1, 2, 4, 8, 16, 32], Ulp = { 1: '175.2', 8: '9.2' };
+function rm() {
+  var s = Segs[+$('#rmSs').value]; $('#rmS').textContent = s;
+  $('#rmP').textContent = (1024 * s).toLocaleString();
+  $('#rmV').textContent = s === 1 ? '24 MiB' : S.f(24 + 8 + 0.1 * (s / 8), 1) + ' MiB';
+  $('#rmU').textContent = Ulp[s] || '—';
+}
+$('#rmSs').addEventListener('input', rm); rm();
+S.notes($('#n-layout'), {
+  c: [
+    ['bank', '共享内存分 32 个 bank，bank 号 = 字地址 mod 32。'],
+    ['padding / swizzle', '行末补一个字 / 把 (r,c) 放到 c⊕r 列：都让同列请求错开。'],
+    ['拆归约', '增加并行任务、减少每组临时数据；代价是多读一遍输入和多两次 kernel。'],
+    ['三种切法', '切 M、切 N 得到不同位置的完整结果；切 K 得到部分和，必须再汇合。']
+  ],
+  p: [
+    ['精度会变', '一行平方和：一组一行差 175.2 ULP，分 8 段只差 9.2 ULP。'],
+    ['原子加不可复现', '到达顺序由调度决定；要可复现就写缓冲、等齐、按固定顺序加。'],
+    ['段数不能随 batch 变', '否则同一行输入在不同 batch 下算出不同结果（第 10 篇再用这一点）。']
+  ]
+});
+
+/* ---------- 融合 / 双缓冲 ---------- */
+function db() {
+  var n = +$('#dbNs').value, tm = +$('#dbMs').value, tc = +$('#dbCs').value;
+  $('#dbN').textContent = n; $('#dbM').textContent = tm.toFixed(2); $('#dbC').textContent = tc.toFixed(2);
+  var ser = n * (tm + tc), pipe = tm + (n - 1) * Math.max(tm, tc) + tc;
+  $('#dbS').textContent = us2(ser); $('#dbP').textContent = us2(pipe); $('#dbG').textContent = S.pct(1 - pipe / ser, 0);
+  var T = ser, box = $('#dbT'); box.innerHTML = '';
+  function lane(name, segs, cls) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: name }, r); var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { h('span', { class: 'b ' + cls, style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%' }, l); });
+  }
+  var ms = [], cs = [], t = 0, ct = 0;
+  for (var i = 0; i < n; i++) { ms.push([t, tm]); t += tm; ct = Math.max(t, ct) ; cs.push([ct, tc]); ct += tc; }
+  lane('搬移', ms, 'cp'); lane('计算', cs, 'kn');
+  $('#dbW').innerHTML = tm > tc ? '搬移是较慢的一项，计算单元只有约 ' + S.pct(n * tc / pipe, 0) + ' 的时间在工作；加槽和加快计算都没用，只能减少每块要搬的字节。' : '计算是较慢的一项，流水节拍由它决定。';
+}
+['dbNs', 'dbMs', 'dbCs'].forEach(function (id) { $('#' + id).addEventListener('input', db); }); db();
+S.notes($('#n-fuse'), {
+  c: [
+    ['融合省什么', '中间张量的一次写回和一次读取；两步运算照做。'],
+    ['访问量 ≠ 峰值', '读写少 96 MiB，峰值只少 12 MiB——同一块空间反复用。'],
+    ['T_pipe', 't_m + (n−1)·max(t_m, t_c) + t_c；两个槽是能重叠的最小配置。'],
+    ['背压', '下游来不及处理，上游被迫暂停。']
+  ],
+  p: [
+    ['实测对照', '激活链 14.2 → 7.7 μs，约 1.8 倍，与 72/120 的预测一致。'],
+    ['加 stage 没用', '搬移器已连续工作时，更多 stage 只多占容量。'],
+    ['布局要匹配', '两阶段访问顺序不同时，缓冲要保存更多尚未使用的数据。']
+  ]
+});
+
+/* ---------- FlashAttention ---------- */
+var osSteps = [
+  ['初始', '—', '—', '—', '还没有处理任何块。'],
+  ['处理第一块（分数 0，值 1）', 'm = 0', 'ℓ = 1', 'u = 1', 'exp(0 − 0) = 1，贡献 1×1。'],
+  ['第二块来了（分数 ln2，值 3）', "m′ = ln2", 'r = exp(0 − ln2) = 0.5', '把旧 ℓ、u 都乘 0.5', '基准变了，分子分母要同时缩小，相对权重才不变。'],
+  ['合并', 'ℓ′ = 0.5 + 1 = 1.5', 'u′ = 0.5 + 3 = 3.5', 'u′/ℓ′ = 7/3', '一次处理整行：权重正比 1 和 2，(1 + 2×3)/3 = 7/3，完全一致。']
+];
+S.stepper($('#osStep'), osSteps.length, function (i) {
+  var r = osSteps[i];
+  $('#osT').innerHTML = '<tr><td colspan="2"><b>' + r[0] + '</b></td></tr>' +
+    '<tr><td>状态</td><td class="n">' + r[1] + '</td></tr><tr><td></td><td class="n">' + r[2] + '</td></tr><tr><td></td><td class="n">' + r[3] + '</td></tr>' +
+    '<tr><td colspan="2">' + r[4] + '</td></tr>';
+}, ['初始', '第一块', '换基准', '合并']);
+var Bs2 = [1, 2, 4, 8, 16, 32, 64, 128];
+function fa2() {
+  var b = Bs2[+$('#faBs2').value], d = 128, L = 8192;
+  $('#faB2').textContent = b;
+  var a = Math.floor((101376 - 2 * b * d) / (2 * d + 4 * b + 4 * d + 12));
+  var scans = Math.ceil(L / a), v = scans * 4 + 4, upd = Math.ceil(L / a) * Math.ceil(L / b);
+  $('#faA').textContent = a; $('#faV').textContent = mib(v); $('#faU').textContent = upd.toLocaleString();
+}
+$('#faBs2').addEventListener('input', fa2); fa2();
+S.notes($('#n-flash'), {
+  c: [
+    ['为什么不能逐元素融合', 'Softmax 的分母是整行指数和。'],
+    ['三个状态', 'm（最大分数）、ℓ（指数和）、u（加权值和）；旧块贡献都在里面。'],
+    ['换基准', 'r = exp(m − m′)：分子分母同乘，保持相对权重。'],
+    ['块形状两难', 'b 小少读数据但更新次数暴涨、矩阵维度过小。']
+  ],
+  p: [
+    ['中间矩阵', 'L = 8192 时 S、P 各 256 MiB，一写一读 1 GiB，随 L² 增长。'],
+    ['实测', '数学后端 2.6 ms / 848 MiB，FA 后端 80 μs / 22 MiB，约 33 倍。'],
+    ['b = 1 vs 64', '读 260 vs 404 MiB，更新 524288 vs 12800 次（41 倍）。'],
+    ['后续版本', 'FA-2 改任务分配，FA-3 用异步执行让搬移、矩阵乘、Softmax 重叠。']
+  ]
+});
+
+/* ---------- 运行时 ---------- */
+var Xs = [0.5, 2, 4, 8, 16, 32, 64, 128];
+function cg() {
+  var save = +$('#cgSs').value, X = Xs[+$('#cgXs').value];
+  $('#cgS').textContent = save; $('#cgX').textContent = X;
+  var cp = 2 * X * 1048576 / 1.792e12 * 1e6, lim = save * 1e-6 * 1.792e12 / 2 / 1048576;
+  $('#cgC').textContent = us2(cp); $('#cgL').textContent = S.f(lim, 1) + ' MiB';
+  var w = $('#cgW'); w.className = 'verdict3' + (cp < save ? '' : ' bad');
+  w.innerHTML = cp < save ? '划算：净省约 ' + us2(save - cp) + '。' : '不划算：复制比省下的提交时间还多 ' + us2(cp - save) + '。可以让上游直接写图缓冲，或从更小的位置开始捕获。';
+}
+['cgSs', 'cgXs'].forEach(function (id) { $('#' + id).addEventListener('input', cg); }); cg();
+S.guess($('#cgG'), { q: '图重放省 15 μs 提交时间，复制带宽 1792 GB/s。输入多大时图重放就不划算了？', unit: 'MiB', ans: 12.8, fmt: function (x) { return S.f(x, 1); }, why: '原书：复制同时读写，2X/B < 15 μs → X < 12.8 MiB。2 MiB 输入净省 12.7 μs，16 MiB 就反而亏。' });
+function sp2() {
+  var r = +$('#spRs').value; $('#spR').textContent = r;
+  var opts = [['通用', 100, 17.0], ['分桶', 400, 12.4], ['特化', 900, 6.8]];
+  var tots = opts.map(function (o) { return o[1] + r * o[2]; }), mn = Math.min.apply(null, tots), mx = Math.max.apply(null, tots);
+  S.bars($('#spBars'), opts.map(function (o, i) { return { label: o[0] + '（准备 ' + o[1] + ' ms + ' + o[2] + ' ms/组）', value: tots[i] / mx, text: S.f(tots[i] / 1000, 2) + ' s', cls: tots[i] === mn ? 'ok' : 'dim' }; }));
+  $('#spW').textContent = '当前最省：' + opts[tots.indexOf(mn)][0] + '。原书：1–64 组通用、65–89 组分桶、90 组起特化；若三种程序都已缓存，准备成本为零，特化从第一组起最快。';
+}
+$('#spRs').addEventListener('input', sp2); sp2();
+S.notes($('#n-rt'), {
+  c: [
+    ['主机瓶颈', '加速器缩到 1/4，总时间几乎不变——CPU 提交速度没变。'],
+    ['CUDA Graph', '复用提交序列；加速器 kernel 数不变，融合才减少它。'],
+    ['plan / run 分离', '同一步多层共用一份计划；长度变了必须重新 plan。'],
+    ['通用 / 分桶 / 特化', '越利用已知形状越快，但要编译和保存更多程序。'],
+    ['persistent kernel', '常驻取任务、按块重叠；省的是 launch，依赖的 L2 往返仍在。']
+  ],
+  p: [
+    ['vLLM v0.6.0', '拆进程 + 多步调度 + 异步输出，8B 吞吐 2.7 倍，没动 kernel。'],
+    ['图输入复制', '2X/B < 省下的提交时间，1792 GB/s 下临界 12.8 MiB。'],
+    ['分桶也能更快', '多算 45% 但 MFU 翻倍，17.0 → 12.4 ms。'],
+    ['调优回本', '搜索 10 分钟、每次省 5 μs，要 1.2 亿次调用。']
+  ]
+});
+
+/* ---------- 放回请求 ---------- */
+function am2() {
+  var f = +$('#am2Fs').value / 1000, s = +$('#am2Ss').value;
+  $('#am2F').textContent = S.f(f * 100, f < 0.1 ? 1 : 0) + '%'; $('#am2S').textContent = s.toFixed(1);
+  var sp = 1 / ((1 - f) + f / s);
+  $('#am2R').textContent = S.f(sp, 4) + '×'; $('#am2M').textContent = S.f(1 / (1 - f), 3) + '×';
+  $('#am2T').textContent = S.f(851 - 851 / sp, 1) + ' ms';
+}
+['am2Fs', 'am2Ss'].forEach(function (id) { $('#' + id).addEventListener('input', am2); }); am2();
+S.guess($('#amG'), { q: 'SwiGLU 激活占请求的 1.6%，decode 部分加速 2.6 倍。851 ms 的请求能省多少毫秒？', unit: 'ms', ans: 1.4, fmt: function (x) { return S.f(x, 1); }, why: '原书：激活总共 13.6 ms，只缩短了 decode 部分（2.4 → 0.92 ms），13.6 降到 12.2，预计省约 1.4 ms；11 对交错测量的配对差中位数约 1.3 ms，占请求 0.16%。即使激活归零，也最多省 13.6 ms。' });
+function dg() {
+  var A = +$('#dgAs').value, B = +$('#dgBs').value;
+  $('#dgA').textContent = A; $('#dgB').textContent = B;
+  var tot = 10 + Math.max(A, B) + 10, T = Math.max(tot, 80), box = $('#dgT'); box.innerHTML = '';
+  function lane(name, segs) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: name }, r); var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { h('span', { class: 'b ' + s[2], style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%', text: s[3] }, l); });
+  }
+  lane('准备', [[0, 10, 'cpu', '10']]);
+  lane('分支 A', [[10, A, 'kn', A + '']]);
+  lane('分支 B', [[10, B, 'vec', B + '']]);
+  lane('收尾', [[10 + Math.max(A, B), 10, 'cpu', '10']]);
+  $('#dgR').textContent = tot + ' μs'; $('#dgK').textContent = A >= B ? 'A' : 'B';
+}
+['dgAs', 'dgBs'].forEach(function (id) { $('#' + id).addEventListener('input', dg); }); dg();
+S.notes($('#n-req'), {
+  c: [
+    ['Amdahl', 'S = 1/((1−f) + f/s)；热点越短，其他阶段占比越高。'],
+    ['关键路径', '有分支时沿依赖图取最长路径；另一支会接替成为关键路径。'],
+    ['共享资源', '新实现占带宽把并行分支拖慢时，整个请求反而更慢。']
+  ],
+  p: [
+    ['实测案例', 'decode 激活快 2.6 倍，整请求只省 1.3 ms（0.16%）。'],
+    ['先数调用次数', '统计各形状的调用数 → 每次省多少 → 依赖关系允不允许。'],
+    ['容量 ≠ 读取', 'V4.1 共享 KV 让驻留降到四分之一，逐层读取只少约 9%。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 3 GiB 从哪来', '每个输出块独立读输入：A 读 N/n 遍、W 读 M/m 遍。64×64 读 3096 MiB，128×128 读 1560 MiB；但工作集 24 → 80 KiB，一个 SM 驻留 4 → 1 块，带宽掉下来就可能更慢。'],
+    ['② 各省了什么', '融合省中间张量的写回重读（120 → 72 MiB）；FlashAttention 省完整 S、P 的 1 GiB（2.6 ms → 80 μs）；CUDA Graph 省主机提交，但输入超过 12.8 MiB 时复制就吃掉收益。'],
+    ['③ 放回请求', '按 Amdahl 和关键路径算：热点只占 1.6% 时，kernel 快 2.6 倍也只省约 1.3 ms；优化前先数调用次数和占比。']
+  ],
+  p: [
+    ['方法', '先按容量排除、再按访问量缩小范围、最后实测，和编译器的流程一样。'],
+    ['下一篇', '把 tile 放到多张卡上，跨块依赖换算成集合通信。']
+  ],
+  ph: '一句话'
+});

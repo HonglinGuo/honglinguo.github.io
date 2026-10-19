@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>反思、规划与推理技术</title>
+<meta name="description" content="智能体设计模式学习笔记（二）：反思（生产者—评审者）、规划（方法要被发现还是已知）、Deep Research，以及推理技术全家福：CoT、ToT、自我纠正、PAL、RLVR、ReAct、辩论链 / 辩论图、MASS 与推理扩展定律。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5' fill='%232340D6'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.loopmeta { display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; color: var(--ink-2); margin: 8px 0; }
+.loopmeta b { font-family: var(--f-num); color: var(--ink); font-size: 18px; }
+</style>
+</head>
+<body data-series="adp-series" data-part="2">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>智能体设计模式 · 02</span><span>对应原书第 4、6、17 章</span><span>约 25 分钟</span></p>
+  <h1>让模型<em>回头看、往前想</em></h1>
+  <p class="lead">第 1 篇的三块积木都是“一次就过”的流程。这一篇的三个模式给流程加上思考：反思是做完以后回头检查，规划是动手之前先想好路线，推理技术则是一整套“多花点算力想清楚”的方法。原书把它们分在第 4、6、17 章，放在一起读更容易看出它们的关系。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">Agentic Design Patterns 智能体设计模式</a>》（Antonio Gulli 著，xindoo 等中文翻译）的学习笔记。21 个模式按主题重新分成 7 篇。每个模式先讲它要解决的问题，再用一张统一格式的模式卡收住，最后配一个小实验；原书的 LangChain / ADK / CrewAI 代码不复述，建议对照原书阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-adp/"><b>总览</b>模式地图</a>
+  <a href="../2026-10-16-adp-1/" data-part="1"><b>01</b>流程编排</a>
+  <a href="../2026-10-16-adp-2/" aria-current="page" data-part="2"><b>02</b>反思与规划</a>
+  <a href="../2026-10-16-adp-3/" data-part="3"><b>03</b>连接外部</a>
+  <a href="../2026-10-16-adp-4/" data-part="4"><b>04</b>记忆与成长</a>
+  <a href="../2026-10-16-adp-5/" data-part="5"><b>05</b>稳健可信</a>
+  <a href="../2026-10-16-adp-6/" data-part="6"><b>06</b>协作与调度</a>
+  <a href="../2026-10-16-adp-7/" data-part="7"><b>07</b>附录速览</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#refl">反思</a><a href="#plan">规划</a><a href="#dr">Deep Research</a><a href="#tech">推理技术</a><a href="#react">ReAct</a><a href="#scale">推理扩展</a><a href="#mass">MASS</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>反思为什么推荐拆成生产者和评审者？它的代价是什么？</li>
+    <li>判断该不该用规划模式，原书给的关键问题是什么？</li>
+    <li>ReAct 比 CoT 多了什么？推理扩展定律说的是什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="refl">
+  <div class="part-head"><h2>反思：做完了，再让一个“挑刺的”看一遍</h2><span class="meta">原书第 4 章</span></div>
+  <div class="sec-lede">
+    <p>即使流程设计得再好，第一版输出也常常不够准确、不够完整。反思（Reflection）让智能体评估自己的输出，再用评估结果改进它。原书把它拆成四步：<strong>执行</strong>（产出初稿）→ <strong>评估 / 评审</strong>（用另一次 LLM 调用或规则集检查事实、连贯性、风格、完整性、指令遵循）→ <strong>反思 / 优化</strong>（据此改稿、调参数，甚至改整体计划）→ <strong>迭代</strong>，直到满意或触发停止条件。和链、路由最大的不同是：它引入了<strong>反馈循环</strong>。</p>
+    <p>原书推荐的实现是把角色分开：<strong>生产者</strong>只管产出，<strong>评审者</strong>只管挑问题，评审者通常带一个具体身份，比如“高级软件工程师”“严谨的事实核查员”。单个智能体也能自我反思，但分成两个角色（或两次用不同系统提示的调用）能避免评审自己作品时的“认知偏差”，更客观。原书的 LangChain 示例让模型写一个阶乘函数，评审者要么列出问题清单，要么回复 <code>CODE_IS_PERFECT</code>，以此或最大迭代次数作为停止条件；ADK 示例则让评审者输出 <code>{status, reasoning}</code> 结构化结论。</p>
+    <p>原书也说清了代价：每轮都是新的 LLM 调用，<strong>成本和延迟上升</strong>，不适合时间敏感的场景；对话历史每轮都在变长，<strong>内存密集</strong>，更容易撞上上下文窗口或 API 限制。它还指出反思和两个模式天然配合：<strong>目标设定与监控</strong>提供评判基准，<strong>记忆</strong>让反思从一次性事件变成可累积的过程（都在第 4 篇）。</p>
+    <p class="go">走一遍原书的阶乘例子，看调用次数和历史长度怎么涨。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">生产者—评审者循环（示意对话）</p>
+      <div id="rfStep"></div>
+      <div class="loopmeta"><span>LLM 调用 <b id="rfCalls">0</b> 次</span><span>历史消息 <b id="rfHist">0</b> 条</span></div>
+      <div class="chat" id="rfChat"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">模式卡 · 反思</p>
+      <div class="card2" style="margin-top:0;border:0;padding:0;background:none">
+        <dl>
+          <dt>问题</dt><dd>初稿常常不准确、不完整，基础工作流没有让智能体发现并修正自身错误的环节。</dd>
+          <dt>做法</dt><dd>执行 → 评审 → 优化 → 迭代；推荐分成<strong>生产者</strong>和<strong>评审者</strong>两个角色。</dd>
+          <dt>何时用</dt><dd>质量、准确性、细节比速度和成本更重要：长文、代码、详细计划。需要高客观性时用独立评审者。</dd>
+          <dt>代价</dt><dd>延迟和成本上升；历史膨胀，可能超出上下文窗口或触发 API 限制。</dd>
+          <dt>实现</dt><dd>单轮反思用 LCEL 就能做；完整迭代要有状态的工作流（LangGraph、ADK 的 SequentialAgent / LoopAgent）。</dd>
+          <dt>相关</dt><dd>目标监控提供基准，记忆让反思可累积；推理技术里的“自我纠正”是同一思路。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-refl"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>规划：方法是要“发现”的，还是已经知道的</h2><span class="meta">原书第 6 章</span></div>
+  <div class="sec-lede">
+    <p>规划（Planning）是智能体构思一系列行动、从初始状态走向目标状态的能力。你说“组织一次团队外出”，只定义了<strong>目标</strong>和约束（预算、人数、日期），没给<strong>方法</strong>；规划智能体要自己把路线想出来。计划不是预设的，而是按请求动态生成的。原书强调它的核心价值是<strong>适应性</strong>：首选场地订不到时，好的智能体不会直接失败，而是记下新约束、重新评估、给出替代方案。</p>
+    <p>但原书紧接着泼了冷水：<strong>动态规划是特定工具，不是通用解</strong>。当解法已经被充分理解、可以重复时，把智能体限制在预先确定的固定工作流里更有效，能减少不确定和不可预测的行为。是否用规划，取决于一个问题：<strong>“方法”需要被发现，还是已经已知？</strong></p>
+    <p class="go">按这个标准判断几个场景。</p>
+  </div>
+  <div class="lab"><div id="planQ"></div></div>
+  <div class="card2">
+    <h3>模式卡 · 规划</h3><p class="en">Planning</p>
+    <dl>
+      <dt>问题</dt><dd>复杂目标无法一步完成；没有结构化方法时，智能体难以把高层目标拆成可执行步骤并处理依赖。</dd>
+      <dt>做法</dt><dd>先生成连贯的计划（子目标 / 步骤），再按序执行、编排工具；遇到障碍时调整计划。</dd>
+      <dt>何时用</dt><dd>请求无法由单个动作或工具完成：研究报告、新员工入职、竞品分析等多步且相互依赖的流程。</dd>
+      <dt>不该用</dt><dd>方法已知、可重复的流程，用固定工作流更可靠可预测。</dd>
+      <dt>实现</dt><dd>在提示或任务定义中显式要求“先出计划再执行”（原书用 CrewAI 演示）；Deep Research 是典型产品形态。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="dr">
+  <div class="part-head"><h2>Deep Research：规划模式的产品形态</h2><span class="meta">原书第 6 章、第 17 章</span></div>
+  <div class="sec-lede">
+    <p>原书在规划和推理两章都拿 Deep Research 做例子。Google Gemini Deep Research 先把用户的问题<strong>分解成多点研究计划</strong>，交给用户<strong>审阅修改</strong>；批准后进入迭代的“搜索—分析”循环，根据已收集的信息动态调整查询、识别知识缺口、核对差异；整个过程<strong>异步</strong>运行，可能分析数百个来源，用户可以离开、完成时收到通知；最后不是把结果罗列出来，而是综合成有章节结构的多页报告，并给出完整的来源列表。</p>
+    <p>原书在第 17 章把它概括为一个转变：普通搜索立刻给链接，综合工作留给用户；Deep Research 则是用户给出复杂问题和<strong>一段“时间预算”（通常几分钟）</strong>，换回一份详细报告。OpenAI 的 Deep Research API 有三点被原书强调：带内联引用的结构化输出；<strong>公开所有中间步骤</strong>（推理、搜索查询、运行的代码），便于调试；支持 <strong>MCP</strong>，能把私有知识库接进来。模型有高质量的 <code>o3-deep-research</code> 和低延迟的 <code>o4-mini-deep-research</code> 两档。</p>
+    <p class="go">逐步看 Gemini Deep Research 的流程。</p>
+  </div>
+  <div class="lab">
+    <div id="drStep"></div>
+    <ol class="flow2" id="drFlow"></ol>
+  </div>
+  <div class="notes" id="n-dr"></div>
+</section>
+
+<section class="part" id="tech">
+  <div class="part-head"><h2>推理技术全家福：核心都是推理时多花算力</h2><span class="meta">原书第 17 章</span></div>
+  <div class="sec-lede">
+    <p>第 17 章把这些技术归到一个共同原则下：<strong>在推理过程中分配更多计算</strong>，给模型更多时间或步骤，换取更准确、更连贯、更鲁棒的结果。按原书的顺序：</p>
+    <p><strong>思维链 CoT</strong>：让模型写出中间推理步骤，可以用少样本示例，也可以只说“逐步思考”。<strong>思维树 ToT</strong>：在 CoT 基础上分叉出多条推理路径，支持回溯和比较。<strong>自我纠正</strong>：对草稿和中间思考做内部评审、迭代改进，就是第 4 章反思的推理版。<strong>程序辅助语言模型（原书写作 PALMs）</strong>：让模型生成并执行代码，把精确计算和逻辑操作交给确定性环境。<strong>RLVR（可验证奖励强化学习）</strong>：在数学、代码这类有确定答案的问题上训练，让“推理模型”学会可变长度的长思考，能自我纠正和回溯，难题上多花算力。</p>
+    <p><strong>ReAct</strong>：推理和行动交错，思考 → 行动（调工具）→ 观察 → 再思考。<strong>辩论链 CoD</strong>：原书称其为微软提出的框架，多个模型像委员会一样提出、互相批评、反驳，减少个体偏见。<strong>辩论图 GoD</strong>：把论点做成节点、“支持 / 反驳”做成边，结论来自图中最稳固、有证据支撑的论点集群。<strong>MASS</strong>：自动搜索多智能体系统的提示词和拓扑（本篇最后一节）。</p>
+    <p class="go">把描述和技术对上号。</p>
+  </div>
+  <div class="lab"><div id="techSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：反思 vs 自我纠正</h4>
+    <p>原书第 17 章说自我纠正“如第 4 章的专门示例所示”，两者是同一种思路：<b>反思</b>作为工作流模式，常常拆成生产者和评审者两个角色、跨多次调用；<b>自我纠正</b>作为推理技术，强调在一次推理过程里对草稿和中间思考做内部审查。推理模型通过 RLVR 学会的回溯，可以看作把自我纠正内化进了模型。</p>
+  </div>
+  <div class="notes" id="n-tech"></div>
+</section>
+
+<section class="part" id="react">
+  <div class="part-head"><h2>ReAct：智能体思考过程的骨架</h2><span class="meta">原书第 17 章</span></div>
+  <div class="sec-lede">
+    <p>原书在第 17 章末尾用 ReAct 总结“智能体的思考过程”：<strong>思考</strong>（分解问题、制定计划、分析现状，这段内部独白让推理透明、可引导）→ <strong>行动</strong>（从预定义的离散动作集中选一个，比如搜索、读网页、给出最终答案）→ <strong>观察</strong>（拿到环境反馈）。循环直到智能体执行“完成”动作。ReAct 常用少样本示例，给模型看类似人类的解题轨迹。</p>
+    <p>原书还提到一个细节：<strong>思考的频率可以按任务调整</strong>。事实核查这类知识密集任务，每个动作前后都思考；在模拟环境里导航这类动作很多的决策任务，思考可以更节制，让智能体自己决定何时需要思考。</p>
+    <p class="go">走一遍一个问答任务的 ReAct 轨迹（示意）。</p>
+  </div>
+  <div class="lab">
+    <div id="raStep"></div>
+    <div class="chat" id="raChat"></div>
+  </div>
+  <p class="xref">ReAct 循环在另一个系列里也有展开：<a href="../2026-10-16-agent-1/">深入理解 AI Agent · 01 Agent 入门</a>。</p>
+  <div class="notes" id="n-react"></div>
+</section>
+
+<section class="part" id="scale">
+  <div class="part-head"><h2>推理扩展定律：小模型 + 更多思考预算</h2><span class="meta">原书第 17 章</span></div>
+  <div class="sec-lede">
+    <p>训练扩展定律讲的是数据和算力越多、模型越好；原书介绍的<strong>推理扩展定律</strong>讲的是另一件事：<strong>推理时投入更多计算，往往能让相对小的模型得到更好的结果</strong>。这不一定是换更强的 GPU，而是用更复杂的推理策略，典型例子是让模型生成多个候选答案（多样化束搜索、自一致性），再用选择机制挑出最好的那个。</p>
+    <p>原书由此得出的结论是：“更大就一定更好”并不成立，部署智能体时要在<strong>模型大小、响应延迟、运营成本</strong>三者之间权衡，把算力花在最能提升质量的地方。</p>
+    <p class="go">用最简单的自一致性（多数投票）感受一下：采样越多，正确率怎么变？</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多数投票的正确率（理想化计算）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>单次答对概率 p <output id="scP">0.65</output></span><input type="range" id="scPs" min="0.3" max="0.95" step="0.05" value="0.65"></label>
+      <label class="ctl"><span>采样次数 n <output id="scN">5</output></span><input type="range" id="scNs" min="1" max="31" step="2" value="5"></label>
+    </div>
+    <div class="read"><div><div class="v" id="scA">0</div><div class="k">多数投票后答对的概率</div></div><div class="warn"><div class="v" id="scC">0</div><div class="k">推理成本（相对单次）</div></div></div>
+    <div id="scBars"></div>
+    <p class="note">假设：每次采样独立，答案只有“对 / 错”两种，取多数。这是二项分布的精确计算，不是原书数据。它说明两件事：p &gt; 0.5 时多采样确实能换来正确率；p &lt; 0.5 时投票反而让错得更稳。真实任务里错误答案往往各不相同，情况会比这里复杂。</p>
+  </div>
+  <div class="notes" id="n-scale"></div>
+</section>
+
+<section class="part" id="mass">
+  <div class="part-head"><h2>MASS：让系统自己搜出提示词和拓扑</h2><span class="meta">原书第 17 章（可选高级主题）</span></div>
+  <div class="sec-lede">
+    <p>多智能体系统的效果很依赖两样东西：<strong>每个智能体的提示词质量</strong>，和<strong>它们之间的交互拓扑</strong>。两者组合起来是个巨大的搜索空间。MASS（Multi-Agent System Search）用三阶段交错优化来走这个空间，可选的积木包括聚合、反思、辩论、总结、工具使用。</p>
+    <p>原书总结的三条设计原则：先用高质量提示词把<strong>单个智能体</strong>调好再组合；用<strong>有影响力的拓扑</strong>组合，而不是在无约束的空间里乱搜；最后做<strong>工作流级联合优化</strong>，把智能体之间的相互依赖考虑进去。</p>
+    <p class="go">逐个看三个阶段，每个阶段都带着原书举的例子。</p>
+  </div>
+  <div class="lab">
+    <div id="massStep"></div>
+    <div id="massBody"></div>
+  </div>
+  <div class="notes" id="n-mass"></div>
+</section>
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 反思为什么推荐拆成生产者和评审者？它的代价是什么？</summary><p class="ans">避免评审自己作品时的认知偏差，评审者可以带特定身份和标准，更客观。代价是每轮新增 LLM 调用，成本和延迟上升；历史不断膨胀，内存密集，可能超出上下文窗口或触发 API 限制。</p></details>
+    <details><summary>2. 判断该不该用规划模式，原书给的关键问题是什么？</summary><p class="ans">“方法”需要被发现，还是已经已知？方法已知、可重复时，用固定工作流更可靠、更可预测。</p></details>
+    <details><summary>3. ReAct 比 CoT 多了什么？推理扩展定律说的是什么？</summary><p class="ans">ReAct 在推理中交错行动和观察（思考 → 行动 → 观察），能根据实时反馈调整。推理扩展定律：推理时投入更多计算（如多候选 + 选择），相对小的模型也能得到更好的结果，需要在模型大小、延迟、成本之间权衡。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-adp-1/"><small>上一篇</small><span>01 · 流程编排：提示词链、路由、并行</span></a><a class="nx" href="../2026-10-16-adp-3/"><small>下一篇</small><span>03 · 工具、MCP、RAG 与 A2A</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">xindoo/agentic-design-patterns</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 反思 ---------- */
+var rf = [
+  [{ r: 'user', b: '任务', t: '写一个计算阶乘的 Python 函数：要有文档字符串，处理 0 的阶乘，负数输入要报错。' }],
+  [{ r: 'asst', b: '生产者 · 第 1 版', t: '<code>def factorial(n): return 1 if n == 0 else n * factorial(n-1)</code>' }],
+  [{ r: 'tool', b: '评审者（高级软件工程师）', t: '· 缺少文档字符串<br>· 负数输入没有报错，会无限递归' }],
+  [{ r: 'asst', b: '生产者 · 第 2 版', t: '补上 docstring；<code>if n &lt; 0: raise ValueError(...)</code>' }],
+  [{ r: 'tool', b: '评审者（高级软件工程师）', t: '<code>CODE_IS_PERFECT</code>' }],
+  [{ r: 'sys', b: '循环结束', t: '评审者给出停止信号（或达到最大迭代次数），输出最终代码。' }]
+];
+var rfCalls = [0, 1, 2, 3, 4, 4];
+S.stepper($('#rfStep'), rf.length, function (i) {
+  var c = $('#rfChat'); c.innerHTML = '';
+  for (var k = 0; k <= i; k++) rf[k].forEach(function (m) { S.msg(c, m, k === i); });
+  $('#rfCalls').textContent = rfCalls[i];
+  $('#rfHist').textContent = Math.min(i + 1, 5);
+}, ['任务', '初稿', '评审', '改稿', '评审', '停止']);
+S.notes($('#n-refl'), {
+  c: [
+    ['反思', '智能体评估自身输出并据此改进；引入了反馈循环。'],
+    ['四步', '执行 → 评估 / 评审 → 反思 / 优化 → 迭代（直到满意或停止条件）。'],
+    ['生产者—评审者', '一个只管产出，一个只管挑错；分开能避免自评的认知偏差。'],
+    ['停止条件', '评审者给出“完美”信号，或达到最大迭代次数。']
+  ],
+  p: [
+    ['代价', '每轮新增 LLM 调用：成本、延迟上升；历史膨胀、内存密集。'],
+    ['评审者要有身份', '如“高级软件工程师”“事实核查员”，并按具体标准评审。'],
+    ['两个搭档', '目标提供评判基准；记忆让反思可累积。']
+  ]
+});
+
+/* ---------- 规划 ---------- */
+S.quiz($('#planQ'), [
+  { q: '每月按同一模板汇总销售数据、生成固定格式的报表。', o: ['规划智能体', '固定工作流'], a: 1, why: '方法已知且可重复，原书建议限制自主权，用预先确定的流程，结果更可靠一致。' },
+  { q: '“帮我组织一次团队外出”，只给了预算、人数和日期。', o: ['规划智能体', '固定工作流'], a: 0, why: '原书的例子：只定义目标不定义方法，路线需要智能体自己构思，并在场地订不到时调整。' },
+  { q: '针对一家陌生公司做竞品分析，事先不知道该查哪些来源。', o: ['规划智能体', '固定工作流'], a: 0, why: '原书列出的典型用例；查什么要在过程中发现和调整。' },
+  { q: '新员工入职：创建账号、分配培训、通知各部门，步骤和依赖都清楚。', o: ['规划智能体', '固定工作流', '两者都说得通'], a: 2, why: '原书把入职列为规划的应用场景（把流程分解成有序子任务）；但按它自己的标准，如果步骤已经充分明确可重复，固定工作流更稳。判断依据始终是“方法是否需要被发现”。' }
+]);
+S.notes($('#n-plan'), {
+  c: [
+    ['规划', '构思一系列行动，从初始状态走到目标状态；计划按请求动态生成。'],
+    ['适应性', '计划只是起点，遇到障碍时记录新约束、重新评估、重新规划。'],
+    ['关键问题', '“方法”需要被发现，还是已经已知？']
+  ],
+  p: [
+    ['灵活性 vs 可预测性', '方法已知时用固定工作流，减少不可预测行为。'],
+    ['鼓励规划', '在提示或任务定义中显式要求先出计划。']
+  ]
+});
+
+/* ---------- Deep Research ---------- */
+var dr = [
+  ['分解成多点研究计划', '用户提示 → 多点研究计划，不是一次查询—响应。'],
+  ['用户审阅、修改计划', '执行前协作塑造研究方向。'],
+  ['迭代“搜索—分析”循环', '根据已收集信息动态改写查询，识别知识缺口、核对数据、解决差异。'],
+  ['异步、长时运行', '可能分析数百个来源；抵御单点故障；用户可以离开，完成后收到通知。可并入用户自己的文档。'],
+  ['综合成结构化报告', '批判性评估、识别主题、组织成有章节的多页报告；返回完整来源列表，可附音频概述、图表。']
+];
+var fl = $('#drFlow');
+dr.forEach(function (d) { h('li', { html: d[0] + '<small>' + d[1] + '</small>' }, fl); });
+S.stepper($('#drStep'), dr.length, function (i) {
+  S.$$('li', fl).forEach(function (li, k) { li.className = k === i ? 'on' : (k < i ? 'done' : ''); });
+}, dr.map(function (d) { return d[0]; }));
+S.notes($('#n-dr'), {
+  c: [
+    ['Deep Research', '给一个复杂问题和几分钟“时间预算”，换回带引用的详细报告。'],
+    ['与普通搜索的区别', '普通搜索给链接、综合留给用户；DR 自主完成多轮搜索与综合。']
+  ],
+  p: [
+    ['Gemini DR', '计划可审阅、迭代搜索分析、异步、结构化报告 + 来源列表。'],
+    ['OpenAI DR API', '内联引用、公开中间步骤、支持 MCP；o3 / o4-mini 两档。']
+  ]
+});
+
+/* ---------- 推理技术 ---------- */
+S.sortGame($('#techSort'), {
+  bins: [{ k: 'cot', t: 'CoT 思维链' }, { k: 'tot', t: 'ToT 思维树' }, { k: 'sc', t: '自我纠正' }, { k: 'pal', t: '程序辅助（PAL）' }, { k: 'rlvr', t: 'RLVR' }, { k: 'deb', t: '辩论链 / 辩论图' }],
+  items: [
+    { t: '“请逐步思考”，写出中间步骤', k: 'cot', why: '把单步难题变成一串简单步骤，同时提高透明度。' },
+    { t: '分叉出多条推理路径，可以回溯', k: 'tot', why: '树状结构，在定答案前比较多条轨迹。' },
+    { t: '起草 → 对照原始要求审查 → 改进', k: 'sc', why: '内部评审的迭代循环，第 4 章反思的推理版本。' },
+    { t: '生成 Python 代码并执行，再把结果转回自然语言', k: 'pal', why: '把精确计算交给确定性环境。' },
+    { t: '在有标准答案的数学 / 代码题上用强化学习训练长思考', k: 'rlvr', why: '“推理模型”的关键训练策略，学会可变长度思考、自我纠正和回溯。' },
+    { t: '多个模型像委员会一样互相批评、反驳', k: 'deb', why: '辩论链（CoD）；把论点和支持 / 反驳关系画成网络就是辩论图（GoD）。' },
+    { t: '结论取自图中证据最充分的论点集群', k: 'deb', why: '辩论图（GoD）：基本事实、搜索证据、多模型共识都算“得到良好支持”。' }
+  ]
+});
+S.notes($('#n-tech'), {
+  c: [
+    ['共同原则', '推理时分配更多计算，换准确性、连贯性、鲁棒性。'],
+    ['CoT / ToT', '一条推理链 / 多条可回溯的推理分支。'],
+    ['PAL', '原书写作 PALMs：生成并执行代码，弥补 LLM 精确计算的短板。'],
+    ['RLVR', '可验证奖励强化学习，推理模型的训练关键。'],
+    ['CoD / GoD', '多模型辩论；链式 / 图式组织论点。']
+  ],
+  p: [
+    ['自我纠正 = 反思', '第 4 章的反思放进推理过程里。'],
+    ['ReAct', 'CoT + 工具交互，是智能体的核心操作循环（下一节）。'],
+    ['何时用', '问题需要分解、多步逻辑、外部工具、或“过程和答案同样重要”。']
+  ]
+});
+
+/* ---------- ReAct ---------- */
+var ra = [
+  { r: 'user', t: '某公司现任 CEO 是哪年加入这家公司的？' },
+  { r: 'asst', b: '思考', t: '需要两步：先查现任 CEO 是谁，再查他的加入年份。先搜索。' },
+  { r: 'tool', b: '行动 · 搜索', t: 'search("某公司 现任 CEO")' },
+  { r: 'tool', b: '观察', t: '返回：现任 CEO 为甲。' },
+  { r: 'asst', b: '思考', t: '知道了是甲，下一步查甲的履历。' },
+  { r: 'tool', b: '行动 · 读取网页', t: 'lookup("甲 履历")' },
+  { r: 'tool', b: '观察', t: '返回：甲于某年加入。' },
+  { r: 'asst', b: '行动 · 完成', t: '给出最终答案，并说明依据。' }
+];
+S.stepper($('#raStep'), ra.length, function (i) {
+  var c = $('#raChat'); c.innerHTML = '';
+  for (var k = 0; k <= i; k++) S.msg(c, ra[k], k === i);
+}, ['问题', '思考', '行动', '观察', '思考', '行动', '观察', '完成']);
+S.notes($('#n-react'), {
+  c: [
+    ['ReAct', 'Reasoning + Acting：思考 → 行动 → 观察，交错循环。'],
+    ['动作空间', '预定义的离散动作集，例如搜索、读网页、给出最终答案。'],
+    ['完成动作', '智能体判断已得到解时执行“完成”，循环结束。']
+  ],
+  p: [
+    ['比 CoT 强在哪', '能根据实时反馈调整计划、纠正错误。'],
+    ['少样本轨迹', '给模型看类似人类的思考—行动示例。'],
+    ['思考频率可调', '知识密集任务每步都想；动作密集任务想得更节制。']
+  ]
+});
+
+/* ---------- 推理扩展 ---------- */
+function binom(n, k) { var r = 1; for (var i = 1; i <= k; i++) r = r * (n - k + i) / i; return r; }
+function maj(p, n) { var s = 0; for (var k = Math.floor(n / 2) + 1; k <= n; k++) s += binom(n, k) * Math.pow(p, k) * Math.pow(1 - p, n - k); return s; }
+function sc() {
+  var p = +$('#scPs').value, n = +$('#scNs').value;
+  $('#scP').textContent = p.toFixed(2); $('#scN').textContent = n;
+  $('#scA').textContent = S.pct(maj(p, n)); $('#scC').textContent = n + '×';
+  S.bars($('#scBars'), [1, 3, 5, 9, 15, 31].map(function (m) {
+    var v = maj(p, m); return { label: 'n = ' + m, value: v, text: S.pct(v), cls: m === n ? '' : 'dim' };
+  }));
+}
+['scPs', 'scNs'].forEach(function (id) { $('#' + id).addEventListener('input', sc); });
+sc();
+S.notes($('#n-scale'), {
+  c: [
+    ['推理扩展定律', '性能随推理时分配的计算增加而可预测地提高。'],
+    ['与训练扩展定律区别', '后者关心训练数据和算力；前者关心生成答案时的计算投入。'],
+    ['思考预算', '推理期间额外的计算步骤或算法，如多候选 + 选择。']
+  ],
+  p: [
+    ['小模型也能赢', '给足思考预算时，小模型有时能超过简单生成的大模型。'],
+    ['三方权衡', '模型大小、响应延迟、运营成本。'],
+    ['典型手段', '多样化束搜索、自一致性。']
+  ]
+});
+
+/* ---------- MASS ---------- */
+var ms = [
+  ['① 块级提示词优化', '先单独优化每类智能体（“块”）的提示词，保证组合前每个组件都好用，避免配置不当的组件互相放大问题。', '原书例子（HotpotQA）：“辩论者”智能体被优化成扮演“主要出版物的专家事实核查员”，对照上下文段落找出不一致或无依据的说法。'],
+  ['② 工作流拓扑优化', '从可定制的设计空间里选择、排列智能体交互。用“影响加权”：测每种拓扑相对基线智能体的增益，引导搜索朝更有希望的组合走。', '原书例子（MBPP 编码）：最优拓扑是“多轮反思的预测器 + 跑测试用例验证代码的执行器”，迭代自我纠正 + 外部验证胜过更简单的设计。'],
+  ['③ 工作流级提示词优化', '拓扑定下来后，把全部提示词当成一个整体再优化一轮，让它们适配编排、照顾彼此依赖。', '原书例子（DROP）：最终的“预测器”提示词包含数据集概要（抽取式问答、数字信息）、少样本示例，以及高风险角色设定（“为紧急新闻报道提取关键数字”）。']
+];
+S.stepper($('#massStep'), ms.length, function (i) {
+  $('#massBody').innerHTML = '<div class="card2" style="margin-top:12px"><h3>' + ms[i][0] + '</h3><dl><dt>做什么</dt><dd>' + ms[i][1] + '</dd><dt>原书例子</dt><dd>' + ms[i][2] + '</dd></dl></div>';
+}, ['块级', '拓扑', '工作流级']);
+S.notes($('#n-mass'), {
+  c: [
+    ['MASS', 'Multi-Agent System Search：自动优化多智能体系统的提示词和拓扑。'],
+    ['搜索空间', '可优化的提示词（指令、示例）+ 可配置积木（聚合、反思、辩论、总结、工具）。'],
+    ['影响加权', '按相对基线的增益给拓扑打分，引导搜索。']
+  ],
+  p: [
+    ['原则一', '组合前先把单个智能体的提示词调好。'],
+    ['原则二', '组合有影响力的拓扑，不在无约束空间乱搜。'],
+    ['原则三', '最后做工作流级联合优化，建模相互依赖。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

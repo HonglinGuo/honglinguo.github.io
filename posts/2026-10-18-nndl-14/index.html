@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>概率图模型：表示、学习与推断</title>
+<meta name="description" content="神经网络与深度学习（第二版）学习笔记（十四）：用条件独立性把联合分布拆小；贝叶斯网络、链式 / 分叉 / 汇聚结构与解释消除、d-分离直觉；Sigmoid 信念网络、朴素贝叶斯、HMM；马尔可夫随机场、团与 Hammersley-Clifford 定理、对数线性模型与 CRF、道德化；全观测参数估计与“期望匹配”；EM 算法、ELBO 分解与高斯混合模型；变量消除、信念传播；变分推断与平均场；蒙特卡罗、拒绝采样、重要性采样、MCMC、MH 与吉布斯采样。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='6' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='5' cy='18' r='2.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='19' cy='12' r='3' fill='%232340D6'/%3E%3Cpath d='M7.3 7l9 4M7.3 17l9-4' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.pg3 { width: 100%; max-width: 320px; height: auto; display: block; }
+.pg3 circle { fill: var(--panel); stroke: var(--ink-3); stroke-width: 1.6; }
+.pg3 circle.obs { fill: var(--s2-soft); stroke: var(--s2); stroke-width: 2.2; }
+.pg3 text { font-size: 15px; fill: var(--ink); text-anchor: middle; }
+.pg3 line { stroke: var(--ink-3); stroke-width: 1.6; marker-end: url(#pgArr); }
+.pg3 line.open { stroke: var(--ok); stroke-width: 2.4; }
+.pg3 line.blk { stroke: var(--alert); stroke-dasharray: 5 4; }
+</style>
+</head>
+<body data-series="nndl-series" data-part="14">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>神经网络与深度学习 · 14</span><span>对应原书第 14 章（第 393–427 页）</span><span>约 55 分钟</span></p>
+  <h1>用一张图，<em>把高维分布拆成小块</em></h1>
+  <p class="lead">K 个二值变量的联合分布要 2ᴷ − 1 个参数，K = 100 时约 10³⁰ 个——没法直接建模。概率图模型的办法是用图结构写清楚“谁和谁条件独立”，把联合分布拆成一堆局部因子的乘积。原书把它归成三个基本问题：怎么表示、怎么学习参数、怎么推断。这一章也是后面深度信念网络、VAE、扩散模型的概率底座：神经网络负责把局部因子参数化，图模型负责说明这些因子该怎么组合。</p>
+  <p class="credit">本系列是教材《<a href="https://github.com/nndl/nndl" rel="noopener">神经网络与深度学习（第二版）</a>》（邱锡鹏 著，开放出版前电子稿，本笔记依据 2026 年 7 月 23 日版 PDF）的学习笔记。原书以数学推导为主，这里按“先建直觉、再看公式、最后动手”重新组织：每节先用几段话说清楚它解决什么问题，再给一个可以拖动参数、亲手训练的小实验。公式、定义和例子以原书为准，标注了对应的节号和页码；为演示设的数据和参数会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-18-nndl/"><b>总览</b>知识地图</a>
+  <a href="../2026-10-18-nndl-1/" data-part="1"><b>01</b>绪论</a>
+  <a href="../2026-10-18-nndl-2/" data-part="2"><b>02</b>机器学习概述</a>
+  <a href="../2026-10-18-nndl-3/" data-part="3"><b>03</b>线性模型</a>
+  <a href="../2026-10-18-nndl-4/" data-part="4"><b>04</b>前馈网络</a>
+  <a href="../2026-10-18-nndl-5/" data-part="5"><b>05</b>卷积网络</a>
+  <a href="../2026-10-18-nndl-6/" data-part="6"><b>06</b>循环网络</a>
+  <a href="../2026-10-18-nndl-7/" data-part="7"><b>07</b>优化与正则化</a>
+  <a href="../2026-10-18-nndl-8/" data-part="8"><b>08</b>注意力与 Transformer</a>
+  <a href="../2026-10-18-nndl-9/" data-part="9"><b>09</b>图神经网络</a>
+  <a href="../2026-10-18-nndl-10/" data-part="10"><b>10</b>无监督学习</a>
+  <a href="../2026-10-18-nndl-11/" data-part="11"><b>11</b>模型独立的学习</a>
+  <a href="../2026-10-18-nndl-12/" data-part="12"><b>12</b>深度强化学习</a>
+  <a href="../2026-10-18-nndl-13/" data-part="13"><b>13</b>大模型与智能体</a>
+  <a href="../2026-10-18-nndl-14/" aria-current="page" data-part="14"><b>14</b>概率图模型</a>
+  <a href="../2026-10-18-nndl-15/" data-part="15"><b>15</b>深度信念网络</a>
+  <a href="../2026-10-18-nndl-16/" data-part="16"><b>16</b>深度生成模型</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#rep">模型表示</a><a href="#ud">无向图</a><a href="#learn">参数学习与 EM</a><a href="#infer">精确推断</a><a href="#vi">变分推断</a><a href="#mc">采样法</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>有向图和无向图分别怎么把联合分布拆开？“观测一个变量”会怎样改变其他变量之间的独立性？</li>
+  <li>含隐变量时为什么不能直接最大化似然？EM 算法和证据下界（ELBO）是怎么回事？</li>
+  <li>精确推断算不动时，变分推断和采样法各用什么思路近似？</li>
+</ol></div>
+
+<section class="part" id="rep">
+  <div class="part-head"><h2>模型表示：有向图（贝叶斯网络）</h2><span class="meta">原书 14 章引言、14.1.1–14.1.2 节 · 第 393–399 页</span></div>
+  <div class="sec-lede">
+    <p>链式法则把联合分布写成 Π p(x<sub>k</sub>|x₁, …, x<sub>k−1</sub>)，本身不省参数；省参数靠<strong>条件独立</strong>。原书的例子：四个二值变量，若已知 X₁ 时 X₂、X₃ 独立，已知 X₂、X₃ 时 X₄ 与 X₁ 独立，联合分布就变成 p(x₁)p(x₂|x₁)p(x₃|x₁)p(x₄|x₂, x₃)，参数从 15 个降到 1 + 2 + 2 + 4 = 9 个。图模型用节点表示变量、边表示依赖，三个基本问题是<strong>表示</strong>、<strong>学习</strong>（本章只讲给定结构下的参数估计）、<strong>推断</strong>。</p>
+    <p><strong>有向图模型</strong>（贝叶斯网络、信念网络）用有向无环图：p(x) = Π<sub>k</sub> p(x<sub>k</sub>|x<sub>π<sub>k</sub></sub>)，π<sub>k</sub> 是父节点。原书特别提醒：边表示“局部条件分布直接依赖”，<strong>只有额外赋予因果语义时才能解释成因果</strong>。两个不直接相连的节点是否条件独立，取决于路径上的局部结构和哪些变量被观测——<strong>链式</strong>和<strong>分叉</strong>：中间节点未知时相关，已知时独立；<strong>汇聚</strong>（X₁ → X₂ ← X₃）恰好相反：未知时独立，<strong>观测了汇聚点（或其后代）反而相关</strong>，这叫<strong>解释消除</strong>。这三种结构就是 <strong>d-分离</strong>的核心直觉。一般地，每个变量在给定父节点时独立于它的非后代（局部马尔可夫性质）。</p>
+    <p>常见的有向图模型：<strong>Sigmoid 信念网络</strong> p(x<sub>k</sub> = 1|父) = σ(θ₀ + Σθ<sub>i</sub>x<sub>i</sub>)，M 个父节点时参数从 2<sup>M</sup> 降到 M + 1。它和 Logistic 回归长得像，区别在于后者只建模 p(y|x)（判别模型），前者建模联合分布（生成模型）。<strong>朴素贝叶斯</strong>假设给定类别时各特征条件独立：p(y|x) ∝ p(y)Πp(x<sub>m</sub>|y)，假设很强但少样本时不易过拟合。<strong>隐马尔可夫模型</strong>：隐状态是马尔可夫链，观测只依赖当前隐状态，p(x, y) = Π p(y<sub>t</sub>|y<sub>t−1</sub>)p(x<sub>t</sub>|y<sub>t</sub>)（转移概率 × 输出概率）。</p>
+    <p class="go">切换三种结构、点“观测 X₂”，看 X₁ 和 X₃ 之间的路径是通还是断；再用一个经典的“防盗铃”例子算一下解释消除。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 14.3：三种基本结构</p>
+      <div class="seg" id="dsS"><button data-v="chain" aria-pressed="true">链式</button><button data-v="fork">分叉</button><button data-v="coll">汇聚</button></div>
+      <div class="btnrow"><button class="btn" type="button" id="dsO" aria-pressed="false">观测 X₂：否</button></div>
+      <svg class="pg3" id="dsG" viewBox="0 0 320 170" role="img" aria-label="三变量结构"></svg>
+      <p class="cap" id="dsW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">解释消除：入室盗窃 B → 警报 A ← 地震 E</p>
+      <table class="calc" id="eaT"></table>
+      <p class="cap">条件概率取自经典教科书示例（示意）：p(B) = 0.001，p(E) = 0.002，p(A|B, E) = 0.95，p(A|B, ¬E) = 0.94，p(A|¬B, E) = 0.29，p(A|¬B, ¬E) = 0.001。</p>
+      <p class="cap" id="eaW"></p>
+    </div>
+  </div>
+  <div class="lab"><p class="lab-t">参数量</p><div id="pmG"></div></div>
+  <div class="notes" id="n-rep"></div>
+</section>
+
+<section class="part" id="ud">
+  <div class="part-head"><h2>无向图：马尔可夫随机场</h2><span class="meta">原书 14.1.3–14.1.6 节 · 第 399–403 页</span></div>
+  <div class="sec-lede">
+    <p><strong>无向图模型</strong>（马尔可夫随机场、马尔可夫网络）：每个变量在给定邻居时独立于其他所有变量。它没有拓扑顺序，不能用链式法则逐个分解，而是以<strong>团</strong>（全连通子图）为单位；不被其他团包含的叫<strong>最大团</strong>。<strong>Hammersley-Clifford 定理</strong>：正分布 p(x) &gt; 0 满足局部马尔可夫性质，当且仅当它能写成最大团上非负<strong>势能函数</strong>的乘积 p(x) = (1/Z)Π<sub>c</sub> φ<sub>c</sub>(x<sub>c</sub>)。和有向图最重要的区别是<strong>配分函数 Z</strong>——要对所有取值求和，复杂度是指数级的。取 φ = exp(−E) 就是<strong>吉布斯分布 / 玻尔兹曼分布</strong>，能量越低概率越高。</p>
+    <p>常见的无向图模型：<strong>对数线性模型</strong>（最大熵模型）φ<sub>c</sub> = exp(θ<sub>c</sub><sup>T</sup>f<sub>c</sub>(x<sub>c</sub>))，用它建模 p(y|x) 就是 Softmax 回归；<strong>条件随机场</strong>直接建模 p(y|x)，y 是随机向量，常用的<strong>线性链 CRF</strong> 有状态特征 f₁(x, y<sub>t</sub>) 和转移特征 f₂(y<sub>t</sub>, y<sub>t+1</sub>)。还有玻尔兹曼机、受限玻尔兹曼机（第 15 篇）。</p>
+    <p><strong>有向图转无向图</strong>：如果一个子节点有多个父节点，p(x<sub>k</sub>|父) 把它们都牵扯进来，必须放进同一个团——把共同父节点两两连上，叫<strong>道德化</strong>（“有共同孩子的父母必须结婚”），得到<strong>道德图</strong>。代价是丢掉一些独立性：比如原书图 14.9 中 X₁、X₂、X₃ 在无观测时相互独立，道德图里不再体现。无向图能表达对称、循环的依赖，但不能直接表示方向编码的非对称关系。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>有向图 vs 无向图</b>：局部条件概率之积（自带归一化）vs 团势能之积再除以配分函数 Z。</p>
+    <p><b>团 vs 最大团</b>：任意全连通子图 vs 不能再被更大的团包含的团。</p>
+    <p><b>Sigmoid 信念网络 vs Logistic 回归</b>：生成模型、建模联合分布 vs 判别模型、只建模 p(y|x)。</p>
+    <p><b>最大熵模型 vs CRF</b>：输出 y 是单个类别（Softmax 回归）vs y 是随机向量（序列标注等）。</p>
+    <p><b>有向边 vs 因果</b>：有向边只表示分解结构里的直接依赖，需要额外的因果假设才能读成“因 → 果”。</p>
+  </div>
+  <div class="notes" id="n-ud"></div>
+</section>
+
+<section class="part" id="learn">
+  <div class="part-head"><h2>参数学习：最大似然与 EM 算法</h2><span class="meta">原书 14.2 节 · 第 404–412 页</span></div>
+  <div class="sec-lede">
+    <p><strong>全观测</strong>时直接最大似然。有向图的对数似然是各局部条件概率之和，<strong>每个变量可以分开估计</strong>（离散时就是在训练集上数条件概率表）。无向图（以对数线性模型为例）的梯度是 𝔼<sub>经验分布</sub>[f<sub>c</sub>] − 𝔼<sub>模型分布</sub>[f<sub>c</sub>]：最优时每个团上的特征在数据和模型下期望相等——<strong>期望匹配</strong>。麻烦在于模型期望要对联合分布求和，配分函数又把所有参数耦合在一起，所以只能近似：采样或变分近似模型期望、伪似然、对比散度等。</p>
+    <p><strong>含隐变量</strong>时，边际似然 log p(x; θ) = log Σ<sub>z</sub> p(x, z; θ)，求和在对数里面，梯度也甩不掉它。引入任意分布 q(z)，由 Jensen 不等式得到<strong>证据下界</strong> ELBO = Σ q(z) log(p(x, z)/q(z)) ≤ log p(x)。更精确的分解是 <strong>log p(x; θ) = ELBO(q, x; θ) + KL(q(z) ‖ p(z|x; θ))</strong>，q 取真实后验时 KL = 0、下界变紧。<strong>EM 算法</strong>交替两步：<strong>E 步</strong>固定 θ，令 q = p(z|x; θ<sub>t</sub>)，让下界贴上去（这一步本身是推断问题）；<strong>M 步</strong>固定 q，最大化 ELBO 更新 θ（相当于全观测问题）。于是 log p(θ<sub>t+1</sub>) ≥ ELBO(q<sub>t+1</sub>, θ<sub>t+1</sub>) ≥ ELBO(q<sub>t+1</sub>, θ<sub>t</sub>) = log p(θ<sub>t</sub>)：<strong>似然单调不降</strong>，收敛到局部最优。</p>
+    <p><strong>高斯混合模型</strong>是 EM 的典型应用：隐变量 z 表示样本来自哪个高斯。E 步算<strong>责任度</strong> γ<sub>nk</sub> = π<sub>k</sub>𝒩(x<sub>n</sub>; μ<sub>k</sub>, σ<sub>k</sub>)/Σ<sub>j</sub>π<sub>j</sub>𝒩(x<sub>n</sub>; μ<sub>j</sub>, σ<sub>j</sub>)；M 步令 N<sub>k</sub> = Σ<sub>n</sub>γ<sub>nk</sub>，π<sub>k</sub> = N<sub>k</sub>/N，μ<sub>k</sub> 和 σ<sub>k</sub>² 是按 γ 加权的均值和方差。可以看作“软”版本的 K-Means（第 10 篇）。</p>
+    <p class="go">在一组一维数据上跑两个分量的 GMM（数据为示意），每点一次走一步 E 或 M，看 log p 和 ELBO 怎么交替贴合、上升——对应原书图 14.11 和图 14.13。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">GMM 的 EM：E 步让 ELBO = log p，M 步把 ELBO 推高</p>
+    <div class="btnrow"><button class="btn pri" type="button" id="emStep">E 步</button><button class="btn" type="button" id="emRun">连跑 10 轮</button><button class="btn" type="button" id="emR">重来</button><span class="stepinfo" id="emI"></span></div>
+    <div id="emC"></div>
+    <div class="lab-split">
+      <table class="calc" id="emT"></table>
+      <div id="emB"></div>
+    </div>
+    <p class="cap" id="emW"></p>
+  </div>
+  <div class="notes" id="n-learn"></div>
+</section>
+
+<section class="part" id="infer">
+  <div class="part-head"><h2>精确推断：变量消除与信念传播</h2><span class="meta">原书 14.3 节 · 第 412–416 页</span></div>
+  <div class="sec-lede">
+    <p><strong>推断</strong>是观测到 e 时计算 p(q|e) = Σ<sub>z</sub>p(q, e, z)/Σ<sub>q, z</sub>p(q, e, z)，关键是算边际分布。<strong>变量消除法</strong>利用乘法分配律 ab + ac = a(b + c)，把求和尽量往里推、一次消一个变量：原书例子里 p(x₁, x₄) 的计算量从 K² 次加法、3K² 次乘法降到 K² + K 次加法、K² + K + 1 次乘法。计算量和消除顺序密切相关；缺点是算多个边际分布时重复计算很多。</p>
+    <p><strong>信念传播</strong>（和积算法、消息传递）把这些中间结果当成“消息”存起来复用。在链 X₁ – … – X<sub>T</sub> 上，p(x<sub>t</sub>) = (1/Z) μ<sub>t−1,t</sub>(x<sub>t</sub>) μ<sub>t+1,t</sub>(x<sub>t</sub>)，前向消息 μ<sub>t−1,t</sub>(x<sub>t</sub>) = Σ φ(x<sub>t−1</sub>, x<sub>t</sub>) μ<sub>t−2,t−1</sub>(x<sub>t−1</sub>)，后向同理。先前向传一遍、再后向传一遍，就能得到<strong>所有</strong>变量的边际，复杂度 O(TK²)。树结构上：叶 → 根传一遍，根 → 叶再传一遍。有环时可以用联合树算法转成无环图，或者直接用<strong>环路信念传播</strong>（不保证收敛和精确）。</p>
+    <p>结构复杂、变量连续且积分没有闭式解时，精确推断就不可行了，需要<strong>近似推断</strong>：环路信念传播、变分推断、采样法。</p>
+  </div>
+  <div class="lab"><p class="lab-t">信念传播省了多少</p><div id="bpG"></div></div>
+  <div class="notes" id="n-infer"></div>
+</section>
+
+<section class="part" id="vi">
+  <div class="part-head"><h2>变分推断</h2><span class="meta">原书 14.4 节 · 第 416–418 页</span></div>
+  <div class="sec-lede">
+    <p>函数把数映到数，<strong>泛函</strong>把函数映到数（比如熵把一个分布映到一个实数）；<strong>变分法</strong>找让泛函取极值的函数。<strong>变分推断</strong>（变分贝叶斯）在一个简单的分布族 𝒬 里找 q*(z) = argmin KL(q(z) ‖ p(z|x)) 来近似后验。后验本身算不出来，但借用 EM 里的分解 log p(x) = ELBO + KL，log p(x) 和 q 无关，所以<strong>最小化 KL 等价于最大化 ELBO</strong>。变分推断可以看作 EM 的扩展版：处理 E 步里后验无法精确计算的情况。</p>
+    <p>最常用的分布族是<strong>平均场</strong>：q(z) = Π<sub>m</sub> q<sub>m</sub>(z<sub>m</sub>)，各组隐变量相互独立。固定其他组，最优的 q<sub>j</sub>* ∝ exp(𝔼<sub>q(z∖j)</sub>[log p(x, z)])，用<strong>坐标上升</strong>轮流更新各组，ELBO 通常单调改进、收敛到局部最优或驻点。扩展有：随机变分推断（SVI，随机梯度处理大数据）、黑盒变分推断（BBVI，用 REINFORCE 式的打分函数估计或重参数化估计 ELBO 梯度）、<strong>摊销变分推断</strong>（用神经网络直接把 x 映射到变分参数，不必对每个样本单独优化——这正是 VAE 的核心思想，见第 16 篇）。</p>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>EM vs 变分推断</b>：E 步能精确算后验（q = p(z|x)）vs 后验算不出，在简单分布族里找最接近的 q。两者都在最大化同一个 ELBO。</p>
+    <p><b>ELBO 的两种写法</b>：Σq log(p(x, z)/q)（Jensen 下界）＝ log p(x) − KL(q ‖ p(z|x))（差多少就是 KL）。</p>
+    <p><b>平均场 vs 摊销</b>：把 q 拆成独立因子、逐个坐标上升 vs 用一个网络 x ↦ q 的参数，所有样本共用。</p>
+  </div>
+  <div class="notes" id="n-vi"></div>
+</section>
+
+<section class="part" id="mc">
+  <div class="part-head"><h2>采样法：拒绝、重要性与 MCMC</h2><span class="meta">原书 14.5 节 · 第 418–425 页</span></div>
+  <div class="sec-lede">
+    <p>很多时候推断分布不是目的，目的是算某个期望 𝔼<sub>p</sub>[f(x)]。<strong>蒙特卡罗方法</strong>：从 p 里独立抽 N 个样本取平均，大数定律保证收敛（经典例子是在正方形里撒点估计 π）。难点是“怎么从 p 里抽样”：累积分布函数可逆时可以用 cdf<sup>−1</sup>(ξ)，ξ 是 [0, 1] 均匀随机数；p 复杂、只知道未归一化的 p̂ 时，要用间接的办法。</p>
+    <p><strong>拒绝采样</strong>：找一个容易采样的<strong>提议分布</strong> q 和常数 k，使 kq(x) ≥ p̂(x) 处处成立；从 q 抽 x̂，以 p̂(x̂)/(kq(x̂)) 的概率接受。kq 比 p̂ 大得越多，拒绝越多，高维时接受率迅速下降。<strong>重要性采样</strong>：只想算期望的话，样本不必服从 p——𝔼<sub>p</sub>[f] = 𝔼<sub>q</sub>[f · p/q]，用重要性权重 w = p/q 修正；只知道 p̂ 时用自归一化权重 Σf ŵ/Σŵ。（第 11 篇的协变量偏移、第 12 篇的异策略和 PPO 都用到了它。）</p>
+    <p>高维时这两种都受维数灾难影响。<strong>MCMC</strong> 把采样看成一条马尔可夫链，只要链的平稳分布是 p，达到平稳后抽的样本就服从 p。要丢掉开头的<strong>预烧期</strong>，相邻样本相关时可以每隔 M 步取一个（也不能保证独立，还要看混合情况和有效样本量）。<strong>Metropolis-Hastings</strong>：从 q(x|x<sub>t</sub>) 提议 x̂，以 A = min(1, p(x̂)q(x<sub>t</sub>|x̂)/(p(x<sub>t</sub>)q(x̂|x<sub>t</sub>))) 接受，否则原地不动；可以用细致平稳条件证明平稳分布是 p，而且只需要 p 的比值，<strong>配分函数正好约掉</strong>。提议对称时简化为 <strong>Metropolis 算法</strong> A = min(1, p(x̂)/p(x<sub>t</sub>))。<strong>吉布斯采样</strong>用全条件分布 p(x<sub>m</sub>|x<sub>∖m</sub>) 逐维采样，接受率恒为 1，是 MH 的特例。</p>
+    <p class="go">左边：同一个双峰目标，调节 k 看拒绝采样的接受率；右边：用 Metropolis 算法采样，调节提议步长 σ 看“混合”好坏。目标分布为示意。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">拒绝采样：kq(x) 必须盖住 p̂(x)</p>
+      <label class="ctl"><span>k 是最小可行值的几倍 <output id="rjK">1.0</output></span><input type="range" id="rjKs" min="1" max="4" step="0.1" value="1"></label>
+      <div id="rjC"></div>
+      <p class="cap" id="rjW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">Metropolis 算法：提议 x̂ ~ 𝒩(x<sub>t</sub>, σ²)</p>
+      <label class="ctl"><span>提议步长 σ（对数刻度） <output id="mhS">1.0</output></span><input type="range" id="mhSs" min="-2" max="2.5" step="0.1" value="0"></label>
+      <div id="mhH"></div>
+      <div id="mhT"></div>
+      <p class="cap" id="mhW"></p>
+    </div>
+  </div>
+  <div class="lab"><p class="lab-t">蒙特卡罗估计 π</p><div id="piG"></div></div>
+  <div class="notes" id="n-mc"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">有向图：p(x) = Π_k p(x_k | x_{π_k})；无向图：p(x) = (1/Z) Π_c φ_c(x_c)，φ = exp(−E)</div>
+    <div class="fx">链 / 分叉：观测中间点阻断；汇聚：观测汇聚点（或后代）打通——解释消除</div>
+    <div class="fx">无向图 MLE 梯度：𝔼_{p̃}[f_c] − 𝔼_{p(x;θ)}[f_c]</div>
+    <div class="fx">log p(x;θ) = ELBO(q,x;θ) + KL(q(z) ‖ p(z|x;θ))；ELBO = Σ_z q(z) log(p(x,z;θ)/q(z))</div>
+    <div class="fx">GMM：γ_nk = π_k 𝒩(x_n;μ_k,σ_k)/Σ_j π_j 𝒩(x_n;μ_j,σ_j)；π_k = N_k/N，μ_k = Σγ x/N_k，σ_k² = Σγ(x−μ_k)²/N_k</div>
+    <div class="fx">BP：μ_{t−1,t}(x_t) = Σ_{x_{t−1}} φ(x_{t−1},x_t) μ_{t−2,t−1}(x_{t−1})；p(x_t) ∝ μ_{t−1,t} μ_{t+1,t}；O(TK²)</div>
+    <div class="fx">平均场：q_j* ∝ exp(𝔼_{q(z∖j)}[log p(x,z)])</div>
+    <div class="fx">重要性采样：𝔼_p[f] = 𝔼_q[f p/q]；MH：A = min(1, p(x̂)q(x_t|x̂) / (p(x_t)q(x̂|x_t)))</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-18-nndl-13/"><small>上一篇</small><span>13 · 大语言模型与智能体</span></a><a class="nx" href="../2026-10-18-nndl-15/"><small>下一篇</small><span>15 · 深度信念网络</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/nndl/nndl" rel="noopener">nndl/nndl</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 三种结构 ---------- */
+var dsMode = 'chain', dsObs = false;
+function ds() {
+  var g = $('#dsG'); g.innerHTML = '<defs><marker id="pgArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="' + S.css('--ink-3') + '"></path></marker></defs>';
+  var P = { 1: [50, 85], 2: [160, 85], 3: [270, 85] };
+  if (dsMode === 'fork') P = { 1: [60, 140], 2: [160, 35], 3: [260, 140] };
+  if (dsMode === 'coll') P = { 1: [60, 35], 2: [160, 140], 3: [260, 35] };
+  var E = dsMode === 'chain' ? [[1, 2], [2, 3]] : dsMode === 'fork' ? [[2, 1], [2, 3]] : [[1, 2], [3, 2]];
+  var open = dsMode === 'coll' ? dsObs : !dsObs;
+  E.forEach(function (e) {
+    var a = P[e[0]], b = P[e[1]], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.sqrt(dx * dx + dy * dy);
+    S.svg('line', { x1: a[0] + dx / L * 26, y1: a[1] + dy / L * 26, x2: b[0] - dx / L * 28, y2: b[1] - dy / L * 28, class: open ? 'open' : 'blk', style: 'color:' + S.css(open ? '--ok' : '--alert') }, g);
+  });
+  [1, 2, 3].forEach(function (k) { S.svg('circle', { cx: P[k][0], cy: P[k][1], r: 24, class: k === 2 && dsObs ? 'obs' : '' }, g); S.svg('text', { x: P[k][0], y: P[k][1] + 5, text: 'X' + k }, g); });
+  var name = { chain: '链式 X₁ → X₂ → X₃', fork: '分叉 X₁ ← X₂ → X₃', coll: '汇聚 X₁ → X₂ ← X₃' }[dsMode];
+  var why = { chain: dsObs ? '知道了中间环节 X₂，X₁ 对 X₃ 再没有额外信息。' : 'X₁ 通过 X₂ 影响 X₃，信息沿链传过去。', fork: dsObs ? '共同的“原因” X₂ 已知，两个“结果”之间的关联就被解释掉了。' : 'X₁、X₃ 都依赖 X₂，看到一个能推测 X₂，进而推测另一个。', coll: dsObs ? '知道了共同的“结果” X₂，两个原本无关的“原因”之间出现了此消彼长的关系——这就是解释消除。' : '两个“原因”各自独立，在不知道结果时互不影响。' }[dsMode];
+  $('#dsW').innerHTML = '<b>' + name + '</b>，X₂ ' + (dsObs ? '已观测' : '未观测') + '：X₁ 与 X₃ ' + (open ? '<b style="color:var(--ok)">一般不独立</b>（路径通）' : '<b style="color:var(--alert)">条件独立</b>（路径断）') + '。' + why;
+  $('#dsO').textContent = '观测 X₂：' + (dsObs ? '是' : '否'); $('#dsO').setAttribute('aria-pressed', dsObs ? 'true' : 'false');
+}
+S.seg($('#dsS'), function (v) { dsMode = v; ds(); });
+$('#dsO').addEventListener('click', function () { dsObs = !dsObs; ds(); }); ds();
+(function () {
+  var pB = 0.001, pE = 0.002, pA = { '11': 0.95, '10': 0.94, '01': 0.29, '00': 0.001 };
+  function joint(b, e, a) { var pa = pA['' + b + e]; return (b ? pB : 1 - pB) * (e ? pE : 1 - pE) * (a ? pa : 1 - pa); }
+  var pBA = (joint(1, 0, 1) + joint(1, 1, 1)) / (joint(1, 0, 1) + joint(1, 1, 1) + joint(0, 0, 1) + joint(0, 1, 1));
+  var pBAE = joint(1, 1, 1) / (joint(1, 1, 1) + joint(0, 1, 1));
+  var pBAnE = joint(1, 0, 1) / (joint(1, 0, 1) + joint(0, 0, 1));
+  $('#eaT').innerHTML = '<tr><td>什么都不知道</td><td class="n">p(B) = ' + S.f(pB, 3) + '</td></tr><tr><td>听到警报响</td><td class="n">p(B|A) = ' + S.f(pBA, 3) + '</td></tr><tr><td>警报响，且确认发生了地震</td><td class="n">p(B|A, E) = ' + S.f(pBAE, 4) + '</td></tr><tr><td>警报响，且确认没有地震</td><td class="n">p(B|A, ¬E) = ' + S.f(pBAnE, 3) + '</td></tr>';
+  $('#eaW').innerHTML = '听到警报，盗窃的概率从 0.1% 升到 <b>' + S.pct(pBA, 1) + '</b>；再得知发生了地震，警报已经被地震“解释”了，盗窃的概率又跌回 <b>' + S.pct(pBAE, 2) + '</b>。B 和 E 本来独立，观测了它们的共同结果 A 之后就不再独立——知道其一会改变对另一个的判断。';
+})();
+S.guess($('#pmG'), { q: '100 个二值变量，不作任何独立性假设，联合概率表需要多少个参数？（填 10 的几次方）', unit: '10^', ans: 30, fmt: function (x) { return S.f(x, 1); }, why: '2¹⁰⁰ − 1 ≈ 1.27 × 10³⁰。如果每个变量最多只有 3 个父节点，有向图里每个变量的条件概率表最多 2³ = 8 个参数，总共不超过 800 个。条件独立把指数级的问题变成了线性规模。' });
+S.notes($('#n-rep'), {
+  c: [
+    ['概率图模型', '用图描述多元随机变量之间的条件独立关系。'],
+    ['三个基本问题', '表示、学习（结构 + 参数）、推断。'],
+    ['贝叶斯网络', '有向无环图，p(x) = Π p(x_k | 父节点)。'],
+    ['解释消除', '汇聚结构中观测共同结果，使原本独立的原因变得相关。'],
+    ['d-分离', '由链式、分叉、汇聚三种局部结构判断路径是否被阻断。'],
+    ['Sigmoid 信念网络', 'p(x_k = 1 | 父) = σ(θ₀ + Σθ_i x_i)。'],
+    ['朴素贝叶斯', '给定类别，各特征条件独立。'],
+    ['HMM', '隐状态马尔可夫链 + 只依赖当前隐状态的观测。']
+  ],
+  p: [
+    ['原书四变量例子', '15 个参数降到 1 + 2 + 2 + 4 = 9 个'],
+    ['链式 / 分叉', '中间节点未知时相关，已知时独立'],
+    ['汇聚', '汇聚点未知时独立，已知时一般不独立'],
+    ['局部马尔可夫性', '给定父节点，独立于所有非后代'],
+    ['参数化 CPT', 'M 个父节点：表格 2^M 个参数 vs Sigmoid M + 1 个'],
+    ['HMM 两类概率', '转移概率 p(y_t|y_{t−1})、输出概率 p(x_t|y_t)']
+  ]
+});
+S.notes($('#n-ud'), {
+  c: [
+    ['马尔可夫随机场', '给定邻居，一个变量独立于其他所有变量。'],
+    ['团 / 最大团', '全连通子图 / 不被更大团包含的团。'],
+    ['势能函数', '定义在团上的非负函数 φ_c(x_c)。'],
+    ['配分函数 Z', '对所有取值求和的归一化项，指数级复杂度。'],
+    ['对数线性模型', 'φ = exp(θᵀf)，即最大熵模型；条件形式即 Softmax 回归。'],
+    ['线性链 CRF', '状态特征 + 转移特征，直接建模 p(y|x)。'],
+    ['道德化', '把共同父节点两两连边，有向图 → 无向图。']
+  ],
+  p: [
+    ['Hammersley-Clifford', '正分布：满足局部马尔可夫性 ⇔ 最大团势能之积'],
+    ['吉布斯 / 玻尔兹曼分布', 'p(x) = (1/Z) exp(−Σ E_c(x_c))，能量低概率高'],
+    ['道德化的代价', '丢失部分独立性（如共同父节点的边际独立）'],
+    ['无向图的长处', '能表达对称、循环依赖']
+  ]
+});
+
+/* ---------- GMM EM ---------- */
+var EMX = (function () { var r = S.rng(23), a = []; for (var i = 0; i < 60; i++) a.push(-1.6 + 0.7 * S.randn(r)); for (i = 0; i < 90; i++) a.push(1.6 + 1.0 * S.randn(r)); return a; })();
+function npdf(x, m, s) { return Math.exp(-(x - m) * (x - m) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI)); }
+var emP, emQ, emPhase, emIt, emHist;
+function emInit() { emP = { pi: [0.5, 0.5], mu: [-0.3, 0.4], sd: [2, 2] }; emQ = EMX.map(function () { return [0.5, 0.5]; }); emPhase = 'E'; emIt = 0; emHist = []; emRec(); }
+function logp(P) { return EMX.reduce(function (s, x) { return s + Math.log(P.pi[0] * npdf(x, P.mu[0], P.sd[0]) + P.pi[1] * npdf(x, P.mu[1], P.sd[1])); }, 0) / EMX.length; }
+function elbo(P, Q) { return EMX.reduce(function (s, x, n) { var t = 0; for (var k = 0; k < 2; k++) { var g = Q[n][k]; if (g > 1e-12) t += g * Math.log(P.pi[k] * npdf(x, P.mu[k], P.sd[k]) / g); } return s + t; }, 0) / EMX.length; }
+function emRec() { emHist.push([emHist.length, logp(emP), elbo(emP, emQ)]); }
+function eStep() { emQ = EMX.map(function (x) { var a = emP.pi[0] * npdf(x, emP.mu[0], emP.sd[0]), b = emP.pi[1] * npdf(x, emP.mu[1], emP.sd[1]); return [a / (a + b), b / (a + b)]; }); }
+function mStep() {
+  var P = { pi: [], mu: [], sd: [] };
+  for (var k = 0; k < 2; k++) {
+    var Nk = 0, m = 0, v = 0; EMX.forEach(function (x, n) { Nk += emQ[n][k]; m += emQ[n][k] * x; }); m /= Nk;
+    EMX.forEach(function (x, n) { v += emQ[n][k] * (x - m) * (x - m); }); v /= Nk;
+    P.pi.push(Nk / EMX.length); P.mu.push(m); P.sd.push(Math.max(0.15, Math.sqrt(v)));
+  }
+  emP = P;
+}
+function emOne() { if (emPhase === 'E') { eStep(); emPhase = 'M'; } else { mStep(); emPhase = 'E'; emIt++; } emRec(); }
+var emChart = S.chart($('#emC'), { h: 250, x: [-5, 6], y: [0, 0.4], xt: [-4, -2, 0, 2, 4, 6], yt: [0, 0.1, 0.2, 0.3, 0.4], xl: 'x' });
+function emDraw() {
+  var bins = [], w = 0.5; for (var b = -5; b < 6; b += w) bins.push([b, 0]);
+  EMX.forEach(function (x) { var i = Math.floor((x + 5) / w); if (i >= 0 && i < bins.length) bins[i][1]++; });
+  var hist = []; bins.forEach(function (b) { var h = b[1] / (EMX.length * w); hist.push([b[0], 0], [b[0], h], [b[0] + w, h], [b[0] + w, 0]); });
+  emChart({ curves: [{ pts: hist, c: 'dim', w: 1.2, label: '数据直方图' }, { f: function (x) { return emP.pi[0] * npdf(x, emP.mu[0], emP.sd[0]); }, c: 'c1', dash: 1, label: '分量 1' }, { f: function (x) { return emP.pi[1] * npdf(x, emP.mu[1], emP.sd[1]); }, c: 'c2', dash: 1, label: '分量 2' }, { f: function (x) { return emP.pi[0] * npdf(x, emP.mu[0], emP.sd[0]) + emP.pi[1] * npdf(x, emP.mu[1], emP.sd[1]); }, c: 'ok', label: '混合密度' }] });
+  var last = emHist[emHist.length - 1], lp = last[1], el = last[2];
+  $('#emT').innerHTML = [0, 1].map(function (k) { return '<tr><td>分量 ' + (k + 1) + '</td><td class="n">π = ' + S.f(emP.pi[k], 2) + '，μ = ' + S.f(emP.mu[k], 2) + '，σ = ' + S.f(emP.sd[k], 2) + '</td></tr>'; }).join('') +
+    '<tr><td>平均 log p(x; θ)</td><td class="n">' + S.f(lp, 4) + '</td></tr><tr><td>平均 ELBO(q, x; θ)</td><td class="n">' + S.f(el, 4) + '</td></tr><tr class="tot"><td>KL(q ‖ p(z|x)) = 差值</td><td class="n">' + S.f(lp - el, 4) + '</td></tr>';
+  var lo = Math.min.apply(null, emHist.map(function (h) { return h[2]; })), hi = Math.max.apply(null, emHist.map(function (h) { return h[1]; }));
+  S.bars($('#emB'), [{ label: 'log p(x; θ)', value: (lp - lo + 0.02) / (hi - lo + 0.02), text: S.f(lp, 3), cls: 'c2' }, { label: 'ELBO', value: (el - lo + 0.02) / (hi - lo + 0.02), text: S.f(el, 3), cls: 'ok' }]);
+  $('#emStep').textContent = emPhase === 'E' ? 'E 步' : 'M 步';
+  $('#emI').textContent = '已完成 ' + emIt + ' 轮，下一步：' + (emPhase === 'E' ? 'E 步（更新 q）' : 'M 步（更新 θ）');
+  var prev = emHist.length > 1 ? emHist[emHist.length - 2] : null;
+  $('#emW').innerHTML = !prev ? '初始化：两个分量都很宽、挤在中间；q 设为均匀的 0.5 / 0.5，所以 ELBO 比 log p 低，差值就是 KL。' :
+    emPhase === 'M' ? 'E 步：θ 不变，log p 不变；q 换成当前后验（责任度），KL 降到 0，<b>ELBO 上升到和 log p 相等</b>。' :
+    'M 步：q 不变，按责任度加权重新估计 π、μ、σ，<b>ELBO 上升</b>；θ 变了之后，q 不再是新后验，KL 又大于 0，于是 log p 比 ELBO 升得更多（log p 从 ' + S.f(emHist[emHist.length - 3] ? emHist[emHist.length - 3][1] : prev[1], 4) + ' 升到 ' + S.f(lp, 4) + '）。';
+}
+$('#emStep').addEventListener('click', function () { emOne(); emDraw(); });
+$('#emRun').addEventListener('click', function () { for (var i = 0; i < 20; i++) emOne(); if (emPhase === 'M') emOne(); emDraw(); });
+$('#emR').addEventListener('click', function () { emInit(); emDraw(); });
+emInit(); emDraw();
+S.notes($('#n-learn'), {
+  c: [
+    ['全观测有向图', '各局部条件概率分开做最大似然；离散时数频率。'],
+    ['期望匹配', '无向图 MLE 最优时，团特征的经验期望 = 模型期望。'],
+    ['边际似然 / 证据', 'p(x; θ) = Σ_z p(x, z; θ)。'],
+    ['ELBO', '对数边际似然的下界，Σ q log(p(x, z)/q)。'],
+    ['EM 算法', 'E 步令 q = 后验，M 步最大化 ELBO。'],
+    ['GMM', '多个高斯的加权组合，隐变量表示来自哪个分量。'],
+    ['责任度 γ_nk', '样本 n 属于分量 k 的后验概率。']
+  ],
+  p: [
+    ['无向图学习难在哪', '配分函数耦合所有参数，模型期望难算'],
+    ['近似手段', '采样 / 变分、伪似然、对比散度'],
+    ['关键分解', 'log p = ELBO + KL(q ‖ p(z|x))'],
+    ['单调性', 'log p(θ_{t+1}) ≥ ELBO(q_{t+1}, θ_{t+1}) ≥ ELBO(q_{t+1}, θ_t) = log p(θ_t)'],
+    ['GMM 的 M 步', 'π = N_k/N，μ、σ² 为 γ 加权均值、方差'],
+    ['与 K-Means 的关系', 'GMM-EM 是软分配版本']
+  ]
+});
+S.guess($('#bpG'), { q: '链长 T = 20，每个变量取 K = 10 个值。直接求和算一个边际要约 K^(T−1) 次加法，信念传播约 T·K² 次。前者是后者的多少倍？（填 10 的几次方）', unit: '10^', ans: Math.log10(Math.pow(10, 19) / (20 * 100)), fmt: function (x) { return S.f(x, 1); }, why: '10¹⁹ / (20 × 100) = 5 × 10¹⁵，约 10^15.7。而且信念传播前后各传一遍就得到所有 20 个变量的边际，暴力法要把这个数再乘以 20。' });
+S.notes($('#n-infer'), {
+  c: [
+    ['推断', '已知部分变量，求其他变量的条件分布。'],
+    ['变量消除', '利用分配律把求和往里推，一次消一个变量。'],
+    ['信念传播', '把中间求和结果当消息保存、复用。'],
+    ['联合树算法', '把有环图转成无环结构再做精确推断。'],
+    ['环路信念传播', '在有环图上照样传消息，不保证收敛与精确。']
+  ],
+  p: [
+    ['推断的核心', '求变量子集的边际分布'],
+    ['消除顺序', '决定中间因子的规模和计算量'],
+    ['链上的边际', 'p(x_t) = (1/Z) μ_{t−1,t}(x_t) μ_{t+1,t}(x_t)'],
+    ['链上的复杂度', 'O(TK²)，前向 + 后向各一遍得到全部边际'],
+    ['树上的顺序', '叶 → 根，再根 → 叶']
+  ]
+});
+S.notes($('#n-vi'), {
+  c: [
+    ['泛函', '函数的函数：输入一个函数，输出一个实数。'],
+    ['变分推断', '在简单分布族里找最接近后验的 q。'],
+    ['平均场', 'q(z) = Π q_m(z_m)，各组隐变量独立。'],
+    ['坐标上升', '固定其他组，轮流更新每个 q_j。'],
+    ['摊销变分推断', '用神经网络把 x 映射到变分参数（VAE 的核心）。']
+  ],
+  p: [
+    ['目标转换', 'min KL(q ‖ p(z|x)) ⇔ max ELBO'],
+    ['最优因子', 'q_j* ∝ exp(𝔼_{q(z∖j)}[log p(x, z)])'],
+    ['与 EM 的关系', 'EM 的 E 步算不出精确后验时的推广'],
+    ['扩展', 'SVI（随机梯度）、BBVI（打分函数 / 重参数化）、摊销']
+  ]
+});
+
+/* ---------- 采样 ---------- */
+function ptgt(x) { return 0.3 * npdf(x, -2, 0.6) + 0.7 * npdf(x, 2, 1); }
+var Q_SD = 3, rjMin = (function () { var m = 0; for (var x = -10; x <= 10; x += 0.01) m = Math.max(m, ptgt(x) / npdf(x, 0, Q_SD)); return m; })();
+var rjChart = S.chart($('#rjC'), { h: 240, x: [-7, 7], y: [0, 0.6], xt: [-6, -4, -2, 0, 2, 4, 6], yt: [0, 0.2, 0.4, 0.6], xl: 'x' });
+function rj() {
+  var m = +$('#rjKs').value; $('#rjK').textContent = S.f(m, 1);
+  var k = rjMin * m;
+  rjChart({ curves: [{ f: ptgt, c: 'c2', label: 'p̂(x) 目标' }, { f: function (x) { return k * npdf(x, 0, Q_SD); }, c: 'c1', dash: 1, label: 'k·q(x)，q = 𝒩(0, 3²)' }], area: [{ f: ptgt, c: 'c2' }] });
+  $('#rjW').innerHTML = '目标已归一化，所以接受率 = ∫p̂ / ∫kq = 1/k = <b>' + S.pct(1 / k, 1) + '</b>。k 取最小可行值 ' + S.f(rjMin, 2) + ' 时接受率最高；k 再大，蓝色虚线和橙色曲线之间的“空白”都是被拒绝的部分。提议分布和目标形状差得越多，最小的 k 也越大——高维时这个差距会成指数地放大。';
+}
+$('#rjKs').addEventListener('input', rj); rj();
+var mhHist = S.chart($('#mhH'), { h: 200, x: [-5, 6], y: [0, 0.5], xt: [-4, -2, 0, 2, 4, 6], yt: [0, 0.25, 0.5], xl: 'x' });
+var mhTrace = S.chart($('#mhT'), { h: 170, x: [0, 1000], y: [-5, 6], xt: [0, 250, 500, 750, 1000], yt: [-4, 0, 4], xl: '迭代步（前 1000 步轨迹）' });
+function mh() {
+  var s = Math.pow(10, +$('#mhSs').value * 0.5); $('#mhS').textContent = S.f(s, 2);
+  var r = S.rng(99), x = -4, acc = 0, N = 6000, burn = 500, tr = [], hb = new Array(44).fill(0), cnt = 0;
+  for (var t = 0; t < N; t++) {
+    var xn = x + s * S.randn(r);
+    if (r() < Math.min(1, ptgt(xn) / ptgt(x))) { x = xn; acc++; }
+    if (t < 1000) tr.push([t, x]);
+    if (t >= burn) { var i = Math.floor((x + 5) / 0.25); if (i >= 0 && i < 44) hb[i]++; cnt++; }
+  }
+  var hist = []; hb.forEach(function (c, i) { var b = -5 + i * 0.25, h = c / (cnt * 0.25); hist.push([b, 0], [b, h], [b + 0.25, h], [b + 0.25, 0]); });
+  mhHist({ curves: [{ pts: hist, c: 'dim', w: 1.2, label: '样本直方图（丢弃前 500 步）' }, { f: ptgt, c: 'c2', label: '目标 p(x)' }] });
+  mhTrace({ curves: [{ pts: tr, c: 'c1', w: 1.2 }] });
+  var ar = acc / N;
+  $('#mhW').innerHTML = '接受率 <b>' + S.pct(ar, 0) + '</b>。' + (s < 0.3 ? '步子太小：几乎每次都接受，但每步只挪一点点，链在一个峰附近慢慢爬，长时间到不了另一个峰——直方图和目标对不上，这叫<b>混合差</b>。' : s > 8 ? '步子太大：提议常常落在概率极低的地方被拒绝，链经常原地不动，样本高度重复。' : '步长适中：既能在峰内移动，也能不时跳到另一个峰，直方图和目标吻合得较好。') + ' 链从 x = −4 出发，开头那段受初值影响，这就是要丢掉预烧期的原因。';
+}
+$('#mhSs').addEventListener('input', mh); mh();
+S.guess($('#piG'), { q: '在边长 2 的正方形里均匀撒 1000 个点，落在内切单位圆里的约有多少个？', unit: '个', ans: 250 * Math.PI, fmt: function (x) { return S.f(x, 0); }, why: '面积比 π/4 ≈ 0.785，约 785 个。反过来，数出落在圆里的比例乘以 4 就是 π 的估计；误差按 1/√N 缩小，想多一位精度要多撒 100 倍的点——这是蒙特卡罗方法的普遍规律。' });
+S.notes($('#n-mc'), {
+  c: [
+    ['蒙特卡罗方法', '用独立样本的均值估计期望，靠大数定律。'],
+    ['逆 CDF 采样', 'ξ ~ U[0, 1]，cdf⁻¹(ξ) 服从 p。'],
+    ['拒绝采样', 'kq ≥ p̂，以 p̂/(kq) 的概率接受提议样本。'],
+    ['重要性采样', '从 q 采样，用权重 p/q 修正期望。'],
+    ['MCMC', '构造平稳分布为 p 的马尔可夫链。'],
+    ['预烧期', '链接近平稳之前的样本，要丢弃。'],
+    ['MH 算法', '提议 + 按 A 接受，否则原地不动。'],
+    ['吉布斯采样', '按全条件分布逐维采样，接受率 1。']
+  ],
+  p: [
+    ['拒绝采样的效率', '接受率 ∝ 1/k，高维时迅速下降'],
+    ['自归一化重要性采样', 'Σ f ŵ / Σ ŵ，ŵ = p̂/q'],
+    ['MH 接受率', 'min(1, p(x̂)q(x_t|x̂) / (p(x_t)q(x̂|x_t)))'],
+    ['为何不需要 Z', '接受率只用到 p 的比值'],
+    ['正确性来源', '细致平稳条件 p(x)q′(x′|x) = p(x′)q′(x|x′)'],
+    ['Metropolis', '提议对称时 A = min(1, p(x̂)/p(x_t))']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 怎么拆', '有向图：每个变量给定父节点的条件概率相乘，自带归一化；无向图：最大团上的势能相乘再除以配分函数 Z。观测中间节点会阻断链式和分叉路径，却会打通汇聚路径（解释消除）。'],
+    ['② 隐变量与 EM', '边际似然的求和在对数里面，难以直接优化。log p = ELBO + KL(q ‖ 后验)：E 步令 q 等于后验让下界贴紧，M 步最大化下界更新参数，似然单调不降，GMM 是典型例子。'],
+    ['③ 近似推断', '变分推断：在简单分布族里最大化 ELBO（等价于最小化到后验的 KL），平均场 + 坐标上升，或用神经网络做摊销。采样法：拒绝 / 重要性采样适合低维，高维用 MCMC（MH、吉布斯），只需要 p 的比值。']
+  ],
+  p: [
+    ['原书一句话', '图模型回答“模型应该分解成哪些概率因子”，神经网络回答“这些因子如何用可学习函数表示”，优化算法回答“不可精确推断时如何仍然学习参数”。'],
+    ['下一篇', '把能量函数和隐变量叠成多层：玻尔兹曼机与深度信念网络。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

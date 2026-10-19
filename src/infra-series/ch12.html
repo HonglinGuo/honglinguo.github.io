@@ -1,0 +1,532 @@
+---
+title: 端边云协同：从模型运行时间到完整交互时间
+desc: 深入理解 AI Infra 学习笔记（十二）：图片精修的串行时间与 Amdahl 限制、音频播放缓冲的递推、截图 Agent 的轮次累积、手机端侧的带宽/容量/能耗下界、端侧编码与会话迁移、广域网的窗口/丢包/BBR/FEC、无线空口的固定开销与双路径，最后为截图 Agent 在端侧、附近工作站和云端之间选部署方案。
+kicker: <span>技术学习</span><span>深入理解 AI Infra · 12</span><span>对应原书第 12 章</span><span>约 45 分钟</span>
+h1: 模型跑 0.3 秒，<em>用户等 12.8 秒</em>
+lead: 一张 30 MB 原图交给云端精修，模型只算 0.3 秒，上传却要 12 秒。模型加速十倍省 0.27 秒，输入压缩一半省近 6 秒。原书最后一章把前面各章的服务和环境放到端、边、云不同设备上，统一用一套方法：先算处理和传输各要多久，再看哪些步骤必须等，最后加上建链、窗口、丢包、空口和故障恢复这些实际开销。
+nav: time|完整交互时间;device|端侧资源;split|跨设备分工;wan|广域网等待;air|无线与双路径;deploy|部署选择;back|三个问题
+---
+<style>
+.aud { margin-top: 10px; }
+.aud .row { display: grid; grid-template-columns: 3.2em minmax(0, 1fr); gap: 8px; align-items: center; margin: 3px 0; font-size: 14px; }
+.aud .lane { position: relative; height: 18px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; }
+.aud .b { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; background: var(--s1); }
+.aud .b.late { background: var(--s2); }
+.aud .pt { position: absolute; top: 4px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--ink); }
+.aud .gh { position: absolute; top: 2px; bottom: 2px; border: 1px dashed var(--dim); border-radius: 3px; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>模型放到远端更快，什么时候反而让用户等得更久？</li>
+  <li>广域网和无线链路上，带宽之外还有哪些等待？</li>
+  <li>截图 Agent 剩下 20 轮、45 秒期限，端侧、附近工作站、云端该怎么选？</li>
+</ol></div>
+
+<section class="part" id="time">
+  <div class="part-head"><h2>从模型运行时间到完整交互时间</h2><span class="meta">原书 12.1.1–12.1.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>端侧</strong>采集输入并与用户交互，<strong>边缘</strong>是附近提供计算的工作站或服务节点，<strong>云端</strong>是远程资源池。原书用三类任务讲同一套分析：图片精修看完整成片何时返回，语音看能否连续播放，截图 Agent 看每轮开销如何累积。</p>
+    <p><strong>图片精修</strong>：<strong>T<sub>serial</sub> = S<sub>u</sub>/B<sub>u</sub> + R + T<sub>c</sub> + S<sub>d</sub>/B<sub>d</sub></strong>。30 MB 原图、20 Mbit/s 上行、5 MB 成片、100 Mbit/s 下行、R = 0.1 s、T<sub>c</sub> = 0.3 s，共 <strong>12.8 秒，上传占 94%</strong>。处理只占约 2.3%，消掉也只缩短 2.3%——这就是 Amdahl 定律。上行提到 100 Mbit/s 只要 3.2 秒；无损压缩减半、多花 0.15 秒编解码，约 7.0 秒。压缩的收益 ΔT = (S<sub>u</sub> − S′<sub>u</sub>)/B<sub>u</sub> − T<sub>e</sub> 随上行变快而缩小：20 Mbit/s 省 6 秒，100 省 1.2 秒，<strong>800 Mbit/s 时收益归零</strong>。分三块独立处理，前两块的处理和回传藏进后续上传，约 12.36 秒；要全局曝光就只能等整图到齐。</p>
+    <p><strong>实时语音</strong>写成逐块递推：<strong>c<sub>i</sub> = max(a<sub>i</sub>, c<sub>i−1</sub>) + m<sub>i</sub>，u<sub>i</sub> = max(c<sub>i</sub>, u<sub>i−1</sub>) + s<sub>i</sub>，r<sub>i</sub> = u<sub>i</sub> + d<sub>i</sub></strong>；两个 max 分别是数据依赖和资源竞争。播放 <strong>p<sub>i</sub> = max(r<sub>i</sub>, p<sub>i−1</sub> + τ)</strong>，第一项更大时差额就是停顿。每块 20 ms，处理 12、发送 1、传播 5 ms，缓冲 40 ms；第三块传播变成 50 ms，晚到 5 ms，后面全部推迟 5 ms；缓冲加到 45 ms 正好避开。长期速率不足是另一回事：256 kbit/s 的 PCM 只收到 130 kbit/s，60 ms 缓冲约 0.12 秒就耗尽——<strong>加缓冲只抬高起点，不改斜率</strong>。</p>
+    <p><strong>截图 Agent</strong>：下一轮截图必须等上一轮操作完成，等待逐轮累积。30 轮，每轮上传 0.8 MB（6.4 Mbit/s，1 秒）+ 终端 0.3 + 远端模型 2.0 + 往返 0.2 = 3.5 秒，共 105 秒。压到 0.2 MB、多 30 ms 编码，每轮 2.78 秒，约 83 秒；但若文字变糊导致多轮纠错，<strong>2.78N′ &lt; 105 → 最多 37 轮</strong>，即最多容忍多出七轮。最短传播还能先排除太远的服务器：光纤约 2×10⁸ m/s，单向 10,000 km 往返至少约 100 ms。</p>
+    <p class="go">先猜模型加速十倍能省多少，再拉上行和压缩。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">图片精修的完成时间</p>
+    <div id="imG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>上行（Mbit/s） <output id="imU">20</output></span><input type="range" id="imUs" min="5" max="1000" step="5" value="20"></label>
+      <label class="ctl"><span>模型加速倍数 <output id="imA">1</output></span><input type="range" id="imAs" min="1" max="100" value="1"></label>
+    </div>
+    <div class="selrow"><span>输入</span><div class="seg" id="imC"><button data-v="0" aria-pressed="true">原图 30 MB</button><button data-v="1">无损压缩减半（+0.15 s）</button></div></div>
+    <div id="imBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="imT">0</div><div class="k">完成时间</div></div><div><div class="v" id="imP">0</div><div class="k">处理所占比例</div></div><div><div class="v" id="imS">0</div><div class="k">压缩省下（同一上行）</div></div></div>
+    <p class="note">下行 100 Mbit/s、成片 5 MB、R = 0.1 s、处理 0.3 s（原书例）。连接已建立，各阶段串行。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">音频播放缓冲：一块晚到</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>第三块传播（ms） <output id="auD">50</output></span><input type="range" id="auDs" min="5" max="120" value="50"></label>
+        <label class="ctl"><span>初始缓冲 J（ms） <output id="auJ">40</output></span><input type="range" id="auJs" min="0" max="100" step="5" value="40"></label>
+      </div>
+      <div class="aud" id="auT"></div>
+      <div class="read"><div><div class="v" id="auF">0</div><div class="k">首块开始播放</div></div><div class="warn"><div class="v" id="auS">0</div><div class="k">累计停顿</div></div></div>
+      <p class="note">每块 20 ms，处理 12、发送 1、通常传播 5 ms。实块为实际播放，虚框为原定区间，圆点为到达。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">截图压缩能容忍多少额外轮次</p>
+      <div id="scG"></div>
+      <label class="ctl"><span>压缩后的实际轮数 N′ <output id="scN">30</output></span><input type="range" id="scNs" min="30" max="45" value="30"></label>
+      <div class="read"><div><div class="v">105 s</div><div class="k">原方案 30 × 3.5</div></div><div class="hl"><div class="v" id="scT">0</div><div class="k">压缩后 2.78 × N′</div></div></div>
+      <p class="verdict3" id="scW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-time"></div>
+</section>
+
+<section class="part" id="device">
+  <div class="part-head"><h2>端侧执行资源：带宽、容量、能耗三个下界</h2><span class="meta">原书 12.1.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>带宽给出每秒 token 的上限。</strong>Snapdragon 8 Elite 最高 5,300 MHz、最大 24 GB LPDDR5X，即每引脚 10.6 Gbit/s；一条 x16 通道 21.2 GB/s，按四条计 <strong>84.8 GB/s</strong>（产品简介没给总线宽度，四通道是原书的计法）。沿用第 4 章的 Qwen3-8B BF16、8K：一步 decode 读权重 15.14 + KV 1.21 ≈ 16.345 GB，约 0.193 s，<strong>上限约 5.2 token/s</strong>；q4_0（每 32 值 64 → 18 bytes）后每步 5.47 GB、64.4 ms，<strong>约 15.5 token/s</strong>。MELTing Point 在 iPhone 14 Pro 上实测 Zephyr-3B q4_k 14.8 token/s、Llama-2 7B q3_k 6.0 token/s，量级一致。</p>
+    <p><strong>容量决定装什么、留多长上下文。</strong>预留 4 GB；BF16 常驻 16.38 GB（比每步读取多出约 1.24 GB 的词嵌入表），只有 24 GB 一档装得下、仅够两条 8K；q4_0 权重 4.61 GB，每 token KV 147,456 bytes。</p>
+    <p><strong>能耗与续航是端侧特有的代价。</strong>MELTing Point 实测每 token 0.576–0.756 J，持续功率最高 13.8 W；14.8 token/s × 0.576 J ≈ 8.5 W，在持续功率之内。<strong>一次充电约 490–590 个提示</strong>。</p>
+    <p>本地三档：手机 84.8 GB/s；M3 Ultra 819 GB/s、约 50.1 token/s；RTX PRO 6000 1,792 GB/s、约 109.6 token/s。运行时（llama.cpp、Ollama、MLX、Unsloth）不改变这些下界，只决定能多接近；RTX PRO 6000 的实测 decode 是读取下界的 <strong>2.83 倍</strong>。翻转条件：45 秒期限摊到 20 轮、扣 0.3 秒终端工作，每轮约 1.95 秒，手机 q4_0 <strong>每轮最多约 30 个 token</strong>，第 12.5 节的任务每轮要 45 个。注意<strong>下界的判断不对称</strong>：下界已超期则一定不可行，低于期限只说明尚未被排除。</p>
+    <p class="go">选手机内存档位，看能放下什么。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">手机能放下什么（预留 4 GB）</p>
+      <div class="selrow"><span>手机内存</span><div class="seg" id="phM"><button data-v="6">6 GB</button><button data-v="12">12 GB</button><button data-v="16" aria-pressed="true">16 GB</button><button data-v="24">24 GB</button></div></div>
+      <div class="selrow"><span>Qwen3-8B 权重</span><div class="seg" id="phQ"><button data-v="16.38">BF16 16.38</button><button data-v="8.70">q8_0 8.70</button><button data-v="4.61" aria-pressed="true">q4_0 4.61</button></div></div>
+      <div class="read"><div><div class="v" id="phR">0</div><div class="k">扣除预留与权重后</div></div><div class="hl"><div class="v" id="phN">0</div><div class="k">8K 请求条数（各 1.21 GB）</div></div><div><div class="v" id="phL">0</div><div class="k">或单条上下文</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">每轮生成预算</p>
+      <div id="dvG"></div>
+      <div class="selrow"><span>设备</span><div class="seg" id="dvD"><button data-v="84.8" aria-pressed="true">手机</button><button data-v="819">M3 Ultra</button><button data-v="1792">RTX PRO 6000</button></div></div>
+      <div class="selrow"><span>权重</span><div class="seg" id="dvQ"><button data-v="16.345">BF16</button><button data-v="5.47" aria-pressed="true">q4_0</button></div></div>
+      <label class="ctl"><span>每轮生成 token <output id="dvT">45</output></span><input type="range" id="dvTs" min="5" max="200" step="5" value="45"></label>
+      <div class="read"><div><div class="v" id="dvR">0</div><div class="k">decode 上限</div></div><div class="hl"><div class="v" id="dvM">0</div><div class="k">每轮模型下界</div></div><div><div class="v" id="dv20">0</div><div class="k">20 轮（含终端 0.3 s/轮）</div></div></div>
+    </div>
+  </div>
+  <div class="notes" id="n-device"></div>
+</section>
+
+<section class="part" id="split">
+  <div class="part-head"><h2>跨设备分工：传图片、传特征，还是传状态</h2><span class="meta">原书 12.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>端侧编码不一定减少上传量。</strong>压缩图片为紧凑存储，视觉编码器的输出为后续计算。Qwen3-VL-4B 固定配置：640×640 → 400 个视觉 token，最终投影 2560 维 + 三组同宽 DeepStack 特征（漏传就缺了三组输入），<strong>S<sub>E</sub> = 400 × 10240 × 2 = 8,192,000 bytes</strong>，是 0.8 MB 截图的约十倍。<strong>ΔT = T<sub>E,l</sub> − T<sub>E,r</sub> + T<sub>x</sub> + (S<sub>E</sub> − S<sub>I</sub>)/B<sub>u</sub></strong>：编码 1.31 TFLOPs，RTX 4090 约 7.9 ms、H100 约 1.3 ms，6.4 Mbit/s 上行下本地编码约 10.25 秒 vs 远端 1.00 秒。换成同机房 400 Gbit/s 的 ConnectX-7，发送差只剩约 0.15 ms，比的就是编码和排队了。图片、7.8 MiB 视觉特征、56.3 MiB 视觉 token KV（每 token 144 KiB）对应三个不同的重算起点。</p>
+    <p><strong>会话迁移</strong>：<strong>G(N) = NΔt − M</strong>。80 Mbit/s 传 64 MiB 状态 + 1 秒恢复，M ≈ 7.7 秒；每轮快 0.4 秒，10 轮亏 3.7 秒，<strong>20 轮才回本</strong>，40 轮净省 8.3 秒；恢复多 1 秒，回本推到 22 轮。连接预热、图编译、模型加载都是同一个式子。</p>
+    <p><strong>模型内部切分</strong>：TP=2 跨两台设备，36 层 × 每层两次归约 × 两阶段环 = <strong>144α</strong>。α = 2 μs 时约 0.29 ms；换成 54 Mbit/s 无聚合 Wi-Fi，每次至少一次 134 μs 的短帧交换，<strong>约 19.3 ms，是 RTX PRO 6000 一步 decode 读取下界 9.12 ms 的两倍多</strong>。流水线并行把通信集中在相邻阶段之间，单请求少等，多请求并行提吞吐。</p>
+    <p class="go">拉上行看编码位置，再拉剩余轮数看迁移何时回本。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">本地编码 vs 远端编码</p>
+      <div id="ecG"></div>
+      <label class="ctl"><span>上行（Mbit/s，对数） <output id="ecB">6.4</output></span><input type="range" id="ecBs" min="0" max="100" value="17"></label>
+      <div id="ecBars" class="wide"></div>
+      <p class="verdict3" id="ecW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">会话迁移 G(N) = NΔt − M</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>剩余轮数 N <output id="mgN">20</output></span><input type="range" id="mgNs" min="1" max="60" value="20"></label>
+        <label class="ctl"><span>每轮快 Δt（s） <output id="mgD">0.4</output></span><input type="range" id="mgDs" min="0.1" max="2" step="0.1" value="0.4"></label>
+        <label class="ctl"><span>恢复时间（s） <output id="mgR">1</output></span><input type="range" id="mgRs" min="0" max="5" step="0.5" value="1"></label>
+      </div>
+      <div class="read"><div><div class="v" id="mgM">0</div><div class="k">准备 M（64 MiB / 80 Mbit/s + 恢复）</div></div><div class="hl"><div class="v" id="mgG">0</div><div class="k">G(N)</div></div><div><div class="v" id="mgB">0</div><div class="k">回本轮数</div></div></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">张量并行跨设备：每 token 的启动开销 144α</p>
+    <div class="selrow"><span>互联</span><div class="seg" id="tpL"><button data-v="2" aria-pressed="true">卡间互联 α = 2 μs</button><button data-v="134">54 Mbit/s Wi-Fi 短帧交换 134 μs</button></div></div>
+    <div id="tpBars" class="wide"></div>
+  </div>
+  <div class="notes" id="n-split"></div>
+</section>
+
+<section class="part" id="wan">
+  <div class="part-head"><h2>广域网：建链、窗口、丢包与冗余</h2><span class="meta">原书 12.3 节</span></div>
+  <div class="sec-lede">
+    <p><strong>建链</strong>：30 轮截图任务、RTT 200 ms、建链两次往返——每轮重建累计 12 秒，复用只要 0.4 秒；任务从 105.4 秒变 117 秒。QUIC 把传输握手与 TLS 1.3 合并，会话恢复还能发 0-RTT 早期数据，被拒时客户端重发、服务端靠操作编号去重。</p>
+    <p><strong>窗口</strong>：<strong>B<sub>useful</sub> ≤ min(B<sub>path</sub>, W/R)</strong>。20 Mbit/s、100 ms 要约 250 KB 在途；只有 64 KB，上限约 5.1 Mbit/s，<strong>30 MB 至少要 47 秒</strong>。新连接从 10 个 1460-byte 段起步、每轮翻倍，约 355 KB 的语音请求要到第五轮才发完。头部与 ACK 让 35 MB 变成约 39.6 MB、完整请求约 14.4 秒；改成每两包确认，字节少了（38.2 MB），完成却晚 43 ms——<strong>ACK 一面占链路，一面释放发送额度</strong>。</p>
+    <p><strong>丢包不一定是拥塞。</strong>Mathis 上界 <strong>B ≤ (MSS/R)·C/√p</strong> 的前提是丢包代表拥塞。原书作者的 Queqiao 路径记录：Irvine → 贵阳下载方向，从 1 提到 300 Mbit/s 丢包始终约 14%，反方向 41,663 个报文一个没丢，RTT 最大最小只差几毫秒；到 600 Mbit/s 才升到 44%（膝点约 333 Mbit/s）。代入得 <strong>约 0.155 Mbit/s</strong>，与实测 0.13–0.47 一致，比路径实际能力低三个数量级。BBR 直接测 max_bw 和 min_rtt：BDP = 333 Mbit/s × 0.2 s = 8.325 MB，cwnd 取两倍；理想有效吞吐 (1 − p) × 333 ≈ 286 Mbit/s，<strong>约是 Mathis 上界的 1,850 倍</strong>。</p>
+    <p>但测准带宽，重传尾巴还在：354,640 bytes = 245 个报文，逐轮重传期望 0.756 s（串行预算 238.5 ms 的 3.2 倍），p99 1.24 s。<strong>FEC</strong> 多发 63 个修复包（25.7%）就能 99.9% 不重传，约 241 ms；丢包 3.6% 时只要 20 个（8.2%）——<strong>冗余应随测得的丢包率调整</strong>。多流时，FIFO 下图片第 5 秒、音频第 6 秒完成，音频优先则 3 秒和 6 秒；整体有序交付让第 3 秒齐的音频等到第 7 秒（队头阻塞），QUIC 逐流交付第 3 秒就交。</p>
+    <p><strong>Queqiao 案例</strong>（贵阳—Irvine，固定 354,640 bytes 音频，交替运行）：新建连接时直接路径约 1.19 s、Queqiao 约 0.30 s；<strong>保持连接并调优后两者都约 0.24 s</strong>，差约 4 ms，小于同期 RTT 约 8 ms 的波动。差距几乎全部来自实现开销，下界没有错。此后再优化：模型 30 → 3 ms 最多省 27 ms，RTT 200 → 20 ms 省约 180 ms。</p>
+    <p class="go">先猜 Mathis 上界，再拉丢包率比较三种做法。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">窗口限速</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>允许在途 W（KB） <output id="wnW">64</output></span><input type="range" id="wnWs" min="16" max="1024" step="16" value="64"></label>
+        <label class="ctl"><span>RTT（ms） <output id="wnR">100</output></span><input type="range" id="wnRs" min="10" max="300" step="10" value="100"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="wnB">0</div><div class="k">有效吞吐（链路 20 Mbit/s）</div></div><div><div class="v" id="wnT">0</div><div class="k">仅发送 30 MB</div></div><div><div class="v" id="wnN">0</div><div class="k">填满链路所需在途</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">随机丢包：Mathis、BBR 与 FEC</p>
+      <div id="lsG"></div>
+      <label class="ctl"><span>丢包率 p <output id="lsP">14%</output></span><input type="range" id="lsPs" min="0.5" max="30" step="0.1" value="14"></label>
+      <div class="read"><div class="warn"><div class="v" id="lsM">0</div><div class="k">Mathis 上界（C = 1）</div></div><div class="hl"><div class="v" id="lsB">0</div><div class="k">BBR 理想 (1−p)×333</div></div><div><div class="v" id="lsF">0</div><div class="k">FEC 修复包（99.9%）</div></div></div>
+      <p class="note">MSS 1,448 bytes、R = 0.2 s、245 个数据包、膝点 333 Mbit/s。FEC 按二项分布精确求最小冗余。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-wan"></div>
+</section>
+
+<section class="part" id="air">
+  <div class="part-head"><h2>无线：空口争用、过期数据与双路径</h2><span class="meta">原书 12.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>空口</strong>上，上行数据和下行反馈轮流占用同一段时间。端到端 ACK 发给远端发送方，<strong>MAC ACK</strong> 确认本跳无线帧——承载端到端 ACK 的帧也要自己的 MAC 确认。OFDM 54/6 Mbit/s、无聚合：数据交换 34 μs 接入等待 + 208 μs 数据帧 + 16 μs SIFS + 44 μs MAC ACK = <strong>302 μs</strong>；承载 ACK 时数据帧缩到 40 μs，共 <strong>134 μs</strong>。数据帧短了约八成，整次交换只短了约 56%——<strong>94 μs 固定开销还在，合并小报文、减少交换次数更直接</strong>。30 MB + 5 MB 共约 30,800 次数据交换和反馈交换，<strong>约 13.4 秒空口</strong>；ACK 减半能释放约 2.1 秒，但反馈晚了又会拉长窗口停等。TACK 把累积确认合并、把需要即时反馈的事件立即返回。</p>
+    <p><strong>过期与取消</strong>：八块 20 ms 音频与大图共用链路，FIFO 下全部到达却都错过播放时刻，媒体优先时全部按时——收到的字节一样，<strong>按时可用的声音分别是 0 与 0.16 秒</strong>。取消分两条路：本地清空待播缓冲（用户何时不再听到），远端停止生成（何时不再耗资源）。截图 Agent 的动作提交后会改变环境，重试要先查原操作编号的结果。</p>
+    <p><strong>双路径</strong>（Wi-Fi + 蜂窝）：分流 <strong>T<sub>split</sub> = max(xS/B<sub>1</sub>, (1−x)S/B<sub>2</sub>)</strong>，最优 x = B<sub>1</sub>/(B<sub>1</sub>+B<sub>2</sub>)：20 和 10 Mbit/s 各传 20、10 MB，各 8 秒，比只用快路的 12 秒少 4 秒；若汇入同一个 24 Mbit/s 出口，至少 10 秒——<strong>瓶颈转到共同出口</strong>。复制看共同故障：<strong>p<sub>fail</sub> = q + (1−q)p<sub>1</sub>p<sub>2</sub></strong>，p₁ = 0.1、p₂ = 0.05、q = 0.02 时约 2.5%，其中 2 个百分点来自共同端点，接入再可靠也降不下去。MPTCP、接入代理和华为 Link Turbo 都按这个思路实现，代理的位置同时决定共享容量、传播与故障域。</p>
+    <p class="go">拉分流比例，再加上共同出口。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">双路径分流 30 MB</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>快路比例 x <output id="dpX">67%</output></span><input type="range" id="dpXs" min="0" max="100" value="67"></label>
+        <label class="ctl"><span>共同出口（Mbit/s，0 = 无） <output id="dpE">0</output></span><input type="range" id="dpEs" min="0" max="40" step="2" value="0"></label>
+      </div>
+      <div id="dpBars" class="wide"></div>
+      <div class="read"><div class="hl"><div class="v" id="dpT">0</div><div class="k">完成时间</div></div><div><div class="v">12.0 s</div><div class="k">只用 20 Mbit/s 快路</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">复制的失败概率</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>接入 1 失败 p₁ <output id="rpA">10%</output></span><input type="range" id="rpAs" min="0" max="50" value="10"></label>
+        <label class="ctl"><span>接入 2 失败 p₂ <output id="rpB">5%</output></span><input type="range" id="rpBs" min="0" max="50" value="5"></label>
+        <label class="ctl"><span>共同端点失败 q <output id="rpQ">2%</output></span><input type="range" id="rpQs" min="0" max="10" step="0.5" value="2"></label>
+      </div>
+      <div class="read"><div><div class="v" id="rpI">0</div><div class="k">两条接入同时失败</div></div><div class="hl"><div class="v" id="rpF">0</div><div class="k">总失败概率</div></div><div class="warn"><div class="v" id="rpS">0</div><div class="k">其中来自共同端点</div></div></div>
+    </div>
+  </div>
+  <div class="notes" id="n-air"></div>
+</section>
+
+<section class="part" id="deploy">
+  <div class="part-head"><h2>部署选择：剩余 20 轮、45 秒期限</h2><span class="meta">原书 12.5 节</span></div>
+  <div class="sec-lede">
+    <p>截图任务前十轮已完成，剩余二十轮必须 45 秒内完成；原服务每轮 3.5 秒要 70 秒，必须换方案。三处运行同一份 Qwen3-8B q4_0、8K 上下文，每轮 45 个 token，模型时间取 decode 读取下界（45 × 5.47 GB ÷ 带宽），新服务接手先对 8K 上下文做一次 prefill（133.6 TFLOPs ÷ BF16 峰值）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>位置</th><th>设备</th><th>一次准备</th><th>每轮模型</th><th>上行</th><th>每轮往返</th><th>20 轮能耗</th></tr></thead>
+      <tbody>
+        <tr><td>端侧</td><td>手机 84.8 GB/s</td><td>0 s</td><td>2.90 s</td><td>无需上传</td><td>0</td><td>518–680 J</td></tr>
+        <tr><td>附近工作站</td><td>RTX PRO 6000，1,792 GB/s，600 W</td><td>0.27 s</td><td>0.137 s</td><td>80 Mbit/s</td><td>0.02 s</td><td>约 1.81 kJ</td></tr>
+        <tr><td>云地域</td><td>H100 SXM，3,350 GB/s，700 W</td><td>0.14 s</td><td>0.073 s</td><td>6.4 Mbit/s</td><td>0.20 s</td><td>约 1.12 kJ</td></tr>
+      </tbody>
+    </table></div>
+    <p>比较之前先过<strong>数据驻留</strong>：截图不允许离开设备或出境时，后两行直接排除。时间：端侧 20 × (0.3 + 2.90) ≈ <strong>64.0 s</strong>（超期）；附近 0.27 + 20 × (0.3 + 0.137 + 0.02 + 0.08) ≈ <strong>11.0 s</strong>；云端 0.14 + 20 × (0.3 + 0.073 + 0.2 + 1) ≈ <strong>31.6 s</strong>。H100 模型每轮少 0.064 s，上传却多 0.92 s、传播多 0.18 s。两个都按时，<strong>按能耗选云端</strong>（1.12 &lt; 1.81 kJ，H100 功率高但忙碌时间只有一半多）。端侧电池占一次充电约 3.4%–4.1%，排除它的是时间。</p>
+    <p>云端随上行变化：<strong>T<sub>cloud</sub>(b) = 11.6 + 128/b</strong>，满足期限要 b ≥ 128/33.4 ≈ 3.8 Mbit/s；上行无限大也不低于 11.6 秒，<strong>始终慢于附近工作站</strong>（每轮 0.2 s 往返比附近的传播 + 上传多 0.1 s，超过 H100 省下的 0.064 s）。门槛 b<sub>min</sub> = 128/(D − 11.6) 只在 D &gt; 11.6 时有意义。若按实测 2.83 倍放大模型时间，附近 16.04 s、云端不含上传 14.29 s，<strong>上行超过约 73 Mbit/s 云端才更快</strong>。上行 4 Mbit/s 只剩 1.4 秒余量，3.5 Mbit/s 就超期；每轮速率不同时 T = 11.6 + Σ6.4/b<sub>i</sub>，十轮 6、十轮 10 Mbit/s 平均也是 8，却要 28.7 秒（全程 8 是 27.6）。</p>
+    <p><strong>恢复</strong>：云端每轮约 1.57 秒，第十轮执行完、确认未返回时断连，恢复连接 1 秒。前九轮已提交只重做一轮：<strong>34.2 s</strong>；十轮都丢：<strong>48.3 s，超期</strong>。附近工作站每轮约 0.54 秒，丢十轮也只要 17.4 秒。独立重试的期望成本 E = C/p。文本 Agent 则相反：少传 56 KB 只省 1.3 ms，主要收益是少做前缀计算（约 0.239 GPU 秒），而 465 MB 状态每秒占 0.0058 GPU 秒，<strong>保存约 41 秒后就抵消了</strong>。</p>
+    <p class="go">先猜云端要多少秒，再拉上行和期限。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三个执行位置的剩余 20 轮</p>
+    <div id="dpG2"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>云路径上行 b（Mbit/s） <output id="dlB">6.4</output></span><input type="range" id="dlBs" min="1" max="200" step="0.1" value="6.4"></label>
+      <label class="ctl"><span>期限 D（s） <output id="dlD">45</output></span><input type="range" id="dlDs" min="5" max="80" value="45"></label>
+    </div>
+    <div class="selrow"><span>模型时间</span><div class="seg" id="dlK"><button data-v="1" aria-pressed="true">读取下界</button><button data-v="2.83">按实测 2.83 倍</button></div></div>
+    <div class="selrow"><span>故障</span><div class="seg" id="dlF"><button data-v="0" aria-pressed="true">无</button><button data-v="1">第十轮断连，保留九轮</button><button data-v="10">第十轮断连，丢十轮</button></div></div>
+    <div id="dlBars" class="wide"></div>
+    <p class="verdict3" id="dlW"></p>
+    <p class="note">能耗为下界口径（额定功率 × 忙碌时间）；实测 2.83 倍和故障两项只改时间。故障场景恢复连接 1 秒。断连时的上行门槛按重传轮数等比放大，这是本页的推算，原书没有给出这个式子。</p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">T_serial = S_u/B_u + R + T_c + S_d/B_d；　压缩收益 ΔT = (S_u − S′_u)/B_u − T_e</div>
+    <div class="fx">c_i = max(a_i, c_{i−1}) + m_i，u_i = max(c_i, u_{i−1}) + s_i，r_i = u_i + d_i</div>
+    <div class="fx">p_0 = r_0 + J，　p_i = max(r_i, p_{i−1} + τ)</div>
+    <div class="fx">端侧编码时间差 ΔT = T_E,l − T_E,r + T_x + (S_E − S_I)/B_u</div>
+    <div class="fx">迁移收益 G(N) = NΔt − M；　TP 启动 T_start = 36 × 2 × 2α = 144α</div>
+    <div class="fx">B_useful ≤ min(B_path, W/R)；　Mathis：B_TCP ≤ (MSS/R)·C/√p</div>
+    <div class="fx">BDP = max_bw × min_rtt；　cwnd = 2 × BDP</div>
+    <div class="fx">T_split = max(xS/B_1, (1−x)S/B_2)，最优 x = B_1/(B_1+B_2)</div>
+    <div class="fx">p_fail = q + (1−q)p_1 p_2；　重试期望成本 E = C/p</div>
+    <div class="fx">T_cloud(b) = 11.6 + 128/b；　b_min = 128/(D − 11.6)，仅当 D &gt; 11.6</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>12.8 s / 0.27 s</b><span>图片精修总时间 / 模型加速十倍省下的时间</span></div>
+      <div><b>84.8 GB/s</b><span>手机按四条 x16 LPDDR5X 通道计</span></div>
+      <div><b>5.2 / 15.5 token/s</b><span>手机 Qwen3-8B BF16 / q4_0 decode 上限</span></div>
+      <div><b>490–590 个提示</b><span>手机一次充电（MELTing Point 实测折算）</span></div>
+      <div><b>8.192 MB</b><span>一张截图的完整视觉特征，约为压缩图的十倍</span></div>
+      <div><b>19.3 ms</b><span>TP=2 经 Wi-Fi 每 token 的启动开销</span></div>
+      <div><b>0.155 Mbit/s vs 286</b><span>14% 随机丢包下 Mathis 上界 vs BBR 理想</span></div>
+      <div><b>302 / 134 μs</b><span>一次数据交换 / 承载 ACK 的交换（94 μs 固定）</span></div>
+      <div><b>1.19 → 0.24 s</b><span>跨地域语音直连：新建连接 → 复用并调优</span></div>
+      <div><b>64.0 / 11.0 / 31.6 s</b><span>端侧 / 附近工作站 / 云端，剩余 20 轮</span></div>
+    </div>
+    <p class="src">数字均取自原书第 12 章。</p>
+  </div>
+  <div class="notes" id="n-deploy"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+function sec(x) { return x >= 10 ? S.f(x, 1) + ' s' : S.f(x, 2) + ' s'; }
+
+/* ---------- 图片精修 ---------- */
+var imC = 0;
+function im() {
+  var bu = +$('#imUs').value, a = +$('#imAs').value; $('#imU').textContent = bu; $('#imA').textContent = a;
+  var su = imC ? 15 : 30, te = imC ? 0.15 : 0;
+  var up = su * 8 / bu, tc = 0.3 / a, dn = 5 * 8 / 100;
+  var T = up + te + 0.1 + tc + dn;
+  var rows = [['上传', up], ['压缩编解码', te], ['往返传播', 0.1], ['模型处理', tc], ['下载成片', dn]];
+  var mx = Math.max.apply(null, rows.map(function (r) { return r[1]; }));
+  S.bars($('#imBars'), rows.map(function (r) { return { label: r[0], value: r[1] / mx, text: sec(r[1]), cls: r[0] === '模型处理' ? 'ok' : (r[0] === '上传' ? 'alt' : 'dim') }; }));
+  $('#imT').textContent = sec(T); $('#imP').textContent = S.pct(tc / T, 1);
+  var save = 15 * 8 / bu - 0.15; $('#imS').textContent = (save > 0 ? '' : '') + S.f(save, 2) + ' s';
+}
+S.seg($('#imC'), function (v) { imC = +v; im(); });
+['imUs', 'imAs'].forEach(function (id) { $('#' + id).addEventListener('input', im); }); im();
+S.guess($('#imG'), { q: '30 MB 原图、20 Mbit/s 上行，完整任务 12.8 秒，其中模型 0.3 秒。把模型加速十倍，能省多少秒？', unit: '秒', ans: 0.27, fmt: function (x) { return S.f(x, 2); }, why: '原书：12.8 → 12.53 秒，只省 0.27 秒。上传占 12 秒（94%），处理只占约 2.3%，消掉也只缩短 2.3%。反过来，无损压缩减半多花 0.15 秒却省 6 秒；上行升到 800 Mbit/s 时，压缩的收益降到零。' });
+
+/* ---------- 音频 ---------- */
+function au() {
+  var d3 = +$('#auDs').value, J = +$('#auJs').value; $('#auD').textContent = d3; $('#auJ').textContent = J;
+  var n = 8, c = 0, u = 0, r = [], p = [];
+  for (var i = 0; i < n; i++) {
+    var a = 20 * (i + 1); c = Math.max(a, c) + 12; u = Math.max(c, u) + 1; r.push(u + (i === 2 ? d3 : 5));
+  }
+  p[0] = r[0] + J; for (i = 1; i < n; i++) p[i] = Math.max(r[i], p[i - 1] + 20);
+  var T = p[n - 1] + 40, box = $('#auT'); box.innerHTML = '';
+  for (i = 0; i < n; i++) {
+    var row = h('div', { class: 'row' }, box); h('span', { text: '块 ' + (i + 1) }, row);
+    var l = h('div', { class: 'lane' }, row);
+    var plan = p[0] + 20 * i;
+    h('span', { class: 'gh', style: 'left:' + plan / T * 100 + '%;width:' + 20 / T * 100 + '%' }, l);
+    h('span', { class: 'b' + (p[i] > plan ? ' late' : ''), style: 'left:' + p[i] / T * 100 + '%;width:' + 20 / T * 100 + '%' }, l);
+    h('span', { class: 'pt', style: 'left:' + r[i] / T * 100 + '%' }, l);
+  }
+  $('#auF').textContent = p[0] + ' ms'; $('#auS').textContent = (p[n - 1] - (p[0] + 20 * (n - 1))) + ' ms';
+}
+['auDs', 'auJs'].forEach(function (id) { $('#' + id).addEventListener('input', au); }); au();
+
+/* ---------- 截图压缩 ---------- */
+function sc() {
+  var N = +$('#scNs').value; $('#scN').textContent = N;
+  var t = 2.78 * N; $('#scT').textContent = S.f(t, 1) + ' s';
+  var w = $('#scW'); w.className = 'verdict3' + (t < 105 ? '' : ' bad');
+  w.innerHTML = t < 105 ? '压缩仍更快，省 ' + S.f(105 - t, 1) + ' s。' : '<b>纠错轮次已抵消压缩的节省</b>（N′ ≥ 38）。';
+}
+$('#scNs').addEventListener('input', sc); sc();
+S.guess($('#scG'), { q: '截图压到 0.2 MB 后每轮 2.78 秒（原来 3.5 秒、30 轮共 105 秒）。若图变糊导致纠错，最多允许总共多少轮仍比原来快？', unit: '轮', ans: 37, fmt: function (x) { return S.f(x, 0); }, why: '原书：2.78N′ < 105 得 N′ < 37.8，最多 37 轮，即最多多出七轮；38 轮约 106 秒。压缩后的图像质量会影响纠错次数。' });
+S.notes($('#n-time'), {
+  c: [
+    ['端 / 边 / 云', '采集交互 / 附近工作站或服务节点 / 远程资源池。'],
+    ['发送 vs 传播', '发送 = 大小 ÷ 速率，传播由路径决定；压缩只缩短发送。'],
+    ['两个 max', '数据依赖与资源竞争：c_i 等输入和处理器，u_i 等计算和出口。'],
+    ['轮次累积', '下一轮截图要等上一轮操作完成，难以像音频那样重叠。']
+  ],
+  p: [
+    ['Amdahl', '处理占 2.3%，模型加速十倍只省 0.27 s。'],
+    ['压缩收益随上行缩小', '20 Mbit/s 省 6 s，800 Mbit/s 归零。'],
+    ['抖动 vs 长期不足', '前者加缓冲可挡，后者只能加带宽或降码率。'],
+    ['传播先排除远端', '10,000 km 往返至少约 100 ms。']
+  ]
+});
+
+/* ---------- 端侧 ---------- */
+var phM = 16, phQ = 4.61;
+function ph() {
+  var rem = phM - 4 - phQ;
+  $('#phR').textContent = S.f(rem, 2) + ' GB';
+  if (rem <= 0) { $('#phN').textContent = '装不下'; $('#phL').textContent = '—'; return; }
+  $('#phN').textContent = Math.floor(rem / 1.21) + ' 条';
+  $('#phL').textContent = '约 ' + S.f(rem * 1e9 / 147456 / 1e4, 1) + ' 万 token';
+}
+S.seg($('#phM'), function (v) { phM = +v; ph(); }); S.seg($('#phQ'), function (v) { phQ = +v; ph(); }); ph();
+var dvB = 84.8, dvQ = 5.47;
+function dv() {
+  var g = +$('#dvTs').value; $('#dvT').textContent = g;
+  var step = dvQ / dvB, m = g * step;
+  $('#dvR').textContent = S.f(1 / step, 1) + ' tok/s'; $('#dvM').textContent = sec(m); $('#dv20').textContent = sec(20 * (0.3 + m));
+}
+S.seg($('#dvD'), function (v) { dvB = +v; dv(); }); S.seg($('#dvQ'), function (v) { dvQ = +v; dv(); });
+$('#dvTs').addEventListener('input', dv); dv();
+S.guess($('#dvG'), { q: '45 秒期限摊到 20 轮，每轮扣掉 0.3 秒终端工作。手机 q4_0（约 15.5 token/s）每轮最多生成多少 token？', unit: 'token', ans: 30, fmt: function (x) { return S.f(x, 0); }, why: '原书：45/20 = 2.25 s，扣 0.3 s 剩约 1.95 s，× 15.5 ≈ 30 token。第 12.5 节任务每轮要 45 个，所以端侧要 64.0 秒、超期。这是硬件下界：下界超期一定不可行，下界够用只说明尚未被排除。' });
+S.notes($('#n-device'), {
+  c: [
+    ['带宽下界', '每步读取字节 ÷ 内存带宽 → token/s 上限。'],
+    ['容量下界', '可用内存 − 权重 − 预留，再除以每请求状态。'],
+    ['能耗下界', '持续速率受功率约束，累计工作量受电池约束。'],
+    ['运行时', 'llama.cpp / Ollama / MLX / Unsloth 只决定离下界多近。']
+  ],
+  p: [
+    ['词嵌入表常驻', 'BF16 读 15.14 GB，常驻 16.38 GB。'],
+    ['16 GB 是 8-bit 分界', 'q8_0 8.70 GB，剩 3.30 GB 放两条 8K。'],
+    ['LoRA 省的是状态', '24 GB 卡装不下 8B 全参 131.1 GB，LoRA 约 16.5 GB 可以。'],
+    ['下界判断不对称', '超期一定不行，没超只是没排除。']
+  ]
+});
+
+/* ---------- 分工 ---------- */
+function ec() {
+  var t = +$('#ecBs').value / 100, b = Math.pow(10, Math.log10(1) + t * (Math.log10(400000) - Math.log10(1)));
+  $('#ecB').textContent = b >= 1000 ? S.f(b / 1000, 1) + 'k' : S.f(b, 1);
+  var loc = 0.0079 + 8.192 * 8 / b, rem = 0.8 * 8 / b + 0.0013;
+  var mx = Math.max(loc, rem);
+  S.bars($('#ecBars'), [{ label: '远端编码：传 0.8 MB 图片', value: rem / mx, text: rem < 1 ? S.f(rem * 1000, 2) + ' ms' : sec(rem), cls: rem <= loc ? 'ok' : 'dim' },
+    { label: '端侧编码：传 8.192 MB 特征', value: loc / mx, text: loc < 1 ? S.f(loc * 1000, 2) + ' ms' : sec(loc), cls: loc < rem ? 'ok' : 'dim' }]);
+  var dsend = (8.192 - 0.8) * 8 / b;
+  $('#ecW').innerHTML = '发送差 ' + (dsend < 1 ? S.f(dsend * 1000, 2) + ' ms' : sec(dsend)) + '，编码差 6.6 ms（RTX 4090 7.9 vs H100 1.3）。' + (dsend > 0.0066 ? '慢链路上先比传输量。' : '快链路上比的是编码与排队。');
+}
+$('#ecBs').addEventListener('input', ec); ec();
+S.guess($('#ecG'), { q: 'Qwen3-VL-4B 把一张截图变成 400 个视觉 token，最终投影 + 三组 DeepStack 共 10240 个 BF16 数/token。完整特征约是 0.8 MB 压缩图的几倍？', unit: '倍', ans: 10.24, fmt: function (x) { return S.f(x, 1); }, why: '原书：400 × 10240 × 2 = 8,192,000 bytes，约十倍。6.4 Mbit/s 上行发送从 1 秒涨到约 10.2 秒。只传最终投影会漏掉另外三组特征。' });
+function mg() {
+  var N = +$('#mgNs').value, d = +$('#mgDs').value, r = +$('#mgRs').value;
+  $('#mgN').textContent = N; $('#mgD').textContent = d; $('#mgR').textContent = r;
+  var M = 64 * 1048576 * 8 / 80e6 + r, G = N * d - M;
+  $('#mgM').textContent = S.f(M, 2) + ' s'; $('#mgG').textContent = (G >= 0 ? '+' : '') + S.f(G, 1) + ' s';
+  $('#mgB').textContent = Math.floor(M / d) + 1 + ' 轮';
+}
+['mgNs', 'mgDs', 'mgRs'].forEach(function (id) { $('#' + id).addEventListener('input', mg); }); mg();
+var tpA = 2;
+function tp() {
+  var t = 144 * tpA / 1000;
+  var mx = Math.max(t, 9.12);
+  S.bars($('#tpBars'), [{ label: '144α 归约启动', value: t / mx, text: S.f(t, 2) + ' ms', cls: t > 9.12 ? 'alt' : 'ok' },
+    { label: 'RTX PRO 6000 一步 decode 读取下界', value: 9.12 / mx, text: '9.12 ms', cls: 'dim' }]);
+}
+S.seg($('#tpL'), function (v) { tpA = +v; tp(); }); tp();
+S.notes($('#n-split'), {
+  c: [
+    ['编码器', '把图片或音频变成模型所用特征的子网络。'],
+    ['三个重算起点', '图片 → 视觉特征（省编码）→ 视觉 token KV（再省前缀计算）。'],
+    ['G(N) = NΔt − M', '迁移、预热、图编译、模型加载通用。'],
+    ['TP vs PP', 'TP 每层同步，PP 只在相邻阶段间传激活。']
+  ],
+  p: [
+    ['端侧算了不等于少传', '特征约是压缩图的十倍。'],
+    ['迁移要预测剩余轮数', '20 轮回本，恢复多 1 s 推到 22 轮。'],
+    ['恢复要知道进度', '操作编号和提交记录让新设备从下一轮接着做。'],
+    ['小载荷也有启动开销', 'Wi-Fi 上 TP 每 token 19.3 ms，是 decode 下界两倍多。']
+  ]
+});
+
+/* ---------- 广域网 ---------- */
+function wn() {
+  var W = +$('#wnWs').value, R = +$('#wnRs').value; $('#wnW').textContent = W; $('#wnR').textContent = R;
+  var lim = W * 1000 * 8 / (R / 1000) / 1e6, b = Math.min(20, lim);
+  $('#wnB').textContent = S.f(b, 1) + ' Mbit/s'; $('#wnT').textContent = S.f(240 / b, 1) + ' s';
+  $('#wnN').textContent = S.f(20e6 / 8 * R / 1000 / 1000, 0) + ' KB';
+}
+['wnWs', 'wnRs'].forEach(function (id) { $('#' + id).addEventListener('input', wn); }); wn();
+function lg(n) { var s = 0; for (var i = 2; i <= n; i++) s += Math.log(i); return s; }
+function fec(k, p) {
+  for (var r = 0; r < 1000; r++) {
+    var n = k + r, s = 0, ln = lg(n);
+    for (var j = 0; j <= r; j++) s += Math.exp(ln - lg(j) - lg(n - j) + j * Math.log(p) + (n - j) * Math.log(1 - p));
+    if (s >= 0.999) return r;
+  }
+  return NaN;
+}
+function ls() {
+  var p = +$('#lsPs').value / 100; $('#lsP').textContent = S.f(p * 100, 1) + '%';
+  var m = 1448 * 8 / (0.2 * Math.sqrt(p)) / 1e6, bb = (1 - p) * 333;
+  $('#lsM').textContent = S.f(m, 3) + ' Mbit/s'; $('#lsB').textContent = S.f(bb, 0) + ' Mbit/s';
+  var r = fec(245, p); $('#lsF').textContent = r + ' 个（' + S.f(r / 245 * 100, 1) + '%）';
+}
+$('#lsPs').addEventListener('input', ls); ls();
+S.guess($('#lsG'), { q: '丢包率 14%、RTT 0.2 s、MSS 1,448 bytes。若把丢包当拥塞，Mathis 简化上界约多少 Mbit/s？', unit: 'Mbit/s', ans: 0.155, fmt: function (x) { return S.f(x, 3); }, why: '原书：1448 × 8 / (0.2 × √0.14) ≈ 0.155 Mbit/s，和这条路径的实测 0.13–0.47 一致。但路径膝点约 333 Mbit/s，丢包不含拥塞信息；BBR 按测量的理想吞吐约 286 Mbit/s，是它的约 1,850 倍。要修正的是模型假设，不是传输实现。' });
+S.notes($('#n-wan'), {
+  c: [
+    ['建链复用', '一次准备、多次使用；空闲连接也占资源。'],
+    ['B_useful ≤ min(B_path, W/R)', '窗口满时链路空着也只能等确认。'],
+    ['Mathis 前提', '丢包 = 拥塞；无线误码和跨地域随机丢包不满足。'],
+    ['BBR', '测 max_bw 与 min_rtt，pacing 按带宽、在途按 2×BDP。'],
+    ['FEC', 'k 个数据 + r 个修复，丢不超过 r 个就不用重传。']
+  ],
+  p: [
+    ['64 KB 窗口', '20 Mbit/s、100 ms 只剩约 5.1 Mbit/s，30 MB 要 47 s。'],
+    ['ACK 的双重作用', '少发省字节，晚到又拉长停等。'],
+    ['测准带宽，尾巴还在', '逐轮重传期望 0.756 s、p99 1.24 s；FEC 约 241 ms。'],
+    ['队头阻塞', '整体有序让音频从第 3 s 等到第 7 s；QUIC 逐流交付。'],
+    ['先调好基线', 'Queqiao 的 3.9 倍差距，调优后只剩约 4 ms。']
+  ]
+});
+
+/* ---------- 无线与双路径 ---------- */
+function dp() {
+  var x = +$('#dpXs').value / 100, E = +$('#dpEs').value; $('#dpX').textContent = Math.round(x * 100) + '%'; $('#dpE').textContent = E || '无';
+  var t1 = x * 240 / 20, t2 = (1 - x) * 240 / 10, te = E ? 240 / E : 0;
+  var T = Math.max(t1, t2, te), mx = Math.max(t1, t2, te, 1);
+  var rows = [{ label: '快路 20 Mbit/s：' + S.f(x * 30, 1) + ' MB', value: t1 / mx, text: sec(t1), cls: t1 === T ? 'alt' : 'ok' },
+    { label: '慢路 10 Mbit/s：' + S.f((1 - x) * 30, 1) + ' MB', value: t2 / mx, text: sec(t2), cls: t2 === T ? 'alt' : 'ok' }];
+  if (E) rows.push({ label: '共同出口 ' + E + ' Mbit/s：30 MB', value: te / mx, text: sec(te), cls: te === T ? 'alt' : 'ok' });
+  S.bars($('#dpBars'), rows);
+  $('#dpT').textContent = sec(T);
+}
+['dpXs', 'dpEs'].forEach(function (id) { $('#' + id).addEventListener('input', dp); }); dp();
+function rp() {
+  var a = +$('#rpAs').value / 100, b = +$('#rpBs').value / 100, q = +$('#rpQs').value / 100;
+  $('#rpA').textContent = Math.round(a * 100) + '%'; $('#rpB').textContent = Math.round(b * 100) + '%'; $('#rpQ').textContent = S.f(q * 100, 1) + '%';
+  var f = q + (1 - q) * a * b;
+  $('#rpI').textContent = S.pct(a * b, 2); $('#rpF').textContent = S.pct(f, 2); $('#rpS').textContent = S.pct(q, 1);
+}
+['rpAs', 'rpBs', 'rpQs'].forEach(function (id) { $('#' + id).addEventListener('input', rp); }); rp();
+S.notes($('#n-air'), {
+  c: [
+    ['空口', '设备通过无线信号通信的接口；上下行轮流占用。'],
+    ['端到端 ACK vs MAC ACK', '前者给远端发送方，后者确认本跳无线帧。'],
+    ['分流 vs 复制', '前者同时用资源，后者更早拿到一份结果。'],
+    ['共同故障', '复制只能消除独立失败，共同端点 q 原样保留。']
+  ],
+  p: [
+    ['固定开销 94 μs', '帧短八成，交换只短约 56%；合并比缩短更有效。'],
+    ['30 MB + 5 MB', '约 13.4 s 空口；ACK 减半释放约 2.1 s。'],
+    ['按时可用的内容', '同样收齐，FIFO 可用 0 s，媒体优先 0.16 s。'],
+    ['速率不能直接相加', '24 Mbit/s 共同出口让 8 s 变成至少 10 s。'],
+    ['取消两条路', '本地清缓冲决定听感，远端停生成决定资源。']
+  ]
+});
+
+/* ---------- 部署 ---------- */
+var dlK = 1, dlF = 0;
+function dl() {
+  var b = +$('#dlBs').value, D = +$('#dlDs').value; $('#dlB').textContent = S.f(b, 1); $('#dlD').textContent = D;
+  var mn = 45 * 5.47 / 1792 * dlK, mc = 45 * 5.47 / 3350 * dlK;
+  var loc = 20 * (0.3 + 2.90);
+  var nrR = 0.3 + mn + 0.02 + 6.4 / 80, near = 0.27 + 20 * nrR;
+  var clR = 0.3 + mc + 0.2 + 6.4 / b, cloud = 0.14 + 20 * clR;
+  var extra = function (r) { return dlF ? 1 + dlF * r : 0; };
+  near += extra(nrR); cloud += extra(clR);
+  var rows = [['端侧（手机）', loc, '518–680 J'], ['附近工作站', near, '约 1.81 kJ'], ['云端 H100', cloud, '约 1.12 kJ']];
+  var mx = Math.max(loc, near, cloud, D);
+  S.bars($('#dlBars'), rows.map(function (r) { return { label: r[0], value: r[1] / mx, text: sec(r[1]) + ' · ' + r[2], cls: r[1] <= D ? 'ok' : 'alt' }; }));
+  var ok = rows.filter(function (r) { return r[1] <= D; });
+  var w = $('#dlW'), msg;
+  if (!ok.length) { msg = '<b>没有方案能在 ' + D + ' s 内完成。</b>'; w.className = 'verdict3 bad'; }
+  else {
+    var names = ok.map(function (r) { return r[0]; });
+    var pick = names.indexOf('云端 H100') >= 0 ? '云端 H100' : (names.indexOf('附近工作站') >= 0 ? '附近工作站' : '端侧（手机）');
+    msg = '按时的方案：' + names.join('、') + '。' + (ok.length > 1 ? '按能耗选 <b>' + pick + '</b>。' : '只能选 <b>' + pick + '</b>。');
+    w.className = 'verdict3';
+  }
+  var fix = 0.14 + 20 * (0.3 + mc + 0.2) + extra(0.3 + mc + 0.2);
+  msg += ' 云端不含上传的固定部分 ' + S.f(fix, 2) + ' s' + (D > fix ? '，期限所需上行 ≥ ' + S.f(128 * (dlF ? 1 + dlF / 20 : 1) / (D - fix), 1) + ' Mbit/s。' : '，已用完期限，不存在有限的带宽门槛。');
+  w.innerHTML = msg;
+}
+S.seg($('#dlK'), function (v) { dlK = +v; dl(); }); S.seg($('#dlF'), function (v) { dlF = +v; dl(); });
+['dlBs', 'dlDs'].forEach(function (id) { $('#' + id).addEventListener('input', dl); }); dl();
+S.guess($('#dpG2'), { q: '云端 H100 每轮模型 0.073 s、终端 0.3 s、往返 0.2 s、6.4 Mbit/s 上传 0.8 MB 截图，外加一次准备 0.14 s。剩余 20 轮共多少秒？', unit: '秒', ans: 31.6, fmt: function (x) { return S.f(x, 1); }, why: '原书：0.14 + 20 × (0.3 + 0.073 + 0.2 + 1) ≈ 31.6 s。附近工作站模型慢一倍，却只要 11.0 s——上传每轮多 0.92 s、传播多 0.18 s，二十轮多等 22 s。两者都在 45 s 内，按能耗选云端（1.12 kJ < 1.81 kJ）。' });
+S.notes($('#n-deploy'), {
+  c: [
+    ['先过约束', '数据驻留 → 期限 → 再比能耗或成本。'],
+    ['T_cloud(b) = 11.6 + 128/b', '固定部分决定上行再快也追不上附近工作站。'],
+    ['b_min 的适用条件', '只在 D > 11.6 时有意义，别把负数当可行带宽。'],
+    ['速率不均更慢', 'T = 11.6 + Σ6.4/b_i；6 和 10 交替比全程 8 慢 1.1 s。']
+  ],
+  p: [
+    ['下界口径会改结论', '按实测 2.83 倍，上行超过约 73 Mbit/s 云端才更快。'],
+    ['进度保存决定能否按时', '保留九轮 34.2 s，丢十轮 48.3 s 超期。'],
+    ['余量越大越耐故障', '附近工作站丢十轮也只要 17.4 s。'],
+    ['反复迁移会亏', '64 MiB 迁移 20 轮只净省 0.3 s，带宽只好十轮就亏 3.7 s。'],
+    ['模型加速的上限', '模型 8 s + 其他 2 s，加速十倍只到 3.57 倍。']
+  ]
+});
+S.notes($('#n-back'), {
+  c: [
+    ['① 远端何时更慢', '只有远端节省的计算多于新增的上传、下载、传播、排队和准备，才划算。图片精修上传占 94%；截图任务云端模型每轮省 0.064 s，却多 1.1 s 通信；多轮任务的通信每轮都发生，准备只做一次。'],
+    ['② 带宽之外的等待', '建链（每轮重建多 11.6 s）、窗口（64 KB 只剩 5.1 Mbit/s）、把随机丢包误当拥塞（低三个数量级）、重传尾巴（FEC 解决）、队头阻塞、空口固定开销（94 μs/交换）、共同出口与共同故障点。'],
+    ['③ 截图 Agent 怎么选', '端侧 64.0 s 超期先排除；附近 11.0 s、云端 31.6 s 都按时，按能耗选云端。上行跌到 3.5 Mbit/s 或断连丢十轮进度就超期，改用附近工作站；更紧的期限也只有附近工作站能满足。']
+  ],
+  p: [
+    ['方法', '先算各步耗时，再看依赖谁必须等，最后加上实际开销；条件一变就重算。'],
+    ['全书收束', '从片上存储到端边云，设计选择都依赖对完整执行过程的了解。']
+  ],
+  ph: '一句话'
+});

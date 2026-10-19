@@ -1,0 +1,612 @@
+---
+title: 数据中心网络：路径、并发、拥塞与尾延迟
+desc: 深入理解 AI Infra 学习笔记（七）：割集与超售比、连续环 / 交错环 / 分层归约 / 在网归约的比较、多轨拓扑与 rail 对齐、在途槽位与发起速率、incast 与 PFC/DCQCN 的两段反馈、多路径喷洒与选择性重传、就绪偏差与尾延迟、1024 卡下超节点变大后的重新选择。
+kicker: <span>技术学习</span><span>深入理解 AI Infra · 07</span><span>对应原书第 7 章</span><span>约 40 分钟</span>
+h1: 字节一样多，<em>时间差六倍</em>
+lead: 同一次 192 MiB 梯度归约，连续环、交错环、分层归约发送的总字节都是 5760 MiB，跨服务器部分却分别是 720、5760、384 MiB，用上的网卡分别是一张、八张、八张；传输时间 7.6、7.6、1.3 ms。这一章讲的就是：字节数由算法定，时间由路径定——以及并发够不够、拥塞怎么控、尾延迟从哪来。
+nav: cut|割集;ring|归约算法;rail|多轨;conc|并发;cong|拥塞;multi|多路径;tail|尾延迟;scale|1024 卡;back|三个问题
+---
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .q1 { stroke: var(--s2); stroke-width: 2.5; fill: none; }
+.rsvg .q2 { stroke: var(--s1); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.tl3 { margin-top: 10px; }
+.tl3 .row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; font-size: 15px; }
+.tl3 .lane { position: relative; height: 22px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; }
+.tl3 .b { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 12px; line-height: 18px; color: #fff; text-align: center; overflow: hidden; }
+.tl3 .cmp { background: var(--dim); } .tl3 .net { background: var(--s1); } .tl3 .upd { background: var(--ok); }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>同样的归约，为什么换个排列就快六倍？分层归约什么时候反而更慢？</li>
+  <li>链路平均只用了 40%，为什么还会积压 1 GB？</li>
+  <li>通信快了 83%，训练步为什么只快 21%？</li>
+</ol></div>
+
+<section class="part" id="cut">
+  <div class="part-head"><h2>割集：先找边界，再数穿过它的字节</h2><span class="meta">原书 7.1 节</span></div>
+  <div class="sec-lede">
+    <p>贯穿算例：两台 HGX H100 共 16 张卡，机内八卡经 NVSwitch 全连接（每方向 450 GB/s），每卡一张 400 Gbit/s 网卡（每方向 50 GB/s）独占 PCIe，两台服务器上编号相同的网卡接同一台交换机，这条网卡到网卡的路径叫一条 <strong>rail</strong>。每轮启动取 0.83 μs（公开 nccl-tests 记录：16 张卡对 16–128 B 做一次 AllReduce 约 25 μs，平摊到 30 轮）。</p>
+    <p>任何边界都可以当割集：一侧要送 V<sub>C</sub> 字节、该方向有效带宽 B<sub>C</sub>，<strong>T<sub>C</sub> ≥ V<sub>C</sub>/B<sub>C</sub></strong>。串联的各段取最慢的一段，不能相加：一张卡 NVLink 能送 450 GB/s，但它的网卡只有 50 GB/s。</p>
+    <p>Clos 网络决定割集有多宽。k 端口交换机，叶用 d 个下联、u 个上联，<strong>d/u 就是超售比</strong>；无阻塞时 d = u = k/2，两层最多 k²/2 个端点、三层 k³/4。QM9700 的 k = 64：两层接 2048 个端点（64 叶 + 32 脊，正是 DGX SuperPOD 的 2048 卡配置），三层接 65536 个。半分带宽：无阻塞两层 51.2 TB/s；超售比 3 时能接 3072 个端点但半分带宽只有 25.6 TB/s，<strong>每端点份额从 50 降到 16.7 GB/s</strong>。</p>
+    <p>还有个有用的判据：一张网卡发出的字节中有比例 f 要离开本叶交换机，上联不成为瓶颈的条件是 <strong>f ≤ 1/r</strong>。rail 对齐让 f = 0，错位配对让 f = 1。</p>
+    <p class="go">先猜 1024 卡在 3:1 超售下每卡的割集份额。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Clos 网络的规模与割集</p>
+    <div id="clG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>交换机端口数 k <output id="clK">64</output></span><input type="range" id="clKs" min="16" max="128" step="16" value="64"></label>
+      <label class="ctl"><span>超售比 r（下联:上联） <output id="clR">1</output></span><input type="range" id="clRs" min="1" max="6" value="1"></label>
+    </div>
+    <table class="calc" id="clT"></table>
+    <p class="note">每端口每方向 50 GB/s。超售比为 r 时每卡穿过割集的份额降到 50/r GB/s。</p>
+  </div>
+  <div class="notes" id="n-cut"></div>
+</section>
+
+<section class="part" id="ring">
+  <div class="part-head"><h2>四种归约：字节一样，路径不同</h2><span class="meta">原书 7.2.1 节</span></div>
+  <div class="sec-lede">
+    <p>192 MiB 的梯度（Qwen3-8B 第一层 FFN 的 gate 投影，[12288, 4096] FP32），16 个参与者做环形 AllReduce，每人发 <strong>2(p−1)M/p = 360 MiB</strong>，共 5760 MiB、30 轮。预算是 3 ms（训练步 20 ms 计算，梯度 17 ms 就绪）。</p>
+    <p><strong>连续环</strong>（0…15）：只有 7→8 和 15→0 跨服务器，每轮每方向 12 MiB 经一张网卡 0.25 ms，其余 14 条边走 NVLink 只要 0.03 ms 却都得等它，30 轮 <strong>7.6 ms</strong>，另外 14 张网卡整轮闲着。<strong>交错环</strong>（0,8,1,9…）：16 条边全跨服务器，跨服务器流量涨到 5760 MiB，每轮仍 0.25 ms，还是 <strong>7.6 ms</strong>。<strong>分层归约</strong>：机内 7 轮 ReduceScatter（每人留 24 MiB）→ 跨服务器 2 轮（八对各走自己的 rail，每轮每卡 12 MiB）→ 机内 7 轮 AllGather，共 <strong>1.3 ms</strong>。</p>
+    <p>跨服务器字节少 47%，时间少 83%——差距不在字节，在路径：分层把割集的有效带宽从一张网卡的 50 GB/s 变成八张的 400 GB/s。</p>
+    <p><strong>分层不总是免费的。</strong>对照配置（每台 4 张 A100 PCIe，卡间 PCIe Gen4 x16 每方向 32 GB/s，一张双端口 ConnectX-7 共用同一个 32 GB/s 插槽）：连续环 11.0 ms，分层归约反而 15.7 ms。令两者相等得本地带宽约 64 GB/s，<strong>约是网卡插槽带宽的两倍</strong>。判据是：跨服务器带宽由多张独立网卡提供时分层几乎没有代价；是共享接口时，本地归约增加的时间必须少于它省下的远端时间。</p>
+    <p><strong>在网归约</strong>（SHARP）让交换机边转发边加：每张网卡只发一次、收一次。两台服务器时只省一次启动；S 台时环要发 2(S−1)/S × 24 MiB、经 2(S−1) 轮，在网归约始终 24 MiB、一轮。32 台时在网归约只要环的 49%。</p>
+    <p class="go">先猜分层归约比连续环快多少，再改配置。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">192 MiB 梯度的四种归约</p>
+    <div id="rgG"></div>
+    <div class="selrow"><span>硬件</span><div class="seg" id="rgH"><button data-v="h100" aria-pressed="true">HGX H100（8 卡独立网卡）</button><button data-v="pcie">对照配置（4 卡共用插槽）</button></div></div>
+    <div class="tblw"><table class="cmpt" id="rgT"></table></div>
+    <p class="cap" id="rgW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">在网归约：服务器越多差得越远</p>
+    <label class="ctl"><span>持有同一分片的服务器数 S <output id="inS">2</output></span><input type="range" id="inSs" min="1" max="6" value="1"></label>
+    <div id="inBars" class="wide"></div>
+    <p class="cap" id="inW"></p>
+  </div>
+  <div class="notes" id="n-ring"></div>
+</section>
+
+<section class="part" id="rail">
+  <div class="part-head"><h2>多轨拓扑：配对对齐不对齐，差一层脊交换机</h2><span class="meta">原书 7.2.3–7.2.5 节</span></div>
+  <div class="sec-lede">
+    <p>DGX SuperPOD 把网络组织成<strong>多轨</strong>：每台服务器的八张网卡分别接八台不同的叶交换机，所有服务器的第 i 张网卡都接第 i 台叶。同组 32 台服务器内，同一条 rail 上的流量一跳到达；不同 rail 之间要经脊交换机。</p>
+    <p>分层归约让 rank i 和 rank i+8 配对，两张网卡都在第 i 条 rail 上，<strong>八对流量各自留在一条 rail 内，没有一个字节经过脊层</strong>。改成 rank i 配 rank i+9，每一对都要先进第 i 台叶再经脊到第 i+1 台叶，每张网卡的发送量没变（下界仍 0.505 ms），但这些字节要和别的作业抢脊层链路，还要经过哈希选路。判据很简单：<strong>i mod 8 相等就在一条 rail 内</strong>。</p>
+    <p>MoE 的通信最不规则：n 个 token、每个选 k 个专家、每份激活 d 字节、跨边界比例 f，dispatch 加 combine 共 <strong>2nkfd</strong>。原书例：1024 个 token 各选 8 个、一半跨服务器、每份 8 KiB，dispatch 32 MiB、combine 32 MiB。全发给一张网卡要 0.67 ms，分到接收方八张网卡只要 0.08 ms；对照配置两个端口共用插槽，怎么分都至少 1.05 ms。<strong>把 V<sub>ij</sub> 写成矩阵：行和是发送量、列和是接收量、跨割集的元素和是割集流量。</strong></p>
+    <p>多网卡也有讲究：有网卡不等于用上网卡（连续环就只用了一张）；端口共用插槽时加端口不提高吞吐（双端口 25+25 受限于 32 GB/s 插槽，时间从 14.1 只降到 11.0 ms 而不是 7.1）。借用相邻 GPU 的空闲网卡（FuseLink）：<strong>B<sub>eff</sub> = min(B<sub>D</sub>, 50 + min(450, 100))</strong>，1.125 GiB 载荷从 24.2 ms 降到 12.1（下游 100 GB/s）或 8.1 ms（150 GB/s）。</p>
+    <p class="go">看 MoE 流量分散到几张网卡的差别。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">MoE dispatch 的接收侧</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>token 数 n <output id="moN">1024</output></span><input type="range" id="moNs" min="128" max="4096" step="128" value="1024"></label>
+        <label class="ctl"><span>跨边界比例 f <output id="moF">50%</output></span><input type="range" id="moFs" min="0" max="100" step="5" value="50"></label>
+        <label class="ctl"><span>接收方用几张网卡 <output id="moK">8</output></span><input type="range" id="moKs" min="1" max="8" value="8"></label>
+      </div>
+      <div class="read"><div><div class="v" id="moV">0</div><div class="k">dispatch + combine 跨边界流量</div></div><div class="hl"><div class="v" id="moT">0</div><div class="k">接收时间（每网卡 50 GB/s）</div></div></div>
+      <p class="note">每 token 选 8 个专家、每份激活 8 KiB。2nkfd 是两个方向合计。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">借用相邻网卡</p>
+      <label class="ctl"><span>下游可用带宽 B<sub>D</sub>（GB/s） <output id="fuD">100</output></span><input type="range" id="fuDs" min="25" max="200" step="5" value="100"></label>
+      <label class="ctl"><span>可借用的相邻网卡数 <output id="fuN">2</output></span><input type="range" id="fuNs" min="0" max="4" value="2"></label>
+      <div class="read"><div class="hl"><div class="v" id="fuB">0</div><div class="k">有效发送带宽</div></div><div><div class="v" id="fuT">0</div><div class="k">传 1.125 GiB</div></div></div>
+      <p class="note">直连网卡 50 GB/s，经 NVLink（450 GB/s）中继到相邻 GPU 的网卡各 50 GB/s。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-rail"></div>
+</section>
+
+<section class="part" id="conc">
+  <div class="part-head"><h2>并发：槽位、发起速率，和读写的不对称</h2><span class="meta">原书 7.3 节</span></div>
+  <div class="sec-lede">
+    <p>有带宽不等于用得上。<strong>请求槽位</strong>保存一项未完成请求的地址、长度和状态，提交时分配、完成处理完才释放。每事务载荷 m、槽位占用 T、目标带宽 B，需要 <strong>N ≥ ⌈BT/m⌉</strong>——这就是带宽—时延积除以每事务载荷。256 B 事务、2 μs 周转、50 GB/s，要 <strong>391 个在途事务</strong>；只有 128 个时有效带宽只有 16.4 GB/s。</p>
+    <p>槽位之外还有发起速率：<strong>B<sub>eff</sub> ≤ min(B<sub>path</sub>, Nm/T, m/δ)</strong>。OpenURMA 的发送流水线最慢一级每 2 个周期接一项，322 MHz 下 δ ≈ 6.2 ns（每秒 1.61 亿项）；同工具链实现的 RoCE 可靠连接因序号分配有依赖，每项占 6 个周期，δ ≈ 18.6 ns（0.54 亿项）。256 B 事务时后者只能提供 13.7 GB/s，比 128 个槽位给的 16.4 还低。<strong>两条出路</strong>：把 δ 缩到 5.12 ns，或者把事务合并成 4 KiB——那时 18.6 ns 对应 220 GB/s，而且只要 25 个槽位就够 50 GB/s。</p>
+    <p>读和写受不同限制。PCIe 上写是 posted（发出即完成），读是 non-posted（靠标签对应完成报文）。原书作者在 KV-Direct 上实测：PCIe Gen3 x8、64 B 随机 DMA 读往返 1050 ns，用满链路要 92 个在途，但主机只发 84 个信用、FPGA 只有 64 个标签，于是上限 6100 万次/秒，实测 6000 万；写不占标签，接近报文开销给的上限。<strong>Nm/T 和 m/δ 两项分别起作用的活例子。</strong></p>
+    <p class="go">调槽位数和事务大小，看哪一项先卡住。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">B_eff ≤ min(B_path, Nm/T, m/δ)</p>
+    <div id="cnG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每事务载荷 m <output id="cnM">256 B</output></span><input type="range" id="cnMs" min="0" max="6" value="0"></label>
+      <label class="ctl"><span>在途槽位 N <output id="cnN">128</output></span><input type="range" id="cnNs" min="3" max="10" value="7"></label>
+      <label class="ctl"><span>槽位周转 T（μs） <output id="cnT">2</output></span><input type="range" id="cnTs" min="0.5" max="10" step="0.5" value="2"></label>
+      <label class="ctl"><span>发起间隔 δ（ns） <output id="cnD">18.6</output></span><input type="range" id="cnDs" min="2" max="40" step="0.2" value="18.6"></label>
+    </div>
+    <div id="cnBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="cnE">0</div><div class="k">有效带宽</div></div><div><div class="v" id="cnNeed">0</div><div class="k">用满 50 GB/s 需要的槽位</div></div></div>
+    <p class="cap" id="cnW"></p>
+  </div>
+  <div class="notes" id="n-conc"></div>
+</section>
+
+<section class="part" id="cong">
+  <div class="part-head"><h2>拥塞：平均 40% 也能积压 1 GB</h2><span class="meta">原书 7.5.1–7.5.2 节</span></div>
+  <div class="sec-lede">
+    <p>例题 7.5：两项作业每 100 ms 各有 20 ms 的通信高峰，峰值都是 50 GB/s，出口 50 GB/s。平均需求 <strong>2 × 50 × 20/100 = 20 GB/s</strong>，利用率只有 40%；但两个高峰同时开始时到达 100 GB/s，<strong>20 ms 积压 1 GB，还要再 20 ms 才排空</strong>。把第二项推迟 20 ms，队列始终为空。重叠 h 毫秒就积压 50h GB；若只留 512 KiB 缓冲，允许的重叠只有 10.5 μs——<strong>毫秒级的相位误差就远远超了</strong>。CASSINI 利用训练通信的周期性错峰；原书的 CPU DDP 对照实验说明一次性错峰不够，相位会继续漂移（三轮测量反而慢 2%–3%）。</p>
+    <p>队列方程 <strong>dQ/dt = λ(t) − B</strong>，不溢出的条件 <strong>T<sub>f</sub> ≤ Q<sub>free</sub>/(λ − B)</strong>。100 GB/s 到达、50 GB/s 出口、剩 256 KiB，只撑 5.2 μs；反馈 20 μs 才到就要丢约 738 KB。而且降到 50 GB/s 只是不再涨，降到 40 才有 10 GB/s 的余量排空，512 KiB 要 52 μs。</p>
+    <p><strong>incast</strong> 更陡：N 个发送方同时打一个出口，λ = (N−1)B。N = 8 时 350 GB/s、允许反馈 3.50 μs；N = 16 时 1.50 μs；N = 64 时 0.34 μs。所以要两段反馈分工：<strong>PFC</strong>（802.1Qbb）只管相邻一跳，30 m 线缆按 5 ns/m 算，暂停帧上行 150 ns + 在途数据下行 150 ns + 1500 B 在 50 GB/s 上串行化 30 ns = <strong>0.33 μs</strong>，需要的 headroom 在 N = 8/16/64 时是 99 KB/231 KB/1.02 MB；<strong>DCQCN</strong> 再把源头速率降下来（约 20 μs）。只靠端到端不丢包的条件是 (N−2)×50 GB/s×20 μs ≤ Q<sub>free</sub>：1 MiB 只允许 N ≤ 3，4 MiB 也只到 N ≤ 6。</p>
+    <p>PFC 的代价是死锁：暂停沿上游逐跳传播，形成循环依赖就停住。解法是规定资源申请次序，或给完成响应预留独立缓冲和发送机会（虚拟通道）。</p>
+    <p class="go">先猜重叠 20 ms 会积压多少，再看 incast。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">两项周期作业的队列</p>
+      <div id="cgG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>高峰重叠 h（ms） <output id="qoH">20</output></span><input type="range" id="qoHs" min="0" max="20" value="20"></label>
+        <label class="ctl"><span>出口带宽（GB/s） <output id="qoB">50</output></span><input type="range" id="qoBs" min="25" max="150" step="5" value="50"></label>
+      </div>
+      <div class="read"><div class="warn"><div class="v" id="qoQ">0</div><div class="k">积压峰值</div></div><div><div class="v" id="qoD">0</div><div class="k">排空时间</div></div><div><div class="v" id="qoU">0</div><div class="k">平均利用率</div></div></div>
+      <svg class="rsvg" id="qoSvg" viewBox="0 0 560 180" role="img" aria-label="积压曲线"></svg>
+    </div>
+    <div class="lab">
+      <p class="lab-t">incast：允许的反馈时延</p>
+      <label class="ctl"><span>发送方数 N <output id="icN">8</output></span><input type="range" id="icNs" min="2" max="64" value="8"></label>
+      <label class="ctl"><span>剩余缓冲 Q<sub>free</sub>（MiB） <output id="icQ">1</output></span><input type="range" id="icQs" min="0.25" max="8" step="0.25" value="1"></label>
+      <table class="calc" id="icT"></table>
+      <p class="verdict3" id="icV"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-cong"></div>
+</section>
+
+<section class="part" id="multi">
+  <div class="part-head"><h2>多路径：哈希冲突、逐包喷洒与选择性重传</h2><span class="meta">原书 7.5.3 节</span></div>
+  <div class="sec-lede">
+    <p>按流分配路径（ECMP）不会乱序，但可能撞车。同一台叶上的 n 条等速跨组流哈希到 m 条上联，最忙的一条分到的流数决定整组速度：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>流数 n</th><th>上联 m</th><th>E[L<sub>max</sub>]</th><th>p99</th><th>无冲突概率</th><th>相对速度</th></tr></thead>
+      <tbody>
+        <tr><td>8</td><td>32</td><td>1.66</td><td>3</td><td>38.6%</td><td>60.1%</td></tr>
+        <tr><td>8</td><td>16</td><td>2.06</td><td>4</td><td>12.1%</td><td>48.5%</td></tr>
+        <tr class="on"><td>32</td><td>32</td><td>3.53</td><td>6</td><td>1.8×10⁻¹³</td><td>28.3%</td></tr>
+        <tr><td>32</td><td>16</td><td>4.83</td><td>8</td><td>0</td><td>41.4%</td></tr>
+        <tr><td>128</td><td>16</td><td>13.36</td><td>18</td><td>0</td><td>59.9%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">原书 7.5.3 节表。<strong>翻转条件：流数与上联数接近时冲突代价最大</strong>（32 条流配 32 条上联只剩 28.3%），远少或远多时代价都小些。避开它要么用 rail 对齐减少同一台叶上的跨组流，要么改用逐包喷洒。</p>
+    <p>逐包喷洒没有哈希冲突，但有乱序。<strong>划算的条件是：慢路径多出的传播时延 &lt; 分路节省的串行发送时间。</strong>32 KiB 拆成 8 个 4 KiB 分两条路（都 1 μs 传播）：1.33 vs 单路 1.66 μs；把第二条路改成 9 μs 传播，最后一个报文 9.33 μs 才到，还要缓存 12 KiB 乱序数据——<strong>省的 0.33 μs 远抵不过多出的 8 μs</strong>。但 8 MiB 拆成 2048 个报文喷到八条路（传播 1–8 μs）：29.0 μs vs 单路 168.8 μs，接收方最多缓存 339 个报文、1.39 MB。</p>
+    <p>丢包要的是另一种恢复：序号 0 丢失、20 μs 后重传，整份 21.2 μs 才交付。<strong>选择性重传</strong>只补 4 KiB，回退 N 步要重发 32 KiB。超以太网把两件事都写进传输层：按熵值（典型 64–256 个）喷洒并按反馈避开拥塞路径，丢失的按选择性确认只补缺失的那些。</p>
+    <p class="go">调路径数和时延差，看喷洒划不划算。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">逐包喷洒：什么时候比单路径快</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>总数据量 <output id="spV">8 MiB</output></span><input type="range" id="spVs" min="0" max="8" value="6"></label>
+      <label class="ctl"><span>路径数 <output id="spP">8</output></span><input type="range" id="spPs" min="1" max="16" value="8"></label>
+      <label class="ctl"><span>最慢路径传播（μs） <output id="spD">8</output></span><input type="range" id="spDs" min="1" max="200" value="8"></label>
+    </div>
+    <div id="spBars" class="wide"></div>
+    <p class="verdict3" id="spW"></p>
+    <p class="note">每报文 4 KiB、每条路 50 GB/s，最快路径传播 1 μs。</p>
+  </div>
+  <div class="notes" id="n-multi"></div>
+</section>
+
+<section class="part" id="tail">
+  <div class="part-head"><h2>关键路径从数据就绪开始</h2><span class="meta">原书 7.6.1、7.6.3 节</span></div>
+  <div class="sec-lede">
+    <p>四个参与者分别在 0、0、0、2 ms 就绪，交换要 0.4 ms：全组 2.4 ms 完成。把交换减半只到 2.2 ms；<strong>让四个都在起点就绪，直接变成 0.4 ms</strong>。这段等待记在通信调用的耗时里，根源却在前面的计算。MegaScale 诊断时就发现带宽稳定但各参与者开始通信的时间差越来越大；原书的 Gloo 四进程实验也一样：4 KiB 输入下一个参与者晚到 25.1 ms，全组完成时间从 1.6 ms 变成 26.6 ms，而最后一个到达之后的尾段仍是 1.6 ms。</p>
+    <p>大小数据的优化方向相反。八人环、每轮启动 5 μs：<strong>T<sub>AR</sub> = 14 × 5 μs + 1.75M/B</strong>，令两项相等得 M ≈ 1.91 MiB。8 MiB 时带宽从 50 提到 150 GB/s，一次归约 364 → 168 μs；8 KiB 时只从 70.3 → 70.1 μs。36 层模型 72 次归约：提带宽省 14 μs，<strong>把每轮启动从 5 μs 降到 2 μs 能省 3.0 ms</strong>。</p>
+    <p>尾延迟要单独看：100 次通信，98 次 0.4 ms、一次晚就绪多等 2 ms、一次恢复多等 10 ms，平均 0.52 ms 而 p99 是 2.4 ms。把正常传输减半 p99 只到 2.2 ms；恢复事件变成两次，<strong>p99 直接变成 10.4 ms</strong>。</p>
+    <p class="go">拖动就绪偏差，看它怎么吃掉通信优化的收益。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">就绪偏差 vs 交换耗时</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>最晚就绪（ms） <output id="rdL">2</output></span><input type="range" id="rdLs" min="0" max="10" step="0.2" value="2"></label>
+        <label class="ctl"><span>交换耗时（ms） <output id="rdE">0.4</output></span><input type="range" id="rdEs" min="0.1" max="4" step="0.1" value="0.4"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="rdT">0</div><div class="k">全组完成</div></div><div><div class="v" id="rdP">0</div><div class="k">等待占比</div></div></div>
+      <p class="cap" id="rdW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">启动 vs 带宽：该优化哪一项</p>
+      <label class="ctl"><span>每次归约输入 M <output id="abM">8 KiB</output></span><input type="range" id="abMs" min="0" max="10" value="0"></label>
+      <div id="abBars" class="wide"></div>
+      <p class="cap" id="abW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-tail"></div>
+</section>
+
+<section class="part" id="scale">
+  <div class="part-head"><h2>固定 1024 卡，超节点变大之后</h2><span class="meta">原书 7.6.2、7.6.4 节</span></div>
+  <div class="sec-lede">
+    <p>先看一个训练步怎么拆：计算 20 ms → 归约 → 更新 2 ms。连续环 29.6 ms、分层归约 23.3 ms：<strong>通信少了 83%，整步只少 21%</strong>（S = (T<sub>c</sub> + T<sub>n</sub>)/(T<sub>c</sub> + T<sub>n</sub>/s)）。如果梯度 17 ms 就绪、能和剩下 3 ms 计算重叠，<strong>T<sub>step</sub> = max(20, 17 + T<sub>n</sub>) + 2</strong>：连续环 26.6 ms，分层 22.0 ms（通信 18.3 ms 就结束，藏在计算后面了）。数据最晚 18.7 ms 就绪仍能藏住；再缩通信就不改变关键路径了。</p>
+    <p>并发不足会把收益吃掉：每张网卡只有 128 个 256 B 事务在途时远端吞吐只有 16.4 GB/s，分层归约的跨服务器 24 MiB 要 1.5 ms，整步回到 24.3 ms。<strong>换了算法还要让请求提交和处理跟得上。</strong></p>
+    <p>扩到 1024 卡（Qwen3-32B、TP8×DP128、每卡梯度分片 8 GB、算力按 Llama 3 405B 报告的 41% MFU）：超节点从 8 卡扩到 256 卡时，每超节点跨域发送量只从 127 GB 降到 96 GB——<strong>超节点大 16 倍不等于出口字节少 16 倍</strong>。出口随卡数增长时吞吐 111.7 → 158.1 万 token/s（8 → 256 卡），但 128 → 256 只提高 1.3%，因为计算和 TP 通信已占 86%。出口固定 400 GB/s 时几乎不提高；3:1 超售又把跨域时间变成三倍。</p>
+    <p>并行度也要重算：128 卡超节点上枚举 TP8/16/32/64，步时间 0.672/0.753/0.942/1.333 s——<strong>TP8 仍最好</strong>，组越大每副本要交换的激活越多，省下的本地梯度同步抵不过它。故障恢复：<strong>ε ≈ C/I + λ(I/2 + R)</strong>，按 Meta 统计 1024 卡作业平均 7.9 小时中断一次，每 600 s 停 10 s 存 checkpoint、恢复 60 s 加状态读回，128/256 卡节点开销约 3.4%/3.8%。</p>
+    <p class="go">先猜 8 → 64 卡超节点吞吐提高多少。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一个训练步的时间线</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>计算（ms） <output id="stC">20</output></span><input type="range" id="stCs" min="5" max="60" value="20"></label>
+      <label class="ctl"><span>梯度就绪时刻（ms） <output id="stR">17</output></span><input type="range" id="stRs" min="0" max="60" value="17"></label>
+      <label class="ctl"><span>通信（ms） <output id="stN">1.3</output></span><input type="range" id="stNs" min="0.2" max="12" step="0.1" value="1.3"></label>
+      <label class="ctl"><span>更新（ms） <output id="stU">2</output></span><input type="range" id="stUs" min="0" max="10" value="2"></label>
+    </div>
+    <div class="tl3" id="stT"></div>
+    <div class="read"><div class="hl"><div class="v" id="stTot">0</div><div class="k">整步</div></div><div><div class="v" id="stSer">0</div><div class="k">完全串行时</div></div><div class="good"><div class="v" id="stHid">0</div><div class="k">通信被藏住的部分</div></div></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">1024 卡：超节点大小 vs 吞吐（原书表）</p>
+    <div id="snG"></div>
+    <div class="seg" id="snS"><button data-v="g" aria-pressed="true">出口随卡数增长</button><button data-v="f">出口固定 400 GB/s</button></div>
+    <div id="snBars" class="wide" style="margin-top:10px"></div>
+    <p class="cap" id="snW"></p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">T_C = V_C / B_C；　超售比 r = d/u；　上联不瓶颈：f ≤ 1/r</div>
+    <div class="fx">环形每人发 V_rank = 2(p−1)M/p；　T_comm = Σ_r (α + max_e V_{r,e}/B_e)</div>
+    <div class="fx">T_msg = α + M/B；　交叉点 M = αB（5 μs × 50 GB/s ≈ 244 KiB）</div>
+    <div class="fx">MoE：dispatch + combine = 2·n·k·f·d</div>
+    <div class="fx">N ≥ ⌈BT/m⌉；　B_eff ≤ min(B_path, Nm/T, m/δ)</div>
+    <div class="fx">dQ/dt = λ(t) − B；　T_f ≤ Q_free/(λ − B)；　incast λ = (N−1)B</div>
+    <div class="fx">T_pipe = (m + p − 1)τ，　U = m/(m + p − 1)</div>
+    <div class="fx">S = (T_c + T_n)/(T_c + T_n/s)；　T_step = max(T_c, t_ready + T_n) + T_update</div>
+    <div class="fx">V_out = 2(H−1)/H · 8G；　ε ≈ C/I + λ(I/2 + R)</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>720 / 5760 / 384 MiB</b><span>连续环 / 交错环 / 分层归约的跨服务器量</span></div>
+      <div><b>7.6 → 1.3 ms</b><span>同一次 192 MiB 归约：连续环 vs 分层</span></div>
+      <div><b>64 GB/s</b><span>对照配置下分层归约才划算的本地带宽门槛</span></div>
+      <div><b>391 个</b><span>256 B 事务、2 μs 周转下用满 50 GB/s 的在途数</span></div>
+      <div><b>6.2 / 18.6 ns</b><span>OpenURMA / RoCE 可靠连接的发起间隔</span></div>
+      <div><b>1 GB</b><span>两个 20 ms 高峰重叠时的积压（平均只占 40%）</span></div>
+      <div><b>0.33 μs / 20 μs</b><span>PFC 一跳反馈 / DCQCN 端到端反馈</span></div>
+      <div><b>28.3%</b><span>32 条流撞 32 条上联时的相对速度</span></div>
+      <div><b>29.0 vs 168.8 μs</b><span>8 MiB 喷到八条路 vs 单路径</span></div>
+      <div><b>127 → 96 GB</b><span>超节点 8 → 256 卡，每节点跨域发送量</span></div>
+    </div>
+    <p class="src">数字均取自原书第 7 章。</p>
+  </div>
+  <div class="notes" id="n-scale"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+function us4(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' ms' : S.f(x, 2) + ' μs'; }
+function ms5(x) { return S.f(x, x < 10 ? 2 : 1) + ' ms'; }
+function mib2(x) { return x >= 1024 ? S.f(x / 1024, 2) + ' GiB' : S.f(x, x >= 100 ? 0 : 1) + ' MiB'; }
+function bw(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' TB/s' : S.f(x, x >= 100 ? 0 : 1) + ' GB/s'; }
+
+/* ---------- 割集 ---------- */
+function cl() {
+  var k = +$('#clKs').value, r = +$('#clRs').value;
+  $('#clK').textContent = k; $('#clR').textContent = r + ':1';
+  var u = Math.round(k / (r + 1)), d = k - u;
+  var leaves = Math.floor(u * 2), endpoints2 = d * Math.max(1, Math.floor(k / u) * 1);
+  // 两层 Clos：叶数 = k/u * ... 简化按原书：无阻塞 d=u=k/2，端点 k²/2
+  var ep2 = r === 1 ? k * k / 2 : Math.round(k * k / 2 * (d / (k / 2)) * 1);
+  var halfBW = ep2 / 2 * 50 / r;
+  $('#clT').innerHTML = '<tr><td>每叶下联 / 上联</td><td class="n">' + d + ' / ' + u + '</td></tr>' +
+    '<tr><td>两层 Clos 最多端点</td><td class="n">' + ep2.toLocaleString() + '</td></tr>' +
+    '<tr><td>三层（fat-tree）最多端点</td><td class="n">' + (k * k * k / 4).toLocaleString() + '</td></tr>' +
+    '<tr><td>两层的半分带宽</td><td class="n">' + bw(halfBW) + '</td></tr>' +
+    '<tr class="tot"><td>每端点穿过半分割集的份额</td><td class="n">' + S.f(50 / r, 1) + ' GB/s</td></tr>';
+}
+['clKs', 'clRs'].forEach(function (id) { $('#' + id).addEventListener('input', cl); }); cl();
+S.guess($('#clG'), { q: '3:1 超售时，每张卡穿过半分割集的带宽份额是多少 GB/s？', unit: 'GB/s', ans: 16.7, fmt: function (x) { return S.f(x, 1); }, why: '原书：无阻塞时每端点 50 GB/s，超售比 r 把它降到 50/r ≈ 16.7 GB/s。1024 卡作业从 32 台叶交换机（1:1，割集 51.2 TB/s）变成 22 台（3:1，17.6 TB/s）。' });
+S.notes($('#n-cut'), {
+  c: [
+    ['割集', '把系统分两半，连接两半的链路合起来；T ≥ V/B。'],
+    ['串联取最慢', '一张卡 NVLink 450 GB/s，但网卡只有 50 GB/s。'],
+    ['超售比', '叶的下联/上联；无阻塞 d = u = k/2。'],
+    ['半分带宽', '无阻塞时等于一半端点的带宽合计。']
+  ],
+  p: [
+    ['k = 64', '两层 2048 个端点（64 叶 + 32 脊），三层 65536 个。'],
+    ['f ≤ 1/r', '一张网卡发出的字节中跨叶的比例不超过 1/r 时，上联不是瓶颈。'],
+    ['强扩展 vs 弱扩展', '总任务固定加卡 vs 任务量随卡数增加。']
+  ]
+});
+
+/* ---------- 归约算法 ---------- */
+var rgH = 'h100';
+function rg() {
+  var rows;
+  if (rgH === 'h100') {
+    rows = [['连续环（0…15）', '720 MiB', '1 张', '7.6 ms', ''], ['交错环（0,8,1,9…）', '5760 MiB', '8 张', '7.6 ms', ''],
+      ['分层归约', '384 MiB', '8 张', '1.3 ms', 'on'], ['在网归约（SHARP）', '384 MiB', '8 张', '1.3 ms', 'on']];
+    $('#rgW').innerHTML = '三种算法发送总量都是 5760 MiB。分层归约把跨服务器压成两轮、八张网卡同时传，<b>割集有效带宽从 50 GB/s 变成 400 GB/s</b>。预算 3 ms：连续环已经超了，分层归约还给归约计算、传播和排队留了 1.7 ms。';
+  } else {
+    rows = [['连续环（8 个参与者）', '每轮 24 MiB', '共用插槽', '11.0 ms', 'on'], ['分层归约', '跨服务器 96 MiB/方向', '共用插槽', '15.7 ms', '']];
+    $('#rgW').innerHTML = '对照配置：每台 4 张 A100 PCIe（卡间 32 GB/s），一张双端口 ConnectX-7 共用 32 GB/s 插槽。<b>分层归约反而更慢</b>——跨服务器阶段把八个参与者的分片集中到同一个插槽上。令两者相等得本地带宽约 64 GB/s，约是插槽带宽的两倍。';
+  }
+  var html = '<thead><tr><th>方案</th><th>跨服务器字节</th><th>用上的网卡</th><th>传输时间</th></tr></thead><tbody>';
+  rows.forEach(function (r) { html += '<tr' + (r[4] ? ' class="on"' : '') + '><td>' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td><td>' + r[3] + '</td></tr>'; });
+  $('#rgT').innerHTML = html + '</tbody>';
+}
+S.seg($('#rgH'), function (v) { rgH = v; rg(); }); rg();
+S.guess($('#rgG'), { q: '同样 192 MiB 的梯度，分层归约的传输时间是连续环的几分之一？', unit: '倍（连续环 ÷ 分层）', ans: 7.6 / 1.3, fmt: function (x) { return S.f(x, 1); }, why: '原书：7.6 ms → 1.3 ms，约 5.8 倍。跨服务器字节只少 47%，时间却少 83%——连续环 30 轮每轮都在等那一条经网卡的边，另外 14 张网卡整轮闲着。' });
+var Ss2 = [2, 4, 8, 16, 32, 64];
+function inr() {
+  var S0 = Ss2[+$('#inSs').value]; $('#inS').textContent = S0;
+  var send = 2 * (S0 - 1) / S0 * 24, rounds = 2 * (S0 - 1);
+  var ring = rounds * 0.83 / 1000 + send * 1048576 / 50e9 * 1000;
+  var sharp = 1 * 0.83 / 1000 + 24 * 1048576 / 50e9 * 1000;
+  S.bars($('#inBars'), [{ label: '环形（' + rounds + ' 轮，每卡发 ' + S.f(send, 1) + ' MiB）', value: ring / Math.max(ring, sharp), text: ms5(ring), cls: 'alt' },
+    { label: '在网归约（1 轮，24 MiB）', value: sharp / Math.max(ring, sharp), text: ms5(sharp), cls: 'ok' }]);
+  $('#inW').innerHTML = S0 === 2 ? '两台服务器时只差一次 0.83 μs 的启动。' : 'S = ' + S0 + ' 时，环的字节是在网归约的 ' + S.f(2 * (S0 - 1) / S0, 2) + ' 倍，还多 ' + (2 * S0 - 3) + ' 次启动；在网归约只要环的 ' + S.pct(sharp / ring, 0) + '。SHARP 论文在 128 台主机上测得 8 B AllReduce 从 6.01 降到 2.83 μs。';
+}
+$('#inSs').addEventListener('input', inr); inr();
+S.notes($('#n-ring'), {
+  c: [
+    ['V_rank', '2(p−1)M/p；16 人各发 360 MiB，共 5760 MiB、30 轮。'],
+    ['逐轮模型', 'T = Σ(α + max_e V/B)：一轮内取最慢，轮之间相加。'],
+    ['分层归约', '机内 RS → 跨服务器 AllReduce → 机内 AG。'],
+    ['在网归约', '交换机边转发边加，每张网卡只发一次收一次。']
+  ],
+  p: [
+    ['字节 ≠ 时间', '交错环跨服务器字节是连续环的 8 倍，时间一样。'],
+    ['分层的前提', '跨服务器带宽由多张独立网卡提供；共享接口时可能更慢。'],
+    ['门槛', '对照配置要本地带宽 ≥ 64 GB/s 分层才划算。']
+  ]
+});
+
+/* ---------- 多轨 / MoE ---------- */
+function mo() {
+  var n = +$('#moNs').value, f = +$('#moFs').value / 100, k = +$('#moKs').value;
+  $('#moN').textContent = n; $('#moF').textContent = Math.round(f * 100) + '%'; $('#moK').textContent = k;
+  var v = 2 * n * 8 * f * 8 * 1024;
+  $('#moV').textContent = mib2(v / 1048576);
+  $('#moT').textContent = us4(v / 2 / k / 50e9 * 1e6);
+}
+['moNs', 'moFs', 'moKs'].forEach(function (id) { $('#' + id).addEventListener('input', mo); }); mo();
+function fu() {
+  var D = +$('#fuDs').value, n = +$('#fuNs').value;
+  $('#fuD').textContent = D; $('#fuN').textContent = n;
+  var relay = Math.min(450, n * 50), eff = Math.min(D, 50 + relay);
+  $('#fuB').textContent = bw(eff);
+  $('#fuT').textContent = ms5(1.125 * 1073741824 / (eff * 1e9) * 1000);
+}
+['fuDs', 'fuNs'].forEach(function (id) { $('#' + id).addEventListener('input', fu); }); fu();
+S.notes($('#n-rail'), {
+  c: [
+    ['多轨', '每台服务器第 i 张网卡都接第 i 台叶交换机。'],
+    ['对齐配对', 'i mod 8 相等就在一条 rail 内一跳到达，否则经脊层。'],
+    ['V_ij 矩阵', '行和 = 发送量，列和 = 接收量，跨割集元素和 = 割集流量。'],
+    ['2nkfd', 'MoE dispatch + combine 的跨边界流量。']
+  ],
+  p: [
+    ['有网卡 ≠ 用上', '连续环只用了八张中的一张。'],
+    ['共享插槽', '双端口 25+25 受限于 32 GB/s 插槽，加端口也没用。'],
+    ['dispatch 热点 = combine 热点', '返回矩阵是发送矩阵的转置，但两段耗时不一定相同。'],
+    ['小消息才看发起速率', 'δ = 18.6 ns 时，消息小于约 0.93 KB 才先于带宽成为瓶颈。']
+  ]
+});
+
+/* ---------- 并发 ---------- */
+var ms6 = [256, 512, 1024, 2048, 4096, 8192, 16384];
+function cn() {
+  var m = ms6[+$('#cnMs').value], N = Math.pow(2, +$('#cnNs').value), T = +$('#cnTs').value, d = +$('#cnDs').value;
+  $('#cnM').textContent = m >= 1024 ? (m / 1024) + ' KiB' : m + ' B';
+  $('#cnN').textContent = N; $('#cnT').textContent = T; $('#cnD').textContent = d.toFixed(1);
+  var path = 50, slot = N * m / (T * 1e-6) / 1e9, rate = m / (d * 1e-9) / 1e9;
+  var eff = Math.min(path, slot, rate), mx = Math.max(path, slot, rate);
+  S.bars($('#cnBars'), [
+    { label: '链路 B_path', value: path / mx, text: bw(path), cls: path === eff ? 'alt' : 'dim' },
+    { label: '槽位 Nm/T', value: slot / mx, text: bw(slot), cls: slot === eff ? 'alt' : 'dim' },
+    { label: '发起速率 m/δ', value: rate / mx, text: bw(rate), cls: rate === eff ? 'alt' : 'dim' }
+  ]);
+  $('#cnE').textContent = bw(eff);
+  $('#cnNeed').textContent = Math.ceil(50e9 * T * 1e-6 / m) + ' 个';
+  var names = []; if (path === eff) names.push('链路带宽'); if (slot === eff) names.push('在途槽位'); if (rate === eff) names.push('发起速率');
+  $('#cnW').innerHTML = '当前瓶颈：<b>' + names.join('、') + '</b>。' + (m <= 512 && rate < path ? ' 小事务下发起速率先于带宽用尽；把事务合并成 4 KiB，18.6 ns 的间隔就对应 220 GB/s。' : '');
+}
+['cnMs', 'cnNs', 'cnTs', 'cnDs'].forEach(function (id) { $('#' + id).addEventListener('input', cn); }); cn();
+S.guess($('#cnG'), { q: '256 B 事务、2 μs 周转，要用满 50 GB/s 需要多少个在途事务？', unit: '个', ans: 391, fmt: function (x) { return S.f(x, 0); }, why: '原书：N ≥ ⌈BT/m⌉ = ⌈50e9 × 2e−6 / 256⌉ = 391。只有 128 个槽位时有效带宽只有 16.4 GB/s；而 RoCE 的 δ = 18.6 ns 对 256 B 只能提供 13.7 GB/s，比槽位给的还低。' });
+S.notes($('#n-conc'), {
+  c: [
+    ['请求槽位', '保存一项未完成请求的记录；完成处理完才释放。'],
+    ['N ≥ ⌈BT/m⌉', '带宽—时延积除以每事务载荷。'],
+    ['三项约束', 'min(B_path, Nm/T, m/δ)。'],
+    ['posted vs non-posted', 'PCIe 写发出即完成；读靠标签对应完成报文。']
+  ],
+  p: [
+    ['两条出路', '缩短 δ，或合并成更大的事务（4 KiB 只要 25 个槽位）。'],
+    ['KV-Direct 实测', '读受在途数限制（64 个标签 → 6100 万次/秒），写受报文处理速率限制。'],
+    ['不对称争用', '进 GPU 方向 posted 写必须推进，读的标签用完只能等，分到的带宽远小于一半。']
+  ]
+});
+
+/* ---------- 拥塞 ---------- */
+function qo() {
+  var h = +$('#qoHs').value, B = +$('#qoBs').value;
+  $('#qoH').textContent = h; $('#qoB').textContent = B;
+  var peak = Math.max(0, (100 - B) * h / 1000);
+  $('#qoQ').textContent = peak > 0 ? S.f(peak, 2) + ' GB' : '0';
+  $('#qoD').textContent = peak > 0 ? ms5(peak / B * 1000) : '—';
+  $('#qoU').textContent = S.pct(20 / B, 0);
+  var g = $('#qoSvg'); g.innerHTML = '';
+  var X = S.scale(0, 80, 50, 540), Y = S.scale(0, Math.max(peak, 0.2) * 1.2, 160, 12);
+  S.svg('line', { x1: 50, y1: 160, x2: 540, y2: 160, class: 'ax' }, g);
+  S.svg('line', { x1: 50, y1: 160, x2: 50, y2: 12, class: 'ax' }, g);
+  var pts = [];
+  for (var t = 0; t <= 80; t += 0.5) {
+    var lam = (t < 20 ? 50 : 0) + (t >= 20 - h && t < 40 - h ? 50 : 0);
+    pts.push(t);
+  }
+  var Q = 0, path = [];
+  for (var i = 0; i < pts.length; i++) {
+    var t2 = pts[i], lam2 = (t2 < 20 ? 50 : 0) + (t2 >= 20 - h && t2 < 40 - h ? 50 : 0);
+    path.push([X(t2), Y(Q)]);
+    Q = Math.max(0, Q + (lam2 - B) * 0.5 / 1000);
+  }
+  S.svg('path', { d: S.path(path), class: 'q1' }, g);
+  [0, 20, 40, 60, 80].forEach(function (t3) { var tx = S.svg('text', { x: X(t3), y: 175, 'text-anchor': 'middle' }, g); tx.textContent = t3 + ' ms'; });
+  var yl = S.svg('text', { x: 46, y: 16, 'text-anchor': 'end' }, g); yl.textContent = S.f(Math.max(peak, 0.2) * 1.2, 2) + ' GB';
+}
+['qoHs', 'qoBs'].forEach(function (id) { $('#' + id).addEventListener('input', qo); }); qo();
+S.guess($('#cgG'), { q: '两项作业各 20 ms 高峰、峰值 50 GB/s，出口 50 GB/s。高峰完全重叠时积压峰值多少 GB？', unit: 'GB', ans: 1, fmt: function (x) { return S.f(x, 2); }, why: '原书例题 7.5：到达 100 GB/s 比出口多 50，20 ms 积压 1 GB，还要再 20 ms 排空——而平均利用率只有 40%。只要把第二项推迟 20 ms，队列始终为空。' });
+function ic() {
+  var N = +$('#icNs').value, Q = +$('#icQs').value;
+  $('#icN').textContent = N; $('#icQ').textContent = Q;
+  var lam = (N - 1) * 50, ex = lam - 50, tf = Q * 1048576 / (ex * 1e9) * 1e6;
+  var head = ex * 1e9 * 0.33e-6;
+  $('#icT').innerHTML = '<tr><td>到达速率（N−1 条流）</td><td class="n">' + bw(lam) + '</td></tr>' +
+    '<tr><td>超额速率</td><td class="n">' + bw(ex) + '</td></tr>' +
+    '<tr><td>允许的反馈时延 Q_free/(λ−B)</td><td class="n">' + S.f(tf, 2) + ' μs</td></tr>' +
+    '<tr class="tot"><td>PFC（0.33 μs）需要的 headroom</td><td class="n">' + S.f(head / 1000, 0) + ' KB</td></tr>';
+  var ok = (N - 2) * 50e9 * 20e-6 <= Q * 1048576;
+  var v = $('#icV'); v.className = 'verdict3' + (ok ? '' : ' bad');
+  v.innerHTML = ok ? '只靠 DCQCN 的 20 μs 端到端反馈也不会丢包。' : '端到端反馈（20 μs）撑不住，必须靠 PFC 先挡住相邻一跳：它只要 ' + S.f(tf, 2) + ' μs 内生效，而 PFC 是 0.33 μs。';
+}
+['icNs', 'icQs'].forEach(function (id) { $('#' + id).addEventListener('input', ic); }); ic();
+S.notes($('#n-cong'), {
+  c: [
+    ['队列方程', 'dQ/dt = λ(t) − B；缓冲保存的是一段时间内的差额。'],
+    ['T_f ≤ Q_free/(λ−B)', '缓冲加倍，允许的反馈时延加倍。'],
+    ['incast', 'N 个发送方打一个出口，λ = (N−1)B。'],
+    ['两段反馈', 'PFC 一跳 0.33 μs 挡住；DCQCN 约 20 μs 降源头速率。']
+  ],
+  p: [
+    ['平均低 ≠ 不积压', '平均 20 GB/s、出口 50，重叠 20 ms 照样积压 1 GB。'],
+    ['降到等于不够', '降到 50 只是不再涨，降到 40 才有余量排空。'],
+    ['错峰要维持', '一次性错峰会漂移，CASSINI 要持续监测重调。'],
+    ['PFC 的代价', '暂停沿上游传播，形成循环就是死锁；靠申请次序或独立响应通道打破。']
+  ]
+});
+
+/* ---------- 多路径 ---------- */
+var Vs2 = [32 * 1024, 64 * 1024, 256 * 1024, 1048576, 2 * 1048576, 4 * 1048576, 8 * 1048576, 32 * 1048576, 128 * 1048576];
+function sp3() {
+  var V = Vs2[+$('#spVs').value], P = +$('#spPs').value, D = +$('#spDs').value;
+  $('#spV').textContent = V >= 1048576 ? (V / 1048576) + ' MiB' : (V / 1024) + ' KiB';
+  $('#spP').textContent = P; $('#spD').textContent = D;
+  var single = V / 50e9 * 1e6 + 1;
+  var multi = V / P / 50e9 * 1e6 + D;
+  var mx = Math.max(single, multi);
+  S.bars($('#spBars'), [{ label: '单路径（传播 1 μs）', value: single / mx, text: us4(single), cls: single <= multi ? 'ok' : 'alt' },
+    { label: P + ' 条路径喷洒（最慢 ' + D + ' μs）', value: multi / mx, text: us4(multi), cls: multi < single ? 'ok' : 'alt' }]);
+  var w = $('#spW'); w.className = 'verdict3' + (multi < single ? '' : ' bad');
+  w.innerHTML = multi < single ? '喷洒更快：省下的串行发送 ' + us4(single - 1 - V / P / 50e9 * 1e6) + ' 大于多出的 ' + (D - 1) + ' μs 时延差。' :
+    '喷洒更慢：省下的串行发送抵不过 ' + (D - 1) + ' μs 的时延差。几十 KiB 的传输均分到时延不同的路径上很少划算。';
+}
+['spVs', 'spPs', 'spDs'].forEach(function (id) { $('#' + id).addEventListener('input', sp3); }); sp3();
+S.notes($('#n-multi'), {
+  c: [
+    ['ECMP', '按流哈希选上联，不乱序但可能撞车。'],
+    ['逐包喷洒', '消除哈希冲突，代价是乱序和接收方缓存。'],
+    ['选择性重传', '只补缺失的报文，不回退 N 步重发整个窗口。'],
+    ['超以太网', '按熵值喷洒（典型 64–256 个）+ 选择性确认。']
+  ],
+  p: [
+    ['最差在流数 ≈ 上联数', '32 条流配 32 条上联只剩 28.3%。'],
+    ['划算条件', '慢路径多出的时延 < 分路省下的串行发送时间。'],
+    ['8 MiB 喷八条', '29.0 vs 168.8 μs；接收方最多缓存 1.39 MB。'],
+    ['rail 对齐减少跨组流', '每台叶上跨组流越少，撞车概率越低。']
+  ]
+});
+
+/* ---------- 尾延迟 ---------- */
+function rd() {
+  var L = +$('#rdLs').value, E = +$('#rdEs').value;
+  $('#rdL').textContent = L.toFixed(1); $('#rdE').textContent = E.toFixed(1);
+  var tot = L + E;
+  $('#rdT').textContent = ms5(tot); $('#rdP').textContent = S.pct(L / tot, 0);
+  $('#rdW').innerHTML = L > E ? '把交换耗时减半只能省 ' + ms5(E / 2) + '；<b>让大家同时就绪能省 ' + ms5(L) + '</b>。' : '就绪已经很齐，继续缩短交换才有效。';
+}
+['rdLs', 'rdEs'].forEach(function (id) { $('#' + id).addEventListener('input', rd); }); rd();
+var Ms7 = [8 * 1024, 64 * 1024, 256 * 1024, 1048576, 1.91 * 1048576, 4 * 1048576, 8 * 1048576, 32 * 1048576, 64 * 1048576, 128 * 1048576, 512 * 1048576];
+function ab() {
+  var M = Ms7[+$('#abMs').value];
+  $('#abM').textContent = M >= 1048576 ? S.f(M / 1048576, M >= 10485760 ? 0 : 2) + ' MiB' : (M / 1024) + ' KiB';
+  function T(a, B) { return 14 * a + 1.75 * M / (B * 1e9) * 1e6; }
+  var base = T(5, 50), hiB = T(5, 150), lowA = T(2, 50);
+  var mx = base;
+  S.bars($('#abBars'), [
+    { label: '基准（α = 5 μs、50 GB/s）', value: 1, text: us4(base), cls: 'dim' },
+    { label: '带宽 ×3（150 GB/s）', value: hiB / mx, text: us4(hiB) + '（省 ' + S.pct(1 - hiB / base, 0) + '）' },
+    { label: 'α 降到 2 μs', value: lowA / mx, text: us4(lowA) + '（省 ' + S.pct(1 - lowA / base, 0) + '）', cls: 'ok' }
+  ]);
+  $('#abW').innerHTML = '交叉点 M ≈ 1.91 MiB（14 × 5 μs = 1.75M/B）。当前 ' + (M < 1.91 * 1048576 ? '<b>低于</b>交叉点：主要耗时在启动，缩短发起路径更有效' : '<b>高于</b>交叉点：主要耗时在传输，提高带宽更有效') + '。36 层模型 72 次归约：8 KiB 时提带宽只省 14 μs，α 从 5 降到 2 能省 3.0 ms。';
+}
+$('#abMs').addEventListener('input', ab); ab();
+S.notes($('#n-tail'), {
+  c: [
+    ['关键路径起点', '交换开始时刻 = 各参与者就绪时刻的最大值。'],
+    ['T_AR', '14 × α + 1.75M/B（八人环）；交叉点 M ≈ 1.91 MiB。'],
+    ['p99', '排序后第 99 项；偶发恢复会直接决定它。']
+  ],
+  p: [
+    ['就绪偏差', '一人晚 25.1 ms，全组从 1.6 ms 变成 26.6 ms。'],
+    ['分桶', '梯度分桶让通信提早开始，与后续梯度计算同时进行。'],
+    ['两类场景', '训练和大 batch prefill 减字节提带宽；低并发 decode 减同步次数、缩发起路径。']
+  ]
+});
+
+/* ---------- 1024 卡 ---------- */
+function st() {
+  var C = +$('#stCs').value, R = +$('#stRs').value, N = +$('#stNs').value, U = +$('#stUs').value;
+  $('#stC').textContent = C; $('#stR').textContent = R; $('#stN').textContent = N.toFixed(1); $('#stU').textContent = U;
+  var endComm = Math.max(R + N, 0), tot = Math.max(C, R + N) + U, ser = C + N + U;
+  $('#stTot').textContent = ms5(tot); $('#stSer').textContent = ms5(ser);
+  $('#stHid').textContent = ms5(Math.min(N, Math.max(0, C - R)));
+  var T = Math.max(ser, tot), box = $('#stT'); box.innerHTML = '';
+  function lane(name, segs) {
+    var r = h('div', { class: 'row' }, box); h('span', { text: name }, r); var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { if (s[1] > 0) h('span', { class: 'b ' + s[2], style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%', text: s[3] }, l); });
+  }
+  lane('计算', [[0, C, 'cmp', C + '']]);
+  lane('通信', [[R, N, 'net', S.f(N, 1)]]);
+  lane('更新', [[Math.max(C, R + N), U, 'upd', U + '']]);
+}
+['stCs', 'stRs', 'stNs', 'stUs'].forEach(function (id) { $('#' + id).addEventListener('input', st); }); st();
+var snMode = 'g';
+function sn() {
+  var data = snMode === 'g' ? [[8, 0.939, 111.7], [64, 0.690, 152.0], [128, 0.672, 156.0], [256, 0.663, 158.1]]
+    : [[8, 0.939, 111.7], [64, 0.939, 111.7], [128, 0.935, 112.2], [256, 0.896, 117.1]];
+  var mx = Math.max.apply(null, data.map(function (d) { return d[2]; }));
+  S.bars($('#snBars'), data.map(function (d) { return { label: d[0] + ' 卡超节点', value: d[2] / mx, text: S.f(d[2], 1) + ' 万 token/s（' + S.f(d[1], 3) + ' s）', cls: d[2] === mx ? 'ok' : '' }; }));
+  $('#snW').textContent = snMode === 'g' ? '出口随卡数增长（每卡一张 400 Gbit/s 网卡都接入交换网络）：8 → 64 卡提高约 36%，128 → 256 只提高 1.3%——此时计算和 TP 通信已占 86%。' :
+    '出口固定 400 GB/s（和一台 HGX 服务器相同）：扩大超节点几乎没有收益。64 卡时分层归约需 331.1 ms，反而比连续环的 317.7 ms 慢，表中取了连续环。';
+}
+S.seg($('#snS'), function (v) { snMode = v; sn(); }); sn();
+S.guess($('#snG'), { q: '1024 卡固定，超节点从 8 卡扩到 64 卡（出口随卡数增长），吞吐提高百分之几？', unit: '%', ans: 36, fmt: function (x) { return S.f(x, 0); }, why: '原书：111.7 → 152.0 万 token/s，约 36%。8 卡时每张卡要把整份 8 GB 梯度分片经网卡同步（0.318 s，占步时间三分之一）；64 卡时先在 NVLink 上归约成八分之一，梯度同步降到约 69 ms。' });
+S.notes($('#n-scale'), {
+  c: [
+    ['S', '(T_c + T_n)/(T_c + T_n/s)：通信加速 ≠ 任务加速。'],
+    ['重叠', 'T_step = max(T_c, t_ready + T_n) + T_update。'],
+    ['V_out', '2(H−1)/H × 8G：超节点大 16 倍，出口字节只少 20%。'],
+    ['ε', 'C/I + λ(I/2 + R)：checkpoint 开销 + 故障恢复。']
+  ],
+  p: [
+    ['83% vs 21%', '通信从 7.6 降到 1.3 ms，串行训练步只从 29.6 降到 23.3 ms。'],
+    ['并发不足会吃掉收益', '128 个槽位时分层归约的远端要 1.5 ms，整步回到 24.3 ms。'],
+    ['TP8 仍最好', '128 卡超节点上 TP8/16/32/64 = 0.672/0.753/0.942/1.333 s。'],
+    ['出口不会自动变宽', '3:1 超售把跨域时间变三倍；内部带宽翻倍的收益不算在节点大小头上。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 为什么差六倍', '字节数由算法定，时间由路径定：连续环 30 轮每轮都在等那一条经网卡的边，分层归约把跨服务器压成两轮、八张网卡同时传，割集有效带宽从 50 变 400 GB/s。但跨服务器带宽是共享接口时（对照配置的 32 GB/s 插槽），分层反而更慢，门槛是本地带宽 ≥ 64 GB/s。'],
+    ['② 平均 40% 也积压', '缓冲保存的是一段时间内的到达与出口之差：两个 20 ms 高峰重叠就积压 1 GB，512 KiB 缓冲只容得下 10.5 μs 的重叠。incast 更陡，所以要 PFC（0.33 μs 一跳）和 DCQCN（20 μs 端到端）两段分工。'],
+    ['③ 83% vs 21%', '通信只是串行链的一段：20 ms 计算 + 2 ms 更新没变。让梯度提早就绪并与计算重叠，才把 23.3 压到 22.0 ms；通信一旦被计算盖住，再缩也不改变关键路径。']
+  ],
+  p: [
+    ['改进顺序', '先减跨服务器字节并让每张网卡都有分片 → 用并发填满带宽 → 找能提早开始的通信 → 再优化计算或更新。'],
+    ['下一篇', '回到单机推理：批处理、缓存和请求调度。']
+  ],
+  ph: '一句话'
+});

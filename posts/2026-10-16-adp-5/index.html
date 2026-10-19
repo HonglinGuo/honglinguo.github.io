@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>异常、人机协同、护栏与评估</title>
+<meta name="description" content="智能体设计模式学习笔记（五）：异常处理与恢复（检测、处理、恢复三阶段）、人机协同与“人在循环外”、多层护栏与生产级工程原则、评估与监控（轨迹评估六种匹配、LLM-as-a-Judge、从智能体到“承包商”）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5' fill='%232340D6'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.layers { display: grid; gap: 6px; margin-top: 10px; }
+.layers .ly { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; background: var(--bg); font-size: 15px; }
+.layers .ly.off { opacity: .45; }
+.layers .ly.hit { border-color: var(--ok); background: var(--ok-soft); }
+.layers .ly .st { font-size: 14px; color: var(--ink-3); }
+.layers .ly.hit .st { color: var(--ok); font-weight: 600; }
+.traj { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.traj .chip2 { cursor: pointer; }
+.mtx { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.mtx div { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+.mtx b { display: block; font-family: var(--f-num); font-size: 20px; }
+.mtx span { font-size: 14px; color: var(--ink-2); }
+.mtx .y b { color: var(--ok); } .mtx .n b { color: var(--alert); }
+@media (max-width: 640px) { .mtx { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+</head>
+<body data-series="adp-series" data-part="5">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>智能体设计模式 · 05</span><span>对应原书第 12、13、18、19 章</span><span>约 25 分钟</span></p>
+  <h1>能用之后，还要<em>靠得住</em></h1>
+  <p class="lead">原书把这四章分在“容错与扩展”和“高级架构”两部分，但它们其实在回答同一个问题：智能体上了生产，出错了怎么办、哪些事必须让人拍板、怎样不让它做坏事、怎么知道它一直在好好干。放在一起读，能拼出一张完整的“可靠性”地图。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">Agentic Design Patterns 智能体设计模式</a>》（Antonio Gulli 著，xindoo 等中文翻译）的学习笔记。21 个模式按主题重新分成 7 篇。每个模式先讲它要解决的问题，再用一张统一格式的模式卡收住，最后配一个小实验；原书的 LangChain / ADK / CrewAI 代码不复述，建议对照原书阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-adp/"><b>总览</b>模式地图</a>
+  <a href="../2026-10-16-adp-1/" data-part="1"><b>01</b>流程编排</a>
+  <a href="../2026-10-16-adp-2/" data-part="2"><b>02</b>反思与规划</a>
+  <a href="../2026-10-16-adp-3/" data-part="3"><b>03</b>连接外部</a>
+  <a href="../2026-10-16-adp-4/" data-part="4"><b>04</b>记忆与成长</a>
+  <a href="../2026-10-16-adp-5/" aria-current="page" data-part="5"><b>05</b>稳健可信</a>
+  <a href="../2026-10-16-adp-6/" data-part="6"><b>06</b>协作与调度</a>
+  <a href="../2026-10-16-adp-7/" data-part="7"><b>07</b>附录速览</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#exc">异常处理</a><a href="#hitl">人机协同</a><a href="#guard">护栏</a><a href="#eng">工程原则</a><a href="#eval">评估指标</a><a href="#traj">轨迹评估</a><a href="#contract">承包商</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>智能体调用的服务时好时坏，“处理”和“恢复”分别有哪些手段？</li>
+    <li>护栏可以放在哪些位置？为什么原书说要用一个更小更便宜的模型做额外保障？</li>
+    <li>智能体最终答案对了，为什么还要评估它的“轨迹”？轨迹有哪几种比对方式？</li>
+  </ol>
+</div>
+
+<section class="part" id="exc">
+  <div class="part-head"><h2>异常处理与恢复：出错不可怕，乱出错才可怕</h2><span class="meta">原书第 12 章</span></div>
+  <div class="sec-lede">
+    <p>原书把这个模式拆成三段。<strong>错误检测</strong>：工具输出无效或格式错、API 返回 404 / 500、响应时间异常长、回复不连贯；还可以用其他智能体或专门的监控系统主动发现。<strong>错误处理</strong>：记日志、重试（瞬态错误，可微调参数）、回退（换一种方法）、优雅降级（保住部分功能）、通知（告警给人或其他智能体）。<strong>恢复</strong>：状态回滚、诊断原因、自我纠正或重新规划、升级给人或更高层系统。</p>
+    <p>原书的用例很具体：数据库临时宕机时客服机器人不该崩，而是告知用户、建议稍后再试或转人工；交易机器人遇到“资金不足”要记录并<strong>避免反复提交同一笔无效交易</strong>；批处理文档遇到损坏文件，应跳过、记录、继续，最后汇报跳过了哪些。它还提到这个模式可以和反思结合：失败后分析原因，换个提示词再试。第 18 章补充了一个常用细节：对瞬态问题用<strong>带指数退避的重试</strong>。</p>
+    <p class="go">算一笔重试的账：重试几次能把成功率拉到多少，要多等多久？</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">指数退避重试（理想化计算）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>单次失败概率 <output id="exP">30%</output></span><input type="range" id="exPs" min="0.05" max="0.9" step="0.05" value="0.3"></label>
+        <label class="ctl"><span>最多重试次数 <output id="exK">3</output></span><input type="range" id="exKs" min="0" max="6" value="3"></label>
+        <label class="ctl"><span>首次退避（秒） <output id="exB">1</output></span><input type="range" id="exBs" min="0.5" max="4" step="0.5" value="1"></label>
+      </div>
+      <div class="read"><div class="good"><div class="v" id="exS">0</div><div class="k">最终成功概率</div></div><div class="warn"><div class="v" id="exW">0</div><div class="k">最坏情况累计等待</div></div></div>
+      <p class="cap" id="exC"></p>
+      <p class="note">假设每次失败相互独立（瞬态错误），第 i 次重试前等待 首次退避 × 2<sup>i−1</sup>。若错误不是瞬态的（比如“资金不足”），重试多少次都没用，这正是原书说的“避免重复尝试无效交易”。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">检测、处理，还是恢复</p>
+      <div id="exSort"></div>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 异常处理与恢复</h3><p class="en">Exception Handling and Recovery</p>
+    <dl>
+      <dt>问题</dt><dd>工具故障、网络问题、无效数据不可避免，没有结构化应对时智能体脆弱、容易整体失败。</dd>
+      <dt>做法</dt><dd>检测（校验输出、看错误码、超时）→ 处理（日志、重试、回退、降级、通知）→ 恢复（回滚、诊断、自我纠正、升级）。</dd>
+      <dt>何时用</dt><dd>任何部署在动态真实环境、可靠性是关键要求的智能体。</dd>
+      <dt>相关</dt><dd>失败后用<strong>反思</strong>换方法重试；升级环节接<strong>人机协同</strong>。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-exc"></div>
+</section>
+
+<section class="part" id="hitl">
+  <div class="part-head"><h2>人机协同：哪些事必须让人拍板</h2><span class="meta">原书第 13 章</span></div>
+  <div class="sec-lede">
+    <p>HITL 的出发点是：在复杂、模糊或高风险的领域，完全自主是不明智的。原书列了六个方面：<strong>人类监督</strong>（看日志、看仪表板）、<strong>干预与纠正</strong>（智能体遇到错误或模糊情况时请人介入）、<strong>用于学习的人类反馈</strong>（如 RLHF）、<strong>决策增强</strong>（AI 给分析和建议，人做最终决定）、<strong>人机协作</strong>（常规处理交给 AI，创造性问题和复杂谈判由人负责）、<strong>升级策略</strong>（事先约定何时、如何交给人）。例子：大额企业贷款的最终批准要人评估“领导层品格”这类定性因素；量刑这类关键决定必须由法官保留最终权力。</p>
+    <p>它的变体叫<strong>“人在循环外”（Human-on-the-loop）</strong>：人不审每一单，而是事先定好策略，AI 负责高速执行。原书的例子：金融专家定下“70% 科技股 + 30% 债券、单一公司不超过 5%、跌破买入价 10% 自动卖出”，AI 实时盯盘照章执行；呼叫中心经理定下“提到‘服务中断’立即转技术专家”“语气高度沮丧就提供转人工”，AI 处理每一通电话。</p>
+    <p>原书也列了 HITL 的代价：<strong>可扩展性差</strong>（人管不了几百万个任务，通常要和自动化混合）、<strong>依赖专家水平</strong>（只有熟练的开发者才能发现 AI 代码里的细微错误）、<strong>标注员需要培训</strong>、<strong>隐私</strong>（敏感信息给人看之前要匿名化）。</p>
+    <p class="go">判断这几个场景是 HITL 还是“人在循环外”。</p>
+  </div>
+  <div class="lab"><div id="hitlQ"></div></div>
+  <div class="card2">
+    <h3>模式卡 · 人机协同</h3><p class="en">Human-in-the-Loop</p>
+    <dl>
+      <dt>问题</dt><dd>需要细致判断、道德推理、处理模糊上下文的任务，AI 表现不佳；高风险场景完全自主后果严重。</dd>
+      <dt>做法</dt><dd>在工作流里战略性地安排人类监督、验证、反馈和干预；明确升级策略。</dd>
+      <dt>何时用</dt><dd>医疗、金融、自主系统等高风险领域；内容审核、复杂客服等模糊任务；需要高质量人类标注持续改进模型。</dd>
+      <dt>代价</dt><dd>不易扩展；依赖专家；标注员培训；隐私与匿名化。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-hitl"></div>
+</section>
+
+<section class="part" id="guard">
+  <div class="part-head"><h2>护栏：不是限制能力，而是让行为可预测</h2><span class="meta">原书第 18 章</span></div>
+  <div class="sec-lede">
+    <p>原书强调，护栏的主要目的<strong>不是限制智能体的能力</strong>，而是确保它稳健、可靠、有益。护栏可以放在多个位置：<strong>输入验证 / 清理</strong>、<strong>输出过滤 / 后处理</strong>（毒性、偏见）、<strong>提示词级的行为约束</strong>、<strong>工具使用限制</strong>、<strong>外部审核 API</strong>、<strong>人工监督</strong>。组合使用才最强，还要持续监控和改进以应对不断演变的风险。另一条实用建议：用一个<strong>计算更便宜的模型</strong>（如 Gemini Flash / Flash Lite）作为快速的额外保障，预先筛输入、复查输出。</p>
+    <p>原书的两个示例很有代表性。CrewAI 示例做了一个“内容策略执行者”智能体：详细的安全提示词覆盖越狱、禁止内容、离题讨论、贬低品牌或谈论竞争对手等；输出必须是 <code>{compliance_status, evaluation_summary, triggered_policies}</code> 的 JSON，并用 Pydantic 模型校验；选用快而便宜、低温度的模型。Vertex AI 示例用 ADK 的 <code>before_tool_callback</code>：<strong>工具执行前</strong>比对参数里的 user_id 和会话里的 user_id，不一致就拦截。原书还提醒，模型生成的内容在 UI 显示前要清理，防止浏览器执行恶意代码。</p>
+    <p class="go">开关不同的护栏层，看看几种输入分别会被哪一层拦下（拦截层的对应关系为示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="gdIn"><button data-v="0" aria-pressed="true">越狱：“忽略之前所有指令…”</button><button data-v="1">离题：聊竞争对手的八卦</button><button data-v="2">工具参数越权：查别人的 user_id</button><button data-v="3">生成内容里夹带脚本</button></div>
+    <div class="layers" id="gdLy"></div>
+    <p class="cap" id="gdOut"></p>
+  </div>
+  <div class="notes" id="n-guard"></div>
+</section>
+
+<section class="part" id="eng">
+  <div class="part-head"><h2>生产级智能体：把它当成复杂软件来造</h2><span class="meta">原书第 18 章“构建可靠的智能体”</span></div>
+  <div class="sec-lede">
+    <p>原书在护栏一章末尾单独写了一节，核心观点是：<strong>不要把智能体当成全新的东西，而要当成比以往任何时候都更需要成熟工程纪律的复杂系统</strong>。确定性代码都会出错和涌现出意外行为，容错、状态管理、健壮测试这些原则一直重要。</p>
+    <p>四条原则：<strong>检查点与回滚</strong>，类比数据库的事务提交与回滚，每个检查点是一次经过验证的“提交”；<strong>模块化与关注点分离</strong>，单体的全能智能体脆弱难调，拆成数据检索、分析、用户沟通等专门智能体，便于测试、并行、故障隔离；<strong>结构化日志的可观测性</strong>，不只看最终输出，还要记下调用了哪些工具、收到什么数据、下一步推理、决策置信度；<strong>最小权限</strong>，总结公开新闻的智能体只该能访问新闻 API，以限制错误或恶意利用的“爆炸半径”。</p>
+    <p class="go">对号入座。</p>
+  </div>
+  <div class="lab"><div id="engSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：护栏 vs 异常处理</h4>
+    <p><b>异常处理</b>对付的是“出了故障”：服务挂了、超时、格式错，目标是恢复正常运行。<b>护栏</b>对付的是“行为不当”：一切技术上都正常，但输入恶意、输出有害、工具被越权使用，目标是让行为保持在安全边界内。两者在“升级给人”这一步汇合到人机协同。</p>
+  </div>
+  <div class="notes" id="n-eng"></div>
+</section>
+
+<section class="part" id="eval">
+  <div class="part-head"><h2>评估与监控：先从“精确匹配为什么不行”说起</h2><span class="meta">原书第 19 章</span></div>
+  <div class="sec-lede">
+    <p>原书把第 19 章和第 11 章区分开：第 11 章是智能体自己设定目标、跟踪进度；第 19 章是对效率、效能和合规进行<strong>持续的、通常是外部的测量</strong>。用例包括生产环境性能跟踪、A/B 测试、合规与安全审计、漂移检测、异常行为检测、学习进度评估，以及企业里给 AI 委派任务时的“合约”。</p>
+    <p>原书的第一个示例故意暴露了问题：用去空格、忽略大小写的精确匹配来判对错，“The capital of France is Paris.” 和 “Paris is the capital of France.” 会被判为 0 分。更合理的指标有：Levenshtein 距离、Jaccard 相似度、关键词分析、嵌入余弦相似度、LLM-as-a-Judge、RAG 专用的忠实性和相关性。除准确性外还要监控<strong>延迟</strong>（写入时序数据库或可观测平台，而不是打印到控制台）和 <strong>token 用量</strong>（直接关系成本）。“有用性”这类主观质量用 <strong>LLM-as-a-Judge</strong>，原书例子按清晰性、中立性、相关性、完整性、受众适当性五项各打 1–5 分并给出理由。</p>
+    <p class="go">输入两句话，看精确匹配和 Jaccard 相似度各给多少分（真实计算）。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">精确匹配 vs Jaccard</p>
+      <label class="ctl"><span>智能体回答</span></label>
+      <div class="rt-in"><input id="evA" value="The capital of France is Paris." aria-label="智能体回答" style="flex:1;min-width:0;font:inherit;font-size:16px;padding:6px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);color:var(--ink)"></div>
+      <label class="ctl"><span>标准答案</span></label>
+      <div class="rt-in"><input id="evB" value="Paris is the capital of France." aria-label="标准答案" style="flex:1;min-width:0;font:inherit;font-size:16px;padding:6px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);color:var(--ink)"></div>
+      <div class="read"><div class="warn"><div class="v" id="evE">0</div><div class="k">精确匹配</div></div><div class="good"><div class="v" id="evJ">0</div><div class="k">Jaccard（词集合交 / 并）</div></div></div>
+      <p class="note">Jaccard 只看词是否出现，不看顺序和含义；把标准答案改成 “Paris is not the capital of France.”，它的分数依然很高。这就是为什么还需要语义相似度和 LLM-as-a-Judge。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">三类评估方法（原书对比表）</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th>方法</th><th>优势</th><th>劣势</th></tr></thead>
+        <tbody>
+          <tr><td>人工评估</td><td>捕获细微行为</td><td>难扩展、昂贵、耗时，有主观因素</td></tr>
+          <tr><td>LLM-as-a-Judge</td><td>一致、高效、可扩展</td><td>可能忽略中间步骤；受评判 LLM 能力限制</td></tr>
+          <tr><td>自动化指标</td><td>可扩展、高效、客观</td><td>难以捕获完整能力</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="notes" id="n-eval"></div>
+</section>
+
+<section class="part" id="traj">
+  <div class="part-head"><h2>轨迹评估：不只看答案，还看它怎么走过来的</h2><span class="meta">原书第 19 章</span></div>
+  <div class="sec-lede">
+    <p>传统软件测试给出确定的通过 / 失败，而智能体是概率性的，所以要同时评估最终输出和<strong>轨迹</strong>，即到达答案所走的步骤序列。原书举例：处理产品查询的理想轨迹是“意图确定 → 数据库搜索 → 结果审查 → 报告生成”。比对方法有六种：<strong>精确匹配</strong>（与理想序列完全一致）、<strong>按序匹配</strong>（正确动作按顺序出现，允许额外步骤）、<strong>任意顺序匹配</strong>（正确动作都出现即可，允许额外步骤）、<strong>精确度</strong>（实际动作中有多少是相关的）、<strong>召回率</strong>（必需动作捕获了多少）、<strong>单工具使用</strong>（检查某个特定动作）。高风险场景可能要求精确匹配，灵活场景用按序或任意顺序。</p>
+    <p>ADK 把测试分成两种：<strong>测试文件</strong>（单个简单会话，用于开发期单元测试，例如“关闭卧室的 device_2”应调用 <code>set_device_info</code>）和<strong>评估集文件</strong>（多个可能很长的会话，用于集成测试）；运行方式有 <code>adk web</code>、pytest、<code>adk eval</code> 三种。多智能体系统还要看“团队”：交接是否传对了信息（航班日期传给酒店智能体）、是否按计划执行、是否选对了智能体（天气要问专门的天气智能体）、加一个智能体是否真的更好。</p>
+    <p class="go">点击下面的动作，拼出智能体的实际轨迹，看六种指标怎么打分（真实计算）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-s">理想轨迹：意图确定 → 数据库搜索 → 结果审查 → 报告生成</p>
+    <p class="lab-s">可选动作（点击追加到实际轨迹）：</p>
+    <div class="traj" id="trPool"></div>
+    <p class="lab-s">实际轨迹：</p>
+    <div class="traj" id="trAct"></div>
+    <div class="ctrls"><button class="btn" type="button" id="trClr">清空</button><button class="btn" type="button" id="trEx1">示例：多搜了一次网页</button><button class="btn" type="button" id="trEx2">示例：顺序颠倒</button><button class="btn" type="button" id="trEx3">示例：漏了审查</button></div>
+    <div class="mtx" id="trM"></div>
+  </div>
+  <div class="notes" id="n-traj"></div>
+</section>
+
+<section class="part" id="contract">
+  <div class="part-head"><h2>从智能体到“承包商”</h2><span class="meta">原书第 19 章</span></div>
+  <div class="sec-lede">
+    <p>原书引用了 Agent Companion（Gulli 等）中的提法：今天常见的智能体靠简短、规格不明的指令运行，做演示可以，上生产很脆。“承包商”模型让用户和 AI 之间建立类似服务协议的正式关系，有四个支柱。</p>
+    <p class="go">逐个看。</p>
+  </div>
+  <div class="lab">
+    <div id="ctStep"></div>
+    <div id="ctBody"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：三种“检查”</h4>
+    <p><b>反思</b>（第 4 篇）是生成过程中的自我批评，目的是改出更好的这一份输出。<b>目标监控</b>（第 4 篇）是智能体内部对照目标跟踪进度。<b>评估与监控</b>（本篇）是对智能体整体表现的外部、持续测量：A/B 测试、漂移、合规审计。承包商模型的“质量为中心的迭代执行”则把前两者写进了合约条款里。</p>
+  </div>
+  <div class="notes" id="n-contract"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 服务时好时坏，“处理”和“恢复”分别有哪些手段？</summary><p class="ans">处理：日志、重试（瞬态错误，可指数退避）、回退、优雅降级、通知。恢复：状态回滚、诊断、自我纠正 / 重新规划、升级给人或上层系统。</p></details>
+    <details><summary>2. 护栏可以放在哪些位置？为什么要用更小的模型做额外保障？</summary><p class="ans">输入验证、输出过滤、提示词行为约束、工具使用限制、外部审核 API、人工监督。小模型快且便宜，适合在每次请求上预筛输入、复查输出，作为主模型之外的一道额外防线。</p></details>
+    <details><summary>3. 为什么还要评估轨迹？有哪几种比对方式？</summary><p class="ans">智能体是概率性的，答案对了也可能走了低效或危险的路，轨迹能暴露错误和低效。六种：精确匹配、按序匹配、任意顺序匹配、精确度、召回率、单工具使用。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-adp-4/"><small>上一篇</small><span>04 · 记忆、学习、目标与探索</span></a><a class="nx" href="../2026-10-16-adp-6/"><small>下一篇</small><span>06 · 多智能体、资源感知与优先级</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">xindoo/agentic-design-patterns</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 异常 ---------- */
+function exc() {
+  var p = +$('#exPs').value, k = +$('#exKs').value, b = +$('#exBs').value;
+  $('#exP').textContent = Math.round(p * 100) + '%'; $('#exK').textContent = k; $('#exB').textContent = b;
+  var s = 1 - Math.pow(p, k + 1), w = 0;
+  for (var i = 1; i <= k; i++) w += b * Math.pow(2, i - 1);
+  $('#exS').textContent = S.pct(s, 2); $('#exW').textContent = S.f(w, 1) + ' 秒';
+  $('#exC').textContent = '共 ' + (k + 1) + ' 次尝试；全部失败的概率 ' + S.pct(1 - s, 2) + '，此时应转入回退、降级或通知，而不是继续重试。';
+}
+['exPs', 'exKs', 'exBs'].forEach(function (id) { $('#' + id).addEventListener('input', exc); });
+exc();
+S.sortGame($('#exSort'), {
+  bins: [{ k: 'd', t: '检测' }, { k: 'h', t: '处理' }, { k: 'r', t: '恢复' }],
+  items: [
+    { t: 'API 返回 503', k: 'd', why: '特定 API 错误码属于错误检测。' },
+    { t: '响应时间异常长（超时）', k: 'd', why: '检测信号之一。' },
+    { t: '损坏文件跳过并记录，继续处理其他文件', k: 'h', why: '日志 + 优雅降级。' },
+    { t: '换一个备用数据源', k: 'h', why: '回退。' },
+    { t: '撤销刚才的事务', k: 'r', why: '状态回滚。' },
+    { t: '机械臂多次拾取失败后报警给操作员', k: 'r', why: '升级给人。' }
+  ]
+});
+S.notes($('#n-exc'), {
+  c: [
+    ['错误检测', '无效输出、错误码（404 / 500）、超时、不连贯回复；可由监控智能体主动发现。'],
+    ['错误处理', '日志、重试、回退、优雅降级、通知。'],
+    ['恢复', '状态回滚、诊断、自我纠正 / 重新规划、升级。']
+  ],
+  p: [
+    ['瞬态 vs 永久', '瞬态错误值得重试（指数退避），永久错误（资金不足）不要重复提交。'],
+    ['与反思结合', '失败后分析原因，用改进的提示词重试。'],
+    ['批处理原则', '跳过、记录、继续、最后汇报。']
+  ]
+});
+
+/* ---------- HITL ---------- */
+S.quiz($('#hitlQ'), [
+  { q: '内容审核：模糊或边界内容交给人类审核员最终决定。', o: ['HITL', '人在循环外'], a: 0, why: '具体案例升级给人，人参与单个决策。' },
+  { q: '专家设定“跌破买入价 10% 自动卖出”等规则，AI 实时执行交易。', o: ['HITL', '人在循环外'], a: 1, why: '原书原例：人定策略，AI 处理即时高速操作，无需逐单审批。' },
+  { q: '自主网络：AI 分析 KPI 预测流量异常，高风险告警和网络变更由人类分析师批准。', o: ['HITL', '人在循环外'], a: 0, why: '原书把“自主网络”列为 HITL 用例：关键决策升级给人。' },
+  { q: '呼叫中心经理规定“提到‘服务中断’立即转技术专家”，AI 处理所有来电。', o: ['HITL', '人在循环外'], a: 1, why: '原书原例：经理定高层策略，AI 自主执行。' }
+]);
+S.notes($('#n-hitl'), {
+  c: [
+    ['HITL 六方面', '监督、干预与纠正、学习反馈、决策增强、人机协作、升级策略。'],
+    ['人在循环外', '人定总体策略，AI 处理即时操作并确保合规。'],
+    ['定位', 'AI 增强人类而不是替代人类。']
+  ],
+  p: [
+    ['四个代价', '可扩展性差、依赖专家、标注员需培训、隐私与匿名化。'],
+    ['典型场景', '贷款终审、量刑、模糊内容审核、自动驾驶交还控制权。'],
+    ['混合方案', '自动化负责规模，HITL 负责准确性。']
+  ]
+});
+
+/* ---------- 护栏 ---------- */
+var layers = [
+  { k: 'in', t: '输入验证 / 小模型预筛（策略执行者）' },
+  { k: 'pr', t: '提示词级行为约束' },
+  { k: 'tool', t: '工具使用限制（before_tool_callback）' },
+  { k: 'mod', t: '外部审核 API' },
+  { k: 'out', t: '输出过滤 / 显示前清理' },
+  { k: 'hu', t: '人工监督' }
+];
+var on = { in: true, pr: true, tool: true, mod: true, out: true, hu: true };
+var catches = [['in', 'pr', 'mod', 'hu'], ['in', 'pr', 'hu'], ['tool', 'hu'], ['out', 'hu']];
+var why = ['原书的“策略执行者”提示词专门覆盖越狱尝试；行为约束提示也是一道防线。', '原书的策略执行者包含“离题讨论、谈论竞争对手”等策略。', '原书 Vertex 示例：工具执行前比对参数和会话中的 user_id，不一致即拦截。', '原书提醒：模型生成内容在 UI 显示前要清理，防止浏览器执行恶意代码。'];
+var gi = 0;
+function guard() {
+  var box = $('#gdLy'); box.innerHTML = '';
+  var first = null;
+  layers.forEach(function (l) {
+    var can = catches[gi].indexOf(l.k) >= 0, hit = on[l.k] && can && !first;
+    if (hit) first = l;
+    var d = h('div', { class: 'ly' + (on[l.k] ? '' : ' off') + (hit ? ' hit' : '') }, box);
+    var cb = h('input', { type: 'checkbox', 'aria-label': l.t }, d); cb.checked = on[l.k];
+    cb.addEventListener('change', function () { on[l.k] = cb.checked; guard(); });
+    h('span', { text: l.t }, d);
+    h('span', { class: 'st', text: hit ? '在这里拦下' : (on[l.k] ? (can ? '后备防线' : '—') : '已关闭') }, d);
+  });
+  $('#gdOut').innerHTML = first ? why[gi] : '<b style="color:var(--alert)">全部漏过。</b>能拦它的层都被关掉了，这就是原书说“组合多种护栏才最强”的原因。';
+}
+S.seg($('#gdIn'), function (v) { gi = +v; guard(); });
+guard();
+S.notes($('#n-guard'), {
+  c: [
+    ['护栏', '引导行为和输出的保护层，目的不是限制能力，而是可预测、安全、合规。'],
+    ['六个位置', '输入验证、输出过滤、提示约束、工具限制、外部审核 API、人工监督。'],
+    ['越狱', '专门设计的提示词，试图绕过模型的安全与道德限制。']
+  ],
+  p: [
+    ['小模型做额外保障', '快且便宜，预筛输入、复查输出。'],
+    ['结构化判定', '策略执行者输出 JSON，用 Pydantic 校验。'],
+    ['工具前回调', 'before_tool_callback 校验参数，例如 user_id 一致性。'],
+    ['持续演进', '护栏要持续监控、评估、改进。']
+  ]
+});
+
+/* ---------- 工程 ---------- */
+S.sortGame($('#engSort'), {
+  bins: [{ k: 'c', t: '检查点与回滚' }, { k: 'm', t: '模块化' }, { k: 'o', t: '可观测性' }, { k: 'l', t: '最小权限' }],
+  items: [
+    { t: '每个经过验证的中间状态都当作一次“提交”', k: 'c', why: '类比数据库事务。' },
+    { t: '数据检索、分析、用户沟通拆成三个专门智能体', k: 'm', why: '关注点分离，便于测试与故障隔离。' },
+    { t: '记录每次调用了什么工具、拿到什么数据、置信度多少', k: 'o', why: '结构化日志捕获“思维链”。' },
+    { t: '新闻摘要智能体只能访问新闻 API', k: 'l', why: '限制爆炸半径。' }
+  ]
+});
+S.notes($('#n-eng'), {
+  c: [
+    ['核心观点', '把智能体当成更需要成熟工程纪律的复杂软件。'],
+    ['四原则', '检查点与回滚、模块化、结构化可观测性、最小权限。']
+  ],
+  p: [
+    ['爆炸半径', '最小权限限制错误或恶意利用的影响范围。'],
+    ['Vertex 建议', '小模型保障、隔离代码执行、严格评估、VPC 等网络边界、先做风险评估。']
+  ]
+});
+
+/* ---------- 评估 ---------- */
+function toks(s) { return s.toLowerCase().replace(/[^a-z0-9一-龥\s]/g, ' ').split(/\s+/).filter(Boolean); }
+function ev() {
+  var a = $('#evA').value, b = $('#evB').value;
+  $('#evE').textContent = a.trim().toLowerCase() === b.trim().toLowerCase() ? '1.0' : '0.0';
+  var A = {}, B = {}, U = {}, I = 0, n = 0;
+  toks(a).forEach(function (w) { A[w] = 1; U[w] = 1; }); toks(b).forEach(function (w) { B[w] = 1; U[w] = 1; });
+  for (var w in U) { n++; if (A[w] && B[w]) I++; }
+  $('#evJ').textContent = n ? S.f(I / n, 2) : '0';
+}
+['evA', 'evB'].forEach(function (id) { $('#' + id).addEventListener('input', ev); });
+ev();
+S.notes($('#n-eval'), {
+  c: [
+    ['评估与监控', '对效率、效能、合规的持续外部测量。'],
+    ['精确匹配的问题', '同义改写被判 0 分。'],
+    ['更好的指标', 'Levenshtein、Jaccard、关键词、嵌入余弦、LLM-as-a-Judge、忠实性 / 相关性。'],
+    ['LLM-as-a-Judge', '按预定义评分标准由 LLM 打分并给理由，评主观质量。']
+  ],
+  p: [
+    ['还要监控', '延迟（写入持久存储）、token 用量（成本）。'],
+    ['用例', '性能跟踪、A/B、合规审计、漂移检测、异常检测、学习进度。'],
+    ['企业治理', 'AI “合约”：编纂委派任务的目标、规则、控制。']
+  ]
+});
+
+/* ---------- 轨迹 ---------- */
+var ideal = ['意图确定', '数据库搜索', '结果审查', '报告生成'];
+var acts = ['意图确定', '数据库搜索', '网页搜索', '结果审查', '报告生成'];
+var cur = ideal.slice();
+acts.forEach(function (a) {
+  var b = h('button', { class: 'chip2', type: 'button', text: '+ ' + a }, $('#trPool'));
+  b.addEventListener('click', function () { cur.push(a); traj(); });
+});
+function inOrder(act, ref) { var j = 0; act.forEach(function (x) { if (j < ref.length && x === ref[j]) j++; }); return j === ref.length; }
+function traj() {
+  var box = $('#trAct'); box.innerHTML = '';
+  cur.forEach(function (a, i) {
+    var b = h('button', { class: 'chip2 ' + (ideal.indexOf(a) >= 0 ? 'ok' : 'bad'), type: 'button', text: (i + 1) + '. ' + a + ' ×', title: '点击移除' }, box);
+    b.addEventListener('click', function () { cur.splice(i, 1); traj(); });
+  });
+  var exact = cur.length === ideal.length && cur.every(function (x, i) { return x === ideal[i]; });
+  var ord = inOrder(cur, ideal);
+  var any = ideal.every(function (x) { return cur.indexOf(x) >= 0; });
+  var rel = cur.filter(function (x) { return ideal.indexOf(x) >= 0; }).length;
+  var prec = cur.length ? rel / cur.length : 0;
+  var rec = ideal.filter(function (x) { return cur.indexOf(x) >= 0; }).length / ideal.length;
+  var single = cur.indexOf('数据库搜索') >= 0;
+  function cell(name, ok, v) { return '<div class="' + (ok ? 'y' : 'n') + '"><b>' + v + '</b><span>' + name + '</span></div>'; }
+  $('#trM').innerHTML = cell('精确匹配', exact, exact ? '通过' : '不通过') + cell('按序匹配', ord, ord ? '通过' : '不通过') + cell('任意顺序匹配', any, any ? '通过' : '不通过') +
+    cell('精确度', prec >= 0.999, S.f(prec, 2)) + cell('召回率', rec >= 0.999, S.f(rec, 2)) + cell('单工具：用了数据库搜索', single, single ? '是' : '否');
+}
+$('#trClr').addEventListener('click', function () { cur = []; traj(); });
+$('#trEx1').addEventListener('click', function () { cur = ['意图确定', '数据库搜索', '网页搜索', '结果审查', '报告生成']; traj(); });
+$('#trEx2').addEventListener('click', function () { cur = ['意图确定', '结果审查', '数据库搜索', '报告生成']; traj(); });
+$('#trEx3').addEventListener('click', function () { cur = ['意图确定', '数据库搜索', '报告生成']; traj(); });
+traj();
+S.notes($('#n-traj'), {
+  c: [
+    ['轨迹', '智能体到达答案所走的步骤序列。'],
+    ['六种比对', '精确、按序（允许多余）、任意顺序（允许多余）、精确度、召回率、单工具。'],
+    ['测试文件 vs 评估集', '单个简单会话做单元测试 / 多个长会话做集成测试。']
+  ],
+  p: [
+    ['选哪种', '高风险用精确匹配，灵活场景用按序或任意顺序。'],
+    ['ADK 三种跑法', 'adk web、pytest（AgentEvaluator.evaluate）、adk eval。'],
+    ['多智能体四问', '交接对不对、计划守不守、智能体选得对不对、加人是否更好。']
+  ]
+});
+
+/* ---------- 承包商 ---------- */
+var ct = [
+  ['① 正式化合约', '详细规范作为任务的唯一真实来源，定义交付物、精确规格、可用数据源、范围、预期计算成本和完成时间，使结果可客观验证。', '不说“分析上季度销售”，而是“一份 20 页 PDF，分析 2025 年 Q1 欧洲市场销售，含五个指定可视化、与 2024 年 Q1 的对比，以及基于给定供应链中断数据集的风险评估”。'],
+  ['② 协商与反馈', '合约是对话的开始：承包商可以分析条款、提出协商，标记歧义和风险，在执行前消除误解。', '“指定的 XYZ 数据库不可访问。请提供凭据，或批准使用替代公共数据库，这可能会略微改变数据粒度。”'],
+  ['③ 质量为中心的迭代执行', '优先正确性和质量而不是低延迟；生成、审查、改进，直到满足合约规格。', '代码合约：生成多种算法方案，用合约里的单元测试编译运行，按性能、安全、可读性评分，只提交全部通过的版本。'],
+  ['④ 子合约分解', '主承包商像项目经理一样，把大目标拆成正式的子合约，分派给专门智能体。', '“构建电商 App”拆成 UI/UX 设计、身份认证、商品数据库、支付集成四个子合约，各有交付物和规格。']
+];
+S.stepper($('#ctStep'), ct.length, function (i) {
+  $('#ctBody').innerHTML = '<div class="card2" style="margin-top:12px"><h3>' + ct[i][0] + '</h3><dl><dt>是什么</dt><dd>' + ct[i][1] + '</dd><dt>原书例子</dt><dd>' + ct[i][2] + '</dd></dl></div>';
+}, ['合约', '协商', '迭代执行', '子合约']);
+S.notes($('#n-contract'), {
+  c: [
+    ['承包商模型', '从规格不明的提示，转向条款明确、可验证、可问责的正式协议。'],
+    ['四支柱', '正式化合约、协商与反馈、质量为中心的迭代执行、子合约分解。']
+  ],
+  p: [
+    ['为什么', '歧义是生产环境失败的主要来源。'],
+    ['子合约', '让系统以可组织、可扩展的方式处理大型项目。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

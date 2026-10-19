@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>超节点：六种并行、集合通信与协作规模</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（六）：DP/TP/SP/CP/PP/EP 各切哪个维度、TP 的 T(p) = T_local/p + 128·T_AR(p)、环形与树形 AllReduce 的交点、MoE 活跃专家期望与负载不均、流水线利用率、环面与交换网络、UB 的连接状态与片上缓存、四会话 128K 的部署选择与故障成本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .l1 { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.rsvg .l2 { stroke: var(--s2); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.rsvg .l3 { stroke: var(--dim); stroke-width: 2; fill: none; stroke-dasharray: 2 3; }
+.gcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 12px; }
+.gcards > div { border: 1px solid var(--hair); border-left: 3px solid var(--s1); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+.gcards h5 { margin: 0 0 4px; font-size: 16px; }
+.gcards p { margin: 2px 0; font-size: 15px; color: var(--ink-2); }
+.gcards .dim2 { color: var(--ink-3); }
+</style>
+</head>
+<body data-series="infra-series" data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 06</span><span>对应原书第 6 章</span><span>约 40 分钟</span></p>
+  <h1>八张卡，<em>怎么分才对</em></h1>
+  <p class="lead">同样八张 H100，可以放八个单卡实例，也可以让八张卡共同算一个请求。原书用 Qwen3-32B 的 128K 会话把这件事算到底：单卡连一个会话都放不下；八卡实例单会话最快（41 ms），四个两卡实例却让全部四个会话最早完成（119 ms）。这一章就是沿着容量、延迟、吞吐三个目标，把六种并行方式、集合通信代价和物理拓扑逐项算清楚。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" aria-current="page" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#dims">六种并行</a><a href="#cap">容量</a><a href="#tp">张量并行</a><a href="#coll">集合通信</a><a href="#moe">MoE 负载</a><a href="#pp">流水线</a><a href="#topo">拓扑</a><a href="#ub">UB 状态</a><a href="#choose">怎么选</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>六种并行方式各切哪个维度，各自换来什么、付出什么通信？</li>
+  <li>TP 卡数翻倍，什么时候就不再划算了？</li>
+  <li>四个 128K 会话、八张卡、130 ms 期限，该怎么部署？出一次故障成本涨多少？</li>
+</ol></div>
+
+<section class="part" id="dims">
+  <div class="part-head"><h2>五个维度，六种切法</h2><span class="meta">原书 6.1.4、6.2 节</span></div>
+  <div class="sec-lede">
+    <p>用更多卡通常出于三种需求：权重放不下（容量）、单请求太慢（延迟）、请求太多（吞吐）。一层的输入有三个维度——样本 B、序列位置 S、特征 H；模型本身还有层 L 和 MoE 的专家集合 E。六种并行方式就切在这五个地方。</p>
+    <p>原书用俄罗斯套娃来理解它们的组合：最外层 DP 决定同时推进多少份独立工作，PP 把连续的层交给不同阶段，进入某一层后 EP 按专家分布、TP 按特征拆矩阵、SP 和 CP 按序列位置分摊。DP2×PP2×TP4 就是 16 张卡；在同一个 TP4 组里再开 SP，卡数不变。</p>
+    <p>还有一个贯穿全章的区分：<strong>沿样本、位置、层、专家切时，各卡负责不同数据，结果靠收集或阶段交接；沿特征切时，各卡贡献同一个输出的一部分，后面必须先求和</strong>。这就是第 5 篇单卡里输出维和归约维的跨卡版本。</p>
+    <p class="go">把这些切法和它们的通信对上号。</p>
+  </div>
+  <div class="lab"><div id="dimSort"></div></div>
+  <div class="gcards" id="gc"></div>
+  <div class="notes" id="n-dims"></div>
+</section>
+
+<section class="part" id="cap">
+  <div class="part-head"><h2>先算容量：放得下，才谈快慢</h2><span class="meta">原书 6.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>每张卡要同时装下权重、KV、激活和工作区：<strong>W<sub>i</sub> + K<sub>i</sub> + A<sub>i</sub> + U<sub>i</sub> ≤ C<sub>i</sub></strong>。贯穿算例是 HGX H100（8 × H100 SXM，80 GB、3350 GB/s、989.4 TFLOP/s，NVLink 每方向 450 GB/s）上的 Qwen3-235B-A22B：94 层、隐藏 4096、64 个查询头、4 个 KV 头、头维 128，每层 128 个路由专家选 8 个、中间维 1536。</p>
+    <p>BF16 权重约 470.2 GB，每 token KV = 2×94×4×128×2 = <strong>188 KiB</strong>，8192 token 约 1.58 GB，加 2 GiB 工作区，单卡要 473.9 GB——接近一张 H100 的六倍。分到八卡后每卡约 <strong>61.50 GB</strong>（权重比八分之一略多，因为归一化参数和路由器每卡都有一份），整机 492 GB，还剩约 148 GB，每卡剩下的 18.5 GB 够再放 47 个 8192 token 的会话。</p>
+    <p>速度也先看读取：一层选中的 8 个专家权重 288 MiB，读一遍 90.1 μs，而矩阵只要 0.31 μs——<strong>单 token decode 的 MFU 上限只有约 0.3%</strong>，与实现好坏无关。全模型一个 token 要读 43.1 GB 权重 + 1.58 GB KV，单卡 13.3 ms，均分八卡 1.73 ms。</p>
+    <p class="go">先猜每卡要多少 GB，再改卡数和上下文。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Qwen3-235B-A22B 的逐卡容量</p>
+    <div id="capG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>卡数 <output id="cpN">8</output></span><input type="range" id="cpNs" min="1" max="16" value="8"></label>
+      <label class="ctl"><span>上下文（K token） <output id="cpL">8</output></span><input type="range" id="cpLs" min="1" max="128" value="8"></label>
+      <label class="ctl"><span>并发会话数 <output id="cpB">1</output></span><input type="range" id="cpBs" min="1" max="60" value="1"></label>
+    </div>
+    <table class="calc" id="cpT"></table>
+    <p class="verdict3" id="cpV"></p>
+    <p class="note">KV 按 188 KiB/token；TP 卡数超过 4 个 KV 头后 KV 开始复制，这里按原书八卡分法每卡保存全部 KV 的四分之一（卡数 ≥ 4 时按 1/4，否则按 1/卡数）。</p>
+  </div>
+  <div class="notes" id="n-cap"></div>
+</section>
+
+<section class="part" id="tp">
+  <div class="part-head"><h2>张量并行：本地时间除以 p，通信时间乘上去</h2><span class="meta">原书 6.2.2、6.4.2 节</span></div>
+  <div class="sec-lede">
+    <p>按权重的<strong>列</strong>切，各卡算出不同的输出元素，拼接即可；按<strong>行</strong>切，各卡只有部分和，必须相加。SwiGLU 的两次投影正好首尾相接：上投影按中间维切列，下投影按中间维切行，于是 <strong>Y = Z₀W<sub>d,0</sub> + Z₁W<sub>d,1</sub></strong>，要一次 AllReduce（或 ReduceScatter，若下游能继续用分片）。注意力按头切，输出投影同样得到部分和。Qwen3-32B 每层两次归约，64 层共 <strong>128 次</strong>。</p>
+    <p>所以时间模型是 <strong>T(p) = T<sub>local</sub>/p + 128·T<sub>AR</sub>(p)</strong>，Qwen3-32B 的 128K 会话 T<sub>local</sub> ≈ 29.35 ms（权重 63.97 GB + KV 34.36 GB，按 3350 GB/s）。卡数从 p 翻到 2p 划算的条件：<strong>128·[T<sub>AR</sub>(2p) − T<sub>AR</sub>(p)] &lt; T<sub>local</sub>/(2p)</strong>。p 越大右边越小。</p>
+    <p>环形 AllReduce：<strong>T = 2(n−1)α + 2(n−1)M/(nB)</strong>。10 KiB、α = 0.822 μs（MSCCL++ 在同款八卡 H100 上实测的 NVLink 单向延迟）、B = 450 GB/s 时，TP8 一次归约 11.55 μs，其中 <strong>11.51 μs 全是启动</strong>——把带宽翻倍整步只省 2.5 μs，把每轮开销减半能省 0.74 ms。</p>
+    <p>还有一条硬约束：<strong>头是分配的最小单位</strong>。Qwen3-32B 只有 8 个 KV 头，TP16 时两张卡共存同一个 KV 头，每卡读的 KV 不再减少；本地时间只从 3.67 降到 2.48 ms，而跨服务器归约实测 32.74 μs/次，TP16 单步 6.67 ms，反而比 TP8 的 5.15 ms 慢。</p>
+    <p class="go">先猜 TP8 的单步时间，再调卡数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">T(p) = T_local/p + 128·T_AR(p)（Qwen3-32B，128K 会话）</p>
+    <div id="tpG"></div>
+    <div class="selrow"><span>互联</span><div class="seg" id="tpI"><button data-v="nv" aria-pressed="true">机内 NVLink（α = 0.822 μs）</button><button data-v="ib">跨服务器（实测 32.74 μs/次）</button></div></div>
+    <label class="ctl"><span>TP 卡数 p <output id="tpP">8</output></span><input type="range" id="tpPs" min="0" max="4" value="3"></label>
+    <div id="tpBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="tpT">0</div><div class="k">单步时间</div></div><div><div class="v" id="tpA">0</div><div class="k">一次归约</div></div><div><div class="v" id="tpD">0</div><div class="k">相对上一档净省</div></div></div>
+    <p class="cap" id="tpW"></p>
+  </div>
+  <div class="notes" id="n-tp"></div>
+</section>
+
+<section class="part" id="coll">
+  <div class="part-head"><h2>集合通信：环还是树，交点在哪</h2><span class="meta">原书 6.4 节</span></div>
+  <div class="sec-lede">
+    <p>四种操作按“开始时各卡有什么、结束时各卡有什么”区分：<strong>AllReduce</strong>（部分结果 → 完整结果）、<strong>ReduceScatter</strong>（部分结果 → 结果的不同分片）、<strong>AllGather</strong>（不同分片 → 完整拼接）、<strong>All-to-All</strong>（发往不同目的地的数据 → 各源卡发给本卡的）。AllReduce = ReduceScatter + AllGather。MoE 的 combine 还包括恢复 token 顺序和按路由权重求和，<strong>不能当成 AllReduce</strong>。</p>
+    <p>环形：2(n−1) 轮，每卡发 2(n−1)M/n；树形：<strong>T = 2log₂n·(α + M/B)</strong>，轮数少但关键路径上每轮传完整张量。八卡 10 KiB 时环 11.55 μs、树 5.07 μs；换成 80 MiB（8192 token），环 0.34 ms、树 1.12 ms。<strong>交点约在 680 KiB</strong>。</p>
+    <p>测量 NCCL 要分清两种带宽：<strong>algbw = M/T</strong>，<strong>busbw = 2(n−1)M/(nT)</strong>。原书例：两台 HGX H100 共 16 rank、每卡 64 MiB AllReduce 用时 466.1 μs，algbw 143.99 GB/s，busbw 269.98 GB/s。busbw 是归一化指标，不能当成每张网卡的实际吞吐。</p>
+    <p>通信还会和计算抢资源。原书用 Gloo 在 4 个 CPU 进程上做实验：4 MiB 归约单独 2.67 ms，与矩阵乘同时跑变成 6.14 ms，但整组仍是 11.58 ms（被计算掩盖）；64 MiB 时通信 36.92 → 45.21 ms、计算 11.03 → 12.89 ms，分开共 48.0 ms，同时跑只省 2.7 ms——<strong>不能把各自单独测的时间直接相减</strong>。</p>
+    <p class="go">拖动数据量，看环和树谁快。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">环形 vs 树形 AllReduce</p>
+    <div id="rtG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>卡数 n <output id="rtN">8</output></span><input type="range" id="rtNs" min="1" max="6" value="3"></label>
+      <label class="ctl"><span>每卡数据量 M <output id="rtM">10 KiB</output></span><input type="range" id="rtMs" min="0" max="13" value="0"></label>
+      <label class="ctl"><span>每轮开销 α（μs） <output id="rtA">0.822</output></span><input type="range" id="rtAs" min="0.1" max="10" step="0.1" value="0.8"></label>
+    </div>
+    <div id="rtBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="rtX">0</div><div class="k">两者相等的数据量</div></div><div><div class="v" id="rtR">0</div><div class="k">环的轮数</div></div><div><div class="v" id="rtTr">0</div><div class="k">树的轮数</div></div></div>
+  </div>
+  <div class="notes" id="n-coll"></div>
+</section>
+
+<section class="part" id="moe">
+  <div class="part-head"><h2>MoE：批内复用省读取，负载不均拖时间</h2><span class="meta">原书 6.2.6、6.3.2 节</span></div>
+  <div class="sec-lede">
+    <p>专家并行把不同专家放到不同卡上，<strong>dispatch</strong> 把 token 送到专家所在卡，<strong>combine</strong> 把结果送回并按路由权重合并（y = a₁y₁ + a₆y₆）。按目的卡发送而不是按专家发送能省一半：一个 token 选中的 8 个专家若两两分布在 4 张远端卡上，4096 维 BF16 输入 8 KiB，逐专家发 64 KiB，按卡发只要 32 KiB。</p>
+    <p>一批 token 选中多少个不同专家，直接决定权重读取。均匀随机时的期望是 <strong>E[E<sub>active</sub>] = E·[1 − (1 − k/E)<sup>m</sup>]</strong>：E = 128、k = 8、m = 8 时约 52 个活跃专家，读约 1.8 GiB；若 8 个 token 全选同一组 8 个专家，只读 288 MiB。64 个 token 均匀覆盖 128 个专家要读 4.5 GiB，集中时 288 MiB，<strong>相差 16 倍而运算量相同</strong>。</p>
+    <p>但读得少不等于快：在 TP2×EP4 布局里，均匀覆盖时每组承担 128 次分派；8 个活跃专家全落在一个组时，该组要扛全部 512 次，<strong>计算量是均匀时的四倍，另外三组干等</strong>。decode 看权重读取，prefill 看最忙的那个专家组。原书的建议是把热点专家分散到不同 EP 组：既保留批内复用，又减轻单组负担。</p>
+    <p>原书还给了一个“用容量换通信”的布局：TP2×EP4 下让四个专家组都对同一请求做注意力，各自保存该请求的 KV，于是专家输入就在本组，不用跨组 dispatch。代价是每卡权重 64.8 GB（八卡 518.6 GB，比每参数存一份多 48.4 GB），8192 token 的 KV 每卡 752 MiB，八卡共 5.875 GiB，<strong>是该请求实际 KV 的四倍</strong>。</p>
+    <p class="go">调 batch，看活跃专家数和读取量。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">活跃专家与权重读取（每层 128 专家、每 token 选 8、每专家 36 MiB）</p>
+    <div id="meG"></div>
+    <label class="ctl"><span>batch 内 token 数 m <output id="meM">8</output></span><input type="range" id="meMs" min="0" max="10" value="3"></label>
+    <div class="read"><div class="hl"><div class="v" id="meE">0</div><div class="k">活跃专家期望</div></div><div class="warn"><div class="v" id="meR">0</div><div class="k">每层权重读取</div></div><div class="good"><div class="v" id="meC">0</div><div class="k">若全部集中到 8 个专家</div></div></div>
+    <div id="meBars" class="wide"></div>
+    <p class="note">随 m 增大，活跃专家数逼近 128，继续加 token 主要是提高每份权重的复用。</p>
+  </div>
+  <div class="notes" id="n-moe"></div>
+</section>
+
+<section class="part" id="pp">
+  <div class="part-head"><h2>流水线并行：利用率 b/(q + b − 1)</h2><span class="meta">原书 6.2.5 节</span></div>
+  <div class="sec-lede">
+    <p>按层分阶段，阶段之间传激活。q 个阶段、每阶段 t、b 个互不依赖的 micro-batch：<strong>T = (q + b − 1)t，η = b/(q + b − 1)</strong>。四阶段四个 micro-batch 利用率 4/7 ≈ 57%，十六个时 16/19 ≈ 84%。</p>
+    <p>阶段不均会积压：四阶段分别 1、1、2、1 ms 时，首个 micro-batch 5 ms 完成，之后最快每 2 ms 一个，上游缓冲满了就得暂停。自回归的麻烦在于：<strong>同一会话未来的四个 token 是一条依赖链，不是四个 micro-batch</strong>；四个独立会话才能提供四个 micro-batch。</p>
+    <p class="go">调阶段数和 micro-batch 数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">流水线利用率</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>阶段数 q <output id="ppQ">4</output></span><input type="range" id="ppQs" min="2" max="16" value="4"></label>
+      <label class="ctl"><span>micro-batch 数 b <output id="ppB">4</output></span><input type="range" id="ppBs" min="1" max="64" value="4"></label>
+      <label class="ctl"><span>每阶段 t（ms） <output id="ppT">1</output></span><input type="range" id="ppTs" min="0.1" max="5" step="0.1" value="1"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="ppE">0</div><div class="k">利用率 b/(q+b−1)</div></div><div><div class="v" id="ppTt">0</div><div class="k">总时间</div></div><div><div class="v" id="ppI">0</div><div class="k">空闲阶段·时间</div></div></div>
+    <div id="ppBars" class="wide"></div>
+  </div>
+  <div class="notes" id="n-pp"></div>
+</section>
+
+<section class="part" id="topo">
+  <div class="part-head"><h2>拓扑：环面还是交换网络</h2><span class="meta">原书 6.5 节</span></div>
+  <div class="sec-lede">
+    <p>64 张卡、每卡六个端口（每方向 50 GB/s，TPU v4 的 ICI 配置）有两条路线：排成 4×4×4 <strong>三维环面</strong>，端口接邻居；或者端口全接<strong>交换芯片</strong>。</p>
+    <p><strong>跳数</strong>：环面最远六跳（经 5 颗中间芯片），交换网络两条链路加一次转发（经 1 颗）。按 UALink 2.0 给 128 lane 交换芯片设定的 200 ns 空载延迟目标，环面每次多 0.8 μs；Qwen3-32B 的 128 次归约就多约 0.10 ms，约为八卡 TP 全部归约 1.48 ms 的 7%。</p>
+    <p><strong>流量模式</strong>才是关键。沿维度的归约（把 AllReduce 拆成 x、y、z 三个方向），环面六条链路同时工作，和交换网络一样快。但均匀 All-to-All（MoE 的 dispatch）：环面每份数据平均走三跳，64 卡各发 M 字节，全网承载 3×64M，分摊到 384 条有向链路每条 M/2；交换网络每卡六个端口各分 M/6。M = 32 MiB 时环面约 336 μs、交换约 112 μs，<strong>差三倍</strong>；512 卡环面平均六跳，差六倍。</p>
+    <p><strong>硬件代价</strong>：64 卡环面 192 条链路、零颗交换芯片；交换网络 384 条链路 + 6 颗 64 端口交换芯片。CloudMatrix384 为 384 个 NPU 用了 448 颗交换芯片（48 个节点各 7 颗一级，7 个子平面各 16 颗二级）。</p>
+    <p>供电和散热还卡着规模：<strong>N ≤ g·⌊(P<sub>b</sub> − P₀)/P<sub>s</sub>⌋</strong>。DGX H100 整机 10.2 kW（平均每卡 1.275 kW，而单卡 TDP 只有 700 W），120 kW 预算最多 11 台 88 张卡。风冷机柜 ASHRAE 给的参考是 40–50 kW 要 5000 cfm 风量而最好的地板送风口只有 1900 cfm，50 kW 机柜风扇本身就要 5 kW；按 40 kW 阈值，一个机柜只能放 3 台 DGX H100（24 卡、30.6 kW）。</p>
+    <p class="go">比较两种拓扑在两种流量下的表现。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">64 卡：环面 vs 交换网络</p>
+      <div class="seg" id="tpoS"><button data-v="a2a" aria-pressed="true">均匀 All-to-All</button><button data-v="dim">沿维度归约</button></div>
+      <label class="ctl" style="margin-top:8px"><span>每卡发送 M（MiB） <output id="tpoM">32</output></span><input type="range" id="tpoMs" min="1" max="128" value="32"></label>
+      <div id="tpoBars" class="wide"></div>
+      <p class="cap" id="tpoW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">供电与散热给出的卡数上限</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>机柜组预算（kW） <output id="pwB">120</output></span><input type="range" id="pwBs" min="20" max="400" step="10" value="120"></label>
+        <label class="ctl"><span>每台服务器（kW） <output id="pwS">10.2</output></span><input type="range" id="pwSs" min="3" max="40" step="0.1" value="10.2"></label>
+      </div>
+      <div class="read"><div class="hl"><div class="v" id="pwN">0</div><div class="k">最多几张卡（每台 8 卡）</div></div><div><div class="v" id="pwR">0</div><div class="k">按 40 kW 风冷阈值要几个机柜</div></div></div>
+    </div>
+  </div>
+  <div class="notes" id="n-topo"></div>
+</section>
+
+<section class="part" id="ub">
+  <div class="part-head"><h2>UB：连接状态决定能连多少台主机</h2><span class="meta">原书 6.5.5、6.6 节</span></div>
+  <div class="sec-lede">
+    <p>UB 把事务层（Jetty：提交、接收、完成通知的端点抽象）和传输层（TP Channel：序号、确认、重传、拥塞控制）分开，多个应用端点可以共用一条传输通道。传统 RDMA 的可靠连接 QP 把两类状态绑在一起。</p>
+    <p>这个区别直接决定规模。网卡片上缓存取 256 KiB，H 台主机、每台 A 个端点：</p>
+    <p class="fx" style="margin:10px 0">逐对连接：S_pair(H) = 512·A²·(H−1) + 32A<br>端点 + 通道：S_UB(H) = 52A + 56(H−1)<br>缓存一致目录：W·((H−1)/8 + 8)，W = 2²⁰ 个缓存行</p>
+    <p>A = 8 时，逐对连接每加一台主机多 32 KiB，256 KiB 只装得下 <strong>8 台</strong>；端点加通道每台只多 56 B，同样的缓存能装<strong>四千多台</strong>。CloudMatrix384 的 192 台主机：逐对要约 6 MiB（缓存的 24 倍），端点加通道只要约 11 KiB。缓存装不下就得每次操作从主机内存重读，每次多两次 PCIe DMA 读取、约 1 μs。缓存一致互联（NVLink 这一类）还要维护目录，2 台主机约 8 MiB、1024 台约 136 MiB，每次写入还要给所有持有副本的对端发失效消息——<strong>这把缓存一致互联的规模限制在几十个对端，NVL72 的 72 张 GPU 正在这个范围</strong>。</p>
+    <p>建连时间也差得远：逐对连接每条要 4 次系统调用 + 1 次带外往返（按 5 μs 和 500 μs 算约 0.52 ms），N = M = 1024 时要建 1,048,576 条，串行 545 s、32 核并行也要 17 s；端点加通道只建 2048 个对象，并行后约 16 ms。<strong>每次重启和扩缩容都要重来一遍</strong>。</p>
+    <p>控制器的位置也是同一类问题：PCIe 外设网卡一次 64 B 远程读要五次穿越 PCIe，约 2.2 μs（其中 PCIe 占 1.65 μs）；接在片上总线的控制器约 0.42 μs——<strong>省下的不是压缩了原有阶段，而是那些阶段不复存在</strong>。</p>
+    <p class="go">先猜 256 KiB 缓存能装几台主机。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三种连接状态组织方式（每台主机 A = 8 个端点）</p>
+    <div id="ubG"></div>
+    <label class="ctl"><span>主机数 H <output id="ubH">192</output></span><input type="range" id="ubHs" min="2" max="1024" value="192"></label>
+    <div id="ubBars" class="wide"></div>
+    <p class="cap" id="ubW"></p>
+  </div>
+  <div class="notes" id="n-ub"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>四个 128K 会话、八张卡、130 ms</h2><span class="meta">原书 6.7 节</span></div>
+  <div class="sec-lede">
+    <p>把前面的结果合起来：Qwen3-32B，四个会话各已有 131,064 个上下文 token，都要再生成八个 token，期限 130 ms、至少完成 75%。</p>
+    <p>单卡连一个会话都放不下（102.03 GB &gt; 80 GB），直接排除。剩下三种：<strong>四个两卡实例</strong>每个会话八步 119.1 ms，四个并行，119.1 ms 全完成；<strong>两个四卡实例</strong>单会话 63.8 ms，但排两轮，127.6 ms 全完成；<strong>一个八卡实例</strong>单会话最快 41.2 ms，四个会话排队，164.7 ms 才全完成、130 ms 内只完成三个。</p>
+    <p>按 <strong>C<sub>on-time</sub> = C<sub>occupied</sub> / N<sub>on-time</sub></strong>（占用成本含故障停顿和重做，分母只数按时完成的）：两卡 0.238、四卡 0.255、八卡 0.439 GPU·s。<strong>两卡实例最省。</strong></p>
+    <p>注入一次故障（20 ms 时卡 0 失效、停 40 ms、从八步起点重做）：两卡和四卡方案的按时比例都还是 75%，但每个按时会话的成本翻倍（两卡 0.478、四卡 0.500 GPU·s）；八卡方案 130 ms 内只完成一个。<strong>故障被隔离在一个实例内，但占用时间延长、按时数减少，成本照样翻倍</strong>——而且两个实例若共用电源或交换机，隔离就失效了。</p>
+    <p>换条件结论就变：单会话 50 ms 期限要选 TP8（41.2 ms，TP4 的 63.8 已超时）；就算有两台服务器 16 张卡，跨服务器 TP16 要 53.3 ms 仍超时，第二台更适合跑别的实例；四会话 32K、130 ms 时 TP1 能装下却要 173.3 ms，还是选四个 TP2（88.3 ms、0.177 GPU·s）。</p>
+    <p class="go">选部署方式，看时间线和成本。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四个 128K 会话的完成时刻与成本</p>
+    <div id="dpG"></div>
+    <div class="togs"><label><input type="checkbox" id="dpF"><span>注入一次故障（20 ms 卡 0 失效，停 40 ms，重做）</span></label></div>
+    <div class="tblw"><table class="cmpt" id="dpT"></table></div>
+    <p class="cap">期限 130 ms、至少 75% 按时。成本 = 八张卡的占用时间（GPU·s），分母只数按时完成的会话。</p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">W_i + K_i + A_i + U_i ≤ C_i；　每 token KV = 2·L·n_KV·d_h·b</div>
+    <div class="fx">T_op = max(F/P, V/B_HBM)；　T(p) = T_local/p + 128·T_AR(p)</div>
+    <div class="fx">加卡划算：128·[T_AR(2p) − T_AR(p)] &lt; T_local/(2p)</div>
+    <div class="fx">环形：T = 2(n−1)α + 2(n−1)M/(nB)；　树形：T = 2log₂n·(α + M/B)</div>
+    <div class="fx">algbw = M/T；　busbw = 2(n−1)M/(nT)</div>
+    <div class="fx">E[E_active] = E·[1 − (1 − k/E)^m]</div>
+    <div class="fx">T_PP = (q + b − 1)t，　η_PP = b/(q + b − 1)</div>
+    <div class="fx">N ≤ g·⌊(P_b − P₀)/P_s⌋；　割集时间 ≥ V_{A→B} / B_{A→B}</div>
+    <div class="fx">S_pair(H) = 512A²(H−1) + 32A；　S_UB(H) = 52A + 56(H−1)</div>
+    <div class="fx">C_on-time = C_occupied / N_on-time</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>188 KiB</b><span>Qwen3-235B-A22B 每 token KV；8 卡每卡 61.50 GB</span></div>
+      <div><b>90.1 vs 0.31 μs</b><span>一层专家：读权重 vs 矩阵运算（MFU 上限 0.3%）</span></div>
+      <div><b>29.35 ms</b><span>Qwen3-32B 128K 单步本地访存（TP1）</span></div>
+      <div><b>11.55 μs</b><span>TP8 一次 10 KiB 环形归约（11.51 是启动）</span></div>
+      <div><b>680 KiB</b><span>八卡环形与树形 AllReduce 的交点</span></div>
+      <div><b>52 / 128</b><span>8 个 token 随机选时的活跃专家期望</span></div>
+      <div><b>336 vs 112 μs</b><span>64 卡 32 MiB All-to-All：环面 vs 交换</span></div>
+      <div><b>8 vs 4000+</b><span>256 KiB 缓存能容纳的主机数：逐对 vs 端点+通道</span></div>
+      <div><b>2.2 → 0.42 μs</b><span>一次 64 B 远程读：PCIe 网卡 vs 片上总线控制器</span></div>
+      <div><b>119.1 / 127.6 / 164.7</b><span>四会话全完成：TP2 / TP4 / TP8（ms）</span></div>
+    </div>
+    <p class="src">数字均取自原书第 6 章。</p>
+  </div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-5/"><small>上一篇</small><span>05 · 算子与运行时</span></a><a class="nx" href="../2026-10-16-infra-7/"><small>下一篇</small><span>07 · 数据中心网络</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+function ms3(x) { return S.f(x, x < 10 ? 2 : 1) + ' ms'; }
+function us3(x) { return x >= 1000 ? S.f(x / 1000, 2) + ' ms' : S.f(x, 2) + ' μs'; }
+function gib(x) { return x >= 1024 ? S.f(x / 1024, 2) + ' GiB' : S.f(x, x >= 100 ? 0 : 1) + ' MiB'; }
+
+/* ---------- 六种并行 ---------- */
+S.sortGame($('#dimSort'), {
+  bins: [{ k: 'dp', t: 'DP 样本' }, { k: 'tp', t: 'TP 特征' }, { k: 'sp', t: 'SP 位置（逐 token 算子）' }, { k: 'cp', t: 'CP 位置（注意力）' }, { k: 'pp', t: 'PP 层' }, { k: 'ep', t: 'EP 专家' }],
+  items: [
+    { t: '每张卡一份完整模型，处理不同请求', k: 'dp', why: '推理里就是部署多个实例；训练时要汇合梯度。' },
+    { t: '把 SwiGLU 的中间维切成两半，下投影出部分和要相加', k: 'tp', why: '按特征切，最后必须 AllReduce 或 ReduceScatter。' },
+    { t: 'LayerNorm、残差相加沿序列位置分片，不再每卡存一份完整激活', k: 'sp', why: '进列并行线性层前 AllGather，行并行后 ReduceScatter。' },
+    { t: '同一个长序列的位置分给多卡，环形传 K、V 并在线合并统计量', k: 'cp', why: '上下文并行是工作划分，环形注意力是一种调度实现。' },
+    { t: '64 层分成两段，前一段算完把激活传给后一段', k: 'pp', why: '阶段之间只传中间结果，各段只存自己的层。' },
+    { t: 'token 被送到所选专家所在的卡，算完再送回合并', k: 'ep', why: 'dispatch + combine，用 All-to-All。' }
+  ]
+});
+var gcData = [
+  ['DP 数据并行', '切样本 B', '提升整体吞吐', '推理不交换；训练汇合梯度'],
+  ['TP 张量并行', '切特征 H', '分摊层内矩阵、权重和中间结果', '输出分片收集；部分和必须相加'],
+  ['SP 序列并行', '切逐 token 算子的位置 S', '分摊激活的保存和处理', '边界上的 AllGather / ReduceScatter'],
+  ['CP 上下文并行', '切注意力的位置 S', '分摊上下文状态和注意力计算', '远端 K、V 或各段的统计量'],
+  ['PP 流水线并行', '切层 L', '承载更多层、更大权重', '相邻阶段交接激活，训练再交接梯度'],
+  ['EP 专家并行', '切专家 E', '分布专家权重，利用 MoE 稀疏性', 'dispatch 把 token 送过去，combine 送回来']
+];
+gcData.forEach(function (g) {
+  var d = h('div', null, $('#gc'));
+  h('h5', { text: g[0] }, d);
+  h('p', { class: 'dim2', text: g[1] }, d);
+  h('p', { html: '<b>换来</b>：' + g[2] }, d);
+  h('p', { html: '<b>代价</b>：' + g[3] }, d);
+});
+S.notes($('#n-dims'), {
+  c: [
+    ['五个维度', '样本 B、位置 S、特征 H、层 L、专家 E。'],
+    ['三种需求', '权重放不下（容量）、单请求太慢（延迟）、请求太多（吞吐）。'],
+    ['两类结果组织', '切样本/位置/层/专家 → 收集或交接；切特征 → 必须先求和。'],
+    ['组合写法', 'DP2×PP2×TP4 = 16 卡；同组内开 SP 不增加卡数。']
+  ],
+  p: [
+    ['套娃', 'DP 包 PP 包 EP/TP，SP、CP 在 TP 组内按位置再分。'],
+    ['看配置不看缩写', '判断一种配置要看切了哪些算子、哪些张量、用哪个通信组。']
+  ]
+});
+
+/* ---------- 容量 ---------- */
+function cap() {
+  var n = +$('#cpNs').value, L = +$('#cpLs').value * 1024, B = +$('#cpBs').value;
+  $('#cpN').textContent = n; $('#cpL').textContent = L / 1024; $('#cpB').textContent = B;
+  var w = 470.2 / n * (n > 1 ? 1.004 : 1), kvTot = 188 * 1024 * L * B / 1e9;
+  var kvFrac = n >= 4 ? 0.25 : 1 / n, kv = kvTot * kvFrac, ws = 2.15, tot = w + kv + ws;
+  $('#cpT').innerHTML = '<tr><td>每卡权重（470.2 GB ÷ ' + n + '，含每卡一份的归一化和路由器）</td><td class="n">' + S.f(w, 2) + ' GB</td></tr>' +
+    '<tr><td>每卡 KV（' + B + ' 个会话 × ' + (L / 1024) + 'K × 188 KiB × ' + S.f(kvFrac, 2) + '）</td><td class="n">' + S.f(kv, 2) + ' GB</td></tr>' +
+    '<tr><td>激活与工作区</td><td class="n">' + ws + ' GB</td></tr>' +
+    '<tr class="tot' + (tot > 80 ? ' over' : '') + '"><td>每卡合计 / 80 GB</td><td class="n">' + S.f(tot, 2) + ' GB</td></tr>';
+  var v = $('#cpV'); v.className = 'verdict3' + (tot <= 80 ? '' : ' bad');
+  var maxB = Math.floor((80 - w - ws) / (188 * 1024 * L / 1e9 * kvFrac));
+  v.innerHTML = tot <= 80 ? '放得下，每卡剩 ' + S.f(80 - tot, 2) + ' GB，这样的会话最多能放 <b>' + maxB + '</b> 个。' : '放不下，超出 ' + S.f(tot - 80, 2) + ' GB。';
+}
+['cpNs', 'cpLs', 'cpBs'].forEach(function (id) { $('#' + id).addEventListener('input', cap); }); cap();
+S.guess($('#capG'), { q: 'Qwen3-235B-A22B（BF16 权重 470.2 GB）分到八张 H100，每卡要多少 GB（含 8K KV 和 2 GiB 工作区）？', unit: 'GB', ans: 61.50, why: '原书：权重 58.96 + KV 0.39 + 工作区 2.15 = 61.50 GB，低于 80 GB。整机 492 GB，640 GB 里还剩约 148 GB，每卡剩的 18.5 GB 够再放 47 个 8192 token 的会话。' });
+S.notes($('#n-cap'), {
+  c: [
+    ['容量四项', '权重、KV、激活、工作区同时占同一张卡的内存。'],
+    ['KV 头是下限', '只有 4 个 KV 头，八卡时每两张卡共用一个、各存一份。'],
+    ['MFU 上限 0.3%', 'batch 1 时一层专家读 90.1 μs、算 0.31 μs，与实现无关。']
+  ],
+  p: [
+    ['每卡权重略多于 1/8', '归一化参数和路由器每张卡都有一份。'],
+    ['prefill 会翻转', '8192 token 时 128 个专家全被选中，读 1.44 ms、算 2.50 ms，改由计算决定。'],
+    ['通信随形状变', '单 token 隐藏张量 8 KiB，8192 token 64 MiB，交换次数相同、数据量差 8192 倍。']
+  ]
+});
+
+/* ---------- TP ---------- */
+var tpMode = 'nv', Ps = [1, 2, 4, 8, 16];
+function tpc() {
+  var p = Ps[+$('#tpPs').value]; $('#tpP').textContent = p;
+  function AR(n) {
+    if (n <= 1) return 0;
+    if (tpMode === 'ib' && n > 8) return 32.74;
+    var M = 10 * 1024, B = 450e9, a = 0.822;
+    return 2 * (n - 1) * a + 2 * (n - 1) * M / (n * B) * 1e6;
+  }
+  function Tp(n) {
+    var local = 29.35 / Math.min(n, 8);
+    if (n === 16) local = 2.48;
+    return { l: local, c: 128 * AR(n) / 1000, t: local + 128 * AR(n) / 1000 };
+  }
+  var cur = Tp(p), prev = p > 1 ? Tp(p / 2) : null;
+  $('#tpT').textContent = ms3(cur.t); $('#tpA').textContent = p > 1 ? us3(AR(p)) : '—';
+  $('#tpD').textContent = prev ? ms3(prev.t - cur.t) : '—';
+  var rows = Ps.map(function (n) { var x = Tp(n); return { label: 'TP' + n, value: x.t / 29.35, text: ms3(x.t), cls: n === p ? '' : 'dim' }; });
+  S.bars($('#tpBars'), rows);
+  $('#tpW').innerHTML = '本地访存 ' + ms3(cur.l) + ' + 128 次归约 ' + ms3(cur.c) + '。' +
+    (p === 1 ? ' TP1 连一个 128K 会话都容纳不下（需 102.03 GB），这一行只作比较。' : '') +
+    (p === 16 ? ' TP16 时 8 个 KV 头要在 16 张卡上各存一份，每卡读的 KV 不再减少。' : '') +
+    (prev && prev.t - cur.t < 0 ? ' <b>加卡反而更慢了。</b>' : '');
+}
+S.seg($('#tpI'), function (v) { tpMode = v; tpc(); });
+$('#tpPs').addEventListener('input', tpc); tpc();
+S.guess($('#tpG'), { q: 'Qwen3-32B 的 128K 会话用机内 TP8，一步 decode 要多少毫秒？', unit: 'ms', ans: 5.15, why: '原书：本地访存 29.35/8 = 3.67 ms + 128 次归约 × 11.55 μs = 1.48 ms，共 5.15 ms。TP4 是 7.97、TP2 是 14.89 ms。四卡到八卡净省只剩 2.83 ms（两卡到四卡省 6.92 ms），收益在递减。' });
+S.notes($('#n-tp'), {
+  c: [
+    ['列切 vs 行切', '切列各算不同输出、拼接；切行各出部分和、必须相加。'],
+    ['T(p)', 'T_local/p + 128·T_AR(p)；Qwen3-32B 的 T_local ≈ 29.35 ms。'],
+    ['环形 AllReduce', '2(n−1) 轮，每卡发 2(n−1)M/n。'],
+    ['头是最小单位', 'TP 卡数超过 KV 头数后就开始复制 KV。']
+  ],
+  p: [
+    ['小数据量看启动', 'TP8 的 11.55 μs 里 11.51 是启动；带宽翻倍只省 2.5 μs。'],
+    ['跨服务器更贵', '实测 32.74 μs/次，TP16 单步 6.67 ms，比机内 TP8 的 5.15 还慢。'],
+    ['两维切分', '16 卡排 4×4 比 2×8、8×2 都快：两个方向的流量更均衡。']
+  ]
+});
+
+/* ---------- 集合通信 ---------- */
+var Ms3 = [10 * 1024, 32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 680 * 1024, 1048576, 4 * 1048576, 16 * 1048576, 32 * 1048576, 64 * 1048576, 80 * 1048576, 256 * 1048576];
+function rt() {
+  var n = Math.pow(2, +$('#rtNs').value), Mi = +$('#rtMs').value, M = Ms3[Mi], a = +$('#rtAs').value, B = 450e9;
+  $('#rtN').textContent = n; $('#rtA').textContent = a.toFixed(3);
+  $('#rtM').textContent = M >= 1048576 ? S.f(M / 1048576, M >= 10485760 ? 0 : 1) + ' MiB' : S.f(M / 1024, 0) + ' KiB';
+  var ring = 2 * (n - 1) * a + 2 * (n - 1) * M / (n * B) * 1e6;
+  var tree = 2 * Math.log2(n) * (a + M / B * 1e6);
+  var mx = Math.max(ring, tree);
+  S.bars($('#rtBars'), [{ label: '环形', value: ring / mx, text: us3(ring), cls: ring <= tree ? 'ok' : 'alt' }, { label: '树形', value: tree / mx, text: us3(tree), cls: tree < ring ? 'ok' : 'alt' }]);
+  // 交点
+  var A = 2 * (n - 1) * a - 2 * Math.log2(n) * a, Bc = 2 * Math.log2(n) / B * 1e6 - 2 * (n - 1) / (n * B) * 1e6;
+  var cross = Bc > 0 ? A / Bc : NaN;
+  $('#rtX').textContent = isFinite(cross) && cross > 0 ? (cross >= 1048576 ? S.f(cross / 1048576, 2) + ' MiB' : S.f(cross / 1024, 0) + ' KiB') : '—';
+  $('#rtR').textContent = 2 * (n - 1); $('#rtTr').textContent = 2 * Math.log2(n);
+}
+['rtNs', 'rtMs', 'rtAs'].forEach(function (id) { $('#' + id).addEventListener('input', rt); }); rt();
+S.guess($('#rtG'), { q: '八卡 AllReduce，环形和树形一样快的数据量大约是多少 KiB？', unit: 'KiB', ans: 680, fmt: function (x) { return S.f(x, 0); }, why: '原书：10 KiB 时环 11.55 μs、树 5.07 μs（树快）；80 MiB 时环 0.34 ms、树 1.12 ms（环快）。交点约 680 KiB：小数据量看轮数，大数据量看关键路径上传了多少完整张量。' });
+S.notes($('#n-coll'), {
+  c: [
+    ['四种操作', 'AllReduce / ReduceScatter / AllGather / All-to-All，按开始和结束时各卡持有什么区分。'],
+    ['AllReduce = RS + AG', '一步改数值，一步改位置。'],
+    ['algbw vs busbw', 'M/T 与 2(n−1)M/(nT)；busbw 是归一化指标，不是网卡吞吐。'],
+    ['combine ≠ AllReduce', 'MoE 还要恢复 token 顺序、按路由权重求和。']
+  ],
+  p: [
+    ['环 vs 树', '轮数 2(n−1) vs 2log₂n；交点约 680 KiB（八卡）。'],
+    ['争资源', '4 MiB 时通信被计算掩盖；64 MiB 时分开 48.0 ms、同时跑只省 2.7 ms。'],
+    ['不能相减', '评价重叠要测同时运行时的时间。'],
+    ['发起时刻', '全组要等最后一张卡发起，相差越大加快交换本身收益越小。']
+  ]
+});
+
+/* ---------- MoE ---------- */
+var ms4 = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+function moe() {
+  var m = ms4[+$('#meMs').value], E = 128, k = 8; $('#meM').textContent = m;
+  var act = E * (1 - Math.pow(1 - k / E, m));
+  $('#meE').textContent = S.f(act, 1);
+  $('#meR').textContent = gib(act * 36);
+  $('#meC').textContent = gib(8 * 36);
+  S.bars($('#meBars'), [
+    { label: '均匀随机（期望）', value: act / E, text: S.f(act, 0) + ' 个 → ' + gib(act * 36) },
+    { label: '全部集中到 8 个', value: 8 / E, text: '8 个 → ' + gib(288), cls: 'ok' },
+    { label: '全部 128 个专家', value: 1, text: '128 个 → 4.5 GiB', cls: 'dim' }
+  ]);
+}
+$('#meMs').addEventListener('input', moe); moe();
+S.guess($('#meG'), { q: '128 个专家、每 token 选 8 个、batch 里 8 个 token 随机选，平均有多少个专家被选中？', unit: '个', ans: 52, fmt: function (x) { return S.f(x, 0); }, why: '原书式 (6-8)：E·[1 − (1 − k/E)^m] = 128 × [1 − (1 − 8/128)⁸] ≈ 52，读约 1.8 GiB；全选同一组 8 个专家时只读 288 MiB。batch 越大，活跃专家越逼近 128。' });
+S.notes($('#n-moe'), {
+  c: [
+    ['dispatch / combine', '把 token 送到专家所在卡 / 把结果送回并按路由权重合并。'],
+    ['活跃专家期望', 'E·[1 − (1 − k/E)^m]。'],
+    ['复用 ≠ 快', '集中路由省读取，但热点集中到一个 EP 组时它要扛全部分派。'],
+    ['按目的卡发送', '同一张卡上的多个专家共用一份输入。']
+  ],
+  p: [
+    ['decode 看读取，prefill 看最忙的组', '两个阶段的瓶颈不同。'],
+    ['用容量换通信', '每组都做注意力就不用跨组 dispatch，代价是权重多 48.4 GB、KV 存四份。'],
+    ['潜空间专家', 'Kimi K3 先投影再发送，BF16 向量从 14 KiB 降到 7 KiB。']
+  ]
+});
+
+/* ---------- 流水线 ---------- */
+function pp() {
+  var q = +$('#ppQs').value, b = +$('#ppBs').value, t = +$('#ppTs').value;
+  $('#ppQ').textContent = q; $('#ppB').textContent = b; $('#ppT').textContent = t;
+  var eff = b / (q + b - 1), tot = (q + b - 1) * t;
+  $('#ppE').textContent = S.pct(eff); $('#ppTt').textContent = ms3(tot);
+  $('#ppI').textContent = ms3(q * tot - q * b * t);
+  S.bars($('#ppBars'), [4, 8, 16, 32, 64].map(function (x) { var e = x / (q + x - 1); return { label: 'b = ' + x, value: e, text: S.pct(e, 0), cls: x === b ? '' : 'dim' }; }));
+}
+['ppQs', 'ppBs', 'ppTs'].forEach(function (id) { $('#' + id).addEventListener('input', pp); }); pp();
+S.notes($('#n-pp'), {
+  c: [
+    ['T 与 η', '(q + b − 1)t；b/(q + b − 1)。'],
+    ['阶段不均', '最慢的阶段决定稳态节奏，上游缓冲满了就暂停。'],
+    ['micro-batch 从哪来', '独立会话才算 micro-batch；同一会话的后续 token 是依赖链。']
+  ],
+  p: [
+    ['四阶段', 'b = 4 时 57%，b = 16 时 84%。'],
+    ['按实际时间划分阶段', '让各阶段耗时接近，减少积压。']
+  ]
+});
+
+/* ---------- 拓扑 ---------- */
+var tpoMode = 'a2a';
+function tpo() {
+  var M = +$('#tpoMs').value; $('#tpoM').textContent = M;
+  var torus, sw;
+  if (tpoMode === 'a2a') {
+    torus = 3 * 64 * M * 1048576 / 384 / 50e9 * 1e6;
+    sw = M * 1048576 / 6 / 50e9 * 1e6;
+  } else {
+    torus = M * 1048576 / 6 / 50e9 * 1e6; sw = torus;
+  }
+  var mx = Math.max(torus, sw);
+  S.bars($('#tpoBars'), [{ label: '三维环面 4×4×4', value: torus / mx, text: us3(torus), cls: torus <= sw ? 'ok' : 'alt' }, { label: '交换网络', value: sw / mx, text: us3(sw), cls: sw < torus ? 'ok' : '' }]);
+  $('#tpoW').innerHTML = tpoMode === 'a2a' ? '环面每份数据平均走三跳，64 卡各发 M，全网承载 3×64M，分摊到 384 条有向链路每条 M/2；交换网络每卡六个端口各分 M/6，<b>差三倍</b>。512 卡环面平均六跳，差六倍。' : '把 AllReduce 拆成沿 x、y、z 三个方向，环面六条链路同时工作，<b>和交换网络一样快</b>——这正是 TPU 编译器把并行分组对应到环面维度的原因。';
+}
+S.seg($('#tpoS'), function (v) { tpoMode = v; tpo(); });
+$('#tpoMs').addEventListener('input', tpo); tpo();
+function pw() {
+  var B = +$('#pwBs').value, Ss = +$('#pwSs').value;
+  $('#pwB').textContent = B; $('#pwS').textContent = Ss.toFixed(1);
+  var srv = Math.floor(B / Ss);
+  $('#pwN').textContent = srv * 8 + ' 张（' + srv + ' 台）';
+  $('#pwR').textContent = Math.ceil(srv / Math.floor(40 / Ss)) + ' 个';
+}
+['pwBs', 'pwSs'].forEach(function (id) { $('#' + id).addEventListener('input', pw); }); pw();
+S.notes($('#n-topo'), {
+  c: [
+    ['跳数', '64 卡环面最远六跳，交换网络两条链路加一次转发。'],
+    ['割集', '一侧要送 V 字节，割集方向总带宽 B，时间 ≥ V/B。'],
+    ['基数 radix', '一颗交换芯片的端口数；下联多了上联就少。'],
+    ['环面扩展', 'k 从 4 到 8，芯片 ×8 而割集链路只 ×4，每芯片分到的割集带宽减半。']
+  ],
+  p: [
+    ['看流量模式', '沿维度归约环面不吃亏；All-to-All 差三到六倍。'],
+    ['供电', 'DGX H100 整机 10.2 kW（每卡 1.275 kW，而 TDP 只有 700 W）。'],
+    ['散热', '按 40 kW 阈值一个机柜只能放 3 台；再多要上液冷。'],
+    ['阶梯成本', '接入第 65 张卡可能要加一整套交换设备。']
+  ]
+});
+
+/* ---------- UB ---------- */
+function ub() {
+  var H = +$('#ubHs').value, A = 8; $('#ubH').textContent = H;
+  var pair = 512 * A * A * (H - 1) + 32 * A, ubs = 52 * A + 56 * (H - 1), dir = Math.pow(2, 20) * ((H - 1) / 8 + 8);
+  var cache = 256 * 1024;
+  function fmt(x) { return x >= 1048576 ? S.f(x / 1048576, 2) + ' MiB' : x >= 1024 ? S.f(x / 1024, 1) + ' KiB' : S.f(x, 0) + ' B'; }
+  S.magbars($('#ubBars'), [
+    { label: '逐对连接（RoCE RC）', v: pair, text: fmt(pair), cls: pair > cache ? 'alt' : 'ok' },
+    { label: '端点 + 通道（UB）', v: ubs, text: fmt(ubs), cls: ubs > cache ? 'alt' : 'ok' },
+    { label: '缓存一致目录（NVLink 这一类）', v: dir, text: fmt(dir), cls: 'dim' },
+    { label: '片上缓存 256 KiB', v: cache, text: '256 KiB', cls: 'dim' }
+  ], { log: true });
+  $('#ubW').innerHTML = H + ' 台主机：逐对连接需 ' + fmt(pair) + '（缓存的 ' + S.f(pair / cache, 1) + ' 倍），端点+通道只需 ' + fmt(ubs) + '。' +
+    (pair > cache ? ' 逐对连接已经装不下，每次操作要从主机内存重读，多约 1 μs。' : '');
+}
+$('#ubHs').addEventListener('input', ub); ub();
+S.guess($('#ubG'), { q: '每台主机 8 个端点、网卡片上缓存 256 KiB。逐对连接方式最多能容纳几台主机？', unit: '台', ans: 8, fmt: function (x) { return S.f(x, 0); }, why: '原书：S_pair = 512×8²×(H−1) + 32×8，每加一台多 32 KiB，256 KiB 只能装 8 台。端点+通道每台只多 56 B，同样的缓存能装四千多台；CloudMatrix384 的 192 台主机需要 6 MiB vs 11 KiB。' });
+S.notes($('#n-ub'), {
+  c: [
+    ['事务层 / 传输层', 'Jetty 端点抽象 / TP Channel 的序号、确认、重传、拥塞控制。'],
+    ['内存语义', '单边操作由发起方指定已授权的远端地址；Load/Store 与 Read/Write 两种发起方式。'],
+    ['三种状态组织', '逐对连接 ×H²、端点+通道 ×H、缓存一致目录还要发失效消息。'],
+    ['内存池', '借用不增加物理内存，只是让任务用上别的节点的空闲空间。']
+  ],
+  p: [
+    ['控制器位置', 'PCIe 网卡 2.2 μs（PCIe 占 1.65）vs 片上总线 0.42 μs。'],
+    ['建连时间', '1024×1024 逐对要 545 s（32 核并行 17 s），端点+通道约 16 ms。'],
+    ['缓存一致的规模上限', '目录开销把它限制在几十个对端，NVL72 的 72 张卡正在这个范围。'],
+    ['远端 KV', '等待中的会话适合放远端；活跃会话每步都读，会持续占带宽。']
+  ]
+});
+
+/* ---------- 部署选择 ---------- */
+function dp() {
+  var f = $('#dpF').checked;
+  var rows = [
+    ['八个单卡实例（TP1）', null, null, null, '无法容纳：128K 会话需 102.03 GB'],
+    ['四个两卡实例（TP2）', 119.1, f ? [119.1, 119.1, 119.1, 179.1] : [119.1, 119.1, 119.1, 119.1], null, ''],
+    ['两个四卡实例（TP4）', 63.8, f ? [63.8, 127.6, 123.9, 187.7] : [63.8, 63.8, 127.6, 127.6], null, ''],
+    ['一个八卡实例（TP8）', 41.2, f ? [101, 142, 184, 225] : [41.2, 82.4, 123.5, 164.7], null, '']
+  ];
+  var html = '<thead><tr><th>部署</th><th>单会话八步</th><th>四会话完成时刻</th><th>按时（130 ms）</th><th>每个按时会话的成本</th></tr></thead><tbody>';
+  rows.forEach(function (r) {
+    if (!r[2]) { html += '<tr><td>' + r[0] + '</td><td colspan="4">' + r[4] + '</td></tr>'; return; }
+    var done = r[2].map(function (x) { return S.f(x, 1); }).join('、') + ' ms';
+    var ok = r[2].filter(function (x) { return x <= 130; }).length;
+    var occupied = 8 * Math.max.apply(null, r[2]) / 1000;
+    var cost = ok ? occupied / ok : NaN;
+    html += '<tr' + (ok >= 3 ? '' : ' class="on"') + '><td>' + r[0] + '</td><td>' + S.f(r[1], 1) + ' ms</td><td>' + done + '</td><td>' + ok + ' / 4（' + S.pct(ok / 4, 0) + '）</td><td>' + (ok ? S.f(cost, 3) + ' GPU·s' : '—') + '</td></tr>';
+  });
+  $('#dpT').innerHTML = html + '</tbody>';
+}
+$('#dpF').addEventListener('change', dp); dp();
+S.guess($('#dpG'), { q: '四个 128K 会话、八张 H100、130 ms 期限，哪种部署每个按时会话的成本最低？填两卡实例的成本（GPU·s）。', unit: 'GPU·s', ans: 0.238, fmt: function (x) { return S.f(x, 3); }, why: '原书：四个两卡实例 8 × 0.1191 ≈ 0.953 GPU·s ÷ 4 = 0.238；四卡 0.255；八卡单会话最快（41.2 ms）但要排队，164.7 ms 才完成，130 ms 内只完成三个，成本 0.439。单会话最快 ≠ 整组最省。' });
+S.notes($('#n-choose'), {
+  c: [
+    ['C_on-time', '占用成本（含故障停顿和重做）÷ 按时完成的会话数。'],
+    ['两层并行', '模型内部的并行计算 vs 请求之间的并发执行，抢的是同一批卡。'],
+    ['五步法', '记录模型/负载/资源 → 按瓶颈列候选 → 写数据归属和时间表 → 同一目标排序 → 实测修正。']
+  ],
+  p: [
+    ['结论随条件变', '单会话 50 ms 选 TP8；四会话 130 ms 选四个 TP2。'],
+    ['故障', '隔离在一个实例内，按时比例仍 75%，但成本翻倍。'],
+    ['共用设备', '两个实例共用电源或交换机时，隔离就失效了。'],
+    ['越早完成越省电', '同样硬件功率，119.1 ms 耗 1.21 kJ、127.6 ms 耗 1.30 kJ。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 六种切法', 'DP 切样本提吞吐、TP 切特征分摊层内矩阵（要归约）、SP 切逐 token 算子的位置、CP 切注意力的位置、PP 切层、EP 切专家；切特征的必须先求和，其余靠收集或交接。'],
+    ['② TP 何时到头', 'T(p) = T_local/p + 128·T_AR(p)：本地时间按 1/p 降、通信按轮数涨。Qwen3-32B 两卡→四卡净省 6.92 ms，四卡→八卡只剩 2.83 ms；TP 卡数超过 KV 头数后 KV 开始复制，跨服务器更是直接变慢。'],
+    ['③ 八卡怎么分', '先按容量排除（TP1 放不下），再按目标排序：四个两卡实例 119.1 ms 全完成、每个按时会话 0.238 GPU·s 最省；八卡实例单会话最快却因排队只完成三个。故障让成本翻倍，但隔离在一个实例内。']
+  ],
+  p: [
+    ['方法', '切分定归属，调度定顺序，算法和物理路径共同决定代价。'],
+    ['下一篇', '把通信路径铺开：数据中心网络的拥塞、故障和交接规则。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

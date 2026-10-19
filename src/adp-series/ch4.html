@@ -1,0 +1,314 @@
+---
+title: 记忆、学习、目标与探索
+desc: 智能体设计模式学习笔记（四）：短期 / 长期记忆与 ADK 的 Session、State、MemoryService，语义 / 情景 / 程序三类长期记忆；学习与适应（PPO、DPO、SICA、AlphaEvolve）；目标设定与监控（SMART 目标与反馈循环）；探索与发现（Google Co-Scientist、Agent Laboratory）。
+kicker: <span>技术学习</span><span>智能体设计模式 · 04</span><span>对应原书第 8、9、11、21 章</span><span>约 25 分钟</span>
+h1: 让智能体<em>越用越好</em>
+lead: 前三篇的智能体做完一件事就“清零”。这一篇的四个模式让它跨越时间：记忆让它记住过去，学习与适应让它根据经验改变行为，目标设定与监控让它知道自己是否走在正确的路上，探索与发现让它主动去找还不知道的东西。
+nav: mem|记忆管理;ltm|长期记忆类型;learn|学习与适应;goal|目标与监控;explore|探索与发现;recap|回扣三问
+---
+<style>
+.ppo { width: 100%; display: block; }
+.ppo text { font-size: 14px; fill: var(--ink-2); }
+.ppo .ax { stroke: var(--hair); }
+.ppo .raw { stroke: var(--ink-3); stroke-dasharray: 4 3; fill: none; }
+.ppo .clip { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.ppo .band { fill: var(--s1-soft); opacity: .6; }
+.ppo .dot { fill: var(--s2); }
+.evo .row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 8px; font-size: 15px; padding: 6px 0; border-top: 1px solid var(--hair); }
+.evo .row b { font-family: var(--f-num); color: var(--s1); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>上下文窗口很长了，为什么还需要长期记忆？ADK 用哪三个组件管理记忆？</li>
+    <li>PPO 的“裁剪”在防什么？DPO 省掉了 PPO 流程里的哪一步？</li>
+    <li>同一个 LLM 既写代码又判断代码是否达标，原书指出了哪些风险？</li>
+  </ol>
+</div>
+
+<section class="part" id="mem">
+  <div class="part-head"><h2>记忆管理：工作台和档案柜</h2><span class="meta">原书第 8 章</span></div>
+  <div class="sec-lede">
+    <p>原书把智能体记忆分为两类。<strong>短期记忆（上下文记忆）</strong>像工作记忆，主要就是上下文窗口：最近的消息、回复、工具结果、反思。它容量有限，要靠总结旧对话、突出关键细节来管理；而且<strong>长上下文模型只是把短期记忆扩大了</strong>，会话一结束照样丢失，每次处理还很贵。<strong>长期记忆（持久记忆）</strong>存在智能体环境之外的数据库、知识图谱或向量库里，需要时检索出来、并入短期上下文。</p>
+    <p>原书用 Google ADK 讲具体落地，三个组件：<strong>Session</strong> 跟踪单个聊天线程（按时间排列的事件 events + 临时数据 state），由 SessionService 管生命周期，实现有内存版（测试用、重启即丢）、数据库版、Vertex AI 版；<strong>State</strong> 是 Session 的“草稿本”，一个键值字典，用前缀区分范围：<code>user:</code> 跟用户走、跨会话，<code>app:</code> 全体用户共享，<code>temp:</code> 只在当前轮有效、不持久化；<strong>MemoryService</strong> 管可搜索的长期知识，<code>add_session_to_memory</code> 写入、<code>search_memory</code> 检索，生产环境常用基于 RAG 的 VertexAiRagMemoryService。</p>
+    <p>原书特别提醒：<strong>不要拿到 session 后直接改 <code>session.state</code> 字典</strong>。这样做绕过了事件机制：不会记入事件历史、可能不被持久化、有并发问题、时间戳也不更新。正确做法是用 <code>output_key</code>（保存智能体的最终文本回复）或在 <code>append_event</code> 时带上 <code>EventActions.state_delta</code>。托管方案里还有 Vertex <strong>Memory Bank</strong>：用 Gemini 异步分析对话、提取关键事实和偏好、按用户 ID 组织并自动整合矛盾。</p>
+    <p class="go">这些数据该放在哪里？</p>
+  </div>
+  <div class="lab"><div id="stSort"></div></div>
+  <div class="card2">
+    <h3>模式卡 · 记忆管理</h3><p class="en">Memory Management</p>
+    <dl>
+      <dt>问题</dt><dd>没有记忆，智能体无法维持对话上下文、跟踪多步任务、从经验中学习或个性化。</dd>
+      <dt>做法</dt><dd>短期记忆在上下文窗口内；长期记忆在外部存储，按需语义检索后并入上下文。</dd>
+      <dt>何时用</dt><dd>不只是回答单个问题：要维持上下文、跟踪任务进度、记住用户偏好、从成败中学习。</dd>
+      <dt>实现</dt><dd>ADK：Session / State / MemoryService；LangChain：ChatMessageHistory、ConversationBufferMemory；LangGraph：检查点器（短期）+ Store（长期，命名空间 + 键）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-mem"></div>
+</section>
+
+<section class="part" id="ltm">
+  <div class="part-head"><h2>长期记忆的三种类型：事实、经历、规则</h2><span class="meta">原书第 8 章 LangGraph 部分</span></div>
+  <div class="sec-lede">
+    <p>原书借用人类记忆的分法，把长期记忆分成三类。<strong>语义记忆：记住事实</strong>，例如用户偏好、领域知识，可以存成一个持续更新的用户“配置文件”（JSON），也可以存成一组独立的事实文档。<strong>情景记忆：记住经历</strong>，对智能体而言常常是“上次是怎么把这类任务做成的”，实践中多用少样本示例实现。<strong>程序记忆：记住规则</strong>，即智能体的核心指令和行为方式，通常在系统提示里；智能体修改自己的提示来改进很常见，有效的做法是<strong>反思</strong>：审视当前指令和最近的交互，然后改写自己的指令。</p>
+    <p class="go">分一分。</p>
+  </div>
+  <div class="lab"><div id="ltmSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：记忆管理 vs RAG</h4>
+    <p>两者都用向量库和语义检索，原书第 8 章也把 RAG 列为记忆的一个应用。区别在<b>写入方</b>：RAG 的知识库通常是预先准备好、定期更新的外部文档；记忆是智能体在<b>交互中自己写入</b>的（会话历史、提取的偏好、改写的指令）。所以记忆要处理“什么时候写、写什么、矛盾时怎么合并”，Memory Bank 的“整合新数据、解决矛盾”就是在干这件事。</p>
+  </div>
+  <p class="xref">记忆的提取、冲突消解在另一个系列里讲得更细：<a href="../2026-10-16-agent-3/">深入理解 AI Agent · 03 记忆与知识库</a>。</p>
+  <div class="notes" id="n-ltm"></div>
+</section>
+
+<section class="part" id="learn">
+  <div class="part-head"><h2>学习与适应：从改参数到改自己的代码</h2><span class="meta">原书第 9 章</span></div>
+  <div class="sec-lede">
+    <p>原书先列了六种学习方式：<strong>强化学习</strong>（试错、奖惩）、<strong>监督学习</strong>（标注样本）、<strong>无监督学习</strong>（找隐藏模式）、<strong>基于 LLM 的少样本 / 零样本</strong>（几个例子就适应新任务）、<strong>在线学习</strong>（持续吸收数据流）、<strong>基于记忆的学习</strong>（回忆过往经验调整行动）。所谓“适应”，就是学习带来的行为或知识的可见变化。</p>
+    <p>两个对齐算法是本章重点。<strong>PPO</strong> 每次只对策略做小而谨慎的更新：收集一批经验，计算一个“裁剪”过的替代目标，在当前策略周围划出信任区域，像安全刹车一样阻止步子太大、毁掉已学到的东西。传统 LLM 对齐用 PPO 要两步：先用人类偏好训练<strong>奖励模型</strong>，再用 PPO 让 LLM 追求高分；这既复杂又不稳定，LLM 还可能学会“钻奖励模型的空子”。<strong>DPO</strong> 完全跳过奖励模型，直接用偏好数据更新策略：提高生成被偏好回答的概率，降低不受欢迎回答的概率。</p>
+    <p>原书还讲了两类“自我改进”系统。<strong>SICA</strong>（自我改进编码智能体）既是修改者又是被修改者：从历史版本档案里按成功率、时间、计算成本的加权分挑出最好的版本，让它分析档案、修改自己的代码库，再跑基准、记入档案，如此循环；它自己发明了“智能编辑器”“AST 符号定位器”等工具；旁边有一个<strong>异步监督者</strong>（另一个 LLM）盯着它，发现循环或停滞时可以介入停止；整个系统跑在 Docker 里隔离。原书也坦言其局限：很难让 LLM 每轮都独立提出新颖、可行的修改。<strong>AlphaEvolve</strong> 则用 Gemini Flash（广撒提案）+ Pro（深入改进）+ 自动评估 + 进化算法发现和优化算法；<strong>OpenEvolve</strong> 是一个开源的同类框架，可以进化整个代码文件。</p>
+    <p class="go">拖动比率 r，看 PPO 的裁剪目标什么时候“踩刹车”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">PPO 的裁剪目标</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>新旧策略概率比 r <output id="ppR">1.10</output></span><input type="range" id="ppRs" min="0.5" max="1.6" step="0.02" value="1.1"></label>
+        <label class="ctl"><span>裁剪范围 ε <output id="ppE">0.20</output></span><input type="range" id="ppEs" min="0.05" max="0.4" step="0.05" value="0.2"></label>
+      </div>
+      <div class="seg" id="ppA"><button data-v="1" aria-pressed="true">优势 A &gt; 0（这个动作比平均好）</button><button data-v="-1">优势 A &lt; 0</button></div>
+      <svg class="ppo" id="ppSvg" viewBox="0 0 420 200" role="img" aria-label="PPO 裁剪目标"></svg>
+      <p class="cap" id="ppOut"></p>
+      <p class="note">原书只做了文字描述。这里用 PPO 论文的标准形式：L = min(r·A, clip(r, 1−ε, 1+ε)·A)。虚线是不裁剪的 r·A，实线是实际优化的目标，蓝色带是信任区域。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">AlphaEvolve 的成绩（原书数据）</p>
+      <div class="evo">
+        <div class="row"><b>0.7%</b><span>数据中心调度改进，节省的全球计算资源</span></div>
+        <div class="row"><b>23%</b><span>Gemini 架构核心内核的加速</span></div>
+        <div class="row"><b>32.5%</b><span>FlashAttention 底层 GPU 指令最高优化</span></div>
+        <div class="row"><b>48 次</b><span>4×4 复数矩阵乘法所需的标量乘法，超过此前已知方案</span></div>
+        <div class="row"><b>75% / 20%</b><span>50 多个开放数学问题中，重新发现最佳解 / 改进现有解的比例</span></div>
+      </div>
+      <p class="note">此外还为 TPU 的 Verilog 代码提出了优化建议。</p>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 学习与适应</h3><p class="en">Learning and Adaptation</p>
+    <dl>
+      <dt>问题</dt><dd>预编程逻辑应付不了没预料到的新情况；不能从经验中学习就无法优化策略、个性化交互。</dd>
+      <dt>做法</dt><dd>集成学习机制：从强化学习、偏好优化，到 SICA 式自我修改、AlphaEvolve 式进化搜索。</dd>
+      <dt>何时用</dt><dd>动态、不确定、持续演化的环境；需要个性化、持续改进、自主应对新情况。</dd>
+      <dt>要点</dt><dd>自我改进系统要配<strong>子智能体</strong>（分解任务、控上下文）和<strong>监督者</strong>（防循环停滞）；上下文窗口的组织方式很关键。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-learn"></div>
+</section>
+
+<section class="part" id="goal">
+  <div class="part-head"><h2>目标设定与监控：知道终点，也知道自己走到哪了</h2><span class="meta">原书第 11 章</span></div>
+  <div class="sec-lede">
+    <p>这个模式给智能体两样东西：<strong>明确的目标</strong>，和<strong>跟踪进度、判断是否达成的手段</strong>。原书要求目标符合 <strong>SMART</strong>：具体、可衡量、可实现、相关、有时限；监控则观察智能体的行动、环境状态和工具输出，形成反馈循环，让智能体能纠偏、改计划或升级。在 ADK 里，目标通常写在智能体指令里，监控靠状态管理和工具交互。</p>
+    <p>原书的示例是一个写代码的智能体：你给它问题描述和一份质量清单（“方案必须简单”“功能必须正确”“处理意外边界情况”），它起草 → 对照清单自查 → 判断 True / False → 不达标就改，直到 True 或用完尝试次数。紧接着原书就列了这个示例的问题：LLM 可能<strong>没真正理解目标却判定自己成功</strong>；可能幻觉；<strong>同一个 LLM 既写又判</strong>，更难发现自己走错了方向；监控太简单，有<strong>永远跑下去</strong>的风险；最终代码仍然要你自己运行和测试。更稳健的做法是把关注点分给不同角色：同伴程序员、代码审查员、文档编写员、测试编写员、提示词优化器。</p>
+    <p class="go">先判断几个目标够不够 SMART。</p>
+  </div>
+  <div class="lab"><div id="goalQ"></div></div>
+  <div class="card2">
+    <h3>模式卡 · 目标设定与监控</h3><p class="en">Goal Setting and Monitoring</p>
+    <dl>
+      <dt>问题</dt><dd>没有目标就只能被动反应；没有监控就无法判断行动是否带来了成功。</dd>
+      <dt>做法</dt><dd>定义清晰、可衡量的目标和成功标准；持续监控进度与环境；偏离时纠正、重规划或升级。</dd>
+      <dt>何时用</dt><dd>智能体要在少人干预下自主完成多步任务、适应动态条件。</dd>
+      <dt>风险</dt><dd>自判成功、幻觉、自写自判难纠偏、无限循环；解法是分离评审角色、设上限、真跑测试。</dd>
+    </dl>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：目标监控 vs 反思 vs 规划</h4>
+    <p><b>规划</b>回答“怎么走”，<b>目标监控</b>回答“走到哪了、到没到”，<b>反思</b>回答“哪里做得不好、怎么改”。原书第 4 章说三者常常协同：目标给反思提供评判基准，监控发现偏差后，反思充当纠正引擎，必要时触发重新规划。</p>
+  </div>
+  <div class="notes" id="n-goal"></div>
+</section>
+
+<section class="part" id="explore">
+  <div class="part-head"><h2>探索与发现：去找“未知的未知”</h2><span class="meta">原书第 21 章</span></div>
+  <div class="sec-lede">
+    <p>前面的模式大多在已定义的解空间里优化。探索与发现则要智能体<strong>主动进入陌生领域</strong>、尝试新方法、产生新知识，目标是发现“未知的未知”。用例包括科研自动化、游戏策略（如 AlphaGo）、市场趋势发现、安全漏洞发现、创意生成。</p>
+    <p>原书的主案例是 <strong>Google Co-Scientist（AI 协同科学家）</strong>：基于 Gemini 的多智能体系统，主管智能体在异步框架里协调六个专门智能体，按“生成、辩论、进化”的循环模拟科学方法，并采用“测试时计算扩展”。原书强调它的定位是<strong>增强而非取代</strong>（“科学家在环”），局限包括只能读开放获取文献、缺少很少发表的负面实验结果、继承 LLM 的幻觉。安全上，研究目标和生成的假设都要过安全审查，用 1,200 个对抗性研究目标做了初步评估。</p>
+    <p>代码示例是开源的 <strong>Agent Laboratory</strong>：文献综述 → 实验 → 报告撰写 → 通过 AgentRxiv 共享知识，角色模仿学术层级（教授、博士后等），并用<strong>三个评审智能体</strong>从不同角度打分，模拟人类审稿。</p>
+    <p class="go">给 Co-Scientist 的六个智能体对号入座。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">谁干这件事</p>
+      <div id="csSort"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">验证结果（原书数据）</p>
+      <div class="evo">
+        <div class="row"><b>78.4%</b><span>GPQA 钻石集 top-1 准确率；内部 Elo 与准确率一致</span></div>
+        <div class="row"><b>200+</b><span>个研究目标的分析：测试时计算越多，假设质量（Elo）越高</span></div>
+        <div class="row"><b>KIRA6</b><span>为急性髓系白血病提出的全新候选药物，体外实验证实抑制肿瘤细胞活力</span></div>
+        <div class="row"><b>2 天</b><span>独立重现 cf-PICIs 的机制假设；另一研究组花了十余年才实验证实</span></div>
+        <div class="row"><b>1,200</b><span>个对抗性研究目标的安全评估，能稳健拒绝危险输入</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 探索与发现</h3><p class="en">Exploration and Discovery</p>
+    <dl>
+      <dt>问题</dt><dd>静态、预编程的知识应付不了开放式问题，智能体无法超越“优化已知”。</dd>
+      <dt>做法</dt><dd>常用多智能体框架模拟科学方法：生成假设 → 批判评审 → 排名 → 进化最有前景的想法。</dd>
+      <dt>何时用</dt><dd>解空间没有完全定义的开放、复杂、快速演化领域：科研、市场分析、创意。</dd>
+      <dt>定位</dt><dd>增强人类而非完全自动化；人始终在环。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-explore"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 上下文窗口很长了，为什么还需要长期记忆？ADK 用哪三个组件？</summary><p class="ans">长上下文只是扩大了短期记忆：会话结束即丢失，每次处理成本高。ADK 用 Session（线程 + 事件）、State（会话草稿本，user: / app: / temp: 前缀）、MemoryService（可搜索的长期知识）。</p></details>
+    <details><summary>2. PPO 的“裁剪”在防什么？DPO 省掉了哪一步？</summary><p class="ans">防止单次更新离当前策略太远、毁掉已学到的东西（信任区域 = 安全刹车）。DPO 省掉了训练奖励模型这一步，直接用偏好数据优化策略。</p></details>
+    <details><summary>3. 同一个 LLM 自写自判有什么风险？</summary><p class="ans">没理解目标却判定成功、幻觉、更难发现自己走错方向、监控太简单可能无限循环；代码仍需真实运行测试。解法：分离出独立的审查、测试角色。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 记忆 ---------- */
+S.sortGame($('#stSort'), {
+  bins: [{ k: 'u', t: 'state 中 <code>user:</code>' }, { k: 'a', t: 'state 中 <code>app:</code>' }, { k: 't', t: 'state 中 <code>temp:</code>' }, { k: 'm', t: 'MemoryService（长期）' }],
+  items: [
+    { t: '该用户累计登录次数 login_count', k: 'u', why: '原书示例 user:login_count：跟用户 ID 走，跨会话。' },
+    { t: '本轮校验是否需要的标志 validation_needed', k: 't', why: '原书示例 temp:validation_needed：只在当前轮有效，不持久化。' },
+    { t: '所有用户共享的功能开关', k: 'a', why: 'app: 前缀：应用内所有用户共享。' },
+    { t: '从过去很多次对话里沉淀下来、需要按语义搜索的知识', k: 'm', why: '可搜索的长期知识库：add_session_to_memory 写入，search_memory 检索。' }
+  ]
+});
+S.notes($('#n-mem'), {
+  c: [
+    ['短期记忆', '上下文窗口里的近期信息；长上下文只是扩容，仍是临时的。'],
+    ['长期记忆', '外部存储（数据库、知识图谱、向量库），检索后并入上下文。'],
+    ['Session / State / MemoryService', '线程与事件 / 会话草稿本 / 可搜索的长期知识。'],
+    ['State 前缀', 'user: 跨会话跟用户；app: 全体共享；temp: 仅当前轮。']
+  ],
+  p: [
+    ['别直接改 session.state', '绕过事件历史、可能不持久、并发问题、时间戳不更新。'],
+    ['正确更新', 'output_key（存最终回复）或 append_event + EventActions.state_delta。'],
+    ['Memory Bank', '托管服务：Gemini 异步提取事实与偏好、按用户组织、整合矛盾。'],
+    ['State 设计', '简单、基本类型、清晰键名、正确前缀、避免深嵌套。']
+  ]
+});
+S.sortGame($('#ltmSort'), {
+  bins: [{ k: 's', t: '语义记忆（事实）' }, { k: 'e', t: '情景记忆（经历）' }, { k: 'p', t: '程序记忆（规则）' }],
+  items: [
+    { t: '用户偏好靠窗座位', k: 's', why: '用户偏好属于事实。' },
+    { t: '一份持续更新的用户配置文件 JSON', k: 's', why: '原书：语义记忆可以存成配置文件或事实文档集合。' },
+    { t: '上次成功完成同类任务的步骤，作为少样本示例', k: 'e', why: '情景记忆常通过少样本示例实现。' },
+    { t: '系统提示里的核心行为指令', k: 'p', why: '程序记忆：如何执行任务的规则。' },
+    { t: '智能体反思后改写自己的指令', k: 'p', why: '原书：用反思更新程序记忆。' }
+  ]
+});
+S.notes($('#n-ltm'), {
+  c: [
+    ['语义记忆', '记住事实：偏好、领域知识；配置文件或事实集合。'],
+    ['情景记忆', '记住经历：如何完成任务；常用少样本示例。'],
+    ['程序记忆', '记住规则：核心指令；可通过反思改写。']
+  ],
+  p: [
+    ['LangGraph 长期记忆', '以 JSON 文档存在 Store 里，按命名空间 + 键组织。'],
+    ['短期记忆持久化', 'LangGraph 用检查点器，线程可随时恢复。']
+  ]
+});
+
+/* ---------- PPO ---------- */
+var ppA = 1;
+function ppo() {
+  var r = +$('#ppRs').value, e = +$('#ppEs').value, A = ppA;
+  $('#ppR').textContent = r.toFixed(2); $('#ppE').textContent = e.toFixed(2);
+  var g = $('#ppSvg'); g.innerHTML = '';
+  var x = S.scale(0.5, 1.6, 40, 400), y = S.scale(-1.7, 1.7, 185, 15);
+  S.svg('rect', { x: x(1 - e), y: 15, width: x(1 + e) - x(1 - e), height: 170, class: 'band' }, g);
+  S.svg('line', { x1: 40, y1: y(0), x2: 400, y2: y(0), class: 'ax' }, g);
+  S.svg('line', { x1: x(1), y1: 15, x2: x(1), y2: 185, class: 'ax' }, g);
+  var raw = [], cl = [];
+  for (var t = 0.5; t <= 1.6001; t += 0.01) {
+    raw.push([x(t), y(t * A)]);
+    cl.push([x(t), y(Math.min(t * A, S.clamp(t, 1 - e, 1 + e) * A))]);
+  }
+  S.svg('path', { d: S.path(raw), class: 'raw' }, g);
+  S.svg('path', { d: S.path(cl), class: 'clip' }, g);
+  var L = Math.min(r * A, S.clamp(r, 1 - e, 1 + e) * A);
+  S.svg('circle', { cx: x(r), cy: y(L), r: 6, class: 'dot' }, g);
+  var lb = S.svg('text', { x: x(1) + 4, y: 196 }, g); lb.textContent = 'r = 1';
+  var ly = S.svg('text', { x: 44, y: 28 }, g); ly.textContent = '目标 L';
+  var clipped = (A > 0 && r > 1 + e) || (A < 0 && r < 1 - e);
+  $('#ppOut').innerHTML = 'L = ' + S.f(L, 3) + '。' + (clipped
+    ? '<b>已被裁剪</b>：曲线在这里变平，梯度为 0，策略再往这个方向挪也拿不到更多“好处”，这就是安全刹车。'
+    : (A > 0 ? '在信任区域内或 r 偏小时，目标随 r 增长，鼓励提高这个好动作的概率。' : '优势为负时，目标鼓励降低这个动作的概率；但 r 降到 1−ε 以下后不再有额外奖励。'));
+}
+S.seg($('#ppA'), function (v) { ppA = +v; ppo(); });
+['ppRs', 'ppEs'].forEach(function (id) { $('#' + id).addEventListener('input', ppo); });
+ppo();
+S.notes($('#n-learn'), {
+  c: [
+    ['六种学习方式', '强化、监督、无监督、少样本 / 零样本、在线、基于记忆。'],
+    ['适应', '学习导致的行为或知识的可见变化。'],
+    ['PPO', '小步谨慎更新；裁剪目标在当前策略周围划信任区域。'],
+    ['DPO', '跳过奖励模型，直接用偏好数据更新策略。'],
+    ['SICA', '自我改进编码智能体：既是修改者也是被修改者。'],
+    ['AlphaEvolve', 'Gemini Flash + Pro + 自动评估 + 进化算法，发现与优化算法。']
+  ],
+  p: [
+    ['PPO 两步对齐的问题', '复杂、不稳定，LLM 可能钻奖励模型的空子。'],
+    ['SICA 循环', '选最佳历史版本 → 分析档案 → 改自身代码 → 跑基准 → 记档案。'],
+    ['SICA 的护栏', '异步监督者防循环停滞；Docker 隔离；可视化事件总线。'],
+    ['SICA 的局限', '难以让 LLM 持续提出新颖、可行的修改。']
+  ]
+});
+
+/* ---------- 目标 ---------- */
+S.quiz($('#goalQ'), [
+  { q: '“让客户满意。”', o: ['够 SMART', '不够：不具体、不可衡量'], a: 1, why: '没有可观察的成功标准，监控无从下手。原书的客服例子用“确认账单已更改并收到客户积极反馈”来衡量成功。' },
+  { q: '“确保项目里程碑 X 在 Y 日期前完成；有风险时标记延迟并建议纠正措施。”', o: ['够 SMART', '不够'], a: 0, why: '原书的项目管理助手例子：具体、可衡量、有时限，还说明了偏离时怎么办。' },
+  { q: '“在保持风险承受范围内最大化投资组合收益。”', o: ['可以监控：有收益和风险阈值两个指标', '无法监控'], a: 0, why: '原书交易机器人例子：持续监控市场、组合价值和风险指标，突破阈值时调整策略。' },
+  { q: '代码智能体自己写、自己判定 True，就可以直接上线吗？', o: ['可以', '不行'], a: 1, why: '原书明确说：模型可能误判成功、可能幻觉，代码仍需运行和测试；最好分出独立的审查员和测试编写员。' }
+]);
+S.notes($('#n-goal'), {
+  c: [
+    ['目标设定与监控', '给智能体目的感 + 跟踪进度、判断成败的机制。'],
+    ['SMART', '具体、可衡量、可实现、相关、有时限。'],
+    ['监控对象', '智能体的行动、环境状态、工具输出。']
+  ],
+  p: [
+    ['反馈循环', '偏离时纠正路线、修订计划或升级。'],
+    ['ADK 实现', '目标写进指令，监控靠状态管理和工具交互。'],
+    ['五个角色', '同伴程序员、代码审查员、文档编写员、测试编写员、提示词优化器。']
+  ]
+});
+
+/* ---------- 探索 ---------- */
+S.sortGame($('#csSort'), {
+  bins: [{ k: 'g', t: '生成' }, { k: 'r', t: '反思' }, { k: 'k', t: '排名' }, { k: 'e', t: '进化' }, { k: 'p', t: '邻近度' }, { k: 'm', t: '元审查' }],
+  items: [
+    { t: '通过文献探索和模拟辩论提出初始假设', k: 'g', why: '生成智能体启动流程。' },
+    { t: '像同行评审一样评估正确性、新颖性、质量', k: 'r', why: '反思智能体。' },
+    { t: '用基于 Elo 的锦标赛比较假设', k: 'k', why: '排名智能体通过模拟科学辩论排序。' },
+    { t: '简化、综合、探索非常规推理，完善排名靠前的假设', k: 'e', why: '进化智能体。' },
+    { t: '算邻近度图，把相似想法聚类', k: 'p', why: '邻近度智能体帮助探索假设格局。' },
+    { t: '综合所有评审和辩论，找共同模式并反馈', k: 'm', why: '元审查智能体让系统持续改进。' }
+  ]
+});
+S.notes($('#n-explore'), {
+  c: [
+    ['探索与发现', '主动进入陌生领域、产生新知识，发现“未知的未知”。'],
+    ['Co-Scientist', '主管 + 六个智能体，“生成、辩论、进化”循环，测试时计算扩展。'],
+    ['Agent Laboratory', '文献综述 → 实验 → 报告 → AgentRxiv 共享；三评审打分。']
+  ],
+  p: [
+    ['定位', '增强人类，科学家在环。'],
+    ['局限', '只读开放获取文献、缺负面结果、继承幻觉。'],
+    ['安全', '输入目标和生成假设都要审查；1,200 个对抗目标评估。']
+  ]
+});

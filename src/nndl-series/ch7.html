@@ -1,0 +1,820 @@
+---
+title: 网络优化与正则化：优化器、初始化、规范化与正则化
+desc: 神经网络与深度学习（第二版）学习笔记（七）：鞍点、平坦最小值与局部最小解的等价性；小批量与批大小、学习率衰减 / 预热 / 周期调整；AdaGrad、RMSprop、AdaDelta、动量、Nesterov、Adam、Muon、SAM、梯度截断；Xavier / He / 正交初始化；标准化与白化；批量 / 层 / RMS / 权重规范化；网格 / 随机 / 贝叶斯搜索、逐次减半、神经架构搜索；ℓ1 / ℓ2、权重衰减与 AdamW、提前停止、暂退法、数据增强与 mixup、标签平滑；训练诊断。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 07</span><span>对应原书第 7 章（第 173–216 页）</span><span>约 70 分钟</span>
+h1: 训得动，<em>还要训得好</em>
+lead: 深度网络有两类难题：优化难（非凸、参数多、梯度消失或爆炸），泛化难（拟合能力太强，容易过拟合）。第 7 章是一份“训练工程手册”：前半部分讲怎么训得动——优化算法、参数初始化、数据预处理、逐层规范化、超参数搜索；后半部分讲怎么训得好——各种正则化。原书最后给了一个现代默认配方：合适的初始化与预处理，AdamW + 学习率预热 + 余弦衰减，按需加规范化、权重衰减、数据增强、标签平滑，并且持续看训练曲线做诊断。
+nav: land|优化地形;opt|优化器赛跑;lr|批大小与学习率;init|参数初始化;pre|数据预处理;norm|逐层规范化;hp|超参数搜索;reg|正则化;diag|训练诊断;back|三个问题
+---
+<style>
+.oplegend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; margin: 8px 0; }
+.oplegend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--ink-2); }
+.oplegend i { display: inline-block; width: 16px; height: 4px; border-radius: 2px; }
+.dmask { width: 100%; max-width: 420px; height: auto; display: block; }
+.dmask circle { stroke-width: 1.6; }
+.dmask line { stroke: var(--rule); }
+.symp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 760px) { .symp { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.symp button { font: inherit; text-align: left; background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink); font-size: 15px; }
+.symp button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.normgrid td.st { outline: 2px solid var(--s2); outline-offset: -2px; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>高维非凸优化真正的难点是局部最小值吗？Adam 和 SGD、动量、RMSprop 是什么关系？</li>
+  <li>Xavier、He 初始化按什么原则算方差？批量规范化、层规范化、RMS 规范化的区别在哪一维上？</li>
+  <li>权重衰减和 ℓ2 正则化什么时候等价，为什么 Adam 要用 AdamW？暂退法为什么能防过拟合？</li>
+</ol></div>
+
+<section class="part" id="land">
+  <div class="part-head"><h2>优化地形：鞍点、平坦最小值</h2><span class="meta">原书 7.1 节 · 第 173–177 页</span></div>
+  <div class="sec-lede">
+    <p>原书把深度网络的难点分成优化和泛化两类。优化方面，网络结构多样（卷积、循环、图，有深有宽）、超参数多，很难有一种通用的方法。更值得注意的是<strong>高维非凸</strong>和低维非凸的区别：低维时难点是逃离局部最优点；<strong>高维时难点是逃离鞍点</strong>（Dauphin 等，2014）。鞍点梯度为 0，但在一些方向上是最高点、另一些方向上是最低点（Hessian 不是半正定）。直观理解：局部最小值要求<strong>所有</strong>方向都不再下降，维数一高，这个条件就极其苛刻，所以驻点更可能是鞍点。梯度下降在鞍点附近几乎停滞，<strong>随机梯度下降引入的噪声恰好有助于逃离鞍点</strong>。</p>
+    <p>另外两个经验观察：<strong>平坦最小值</strong>——参数冗余使单个参数影响小，最小值附近常是一片平坦区域，在平坦区域里参数小扰动不影响结果，鲁棒性更好，通常被认为泛化更好；尖锐最小值则相反。<strong>局部最小解的等价性</strong>——大网络里许多局部最小解的训练损失和测试性能都接近全局最优，实践中更重要的是找泛化好的解，而不是精确追求全局最小（过度追求反而可能过拟合）。原书提醒这些描述大多是经验性的。</p>
+    <p>改善优化的四个方向：更好的优化算法（7.2）；更好的初始化与数据预处理（7.3、7.4）；改网络结构得到更平滑的<strong>优化地形</strong>，比如 ReLU、残差、逐层规范化（7.5）；更好的超参数搜索（7.6）。</p>
+    <p class="go">在鞍点 f = x² − y² 附近放一个起点，分别用无噪声的梯度下降和带噪声的 SGD 跑一跑。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">鞍点：f(x, y) = x² − y² + y⁴/4（示意）</p>
+      <div id="sdF"></div>
+      <label class="ctl"><span>梯度噪声强度 <output id="sdN">0</output></span><input type="range" id="sdNs" min="0" max="0.5" step="0.01" value="0"></label>
+      <p class="cap" id="sdW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">平坦 vs 尖锐最小值：参数抖一下，损失变多少</p>
+      <div id="flC"></div>
+      <label class="ctl"><span>参数扰动幅度 <output id="flP">0.15</output></span><input type="range" id="flPs" min="0" max="0.5" step="0.01" value="0.15"></label>
+      <div class="read"><div class="good"><div class="v" id="flA">0</div><div class="k">平坦处损失增加</div></div><div class="warn"><div class="v" id="flB">0</div><div class="k">尖锐处损失增加</div></div></div>
+      <div id="sdG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-land"></div>
+</section>
+
+<section class="part" id="opt">
+  <div class="part-head"><h2>优化器赛跑：从 SGD 到 Adam</h2><span class="meta">原书 7.2.3.4–7.2.5 节 · 第 182–190 页</span></div>
+  <div class="sec-lede">
+    <p>原书把优化算法分成三类：<strong>调学习率</strong>、<strong>修正梯度估计</strong>、<strong>利用参数结构或局部平坦性</strong>。它们都能写进一个统一形式：<strong>Δθ<sub>t</sub> = −α<sub>t</sub>/√(G<sub>t</sub> + ε) · M<sub>t</sub></strong>，G<sub>t</sub> 是学习率缩放（1 或历史梯度平方的累计），M<sub>t</sub> 是更新方向（当前梯度或历史梯度的移动平均）。</p>
+    <p><strong>自适应学习率</strong>：<strong>AdaGrad</strong> 累加梯度平方 G<sub>t</sub> = Σg²，累计大的参数学习率小，但学习率只降不升，后期可能过慢；<strong>RMSprop</strong>（Hinton）改成指数衰减移动平均 G<sub>t</sub> = βG<sub>t−1</sub> + (1 − β)g²，β 常取 0.9，学习率可大可小；<strong>AdaDelta</strong> 再把 α 换成参数更新量平方的移动平均，平抑波动。<strong>修正梯度</strong>：<strong>动量法</strong>用负梯度的加权移动平均作方向，Δθ<sub>t</sub> = ρΔθ<sub>t−1</sub> − αg<sub>t</sub>（ρ 常取 0.9），方向一致时加速、来回振荡时减速；<strong>Nesterov</strong> 先按动量走一步，再在“前瞻点”算梯度，更合理。<strong>Adam</strong> = 动量 + RMSprop：一阶矩 M<sub>t</sub> = β₁M<sub>t−1</sub> + (1 − β₁)g，二阶矩 G<sub>t</sub> = β₂G<sub>t−1</sub> + (1 − β₂)g²（β₁ = 0.9，β₂ = 0.999），由于 M₀ = G₀ = 0，初期估计偏小，要做<strong>偏差修正</strong> M̂ = M/(1 − β₁ᵗ)、Ĝ = G/(1 − β₂ᵗ)，然后 Δθ = −αM̂/√(Ĝ + ε)，α 常取 0.001。</p>
+    <p>原书第二版新增了两个现代优化器。<strong>Muon</strong>（MomentUm Orthogonalized by Newton–Schulz）：把权重矩阵当整体，先算动量方向 M，再把它“正交化”（相当于把 SVD 的奇异值都置为 1，只留方向、拉平各方向的幅度），用 Newton–Schulz 迭代近似；只适用于隐藏层二维矩阵，其余参数仍用 AdamW。<strong>SAM</strong>：min<sub>θ</sub> max<sub>‖ε‖≤ρ</sub> ℒ(θ + ε)，找“附近怎么扰动损失都不大”的平坦解，两步近似：先沿梯度找最坏扰动，再在扰动点算梯度更新。还有<strong>梯度截断</strong>：按值截断，或按模截断 g ← (b/‖g‖)g（‖g‖ &gt; b 时），对循环网络防梯度爆炸很有效，且对阈值不敏感。</p>
+    <p class="go">选一种地形，让六个优化器同时出发（学习率按各自常用量级示意设置）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">六个优化器在同一地形上的轨迹</p>
+    <div class="lab-split">
+      <div id="orF"></div>
+      <div>
+        <div class="selrow"><span>地形</span><div class="seg" id="orL"><button data-v="valley" aria-pressed="true">狭长山谷</button><button data-v="rosen">香蕉谷（Rosenbrock）</button><button data-v="saddle">鞍点</button></div></div>
+        <div class="oplegend" id="orLeg"></div>
+        <label class="ctl"><span>学习率倍数 <output id="orA">×1.0</output></span><input type="range" id="orAs" min="-1" max="1" step="0.05" value="0"></label>
+        <label class="ctl"><span>迭代步数 <output id="orT">150</output></span><input type="range" id="orTs" min="10" max="500" step="10" value="150"></label>
+        <table class="calc" id="orTab"></table>
+        <p class="cap" id="orW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书习题 7-16：手算 Adam 的三步</p>
+    <div id="adG"></div>
+    <div id="adS"></div>
+    <table class="calc" id="adT"></table>
+  </div>
+  <div class="notes" id="n-opt"></div>
+</section>
+
+<section class="part" id="lr">
+  <div class="part-head"><h2>批大小与学习率调度</h2><span class="meta">原书 7.2.1–7.2.3.3 节 · 第 177–182 页</span></div>
+  <div class="sec-lede">
+    <p><strong>批大小</strong>不影响随机梯度的期望，但影响方差：批越大方差越小、越稳定，可以用更大的学习率。<strong>线性缩放规则</strong>：批大小乘 m 倍，学习率也乘 m 倍——批很大时会失效。看曲线的角度也要分清：<strong>1 轮（Epoch）= (N/K) 次迭代（Iteration）</strong>。按迭代数看，批越大下降越快越平滑；按轮数看，反而是适当小的批收敛更快。实验还发现批越大越可能收敛到尖锐最小值。显存不够时用<strong>梯度累积</strong>：把大批拆成几个小批分别算梯度、累加后再更新一次，数学上近似等价于大批（忽略 BN 统计、暂退掩码等差异），大模型训练常用。</p>
+    <p><strong>学习率</strong>开始要大些保证速度，接近最优点时要小些避免振荡。<strong>学习率衰减</strong>（退火）有：分段常数（阶梯）、逆时 α₀/(1 + βt)、指数 α₀βᵗ、自然指数 α₀e<sup>−βt</sup>、<strong>余弦</strong> ½α₀(1 + cos(tπ/T))。大批量训练初期梯度大、参数随机，直接用大学习率不稳定，于是先用<strong>预热</strong>：前 T′ 步线性增大 α′<sub>t</sub> = (t/T′)α₀，再衰减。为了逃离鞍点或尖锐最小值，还可以<strong>周期性地增大</strong>学习率：三角<strong>循环学习率</strong>，以及带热重启的 <strong>SGDR</strong>（每个周期内余弦衰减，周期末重置，参数接着优化不清零，周期可逐次放大）。</p>
+    <p class="go">点选几种调度方式对比（初始学习率取 1，示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">学习率调度（原书图 7.4、7.5）</p>
+    <div class="toggles" id="lrT" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div id="lrC"></div>
+    <label class="ctl"><span>预热步数 T′（只影响“预热 + 余弦”） <output id="lrW">10</output></span><input type="range" id="lrWs" min="0" max="40" value="10"></label>
+  </div>
+  <div class="lab">
+    <p class="lab-t">轮、迭代、批大小</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>训练样本数 N <output id="epN">60000</output></span><input type="range" id="epNs" min="1000" max="100000" step="1000" value="60000"></label>
+      <label class="ctl"><span>批大小 K <output id="epK">128</output></span><input type="range" id="epKs" min="3" max="12" value="7"></label>
+      <label class="ctl"><span>基准学习率（K = 128 时） <output id="epA">0.1</output></span><input type="range" id="epAs" min="0.01" max="0.5" step="0.01" value="0.1"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="epI">0</div><div class="k">每轮迭代次数 N/K</div></div><div><div class="v" id="epL">0</div><div class="k">线性缩放后的学习率</div></div><div><div class="v" id="epG">0</div><div class="k">若显存只够 32，要累积几步</div></div></div>
+    <p class="cap">原书图 7.3 的四组设置正是线性缩放：批大小 128 / 256 / 512 / 1024 对应学习率 0.1 / 0.2 / 0.4 / 0.8（因此并非严格对比）。</p>
+  </div>
+  <div class="notes" id="n-lr"></div>
+</section>
+
+<section class="part" id="init">
+  <div class="part-head"><h2>参数初始化：让信号既不放大也不缩小</h2><span class="meta">原书 7.3 节 · 第 190–195 页</span></div>
+  <div class="sec-lede">
+    <p>三种初始化：<strong>预训练初始化</strong>（用大数据上训练过的模型做起点，之后微调，泛化好但不能随意改结构）；<strong>随机初始化</strong>；<strong>固定值初始化</strong>（偏置通常为 0；LSTM 遗忘门偏置设 1 或 2 让初期偏向保留记忆；ReLU 偏置可设 0.01 让它初期更容易激活）。线性模型可以全零初始化，神经网络不行：全零时同一层所有神经元前向输出相同、反向更新也相同，永远没有区分性，这叫<strong>对称权重现象</strong>。</p>
+    <p>随机初始化最关键的是方差。固定方差 σ² 太小，信号逐层衰减，Sigmoid 型函数还会退化成线性；太大则激活饱和、梯度消失。所以要根据连接数自适应——<strong>方差缩放</strong>，原则是<strong>让每个神经元输入和输出的方差一致</strong>。推导很短：var(a⁽ˡ⁾) = M<sub>l−1</sub> var(w) var(a⁽ˡ⁻¹⁾)，要不放大也不缩小，就要 M<sub>l−1</sub> var(w) = 1。只看前向得 1/M<sub>l−1</sub>，只看反向得 1/M<sub>l</sub>，折中得 <strong>Xavier（Glorot）初始化 var(w) = 2/(M<sub>l−1</sub> + M<sub>l</sub>)</strong>，适合 Tanh（Logistic 再乘 16）。ReLU 让一半输出为 0、方差减半，于是 <strong>He（Kaiming）初始化 var(w) = 2/M<sub>l−1</sub></strong>。均匀分布 [−r, r] 的方差是 r²/3，所以 r = √(3σ²)。</p>
+    <p>逐个独立采样仍可能让权重矩阵不够“保范”，<strong>正交初始化</strong>直接让 W 是正交矩阵（WWᵀ = I）：先用高斯分布生成矩阵，再用奇异值分解取正交矩阵；用于 ReLU 时乘缩放系数 √2。常用于循环网络循环边的权重。</p>
+    <p class="go">在一个 20 层、每层 128 个神经元的网络里，看各种初始化下每层激活值的标准差（模拟）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">逐层激活值的标准差</p>
+    <div class="selrow"><span>初始化</span><div class="seg" id="inI"><button data-v="small">固定 σ = 0.01</button><button data-v="big">固定 σ = 1</button><button data-v="xavier" aria-pressed="true">Xavier</button><button data-v="he">He</button></div></div>
+    <div class="selrow"><span>激活函数</span><div class="seg" id="inA"><button data-v="tanh" aria-pressed="true">Tanh</button><button data-v="relu">ReLU</button></div></div>
+    <div id="inC"></div>
+    <p class="cap" id="inW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书习题 7-17：100 → 256 → 128 → 10</p>
+    <div id="inG"></div>
+    <div class="tblw"><table class="cmpt"><thead><tr><th>层</th><th>Xavier 方差 2/(M_{l−1}+M_l)</th><th>He 方差 2/M_{l−1}</th></tr></thead><tbody id="inT"></tbody></table></div>
+  </div>
+  <div class="notes" id="n-init"></div>
+</section>
+
+<section class="part" id="pre">
+  <div class="part-head"><h2>数据预处理：让每个方向一样陡</h2><span class="meta">原书 7.4 节 · 第 195–197 页</span></div>
+  <div class="sec-lede">
+    <p>特征来源和单位不同，尺度可能差很多（米 vs 厘米）。缩放特征后不影响学习和预测的算法叫<strong>尺度不变</strong>（线性分类器是），最近邻这类按距离算的就尺度敏感。神经网络在表示上能靠参数适应尺度，但<strong>优化</strong>会受影响：原书的例子 y = tanh(w₁x₁ + w₂x₂ + b)，x₁ ∈ [0, 10]、x₂ ∈ [0, 1]，tanh 只在 [−2, 2] 有明显导数，w₁ 必须精心设小；维数一多就没法这样手调。更重要的是，尺度不同会让损失的等高线变成细长椭圆，<strong>大多数位置的梯度方向都不指向最小值</strong>，梯度下降走“之”字形（原书图 7.9）。</p>
+    <p>三种常用的规范化：<strong>最小最大值规范化</strong> (x − min)/(max − min) 映射到 [0, 1]；<strong>标准化</strong>（Z 值规范化）(x − μ)/σ 变成均值 0、方差 1（σ 为 0 说明这一维没有区分性，直接删掉）；<strong>白化</strong>用 PCA 去掉特征之间的相关性，并让所有特征方差相同。</p>
+    <p class="go">拖动两维特征的尺度比，看梯度下降要走多少步。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">尺度差异与梯度下降路径（示意）</p>
+      <div id="ppF"></div>
+      <label class="ctl"><span>两维特征尺度比 <output id="ppR">10</output></span><input type="range" id="ppRs" min="1" max="30" value="10"></label>
+      <div class="read"><div class="hl"><div class="v" id="ppS">0</div><div class="k">收敛所需步数</div></div></div>
+      <p class="cap" id="ppW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">原始 → 标准化 → PCA 白化（原书图 7.10，数据为示意）</p>
+      <div class="seg" id="wtS"><button data-v="raw" aria-pressed="true">原始数据</button><button data-v="std">标准化</button><button data-v="white">PCA 白化</button></div>
+      <div id="wtF" style="margin-top:10px"></div>
+      <p class="cap" id="wtW"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-pre"></div>
+</section>
+
+<section class="part" id="norm">
+  <div class="part-head"><h2>逐层规范化：BN、LN、RMSNorm</h2><span class="meta">原书 7.5 节 · 第 197–201 页</span></div>
+  <div class="sec-lede">
+    <p>逐层规范化把数据预处理用到每个隐藏层的输入上。原书给两个理由：<strong>更好的尺度不变性</strong>——低层参数一变，高层输入分布就跟着变（像高楼底层偏一点、顶层偏很多），这叫<strong>内部协变量偏移</strong>，规范化后高层输入保持稳定；<strong>更平滑的优化地形</strong>——让大部分输入落在不饱和区、梯度更稳定，可以用更大学习率。原书特别指出：BN 最初的动机是减少内部协变量偏移，但<strong>后续研究发现它的主要作用是让损失地形更平滑</strong>。</p>
+    <p><strong>批量规范化</strong>（BN）：对每个神经元，用小批量里 K 个样本的均值和方差标准化净输入，再用可学习的 γ、β 缩放平移（防止把 Sigmoid 的输入压到线性区，γ = σ<sub>ℬ</sub>、β = μ<sub>ℬ</sub> 时可完全还原），通常放在仿射变换之后、激活之前，因为自带平移所以仿射层可以去掉偏置。训练完用整个数据集（或移动平均）的统计量代替小批量统计量。批的随机性还带来一点隐式正则化。<strong>层规范化</strong>（LN）：对一个样本在这一层<strong>所有神经元</strong>上算均值方差，不依赖批大小，适合循环网络、Transformer、小批量。<strong>RMS 规范化</strong>：不减均值，只除以均方根 RMS(z) = √(Σz²/M + ε)，再乘 γ，计算更简单，在现代大模型里比 LN 更常见。<strong>权重规范化</strong>把权重再参数化为长度 g 和方向 v/‖v‖；<strong>局部响应规范化</strong>（AlexNet 用过）已很少用。</p>
+    <p class="go">同一个小批量矩阵（行是神经元、列是样本，和原书记号一致），切换三种规范化，看统计量沿哪个方向算。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Z⁽ˡ⁾ = [z⁽¹ˡ⁾, …, z⁽ᴷˡ⁾]：4 个神经元 × 5 个样本（数值为示意）</p>
+    <div class="seg" id="nmS"><button data-v="bn" aria-pressed="true">批量规范化（按行）</button><button data-v="ln">层规范化（按列）</button><button data-v="rms">RMS 规范化（按列，不减均值）</button></div>
+    <div class="lab-split" style="margin-top:10px">
+      <div><p class="lab-s">规范化前（红框是一组统计量的范围，点任意格切换）</p><div id="nmX"></div></div>
+      <div><p class="lab-s">规范化后（γ = 1，β = 0）</p><div id="nmY"></div></div>
+    </div>
+    <p class="cap" id="nmW"></p>
+  </div>
+  <div class="notes" id="n-norm"></div>
+</section>
+
+<section class="part" id="hp">
+  <div class="part-head"><h2>超参数优化</h2><span class="meta">原书 7.6 节 · 第 201–206 页</span></div>
+  <div class="sec-lede">
+    <p>超参数有三类：网络结构（层数、宽度、激活函数）、优化参数（优化器、学习率、批大小）、正则化系数。难在两点：它是组合优化，不能用梯度下降；评估一组配置的代价非常高。目标函数 f(x) 一般是验证集错误率，当作黑盒。</p>
+    <p><strong>网格搜索</strong>尝试所有组合（m₁ × m₂ × … 个），连续超参数要按自身特点离散化（学习率不能等间隔）。<strong>随机搜索</strong>（Bergstra 和 Bengio，2012）随机组合：不同超参数重要性差异很大，网格会在不重要的维度上浪费试验，<strong>随机搜索在重要的维度上能试到更多不同的值</strong>，实践中常更有效。两者都没利用“相近配置性能相近”这一点。<strong>贝叶斯优化</strong>（SMBO）用高斯过程建模 f，按收益函数（如期望改善 EI）挑下一个最有希望的点，缺点是 O(N³)。<strong>动态资源分配</strong>把它看作最优臂问题，早早终止没希望的配置：<strong>逐次减半</strong>每轮把预算平分给剩下的配置、淘汰一半，共 ⌈log₂N⌉ 轮；HyperBand 再对不同的 N 做尝试。<strong>神经架构搜索</strong>（NAS）用一个控制器（如 RNN）生成网络结构，以验证集准确率为奖励做强化学习。大模型时代还有一个思路：先在小模型上调好，在合适的参数化下迁移到大模型。</p>
+    <p class="go">两个超参数，只有一个真正重要。同样 9 次试验，网格和随机各能找到多好的值？</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">网格搜索 vs 随机搜索（9 次试验，示意）</p>
+      <div class="seg" id="gsS"><button data-v="grid" aria-pressed="true">网格 3 × 3</button><button data-v="rand">随机 9 次</button></div>
+      <div id="gsF" style="margin-top:10px"></div>
+      <div class="btnrow"><button class="btn" type="button" id="gsR">换一组随机点</button></div>
+      <p class="cap" id="gsW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">逐次减半（原书算法 7.2）</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>配置数 N <output id="shN">16</output></span><input type="range" id="shNs" min="2" max="64" value="16"></label>
+        <label class="ctl"><span>总预算 B（训练轮数） <output id="shB">256</output></span><input type="range" id="shBs" min="32" max="1024" step="32" value="256"></label>
+      </div>
+      <table class="calc" id="shT"></table>
+      <p class="cap">每轮 r<sub>t</sub> = ⌊B/(|S<sub>t</sub>| × T)⌋，T = ⌈log₂N⌉。N 越大越可能包含最优配置，但每个配置分到的预算越少、早期评估越不准——这是利用与探索的权衡。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-hp"></div>
+</section>
+
+<section class="part" id="reg">
+  <div class="part-head"><h2>网络正则化</h2><span class="meta">原书 7.7 节 · 第 206–213 页</span></div>
+  <div class="sec-lede">
+    <p>正则化是一类限制模型复杂度、提高泛化能力的方法。在<strong>过度参数化</strong>（参数远多于训练数据）的深度网络里，ℓ1、ℓ2 的效果不如在浅层模型中显著，所以还要用数据增强、提前停止、暂退法、标签平滑等。</p>
+    <p><strong>ℓ1 和 ℓ2 正则化</strong>：在损失上加 λℓ<sub>p</sub>(θ)，等价于约束 ℓ<sub>p</sub>(θ) ≤ c。ℓ1 的约束区域是菱形，最优解常落在坐标轴上，所以 <strong>ℓ1 产生稀疏解</strong>；两者同时用叫<strong>弹性网络</strong>。<strong>权重衰减</strong>每步把参数按比例缩小：θ<sub>t</sub> ← (1 − β)θ<sub>t−1</sub> − αg<sub>t</sub>。对<strong>标准 SGD</strong>，它和 ℓ2 正则化<strong>恰好等价</strong>（β = αλ）；但对 <strong>Adam 不等价</strong>——ℓ2 项会混进一阶、二阶矩，被 1/√Ĝ 按坐标缩放，收缩强度受历史梯度影响。所以用 <strong>AdamW</strong>：θ<sub>t</sub> = (1 − αλ)θ<sub>t−1</sub> − αM̂<sub>t</sub>/√(Ĝ<sub>t</sub> + ε)，把“按梯度优化”和“控制参数范数”解耦，λ 的含义更直接，常是 Transformer 的默认优化器。</p>
+    <p><strong>暂退法</strong>（Dropout）：训练时以保留率 p 随机保留神经元，现代框架用<strong>反向缩放</strong>：训练时 m ⊙ x / p，测试时直接用 x，期望尺度一致。直观作用是打破神经元之间的复杂共适应。两种解释：<strong>集成</strong>——n 个神经元可采样出 2ⁿ 个共享参数的子网络；<strong>贝叶斯</strong>——每次暂退是对参数的一次采样，预测是对采样的平均。循环网络上不能对每个时刻独立屏蔽隐状态（会破坏记忆），要么只屏蔽非循环连接，要么用<strong>变分暂退法</strong>（所有时刻共享同一个掩码）。</p>
+    <p><strong>数据增强</strong>施加保持标签不变的变换（旋转、翻转、缩放、平移、加噪），或用 <strong>mixup</strong> 对两个样本及其标签做凸组合 x̃ = λx<sub>i</sub> + (1 − λ)x<sub>j</sub>。原书的观点：数据增强的目标不是“制造更多数据”，而是<strong>把任务中合理的不变性或平滑性显式编码进训练</strong>。<strong>标签平滑</strong>把 one-hot 硬目标换成软目标 [ε/(K−1), …, 1 − ε, …]，避免模型过度自信、改善校准；按类别相关性分配就是<strong>知识蒸馏</strong>（用教师网络的输出作软目标）。<strong>提前停止</strong>见第 2 篇，实际验证曲线常有波动，停止标准要视任务调整。</p>
+    <p class="go">先看 ℓ1、ℓ2 约束的几何，再玩暂退法和标签平滑。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">原书图 7.11：约束 ℓ_p(θ) ≤ 1 下的最优解</p>
+      <div class="seg" id="l1S"><button data-v="1" aria-pressed="true">ℓ1</button><button data-v="2">ℓ2</button><button data-v="inf">ℓ∞</button></div>
+      <div id="l1F" style="margin-top:10px"></div>
+      <p class="cap" id="l1W">点画布任意位置，把它设为“无约束最优点” c（损失为 ‖θ − c‖²）。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">暂退法：每次迭代采样一个子网络</p>
+      <label class="ctl"><span>保留率 p <output id="dpP">0.6</output></span><input type="range" id="dpPs" min="0.1" max="1" step="0.05" value="0.6"></label>
+      <svg class="dmask" id="dpG" viewBox="0 0 420 200" role="img" aria-label="暂退法示意"></svg>
+      <div class="btnrow"><button class="btn" type="button" id="dpR">再采样一次</button></div>
+      <div class="read"><div><div class="v" id="dpK">0</div><div class="k">本次保留的隐藏神经元</div></div><div class="hl"><div class="v" id="dpE">0</div><div class="k">反向缩放后输出均值（期望 1.00）</div></div></div>
+      <div id="dpGs"></div>
+    </div>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">标签平滑：硬目标 → 软目标</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>类别数 K <output id="lsK">5</output></span><input type="range" id="lsKs" min="2" max="10" value="5"></label>
+        <label class="ctl"><span>ε <output id="lsE">0.1</output></span><input type="range" id="lsEs" min="0" max="0.5" step="0.01" value="0.1"></label>
+      </div>
+      <div id="lsB" class="wide"></div>
+      <p class="cap" id="lsW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">mixup：样本和标签一起混</p>
+      <label class="ctl"><span>λ <output id="mxL">0.7</output></span><input type="range" id="mxLs" min="0" max="1" step="0.05" value="0.7"></label>
+      <div class="imgs" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><canvas id="mxA" width="40" height="40"></canvas><span>×λ +</span><canvas id="mxB" width="40" height="40"></canvas><span>×(1−λ) =</span><canvas id="mxC" width="40" height="40"></canvas></div>
+      <div id="mxY" class="wide" style="margin-top:10px"></div>
+      <p class="cap">两张示意图（竖条“1”和圆圈“0”）按 λ 叠加，标签也按同样比例混合。模型被鼓励在样本之间学出更平滑的判别边界。</p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>权重衰减 vs ℓ2 正则化</b>：SGD 下等价（β = αλ）；Adam 下不等价，所以有 AdamW（解耦权重衰减）。AdamW 不是不用正则化，而是换了施加方式。</p>
+    <p><b>BN vs LN</b>：同一个矩阵，BN 沿样本（一行 / 一个神经元跨 K 个样本），LN 沿神经元（一列 / 一个样本跨 M 个神经元）。</p>
+    <p><b>LN vs RMSNorm</b>：后者不减均值、没有 β，只按均方根缩放。</p>
+    <p><b>轮 vs 迭代</b>：1 轮 = 把训练集过一遍 = N/K 次迭代。</p>
+    <p><b>暂退法的保留率 vs 丢弃率</b>：原书用保留率 p；很多框架参数是丢弃率 1 − p，注意别弄反。</p>
+  </div>
+  <div class="notes" id="n-reg"></div>
+</section>
+
+<section class="part" id="diag">
+  <div class="part-head"><h2>训练过程诊断</h2><span class="meta">原书 7.8–7.9 节 · 第 213–215 页</span></div>
+  <div class="sec-lede">
+    <p>原书第二版新增了一节很实用的内容：训练时不能只看最终测试指标，要持续观察训练集和验证集上的损失、评价指标、梯度范数、参数范数和预测置信度，尽早判断问题来自优化失败、容量不足、过拟合，还是数据划分、标注噪声、指标设置不当。</p>
+    <p>还要守住数据使用的边界：反复按测试集结果修改模型，测试集就变成了隐含的验证集；超参数搜索次数越多，越可能对验证集“二次过拟合”，重要应用要保留独立测试集，或用交叉验证、重复实验和置信区间报告结论。</p>
+    <p>最后，原书把<strong>混合精度训练</strong>列为大规模训练的基础技术：前向和反向用 FP16 / BF16（部分场景 FP8）省显存、加速，参数更新、梯度累积和关键归约保留 FP32，配合梯度累积和截断，在有限硬件上训练大模型。</p>
+    <p class="go">点一个症状，看原书建议先查什么、怎么处理（表 7.3）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">症状 → 排查方向</p>
+    <div class="symp" id="dgB">
+      <button data-v="0" aria-pressed="true">训练、验证损失都高</button>
+      <button data-v="1" aria-pressed="false">训练很低、验证较高</button>
+      <button data-v="2" aria-pressed="false">损失剧烈振荡或 NaN</button>
+      <button data-v="3" aria-pressed="false">准确率高但置信度不可靠</button>
+    </div>
+    <div class="lab-split" style="margin-top:12px"><div id="dgC"></div><div><table class="calc" id="dgT"></table></div></div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>类别</th><th>方法</th></tr></thead>
+    <tbody>
+      <tr><td>固定衰减学习率</td><td>分段常数、逆时、（自然）指数、余弦</td></tr>
+      <tr><td>周期性学习率</td><td>循环学习率、SGDR</td></tr>
+      <tr><td>自适应学习率</td><td>AdaGrad、RMSprop、AdaDelta</td></tr>
+      <tr><td>梯度估计修正</td><td>动量法、Nesterov、梯度截断</td></tr>
+      <tr><td>逐元素自适应</td><td>Adam、AdamW</td></tr>
+      <tr><td>矩阵结构优化</td><td>Muon（常与 AdamW 混用）</td></tr>
+      <tr><td>平坦性优化</td><td>SAM</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">原书表 7.1：常用优化方法汇总。</p>
+  <div class="notes" id="n-diag"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">统一形式：Δθ_t = −α_t M_t / √(G_t + ε)</div>
+    <div class="fx">AdaGrad G = Σg²；RMSprop G = βG + (1−β)g²；动量 Δθ = ρΔθ − αg；Nesterov 在 θ + ρΔθ 处求梯度</div>
+    <div class="fx">Adam：M = β₁M + (1−β₁)g，G = β₂G + (1−β₂)g²，M̂ = M/(1−β₁ᵗ)，Ĝ = G/(1−β₂ᵗ)，Δθ = −αM̂/√(Ĝ+ε)</div>
+    <div class="fx">余弦 α_t = ½α₀(1 + cos(tπ/T))；预热 α′_t = (t/T′)α₀；1 轮 = N/K 次迭代</div>
+    <div class="fx">Xavier var = 2/(M_{l−1} + M_l)；He var = 2/M_{l−1}；均匀分布 r = √(3σ²)</div>
+    <div class="fx">BN：(z − μ_ℬ)/√(σ²_ℬ + ε) ⊙ γ + β；LN 沿神经元；RMSNorm：z/RMS(z) ⊙ γ</div>
+    <div class="fx">权重衰减 θ ← (1−β)θ − αg（SGD 下 β = αλ）；AdamW θ ← (1−αλ)θ − αM̂/√(Ĝ+ε)</div>
+    <div class="fx">反向缩放暂退：训练 m ⊙ x / p，测试 x；标签平滑 [ε/(K−1), …, 1−ε, …]</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 鞍点 ---------- */
+var sdPaths = [];
+function sdF2(x, y) { return x * x - y * y + y * y * y * y / 4; }
+function sdGrad(x, y) { return [2 * x, -2 * y + y * y * y]; }
+var sdField = S.field($('#sdF'), { xr: [-2.5, 2.5], yr: [-2.5, 2.5], res: 60, size: 340,
+  f: function (x, y) { var v = sdF2(x, y); return [0, S.clamp(1 - (v + 1) / 7, 0, 1)]; },
+  overlay: function (ctx, X, Y) {
+    sdPaths.forEach(function (p, k) {
+      ctx.strokeStyle = S.css(k ? '--s2' : '--ink'); ctx.lineWidth = 2; ctx.beginPath();
+      p.forEach(function (q, i) { if (i) ctx.lineTo(X(q[0]), Y(q[1])); else ctx.moveTo(X(q[0]), Y(q[1])); }); ctx.stroke();
+    });
+    ctx.fillStyle = S.css('--ink'); ctx.beginPath(); ctx.arc(X(0), Y(0), 4, 0, 7); ctx.fill();
+    ctx.font = '15px ' + S.css('--f-sans'); ctx.fillText('鞍点', X(0) + 6, Y(0) - 6);
+  } });
+function sd() {
+  var n = +$('#sdNs').value; $('#sdN').textContent = S.f(n, 2);
+  var r = S.rng(3), p1 = [[-2, 1e-6]], p2 = [[-2, 1e-6]], a = [-2, 1e-6], b = [-2, 1e-6];
+  for (var t = 0; t < 120; t++) {
+    var g = sdGrad(a[0], a[1]); a = [a[0] - 0.05 * g[0], a[1] - 0.05 * g[1]]; p1.push(a);
+    var g2 = sdGrad(b[0], b[1]); b = [b[0] - 0.05 * (g2[0] + n * S.randn(r) * 4), b[1] - 0.05 * (g2[1] + n * S.randn(r) * 4)]; p2.push(b);
+  }
+  sdPaths = [p1, p2]; sdField({});
+  $('#sdW').innerHTML = '黑线：纯梯度下降。从 y 方向几乎为 0 的起点出发，它沿 x 方向滑进鞍点后<b>停在那里</b>（y 方向的梯度太小，要很久才放大）。<span style="color:var(--s2)">橙线</span>：' + (n > 0 ? '加了噪声的 SGD，随机扰动把它推离鞍点，滑向 y = ±√2 处的真正谷底。' : '把噪声调大一点看看。');
+}
+$('#sdNs').addEventListener('input', sd); sd();
+var flChart = S.chart($('#flC'), { h: 220, x: [-3, 3], y: [0, 2.2], xt: [-2, 0, 2], yt: [0, 1, 2], xl: '参数 θ' });
+function flL(x) { return Math.min(0.35 * Math.pow(x + 1.5, 2) + 0.05, 6 * Math.pow(x - 1.5, 2) + 0.05, 2.2); }
+function fl() {
+  var p = +$('#flPs').value; $('#flP').textContent = S.f(p, 2);
+  var a = flL(-1.5 + p) - flL(-1.5), b = flL(1.5 + p) - flL(1.5);
+  flChart({ curves: [{ f: flL, c: 'c1' }], dots: [{ x: -1.5 + p, y: flL(-1.5 + p), c: 'ok', label: '平坦' }, { x: 1.5 + p, y: flL(1.5 + p), c: 'c2', label: '尖锐' }], vl: [{ x: -1.5, c: 'dim' }, { x: 1.5, c: 'dim' }] });
+  $('#flA').textContent = '+' + S.f(a, 3); $('#flB').textContent = '+' + S.f(b, 3);
+}
+$('#flPs').addEventListener('input', fl); fl();
+S.guess($('#sdG'), { q: '粗略类比（原书）：假设一个驻点在每个维度上表现为“局部最小”的概率都是 1/2 且相互独立，那么在 10 个维度上同时是局部最小值的概率是多少？', ans: Math.pow(0.5, 10), fmt: function (x) { return S.f(x, 5); }, why: '(1/2)¹⁰ ≈ 0.001。参数有 10 000 维时是 (1/2)¹⁰⁰⁰⁰，几乎为 0——高维空间里的驻点绝大多数是鞍点。原书强调这只是帮助理解高维直觉的类比，不是严格结论。' });
+S.notes($('#n-land'), {
+  c: [
+    ['鞍点', '梯度为 0，但有的方向是最高点、有的是最低点（Hessian 非半正定）。'],
+    ['平坦最小值', '邻域内损失都接近；参数扰动不敏感，通常泛化更好。'],
+    ['局部最小解的等价性', '大网络里许多局部最小解的训练损失接近全局最优。'],
+    ['优化地形', '高维空间中损失函数的曲面形状，好的地形比较平滑。']
+  ],
+  p: [
+    ['高维非凸的难点', '逃离鞍点，而不是逃离局部最优。'],
+    ['SGD 的好处', '梯度中的随机性帮助逃离鞍点。'],
+    ['四个改善方向', '优化算法、初始化与预处理、改结构（ReLU / 残差 / 规范化）、超参数优化。']
+  ]
+});
+
+/* ---------- 优化器赛跑 ---------- */
+var LAND = {
+  valley: { f: function (x, y) { return 0.05 * x * x + 2 * y * y; }, g: function (x, y) { return [0.1 * x, 4 * y]; }, xr: [-10, 10], yr: [-4, 4], st: [-9, 2.5], lr: [0.15, 0.6], vmax: 25, opt: [0, 0] },
+  rosen: { f: function (x, y) { return Math.pow(1 - x, 2) + 10 * Math.pow(y - x * x, 2); }, g: function (x, y) { return [-2 * (1 - x) - 40 * x * (y - x * x), 20 * (y - x * x)]; }, xr: [-2, 2], yr: [-1, 3], st: [-1.5, 2.5], lr: [0.02, 0.1], vmax: 40, opt: [1, 1] },
+  saddle: { f: function (x, y) { return x * x - y * y + y * y * y * y / 4; }, g: function (x, y) { return [2 * x, -2 * y + y * y * y]; }, xr: [-2.5, 2.5], yr: [-2.5, 2.5], st: [-2.2, 0.02], lr: [0.05, 0.1], vmax: 6, opt: [0, Math.SQRT2] }
+};
+var OPTS = [
+  { k: 'sgd', n: 'SGD', c: '--ink', on: true },
+  { k: 'mom', n: '动量', c: '--s1', on: true },
+  { k: 'nag', n: 'Nesterov', c: '--s3', on: false },
+  { k: 'ada', n: 'AdaGrad', c: '--ok', on: true },
+  { k: 'rms', n: 'RMSprop', c: '--dim', on: false },
+  { k: 'adam', n: 'Adam', c: '--s2', on: true }
+];
+var orLand = 'valley', orRes = {};
+(function () {
+  var box = $('#orLeg');
+  OPTS.forEach(function (o) {
+    var lb = h('label', null, box);
+    var cb = h('input', { type: 'checkbox' }, lb); cb.checked = o.on;
+    h('i', { style: 'background:var(' + o.c + ')' }, lb);
+    h('span', { text: o.n }, lb);
+    cb.addEventListener('change', function () { o.on = cb.checked; orDraw(); });
+  });
+})();
+function runOpt(kind, L, T, mult) {
+  var x = L.st.slice(), path = [x.slice()], a = (kind === 'sgd' || kind === 'mom' || kind === 'nag' ? L.lr[0] : L.lr[1]) * mult;
+  var v = [0, 0], G = [0, 0], M = [0, 0], eps = 1e-8;
+  for (var t = 1; t <= T; t++) {
+    var g;
+    if (kind === 'nag') { g = L.g(x[0] + 0.9 * v[0], x[1] + 0.9 * v[1]); } else g = L.g(x[0], x[1]);
+    var d = [0, 0];
+    if (kind === 'sgd') d = [-a * g[0], -a * g[1]];
+    else if (kind === 'mom' || kind === 'nag') { v = [0.9 * v[0] - a * g[0], 0.9 * v[1] - a * g[1]]; d = v; }
+    else if (kind === 'ada') { G = [G[0] + g[0] * g[0], G[1] + g[1] * g[1]]; d = [-a * 3 * g[0] / Math.sqrt(G[0] + eps), -a * 3 * g[1] / Math.sqrt(G[1] + eps)]; }
+    else if (kind === 'rms') { G = [0.9 * G[0] + 0.1 * g[0] * g[0], 0.9 * G[1] + 0.1 * g[1] * g[1]]; d = [-a * 0.3 * g[0] / Math.sqrt(G[0] + eps), -a * 0.3 * g[1] / Math.sqrt(G[1] + eps)]; }
+    else { M = [0.9 * M[0] + 0.1 * g[0], 0.9 * M[1] + 0.1 * g[1]]; G = [0.999 * G[0] + 0.001 * g[0] * g[0], 0.999 * G[1] + 0.001 * g[1] * g[1]]; var mh = [M[0] / (1 - Math.pow(0.9, t)), M[1] / (1 - Math.pow(0.9, t))], gh = [G[0] / (1 - Math.pow(0.999, t)), G[1] / (1 - Math.pow(0.999, t))]; d = [-a * mh[0] / Math.sqrt(gh[0] + eps), -a * mh[1] / Math.sqrt(gh[1] + eps)]; }
+    x = [x[0] + d[0], x[1] + d[1]];
+    if (!isFinite(x[0]) || Math.abs(x[0]) > 1e3 || Math.abs(x[1]) > 1e3) { path.push(x); return { path: path, div: true, loss: Infinity }; }
+    path.push(x.slice());
+  }
+  return { path: path, div: false, loss: L.f(x[0], x[1]) };
+}
+var orField = S.field($('#orF'), { xr: [-10, 10], yr: [-4, 4], res: 60, size: 360,
+  f: function (x, y) { var L = LAND[orLand], v = L.f(x, y); return [0, S.clamp(1 - Math.log(1 + v) / Math.log(1 + L.vmax), 0, 1)]; },
+  overlay: function (ctx, X, Y) {
+    var L = LAND[orLand];
+    OPTS.forEach(function (o) {
+      if (!o.on || !orRes[o.k]) return;
+      ctx.strokeStyle = S.css(o.c); ctx.lineWidth = 2; ctx.beginPath();
+      orRes[o.k].path.forEach(function (q, i) { var px = X(S.clamp(q[0], -1e4, 1e4)), py = Y(S.clamp(q[1], -1e4, 1e4)); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+      ctx.stroke();
+    });
+    ctx.fillStyle = S.css('--ink'); ctx.beginPath(); ctx.arc(X(L.st[0]), Y(L.st[1]), 4, 0, 7); ctx.fill();
+    ctx.strokeStyle = S.css('--ok'); ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(X(L.opt[0]), Y(L.opt[1]), 6, 0, 7); ctx.stroke();
+  } });
+function orDraw() {
+  var L = LAND[orLand], T = +$('#orTs').value, mult = Math.pow(10, +$('#orAs').value);
+  $('#orT').textContent = T; $('#orA').textContent = '×' + S.f(mult, 2);
+  OPTS.forEach(function (o) { orRes[o.k] = runOpt(o.k, L, T, mult); });
+  orField({ xr: L.xr, yr: L.yr });
+  $('#orTab').innerHTML = '<tr><td>优化器</td><td class="n">最终损失</td></tr>' + OPTS.filter(function (o) { return o.on; }).map(function (o) { var r = orRes[o.k]; return '<tr><td><span style="color:var(' + o.c + ')">■</span> ' + o.n + '</td><td class="n">' + (r.div ? '发散' : r.loss < 1e-4 ? S.sci(r.loss, 1) : S.f(r.loss, 4)) + '</td></tr>'; }).join('');
+  $('#orW').innerHTML = orLand === 'valley' ? '山谷在 y 方向陡、x 方向缓（曲率差 40 倍）。SGD 学习率受陡方向限制，沿 x 方向挪得很慢；动量在 x 方向累积速度；AdaGrad / Adam 按坐标缩放，两个方向步长差不多，直奔谷底。绿圈是最优点。' :
+    orLand === 'rosen' ? '香蕉形的弯曲谷底：先要掉进谷里，再沿着弯谷走到 (1, 1)。SGD 在谷底挪得极慢；动量容易冲过头又被拉回；Adam 前期步长稳定。调学习率倍数看谁先发散。' :
+    '从鞍点附近出发（y 方向偏离只有 0.02）。SGD 先被吸到鞍点附近再慢慢离开；动量和自适应方法更快地放大 y 方向的微小信号逃出去。';
+}
+S.seg($('#orL'), function (v) { orLand = v; orDraw(); });
+['orAs', 'orTs'].forEach(function (id) { $('#' + id).addEventListener('input', orDraw); });
+orDraw();
+(function () {
+  var g = [0.1, 0.2, 0.15], th = 1, M = 0, G = 0, rows = [];
+  g.forEach(function (gt, i) {
+    var t = i + 1; M = 0.9 * M + 0.1 * gt; G = 0.999 * G + 0.001 * gt * gt;
+    var mh = M / (1 - Math.pow(0.9, t)), gh = G / (1 - Math.pow(0.999, t)), d = -0.01 * mh / (Math.sqrt(gh) + 1e-8);
+    th += d; rows.push([t, gt, M, G, mh, gh, d, th]);
+  });
+  var items = S.$$('#adT');
+  S.stepper($('#adS'), 3, function (k) {
+    $('#adT').innerHTML = '<tr><td>t</td><td class="n">g</td><td class="n">M_t</td><td class="n">G_t</td><td class="n">M̂_t</td><td class="n">Ĝ_t</td><td class="n">Δθ</td><td class="n">θ_t</td></tr>' +
+      rows.slice(0, k + 1).map(function (r) { return '<tr' + (r[0] === k + 1 ? ' class="tot"' : '') + '><td>' + r[0] + '</td><td class="n">' + r[1] + '</td><td class="n">' + S.f(r[2], 4) + '</td><td class="n">' + S.sci(r[3], 3) + '</td><td class="n">' + S.f(r[4], 4) + '</td><td class="n">' + S.f(r[5], 4) + '</td><td class="n">' + S.f(r[6], 5) + '</td><td class="n">' + S.f(r[7], 5) + '</td></tr>'; }).join('');
+  }, ['第 1 步', '第 2 步', '第 3 步']);
+  S.guess($('#adG'), { q: 'θ₀ = 1、α = 0.01、β₁ = 0.9、β₂ = 0.999、梯度依次为 0.1、0.2、0.15。Adam 第 3 步后 θ₃ 是多少？', ans: rows[2][7], fmt: function (x) { return S.f(x, 4); }, why: '第 1 步偏差修正后 M̂ = g、Ĝ = g²，更新量恰好是 −α（与梯度大小无关）——这是 Adam 的一个特点：初期每步大约走 α。之后三步分别约 −0.0100、−0.0097、−0.0098，θ₃ ≈ 0.9706。不做偏差修正的话，第 1 步 M = 0.01、G = 10⁻⁵，更新量会变成 −0.0316，偏大三倍多。' });
+})();
+S.notes($('#n-opt'), {
+  c: [
+    ['AdaGrad', '累加梯度平方，学习率只降不升。'],
+    ['RMSprop', '梯度平方的指数移动平均，学习率可升可降。'],
+    ['动量法', '负梯度的加权移动平均作方向；一致加速、振荡减速。'],
+    ['Nesterov', '在按动量“前瞻”一步的位置算梯度。'],
+    ['Adam', '动量（一阶矩）+ RMSprop（二阶矩）+ 偏差修正。'],
+    ['Muon', '动量方向做正交化（奇异值置 1），用于隐藏层矩阵。'],
+    ['SAM', 'min max_{‖ε‖≤ρ} ℒ(θ+ε)，寻找平坦解。'],
+    ['梯度截断', '按值或按模截断，防梯度爆炸。']
+  ],
+  p: [
+    ['RMSprop', 'G = βG + (1−β)g²，Δθ = −α g/√(G+ε)，β = 0.9'],
+    ['动量', 'Δθ_t = ρΔθ_{t−1} − αg_t，ρ = 0.9'],
+    ['Adam 默认', 'β₁ = 0.9，β₂ = 0.999，α = 0.001'],
+    ['偏差修正', 'M̂ = M/(1−β₁ᵗ)，Ĝ = G/(1−β₂ᵗ)'],
+    ['按模截断', '‖g‖ > b 时 g ← (b/‖g‖) g']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 学习率调度 ---------- */
+var SCH = [
+  ['分段常数', 'c1', true, function (t) { return t < 30 ? 1 : t < 60 ? 0.5 : t < 85 ? 0.2 : 0.05; }],
+  ['逆时 β=0.1', 'c3', false, function (t) { return 1 / (1 + 0.1 * t); }],
+  ['指数 β=0.96', 'ok', false, function (t) { return Math.pow(0.96, t); }],
+  ['自然指数 β=0.04', 'dim', false, function (t) { return Math.exp(-0.04 * t); }],
+  ['余弦', 'c2', true, function (t) { return 0.5 * (1 + Math.cos(t * Math.PI / 100)); }],
+  ['预热 + 余弦', 'ink', true, function (t) { var w = +$('#lrWs').value; if (w && t < w) return t / w; return 0.5 * (1 + Math.cos((t - w) * Math.PI / (100 - w))); }],
+  ['三角循环', 'c1', false, function (t) { var dT = 12.5, m = Math.floor(1 + t / (2 * dT)), b = Math.abs(t / dT - 2 * m + 1), mx = Math.pow(0.8, m - 1); return 0.05 + (mx - 0.05) * Math.max(0, 1 - b); }],
+  ['SGDR', 'c3', false, function (t) { var T = 25, s = 0, m = 0; while (t >= s + T) { s += T; T *= 1.5; m++; } var mx = Math.pow(0.8, m); return 0.5 * mx * (1 + Math.cos((t - s) / T * Math.PI)); }]
+];
+(function () {
+  var box = $('#lrT');
+  SCH.forEach(function (s, i) {
+    var b = h('button', { type: 'button', 'aria-pressed': s[2] ? 'true' : 'false', text: s[0], style: 'font:inherit;font-size:15px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair);background:var(--bg);color:var(--ink-2);cursor:pointer' }, box);
+    b.addEventListener('click', function () { s[2] = !s[2]; b.setAttribute('aria-pressed', String(s[2])); b.style.borderColor = s[2] ? 'var(--ink-2)' : 'var(--hair)'; lrd(); });
+    b.style.borderColor = s[2] ? 'var(--ink-2)' : 'var(--hair)';
+  });
+})();
+var lrChart = S.chart($('#lrC'), { h: 260, x: [0, 100], y: [0, 1.05], xt: [0, 20, 40, 60, 80, 100], yt: [0, 0.5, 1], xl: '迭代次数', yl: '学习率' });
+function lrd() {
+  $('#lrW').textContent = $('#lrWs').value;
+  lrChart({ curves: SCH.filter(function (s) { return s[2]; }).map(function (s, i) { var pts = []; for (var t = 0; t <= 100; t += 0.5) pts.push([t, s[3](t)]); return { pts: pts, c: s[1], dash: SCH.indexOf(s) >= 6, label: s[0] }; }) });
+}
+$('#lrWs').addEventListener('input', lrd); lrd();
+function ep() {
+  var N = +$('#epNs').value, K = Math.pow(2, +$('#epKs').value), a = +$('#epAs').value;
+  $('#epN').textContent = N; $('#epK').textContent = K; $('#epA').textContent = S.f(a, 2);
+  $('#epI').textContent = Math.ceil(N / K).toLocaleString();
+  $('#epL').textContent = S.f(a * K / 128, 3);
+  $('#epG').textContent = K <= 32 ? '不用' : (K / 32) + ' 步';
+}
+['epNs', 'epKs', 'epAs'].forEach(function (id) { $('#' + id).addEventListener('input', ep); }); ep();
+S.notes($('#n-lr'), {
+  c: [
+    ['批大小', '不影响随机梯度的期望，影响方差。'],
+    ['线性缩放规则', '批大小 × m，学习率 × m（批很大时失效）。'],
+    ['梯度累积', '小批分别算梯度、累加后更新一次，等效大批。'],
+    ['学习率预热', '训练初期用逐渐增大的小学习率，稳住大批量训练。'],
+    ['SGDR', '周期内余弦衰减、周期末热重启，参数不清零。']
+  ],
+  p: [
+    ['轮与迭代', '1 轮 = (N/K) 次迭代'],
+    ['逆时 / 指数 / 自然指数', 'α₀/(1+βt)、α₀βᵗ、α₀e^{−βt}'],
+    ['余弦', 'α_t = ½α₀(1 + cos(tπ/T))'],
+    ['逐渐预热', 'α′_t = (t/T′)α₀，1 ≤ t ≤ T′'],
+    ['批与最小值', '批越大越可能收敛到尖锐最小值。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 初始化 ---------- */
+var inI = 'xavier', inA = 'tanh';
+var inChart = S.chart($('#inC'), { h: 240, x: [1, 20], y: [-6, 2], xt: [1, 5, 10, 15, 20], yt: [-6, -4, -2, 0, 2], xl: '层号', yl: 'log₁₀(激活值标准差)', ml: 40 });
+function ini() {
+  var n = 128, L = 20, B = 64, r = S.rng(13);
+  var X = []; for (var b = 0; b < B; b++) { var row = []; for (var i = 0; i < n; i++) row.push(S.randn(r)); X.push(row); }
+  var sd = inI === 'small' ? 0.01 : inI === 'big' ? 1 : inI === 'xavier' ? Math.sqrt(2 / (n + n)) : Math.sqrt(2 / n);
+  var pts = [];
+  for (var l = 0; l < L; l++) {
+    var W = []; for (var i2 = 0; i2 < n; i2++) { var wr = []; for (var j = 0; j < n; j++) wr.push(S.randn(r) * sd); W.push(wr); }
+    X = X.map(function (x) { return W.map(function (wr) { var s = 0; for (var j2 = 0; j2 < n; j2++) s += wr[j2] * x[j2]; return inA === 'tanh' ? Math.tanh(s) : Math.max(0, s); }); });
+    var m = 0, v = 0, c = 0; X.forEach(function (x) { x.forEach(function (z) { m += z; c++; }); }); m /= c;
+    X.forEach(function (x) { x.forEach(function (z) { v += (z - m) * (z - m); }); }); v /= c;
+    pts.push([l + 1, Math.log10(Math.sqrt(v) + 1e-30)]);
+  }
+  var lo = Math.min(-6, Math.floor(Math.min.apply(null, pts.map(function (p) { return p[1]; })))), hi = Math.max(2, Math.ceil(Math.max.apply(null, pts.map(function (p) { return p[1]; }))));
+  inChart({ y: [lo, hi], yt: [lo, Math.round((lo + hi) / 2), hi], curves: [{ pts: pts, c: 'c2' }], dots: pts.map(function (p) { return { x: p[0], y: p[1], c: 'c2', r: 3.5 }; }) });
+  var last = Math.pow(10, pts[L - 1][1]);
+  $('#inW').innerHTML = (inI === 'small' ? '方差太小：信号每层都被缩小，20 层后几乎为 0（第 20 层标准差 ' + S.sci(last, 1) + '），反向梯度同样会消失。' :
+    inI === 'big' ? (inA === 'tanh' ? '方差太大：Tanh 全部饱和在 ±1，标准差卡在 1 附近，但导数接近 0——梯度消失。' : 'ReLU 下信号每层放大约 √(n/2) ≈ 8 倍，迅速爆炸。') :
+    inI === 'xavier' ? (inA === 'tanh' ? 'Xavier + Tanh：各层标准差基本稳定，这正是它的设计目标。' : 'Xavier + ReLU：ReLU 砍掉一半，方差每层减半，深了慢慢衰减——应该用 He。') :
+    (inA === 'relu' ? 'He + ReLU：方差补偿了 ReLU 砍掉的一半，各层稳定。' : 'He + Tanh：方差偏大，Tanh 逐渐趋向饱和。')) + '（模拟：64 个样本、每层 128 个神经元、无偏置。）';
+}
+S.seg($('#inI'), function (v) { inI = v; ini(); });
+S.seg($('#inA'), function (v) { inA = v; ini(); }); ini();
+(function () {
+  var L = [100, 256, 128, 10], rows = '';
+  for (var i = 1; i < L.length; i++) rows += '<tr><td>' + L[i - 1] + ' → ' + L[i] + '</td><td>' + S.f(2 / (L[i - 1] + L[i]), 5) + '</td><td>' + S.f(2 / L[i - 1], 5) + '</td></tr>';
+  $('#inT').innerHTML = rows;
+  S.guess($('#inG'), { q: '第一层 100 → 256 用 He 初始化，高斯分布的方差是多少？', ans: 0.02, fmt: function (x) { return S.f(x, 4); }, why: 'He：2/M_{l−1} = 2/100 = 0.02，标准差约 0.141。Xavier 则是 2/(100 + 256) ≈ 0.0056。均匀分布的话 He 取 r = √(6/100) ≈ 0.245。' });
+})();
+S.notes($('#n-init'), {
+  c: [
+    ['对称权重现象', '全零初始化时同层神经元输出和更新都相同，没有区分性。'],
+    ['方差缩放', '按连接数自适应设置方差，让输入输出方差一致。'],
+    ['Xavier（Glorot）', 'var = 2/(M_{l−1} + M_l)，适合 Tanh（Logistic 乘 16）。'],
+    ['He（Kaiming）', 'var = 2/M_{l−1}，适合 ReLU。'],
+    ['正交初始化', 'W 取正交矩阵，前向和反向都保范；常用于 RNN 循环边。']
+  ],
+  p: [
+    ['推导核心', 'var(a⁽ˡ⁾) = M_{l−1} var(w) var(a⁽ˡ⁻¹⁾)，令 M_{l−1}var(w) = 1'],
+    ['均匀分布', 'var = (b−a)²/12，[−r, r] 时 r = √(3σ²)'],
+    ['固定值初始化', '偏置 0；LSTM 遗忘门偏置 1 或 2；ReLU 偏置可设 0.01。'],
+    ['预训练初始化', '泛化好但结构不能随意改；之后微调。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 数据预处理 ---------- */
+var ppPath = [];
+var ppField = S.field($('#ppF'), { xr: [-1.2, 1.2], yr: [-1.2, 1.2], res: 60, size: 320,
+  f: function (x, y) { var R = +$('#ppRs').value, v = x * x + R * R * y * y; return [0, S.clamp(1 - Math.sqrt(v) / (1.2 * R), 0, 1)]; },
+  overlay: function (ctx, X, Y) { ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 2; ctx.beginPath(); ppPath.forEach(function (q, i) { if (i) ctx.lineTo(X(q[0]), Y(q[1])); else ctx.moveTo(X(q[0]), Y(q[1])); }); ctx.stroke(); } });
+function pp() {
+  var R = +$('#ppRs').value; $('#ppR').textContent = R;
+  var a = 0.9 / (R * R), x = [-1, 0.9 / R + 0.05], n = 0;
+  ppPath = [x.slice()];
+  while (n < 2000 && Math.hypot(x[0], R * x[1]) > 0.01) { x = [x[0] - a * 2 * x[0], x[1] - a * 2 * R * R * x[1]]; ppPath.push(x.slice()); n++; }
+  ppField({});
+  $('#ppS').textContent = n >= 2000 ? '> 2000' : n;
+  $('#ppW').innerHTML = '损失 w₁² + (R·w₂)²，学习率取能保证稳定的最大值（受陡方向限制）。R = ' + R + ' 时要 ' + (n >= 2000 ? '2000 多' : n) + ' 步；R = 1（规范化后）时等高线是圆，梯度直指圆心，几步就到。';
+}
+$('#ppRs').addEventListener('input', pp); pp();
+var WT = (function () { var r = S.rng(6), a = []; for (var i = 0; i < 150; i++) { var u = S.randn(r), v = S.randn(r); a.push([3 + 2.2 * u + 0.4 * v, 1 + 0.9 * u * 0.6 + 0.25 * v]); } return a; })();
+var wtMode = 'raw';
+var wtField = S.field($('#wtF'), { xr: [-4, 8], yr: [-4, 8], res: 10, size: 300 });
+function wt() {
+  var n = WT.length, mx = [0, 0]; WT.forEach(function (p) { mx[0] += p[0] / n; mx[1] += p[1] / n; });
+  var C = [[0, 0], [0, 0]]; WT.forEach(function (p) { var d = [p[0] - mx[0], p[1] - mx[1]]; C[0][0] += d[0] * d[0] / n; C[0][1] += d[0] * d[1] / n; C[1][1] += d[1] * d[1] / n; }); C[1][0] = C[0][1];
+  var pts;
+  if (wtMode === 'raw') pts = WT;
+  else if (wtMode === 'std') pts = WT.map(function (p) { return [(p[0] - mx[0]) / Math.sqrt(C[0][0]), (p[1] - mx[1]) / Math.sqrt(C[1][1])]; });
+  else {
+    var tr = C[0][0] + C[1][1], det = C[0][0] * C[1][1] - C[0][1] * C[0][1], l1 = tr / 2 + Math.sqrt(tr * tr / 4 - det), l2 = tr / 2 - Math.sqrt(tr * tr / 4 - det);
+    var v1 = [C[0][1], l1 - C[0][0]], nv = Math.hypot(v1[0], v1[1]); v1 = [v1[0] / nv, v1[1] / nv]; var v2 = [-v1[1], v1[0]];
+    pts = WT.map(function (p) { var d = [p[0] - mx[0], p[1] - mx[1]]; return [(d[0] * v1[0] + d[1] * v1[1]) / Math.sqrt(l1), (d[0] * v2[0] + d[1] * v2[1]) / Math.sqrt(l2)]; });
+  }
+  var rng = wtMode === 'raw' ? [-4, 8] : [-4, 4];
+  wtField({ xr: rng, yr: rng, pts: pts.map(function (p) { return [p[0], p[1], 0]; }) });
+  var corr = C[0][1] / Math.sqrt(C[0][0] * C[1][1]);
+  $('#wtW').innerHTML = wtMode === 'raw' ? '原始数据：均值不在原点，x₁ 的方差比 x₂ 大，两者正相关（相关系数 ' + S.f(corr, 2) + '）。' : wtMode === 'std' ? '标准化：每一维都变成均值 0、方差 1，但<b>相关性还在</b>，点云仍是斜的椭圆。' : 'PCA 白化：先旋转到主成分方向去掉相关性，再把每个方向缩放到方差 1，点云变成圆。';
+}
+S.seg($('#wtS'), function (v) { wtMode = v; wt(); }); wt();
+S.notes($('#n-pre'), {
+  c: [
+    ['尺度不变性', '缩放特征不影响学习与预测（线性分类器是，最近邻不是）。'],
+    ['最小最大值规范化', '(x − min)/(max − min)，映射到 [0, 1]。'],
+    ['标准化（Z 值）', '(x − μ)/σ，均值 0、方差 1。'],
+    ['白化', '用 PCA 去相关，并让各特征方差相同。']
+  ],
+  p: [
+    ['为什么要规范化', '尺度不同 → 等高线细长 → 梯度方向不指向最优点 → 之字形、迭代多。'],
+    ['σ = 0', '这一维没有区分性，直接删掉。'],
+    ['tanh 例子', '输入落在 [−2, 2] 外导数接近 0，尺度大的特征要精心设小权重。']
+  ]
+});
+
+/* ---------- 逐层规范化 ---------- */
+var NZ = [[2.1, 0.4, 3.3, 1.2, 2.6], [-0.5, 0.7, -1.1, 0.2, -0.3], [8.0, 6.5, 9.4, 7.1, 8.8], [0.9, -2.2, 1.6, 0.1, -0.8]], nmMode = 'bn', nmSel = [0, 0];
+function nm() {
+  var M = NZ.length, K = NZ[0].length, Y = NZ.map(function (r) { return r.slice(); }), i, j;
+  if (nmMode === 'bn') for (i = 0; i < M; i++) { var mu = NZ[i].reduce(function (a, b) { return a + b; }, 0) / K, v = NZ[i].reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / K; for (j = 0; j < K; j++) Y[i][j] = (NZ[i][j] - mu) / Math.sqrt(v + 1e-5); }
+  else for (j = 0; j < K; j++) { var col = NZ.map(function (r) { return r[j]; }), mu2 = col.reduce(function (a, b) { return a + b; }, 0) / M, v2 = col.reduce(function (a, b) { return a + (b - mu2) * (b - mu2); }, 0) / M, rms = Math.sqrt(col.reduce(function (a, b) { return a + b * b; }, 0) / M + 1e-5);
+    for (i = 0; i < M; i++) Y[i][j] = nmMode === 'ln' ? (NZ[i][j] - mu2) / Math.sqrt(v2 + 1e-5) : NZ[i][j] / rms; }
+  var inStat = function (i, j) { return nmMode === 'bn' ? i === nmSel[0] : j === nmSel[1]; };
+  var t = S.grid($('#nmX'), NZ, { rl: ['神经元 1', '神经元 2', '神经元 3', '神经元 4'], cl: ['样本 1', '样本 2', '样本 3', '样本 4', '样本 5'], fmt: function (v) { return S.f(v, 1); }, cls: function (i, j) { return inStat(i, j) ? 'st' : ''; } });
+  t.classList.add('normgrid');
+  S.$$('td', t).forEach(function (td, k) { td.style.cursor = 'pointer'; td.addEventListener('click', function () { nmSel = [Math.floor(k / K), k % K]; nm(); }); });
+  var t2 = S.grid($('#nmY'), Y, { rl: ['神经元 1', '神经元 2', '神经元 3', '神经元 4'], cl: ['样本 1', '样本 2', '样本 3', '样本 4', '样本 5'], fmt: function (v) { return S.f(v, 2); }, cls: function (i, j) { return inStat(i, j) ? 'st' : ''; } });
+  t2.classList.add('normgrid');
+  $('#nmW').innerHTML = nmMode === 'bn' ? '<b>BN</b>：每个神经元（一行）用这一批 K 个样本算均值和方差。批很小时统计量不可靠；循环网络里同一神经元在不同时刻分布不同，也不好用。神经元 3 的数值整体很大，规范化后和其他行处在同一尺度。' :
+    nmMode === 'ln' ? '<b>LN</b>：每个样本（一列）用这一层所有神经元算均值和方差，与批大小无关。注意神经元 3 在每个样本里都最大，LN 之后它仍然最大——LN 保留的是样本内部各神经元的相对关系。' :
+    '<b>RMSNorm</b>：同样按列，但不减均值，只除以均方根。结果和 LN 相比整体没有居中（均值不为 0），计算少了一步。';
+}
+S.seg($('#nmS'), function (v) { nmMode = v; nm(); }); nm();
+S.notes($('#n-norm'), {
+  c: [
+    ['内部协变量偏移', '低层参数变化导致高层输入分布不断变化。'],
+    ['批量规范化 BN', '对每个神经元，用小批量样本的均值方差标准化，再乘 γ 加 β。'],
+    ['层规范化 LN', '对每个样本，用该层所有神经元的均值方差标准化。'],
+    ['RMSNorm', '不减均值，只除以均方根再乘 γ；大模型常用。'],
+    ['权重规范化', 'W_i = (g_i/‖v_i‖) v_i：长度和方向分开。']
+  ],
+  p: [
+    ['BN 公式', 'ẑ = (z − μ_ℬ)/√(σ²_ℬ + ε) ⊙ γ + β'],
+    ['BN 的位置', '仿射之后、激活之前；仿射层可去掉偏置。'],
+    ['BN 的真正作用', '让优化地形更平滑，而不主要是减少内部协变量偏移。'],
+    ['推理时', '用全数据集（或移动平均）的均值方差代替批统计量。'],
+    ['怎么选', 'CNN / 大批视觉任务用 BN；RNN、Transformer、小批量用 LN / RMSNorm。']
+  ]
+});
+
+/* ---------- 超参数搜索 ---------- */
+var gsMode = 'grid', gsSeed = 1;
+function gsF(x) { return Math.exp(-Math.pow((x - 0.63) / 0.08, 2)); }
+var gsField = S.field($('#gsF'), { xr: [0, 1], yr: [0, 1], res: 50, size: 300, f: function (x) { return [0, gsF(x) * 0.9]; } });
+function gs() {
+  var pts = [];
+  if (gsMode === 'grid') { [1 / 6, 0.5, 5 / 6].forEach(function (a) { [1 / 6, 0.5, 5 / 6].forEach(function (b) { pts.push([a, b]); }); }); }
+  else { var r = S.rng(gsSeed * 7 + 1); for (var i = 0; i < 9; i++) pts.push([r(), r()]); }
+  var best = pts.reduce(function (m, p) { return gsF(p[0]) > gsF(m[0]) ? p : m; });
+  var xs = []; pts.forEach(function (p) { var v = S.f(p[0], 2); if (xs.indexOf(v) < 0) xs.push(v); });
+  gsField({ pts: pts.map(function (p) { return [p[0], p[1], 1, p === best]; }) });
+  $('#gsW').innerHTML = '横轴是重要的超参数（比如学习率），纵轴是几乎不影响性能的超参数，颜色深处性能好（最优约在 0.63）。' + (gsMode === 'grid' ? '网格的 9 次试验在横轴上只试了 <b>3 个不同的值</b>，最好的离最优还远。' : '随机的 9 次试验在横轴上试了 <b>' + xs.length + ' 个不同的值</b>，更有机会碰到好区域。') + ' 最好的一次得分 ' + S.f(gsF(best[0]), 2) + '（满分 1）。';
+}
+S.seg($('#gsS'), function (v) { gsMode = v; gs(); });
+$('#gsR').addEventListener('click', function () { gsSeed++; gsMode = 'rand'; S.$$('#gsS button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === 'rand')); }); gs(); });
+gs();
+function sh() {
+  var N = +$('#shNs').value, B = +$('#shBs').value; $('#shN').textContent = N; $('#shB').textContent = B;
+  var T = Math.ceil(Math.log2(N)), n = N, rows = '<tr><td>轮次 t</td><td class="n">剩余配置 |S_t|</td><td class="n">每个配置分到 r_t</td><td class="n">本轮消耗</td></tr>', used = 0;
+  for (var t = 0; t < T; t++) { var r = Math.floor(B / (n * T)); used += r * n; rows += '<tr><td>' + t + '</td><td class="n">' + n + '</td><td class="n">' + r + '</td><td class="n">' + r * n + '</td></tr>'; n = Math.max(1, Math.ceil(n / 2)); }
+  rows += '<tr class="tot"><td>共 ' + T + ' 轮，最后剩 ' + n + ' 个</td><td class="n"></td><td class="n"></td><td class="n">' + used + ' / ' + B + '</td></tr>';
+  $('#shT').innerHTML = rows;
+}
+['shNs', 'shBs'].forEach(function (id) { $('#' + id).addEventListener('input', sh); }); sh();
+S.notes($('#n-hp'), {
+  c: [
+    ['网格搜索', '尝试所有组合 m₁ × m₂ × …；连续值要按特点离散化。'],
+    ['随机搜索', '随机组合；在重要超参数上试到更多不同取值。'],
+    ['贝叶斯优化', '高斯过程建模 f，用收益函数（如 EI）选下一个点；O(N³)。'],
+    ['逐次减半', '每轮淘汰一半，把预算集中给有希望的配置。'],
+    ['神经架构搜索', '控制器生成网络结构，验证准确率作奖励做强化学习。']
+  ],
+  p: [
+    ['三类超参数', '网络结构、优化参数、正则化系数。'],
+    ['两大困难', '组合优化不能用梯度；评估代价高。'],
+    ['期望改善', 'EI(x) = ∫ max(y* − y, 0) p(y|x, ℋ) dy'],
+    ['大模型技巧', '小模型调参，合适参数化下迁移到大模型。']
+  ]
+});
+
+/* ---------- 正则化 ---------- */
+var l1P = '1', l1C = [1.6, 0.6];
+function projL1(c) {
+  var a = [Math.abs(c[0]), Math.abs(c[1])];
+  if (a[0] + a[1] <= 1) return c.slice();
+  var u = a.slice().sort(function (x, y) { return y - x; }), cs = 0, rho = 0, th = 0;
+  for (var j = 0; j < 2; j++) { cs += u[j]; var t = (cs - 1) / (j + 1); if (u[j] - t > 0) { rho = j; th = t; } }
+  return [Math.sign(c[0]) * Math.max(a[0] - th, 0), Math.sign(c[1]) * Math.max(a[1] - th, 0)];
+}
+function projP(c) { if (l1P === '1') return projL1(c); if (l1P === '2') { var n = Math.hypot(c[0], c[1]); return n <= 1 ? c.slice() : [c[0] / n, c[1] / n]; } return [S.clamp(c[0], -1, 1), S.clamp(c[1], -1, 1)]; }
+var l1Field = S.field($('#l1F'), { xr: [-2, 2], yr: [-2, 2], res: 60, size: 320,
+  f: function (x, y) { var d = Math.hypot(x - l1C[0], y - l1C[1]); return [0, S.clamp(1 - d / 3, 0, 1) * 0.6]; },
+  onClick: function (x, y) { l1C = [x, y]; l1(); },
+  overlay: function (ctx, X, Y) {
+    ctx.strokeStyle = S.css('--s2'); ctx.lineWidth = 2.5; ctx.beginPath();
+    if (l1P === '1') { ctx.moveTo(X(1), Y(0)); ctx.lineTo(X(0), Y(1)); ctx.lineTo(X(-1), Y(0)); ctx.lineTo(X(0), Y(-1)); ctx.closePath(); }
+    else if (l1P === '2') { ctx.arc(X(0), Y(0), X(1) - X(0), 0, 7); }
+    else { ctx.rect(X(-1), Y(1), X(1) - X(-1), Y(-1) - Y(1)); }
+    ctx.stroke();
+    var s = projP(l1C);
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = S.css('--ink-3'); ctx.lineWidth = 1.2;
+    var d = Math.hypot(s[0] - l1C[0], s[1] - l1C[1]);
+    if (d > 1e-6) { ctx.beginPath(); ctx.arc(X(l1C[0]), Y(l1C[1]), (X(1) - X(0)) * d, 0, 7); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.fillStyle = S.css('--ink'); ctx.beginPath(); ctx.arc(X(l1C[0]), Y(l1C[1]), 4, 0, 7); ctx.fill();
+    ctx.font = '15px ' + S.css('--f-sans'); ctx.fillText('c', X(l1C[0]) + 6, Y(l1C[1]) - 6);
+    ctx.fillStyle = S.css('--s1'); ctx.beginPath(); ctx.arc(X(s[0]), Y(s[1]), 6, 0, 7); ctx.fill();
+    ctx.fillText('θ*', X(s[0]) + 8, Y(s[1]) + 16);
+  } });
+function l1() {
+  l1Field({});
+  var s = projP(l1C), sparse = Math.abs(s[0]) < 1e-6 || Math.abs(s[1]) < 1e-6;
+  $('#l1W').innerHTML = 'θ* = (' + S.f(s[0], 2) + ', ' + S.f(s[1], 2) + ')。' + (sparse ? '<b>有一个分量正好是 0</b>——最优解落在了坐标轴上（稀疏）。' : '两个分量都不为 0。') + (l1P === '1' ? ' 菱形的“尖角”在坐标轴上，等高线圆最先碰到的往往是尖角，所以 ℓ1 容易得到稀疏解。点几个不同位置试试。' : l1P === '2' ? ' 圆形约束没有尖角，解只会被等比例缩小，很少正好为 0。' : ' ℓ∞ 约束的角在对角线方向，解常常各分量绝对值相同。');
+}
+S.seg($('#l1S'), function (v) { l1P = v; l1(); }); l1();
+var dpMask = [];
+function dpSample() { var p = +$('#dpPs').value, r = Math.random; dpMask = []; for (var i = 0; i < 10; i++) dpMask.push(r() < p); }
+function dp() {
+  var p = +$('#dpPs').value; $('#dpP').textContent = S.f(p, 2);
+  var g = $('#dpG'); g.innerHTML = '';
+  var L1 = [40, 85, 130, 175].map(function (y) { return [50, y]; }), L2 = [], L3 = [[370, 85], [370, 130]];
+  for (var i = 0; i < 5; i++) L2.push([170, 25 + i * 38]); for (var j = 0; j < 5; j++) L2.push([270, 25 + j * 38]);
+  var hid = L2;
+  L1.forEach(function (a) { hid.slice(0, 5).forEach(function (b, k) { if (dpMask[k]) S.svg('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, g); }); });
+  hid.slice(0, 5).forEach(function (a, k) { hid.slice(5).forEach(function (b, q) { if (dpMask[k] && dpMask[5 + q]) S.svg('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, g); }); });
+  hid.slice(5).forEach(function (a, q) { L3.forEach(function (b) { if (dpMask[5 + q]) S.svg('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, g); }); });
+  L1.concat(L3).forEach(function (a) { S.svg('circle', { cx: a[0], cy: a[1], r: 11, fill: 'var(--panel)', stroke: 'var(--ink-2)' }, g); });
+  hid.forEach(function (a, k) { S.svg('circle', { cx: a[0], cy: a[1], r: 11, fill: dpMask[k] ? 'var(--s1-soft)' : 'var(--bg)', stroke: dpMask[k] ? 'var(--s1)' : 'var(--rule)', 'stroke-dasharray': dpMask[k] ? '' : '3 3' }, g); });
+  var kept = dpMask.filter(Boolean).length;
+  $('#dpK').textContent = kept + ' / 10';
+  var r2 = S.rng(Math.floor(p * 100) + 3), s = 0, N = 20000; for (var t = 0; t < N; t++) s += (r2() < p ? 1 / p : 0);
+  $('#dpE').textContent = S.f(s / N, 3);
+}
+$('#dpPs').addEventListener('input', function () { dpSample(); dp(); });
+$('#dpR').addEventListener('click', function () { dpSample(); dp(); });
+dpSample(); dp();
+S.guess($('#dpGs'), { q: '一个网络有 20 个可被暂退的神经元，理论上能采样出多少个不同的子网络？', unit: '个', ans: Math.pow(2, 20), fmt: function (x) { return Math.round(x).toLocaleString(); }, why: '2²⁰ = 1,048,576。每次迭代训练其中一个、所有子网络共享参数，最终网络近似于指数级多个网络的集成——这是原书给出的集成学习角度的解释。' });
+function ls() {
+  var K = +$('#lsKs').value, e = +$('#lsEs').value; $('#lsK').textContent = K; $('#lsE').textContent = S.f(e, 2);
+  var soft = []; for (var i = 0; i < K; i++) soft.push(i === 1 ? 1 - e : e / (K - 1));
+  S.bars($('#lsB'), soft.map(function (v, i) { return { label: '类别 ' + (i + 1) + (i === 1 ? '（真实）' : ''), value: v, text: S.f(v, 3), cls: i === 1 ? 'alt' : 'dim' }; }));
+  var q = soft.slice(), ce = -soft.reduce(function (s, v, i) { return s + v * Math.log(Math.max(1e-12, i === 1 ? 0.999 : 0.001 / (K - 1))); }, 0);
+  $('#lsW').innerHTML = '软目标的交叉熵 −Σ ỹ<sub>c</sub> log ŷ<sub>c</sub>（习题 7-6）。如果模型极度自信地输出 [0.999, 其余均分 0.001]，硬目标下损失只有 ' + S.f(-Math.log(0.999), 4) + '，软目标下却是 ' + S.f(ce, 3) + '——标签平滑惩罚过度自信，让模型不必把真实类的得分推到无穷大。';
+}
+['lsKs', 'lsEs'].forEach(function (id) { $('#' + id).addEventListener('input', ls); }); ls();
+function mxDraw(cv, f) { var ctx = cv.getContext('2d'), img = ctx.createImageData(40, 40); for (var i = 0; i < 40; i++) for (var j = 0; j < 40; j++) { var v = f(i, j), k = (i * 40 + j) * 4, c = Math.round(255 * (1 - v)); img.data[k] = c; img.data[k + 1] = c; img.data[k + 2] = c; img.data[k + 3] = 255; } ctx.putImageData(img, 0, 0); cv.style.width = '80px'; cv.style.height = '80px'; cv.style.imageRendering = 'pixelated'; cv.style.border = '1px solid var(--hair)'; cv.style.borderRadius = '6px'; }
+function one(i, j) { return j > 17 && j < 23 && i > 6 && i < 34 ? 1 : 0; }
+function zero(i, j) { var d = Math.hypot(i - 20, (j - 20) * 1.3); return d > 9 && d < 14 ? 1 : 0; }
+function mx() {
+  var l = +$('#mxLs').value; $('#mxL').textContent = S.f(l, 2);
+  mxDraw($('#mxA'), one); mxDraw($('#mxB'), zero); mxDraw($('#mxC'), function (i, j) { return l * one(i, j) + (1 - l) * zero(i, j); });
+  S.bars($('#mxY'), [{ label: '标签“1”', value: l, text: S.f(l, 2), cls: 'alt' }, { label: '标签“0”', value: 1 - l, text: S.f(1 - l, 2), cls: 'dim' }]);
+}
+$('#mxLs').addEventListener('input', mx); mx();
+S.notes($('#n-reg'), {
+  c: [
+    ['过度参数化', '参数远多于训练数据；ℓ1 / ℓ2 效果不如浅层模型显著。'],
+    ['ℓ1 稀疏性', '菱形约束的尖角在坐标轴上，最优解常有分量为 0。'],
+    ['弹性网络', '同时加 ℓ1 和 ℓ2。'],
+    ['AdamW', '解耦权重衰减：(1 − αλ)θ − α M̂/√(Ĝ+ε)。'],
+    ['暂退法', '训练时随机屏蔽神经元；集成与贝叶斯两种解释。'],
+    ['变分暂退法', 'RNN 所有时刻共享同一暂退掩码。'],
+    ['mixup', '样本与标签同比例凸组合，λ 常服从 Beta 分布。'],
+    ['标签平滑 / 知识蒸馏', '软目标防过度自信；按类别相关性分配就是蒸馏。']
+  ],
+  p: [
+    ['正则化目标', 'θ* = argmin (1/N)Σℒ + λℓ_p(θ) ⇔ s.t. ℓ_p(θ) ≤ c'],
+    ['权重衰减', 'θ ← (1 − β)θ − αg；SGD 下 β = αλ，β 常取 0.0005'],
+    ['反向缩放', '训练 m ⊙ x / p，测试 x，期望尺度一致'],
+    ['子网络数', 'n 个神经元 → 2ⁿ 个子网络'],
+    ['数据增强的本质', '把合理的不变性 / 平滑性编码进训练。']
+  ]
+});
+
+/* ---------- 训练诊断 ---------- */
+var DG = [
+  [['模型容量', '学习率', '初始化', '输入预处理'], ['增大模型或训练步数', '调整学习率和初始化', '检查数据预处理'], function (t) { return [1.6 - 0.4 * (1 - Math.exp(-t / 30)), 1.65 - 0.38 * (1 - Math.exp(-t / 30))]; }],
+  [['过拟合', '数据划分', '数据泄露', '分布差异'], ['加强正则化', '数据增强或提前停止', '重新检查数据划分'], function (t) { return [1.5 * Math.exp(-t / 18) + 0.03, 1.2 * Math.exp(-t / 15) + 0.35 + 0.006 * Math.max(0, t - 25)]; }],
+  [['学习率过大', '梯度爆炸', '数值精度'], ['降低学习率', '学习率预热、梯度截断', '混合精度的损失缩放'], function (t) { var s = Math.sin(t * 1.3) * 0.35 + Math.sin(t * 0.37) * 0.2; return [0.9 + s + 0.4 * Math.exp(-t / 40) + (t > 85 ? 2 : 0), 1 + s * 0.9 + 0.4 * Math.exp(-t / 40) + (t > 85 ? 2 : 0)]; }],
+  [['概率校准', '类别不平衡', '标签噪声'], ['检查校准误差', '标签平滑、温度缩放', '换更合适的评价指标'], function (t) { return [1.2 * Math.exp(-t / 20) + 0.15, 1.2 * Math.exp(-t / 20) + 0.25]; }]
+];
+var dgChart = S.chart($('#dgC'), { h: 220, x: [0, 100], y: [0, 2], xt: [0, 50, 100], yt: [0, 1, 2], xl: '训练轮数（示意）', yl: '损失' });
+function dg(k) {
+  var d = DG[+k], tr = [], va = [];
+  for (var t = 0; t <= 100; t++) { var v = d[2](t); tr.push([t, Math.min(v[0], 2)]); va.push([t, Math.min(v[1], 2)]); }
+  dgChart({ curves: [{ pts: tr, c: 'c1', label: '训练' }, { pts: va, c: 'c2', label: '验证' }] });
+  $('#dgT').innerHTML = '<tr><td><b>优先检查</b></td><td>' + d[0].join('、') + '</td></tr><tr><td><b>常见处理</b></td><td>' + d[1].join('；') + '</td></tr>';
+}
+S.seg($('#dgB'), dg); dg('0');
+S.notes($('#n-diag'), {
+  c: [
+    ['要持续观察的信号', '训练 / 验证损失与指标、梯度范数、参数范数、预测置信度。'],
+    ['二次过拟合', '超参数搜索次数越多，越可能对验证集过拟合。'],
+    ['混合精度训练', 'FP16 / BF16 算前向反向，FP32 做更新与关键归约。']
+  ],
+  p: [
+    ['现代默认配方', 'AdamW + 学习率预热 + 余弦衰减，按需加规范化、权重衰减、数据增强、标签平滑。'],
+    ['大模型再加', 'RMSNorm、矩阵结构优化（Muon）、平坦性优化（SAM）。'],
+    ['原书提醒', '训练配方不是孤立技巧的堆叠，要靠诊断。']
+  ]
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 难点与优化器', '高维非凸的主要难点是鞍点而非局部最小值，SGD 的噪声有助逃离；平坦最小值通常泛化更好。所有优化器都可写成 −α M/√(G+ε)：动量改 M，AdaGrad / RMSprop 改 G，Adam 两者都改并做偏差修正。'],
+    ['② 初始化与规范化', '方差缩放让每层输入输出方差一致：Xavier 2/(M_{l−1}+M_l) 配 Tanh，He 2/M_{l−1} 配 ReLU。BN 对每个神经元跨批统计，LN 对每个样本跨神经元统计，RMSNorm 是不减均值的 LN。'],
+    ['③ 正则化', 'SGD 下权重衰减 = ℓ2；Adam 下 ℓ2 被自适应缩放扭曲，所以用 AdamW 解耦。暂退法打破共适应，相当于共享参数的 2ⁿ 个子网络集成（或参数的贝叶斯采样）。']
+  ],
+  p: [
+    ['原书一句话', '优化和正则化既对立又统一，共同目标仍是期望风险最小化。'],
+    ['下一篇', '编码器—解码器的信息瓶颈催生了注意力机制：注意力与 Transformer。']
+  ],
+  ph: '一句话'
+});

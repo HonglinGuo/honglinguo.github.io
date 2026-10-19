@@ -1,0 +1,268 @@
+---
+title: 神经网络与深度学习（第二版）：学习笔记
+desc: 邱锡鹏《神经网络与深度学习（第二版）》的十六篇互动学习笔记总览：前言里的写作初衷与对能力边界的提醒、三大部分与四条阅读路径、全书五条主线、概念速记卡（可自测）、全系列易混辨析索引和公式速查。
+kicker: <span>技术学习</span><span>系列 · 共 16 篇</span><span>以动手实验为主</span><span>先估再算</span>
+h1: 既知其然，<em>也知其所以然</em>
+lead: 这是邱锡鹏《神经网络与深度学习》第二版（2026 年 7 月 23 日电子稿）的学习笔记，按原书十六章拆成十六篇。原书是一本以基础原理为核心的教材，第二版在第一版的主线上补进了 Transformer、图神经网络、大语言模型与智能体、扩散模型与流匹配等内容。每一篇都把公式和定义落到浏览器里能拖、能算、能训练的小实验上。这一页给出全书地图和阅读路径，并把各篇的速记、易混辨析和公式卡汇总在一起，方便以后回来复习。
+nav: why|这本书;map|地图与路径;cards|概念速记;cf|易混辨析;fx|公式速查;back|记下来
+---
+<style>
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s, opacity .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap a.hl { border-color: var(--s1); box-shadow: inset 0 0 0 1px var(--s1); }
+.chap a.fade { opacity: .4; }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl { margin-top: 12px; }
+.cfl h4, .fxl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a, .fxl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.fxl { margin-top: 12px; }
+.fxl .fx { margin: 6px 0 0; }
+</style>
+===BODY===
+<div class="q3"><h3>这一页要回答的 3 个问题</h3><ol>
+  <li>这本书想帮读者建立什么？第二版和第一版相比有什么变化？</li>
+  <li>十六章怎么组织，不同背景的读者该从哪里读起？</li>
+  <li>读完以后，怎么用最短的时间把全书过一遍？</li>
+</ol></div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这本书想做什么</h2><span class="meta">原书前言</span></div>
+  <div class="sec-lede">
+    <p>原书前言先讲领域的变化：第一版出版以来，深度学习从图像识别、语音识别、文本分类这类专用技术，发展成支撑生成式人工智能、跨模态学习、大语言模型和智能体的基础，“从感知走向生成，从建模单一任务走向处理开放环境中的复杂问题”。知识体系也随之变化：注意力、Transformer、预训练模型、扩散模型、大语言模型成为主线，又和强化学习、知识表示、因果推断、多模态、工具调用交叉融合——对初学者来说“既令人兴奋，也容易感到碎片化和无所适从”。</p>
+    <p>写作目的没有变：<strong>系统地掌握基本原理，既知其然，也知其所以然</strong>。第二版保持原有主线，更新了部分章节、调整了结构与表述、补充了近年有代表性的方法和模型。作者的基本想法是：教材不应只是罗列方法，更重要的是帮助读者建立对整个领域的理解——教材的价值“不在于完整罗列某一时期的全部技术细节，而在于帮助读者抓住一个领域中相对稳定、可以迁移、能够不断生长的<strong>知识骨架</strong>”。</p>
+    <p>前言里还有一段值得记住的提醒：尽管大语言模型、多模态模型与智能体在许多任务上表现强大，甚至有一定通用性，但当前的人工智能系统距离<strong>稳定、可靠、可解释、能持续适应开放环境</strong>的通用智能仍有很长的路；数据依赖、训练代价、可控性、鲁棒性、对齐、安全性仍是重要挑战。所以今天学这门课，不能只停留在“会调用模型”或“会复现结果”，而要理解方法背后的<strong>假设、优势、局限和适用条件</strong>。这个系列的每个小实验都在尽量做这件事：把参数推到极端，看方法在哪里失效。</p>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>全书地图与阅读路径</h2><span class="meta">原书“如何阅读本书”、1.6 节</span></div>
+  <div class="sec-lede">
+    <p>全书分三大部分加附录，大体沿“<strong>判别建模 → 表示与序列建模 → 决策与生成</strong>”展开。第一部分“机器学习基础”（1–3 章）讲基本概念与线性模型，是后续深度网络的逻辑起点；第二部分“基础模型”（4–9 章）讲前馈、卷积、循环、Transformer、图神经网络等核心架构，以及网络的优化与正则化；第三部分“进阶主题”（10–16 章）讲无监督学习、模型独立的学习方式、深度强化学习、大语言模型与智能体、概率图模型、深度信念网络与深度生成模型。附录整理微积分、线性代数、概率统计、信息论与数学优化（本系列没有单独成篇，用到时在正文里交代）。</p>
+    <p>原书给了四条阅读路径，下面可以切换；第 1 篇里介绍的“五条主线”也可以在这里切换着看。卡片左侧有绿边的，是你在这台设备上已经读过的篇目。</p>
+    <p class="go">选一条阅读路径或一条主线，卡片会标出重点章节。</p>
+  </div>
+  <div class="selrow"><span>阅读路径</span><div class="seg" id="path"><button data-v="all" aria-pressed="true">零基础 / 本科生</button><button data-v="math">数学基础较强</button><button data-v="eng">工程实践导向</button><button data-v="res">研究导向</button></div></div>
+  <div class="selrow"><span>五条主线</span><div class="seg" id="line"><button data-v="0">机器学习基础</button><button data-v="1">网络结构</button><button data-v="2">概率与生成</button><button data-v="3">决策与交互</button><button data-v="4">现代基础模型</button></div></div>
+  <p class="cap" id="pathC"></p>
+  <p class="parthd">第一部分 · 机器学习基础</p>
+  <div class="chap" id="chapA"></div>
+  <p class="parthd">第二部分 · 基础模型</p>
+  <div class="chap" id="chapB"></div>
+  <p class="parthd">第三部分 · 进阶主题</p>
+  <div class="chap" id="chapC"></div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>概念速记卡</h2><span class="meta">每篇两张</span></div>
+  <div class="sec-lede">
+    <p>每篇挑两个最值得记住的问题。打开自测模式后答案会被遮住：先在心里回答，再点卡片翻开对照。答不上来的，点卡片上的篇号回到那一篇。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找（如 KL、同策略、Pre-Norm、DDIM），标题链接回到原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 KL、BN、SARSA" aria-label="搜索易混辨析" style="max-width:260px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="part" id="fx">
+  <div class="part-head"><h2>全系列公式速查</h2><span class="meta">各篇“本章公式卡”汇总</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾都有一张公式卡，这里把它们汇总在一起。可以按部分筛选，或输入关键词（如 softmax、ELBO、KL、梯度）查找。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="fxQ" type="search" placeholder="关键词，如 ELBO、σ、Adam" aria-label="搜索公式" style="max-width:260px"><div class="seg" id="fxP"><button data-v="0" aria-pressed="true">全部</button><button data-v="1">1–3 章</button><button data-v="2">4–9 章</button><button data-v="3">10–16 章</button></div></div>
+  <div class="fxl" id="fxL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-18-nndl-';
+S.notes($('#n-why'), {
+  c: [
+    ['写作目的', '系统掌握基本原理，既知其然，也知其所以然。'],
+    ['知识骨架', '相对稳定、可以迁移、能够不断生长的部分，比罗列技术细节更重要。'],
+    ['第二版的变化', '保持主线，更新章节与结构，补充 Transformer、GNN、LLM 与智能体、扩散与流匹配等。'],
+    ['能力边界', '离稳定、可靠、可解释、持续适应开放环境的通用智能还很远。']
+  ],
+  p: [
+    ['领域的两个转变', '从感知走向生成；从单一任务走向开放环境中的复杂问题'],
+    ['仍待解决的挑战', '数据依赖、训练代价、可控性、鲁棒性、对齐、安全性'],
+    ['该怎么学', '理解方法的假设、优势、局限和适用条件，而不只是会调用、会复现']
+  ]
+});
+
+/* ---------- 章节地图 ---------- */
+var chs = [[1, "绪论", "智能从哪里来：规则、知识、数据、规模", "人工智能、机器学习、表示学习、深度学习、神经网络，这五个词之间是什么关系？", "四个时期 · 特征与表示 · 两种表示 · 深度与非线性 · 贡献度分配 · 神经网络 · 全书主线"], [2, "机器学习概述", "不是记住训练集，而是猜中没见过的", "机器学习的“三要素”是什么？训练集、验证集、测试集各管什么，为什么测试集不能拿来调参？", "基本概念 · 模型与损失 · 风险与过拟合 · 梯度下降 · 评价指标 · 线性回归 · 偏差与方差 · 范式与特征 · 理论"], [3, "线性模型", "同一条直线，四种学法", "“线性分类器”的“线性”指什么？Logistic 回归输出了一个非线性的概率，为什么还叫线性模型？", "决策边界 · 多分类 · Logistic · Softmax · 感知器 · 支持向量机 · 核函数 · 损失对比"], [4, "前馈神经网络", "一层仿射，一层非线性，再来一层", "前馈网络每一层在算什么？一个隐藏层就“能逼近任何连续函数”，为什么还要深？", "神经元与网络 · 通用近似 · 训练游乐场 · 反向传播 · 自动微分 · 优化难题 · 激活函数 · 门控单元"], [5, "卷积神经网络", "一个小窗口，在整张图上滑", "卷积层为什么参数少？参数量和输入图像的大小有关吗？", "为什么卷积 · 一维卷积 · 二维卷积 · 尺寸与感受野 · 卷积层与汇聚 · 反向传播 · 经典结构 · 其他卷积"], [6, "循环神经网络", "让网络记住刚才发生了什么，以及记多久", "循环神经网络的“记忆”在哪里？按时间展开后它和前馈网络是什么关系？", "三种记忆 · 简单循环网络 · 四种模式 · 随时间反传 · 长程依赖 · LSTM 与 GRU · 深层与双向"], [7, "网络优化与正则化", "训得动，还要训得好", "高维非凸优化真正的难点是局部最小值吗？Adam 和 SGD、动量、RMSprop 是什么关系？", "优化地形 · 优化器赛跑 · 批大小与学习率 · 参数初始化 · 数据预处理 · 逐层规范化 · 超参数搜索 · 正则化 · 训练诊断"], [8, "注意力机制与 Transformer", "不压缩全部输入，按需去取", "注意力的两步是什么？为什么点积要除以 √D？自注意力和全连接层的关键区别在哪？", "注意力机制 · 注意力变体 · 自注意力 · 位置编码 · Transformer 结构 · 语言模型数据流 · 现代优化 · 推断与容量"], [9, "图神经网络", "每个节点都向邻居打听，一层一跳", "拉普拉斯矩阵 L = D − A 衡量的是什么？它和图卷积有什么关系？", "图与拉普拉斯 · 三类任务 · 消息传递 · GCN · GraphSAGE 与 GAT · GIN 与 WL · 共性问题"], [10, "无监督学习", "没有标签，数据自己就是老师", "PCA、稀疏编码、自编码器分别对表示施加了什么约束？自编码器为什么容易学成恒等函数？", "主成分分析 · 稀疏编码 · 自编码器 · 密度估计 · 聚类 · 自监督学习"], [11, "模型独立的学习方式", "不换模型，换一种学法", "集成为什么能降低误差？Bagging 和 Boosting 用什么办法制造“差异”？", "集成学习 · 半监督 · 多任务 · 迁移学习 · 持续学习 · 元学习"], [12, "深度强化学习", "没有标准答案，只有奖励", "强化学习的学习信号是什么？值函数和贝尔曼方程在其中起什么作用？", "问题与 MDP · 值函数方法 · 时序差分 · 策略梯度 · AC 与 PPO · 模型、离线与奖励"], [13, "大语言模型与智能体", "从续写文本，到在环境里行动", "大语言模型是怎么训练出来的？规模法则告诉我们参数和数据该怎么配？", "语言模型与解码 · 预训练与规模 · 涌现与推理 · SFT 与对齐 · 推理增强 · 智能体"], [14, "概率图模型", "用一张图，把高维分布拆成小块", "有向图和无向图分别怎么把联合分布拆开？“观测一个变量”会怎样改变其他变量之间的独立性？", "模型表示 · 无向图 · 参数学习与 EM · 精确推断 · 变分推断 · 采样法"], [15, "深度信念网络", "能量越低，越可能出现", "玻尔兹曼机用什么定义概率？为什么它的每个变量的条件概率正好是 Logistic 函数？", "玻尔兹曼机 · 能量最小化 · 受限玻尔兹曼机 · 对比散度 · 深度信念网络"], [16, "深度生成模型", "把一团噪声，变成数据", "VAE 的训练目标由哪两项组成？为什么需要重参数化？", "生成模型 · VAE · GAN · 扩散模型 · 采样与引导 · 流匹配"]];
+var paths = {
+  all: [[1, 2, 3, 4, 5, 6, 8], '零基础读者或本科生：按章节顺序读，从绪论开始，完成机器学习概述与线性模型，再进入前馈、卷积、循环神经网络以及注意力与 Transformer——这是深度学习里最稳定的基础，也是其他主题的前置。'],
+  math: [[3, 7, 16, 12], '数学基础较强的读者：先快速浏览附录的数学基础，从线性模型和网络优化与正则化入手，以最小的篇幅打通“模型 → 优化 → 泛化”的核心链条，再按兴趣进入深度生成模型或深度强化学习。'],
+  eng: [[5, 6, 8, 13, 11], '工程实践导向的读者：略读机器学习概述与线性模型，重点读卷积、循环与注意力 / Transformer，然后直接进入大语言模型与智能体，再回头补模型独立的学习方式中关于迁移、元学习与多任务的内容。'],
+  res: [[8, 9, 12, 16, 13, 14], '研究导向的读者：从注意力与 Transformer 出发，了解图神经网络在结构化数据上的扩展，再进入深度强化学习、深度生成模型与大语言模型与智能体；读生成模型之前，先看概率图模型里 EM、变分推断和采样的部分。重点关注每章末尾“总结和扩展阅读”的文献。']
+};
+var LINES = [
+  [[2, 3], '机器学习基础线：什么是模型、学习准则与优化算法。'],
+  [[4, 5, 6, 7, 8, 9, 10, 11], '神经网络结构线：不同网络如何组织信息、带来什么归纳偏置——全书主体。'],
+  [[14, 15, 16], '概率与生成线：从概率建模的角度理解学习与生成。'],
+  [[12, 13], '决策与交互线：智能体如何在环境中学习和行动。'],
+  [[8, 13], '现代基础模型线：为什么 Transformer、大语言模型与智能体代表了新的阶段。']
+];
+var read = S.readList(), cards = {};
+chs.forEach(function (c) {
+  var n = c[0], box = n <= 3 ? $('#chapA') : n <= 9 ? $('#chapB') : $('#chapC'), done = read.indexOf(String(n)) >= 0;
+  var a = S.h('a', { href: P + n + '/', class: done ? 'done' : '' }, box);
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3] + '</p><span class="tag">' + c[4] + (done ? ' · 已读' : '') + '</span>';
+  cards[n] = a;
+});
+function mark(on, all) {
+  Object.keys(cards).forEach(function (k) { var hit = on.indexOf(+k) >= 0; cards[k].classList.toggle('hl', hit); cards[k].classList.toggle('fade', !all && !hit); });
+}
+S.seg($('#path'), function (v) { S.$$('#line button').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); }); mark(paths[v][0], v === 'all'); $('#pathC').innerHTML = '<b>阅读路径。</b>' + paths[v][1] + '（高亮的是重点章节，顺序见文字说明。）'; });
+S.seg($('#line'), function (v) { S.$$('#path button').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); }); mark(LINES[+v][0], false); $('#pathC').innerHTML = '<b>主线。</b>' + LINES[+v][1]; });
+mark(paths.all[0], true); $('#pathC').innerHTML = '<b>阅读路径。</b>' + paths.all[1];
+S.notes($('#n-map'), {
+  c: [
+    ['三大部分', '机器学习基础（1–3）、基础模型（4–9）、进阶主题（10–16），加数学附录。'],
+    ['三个知识域', '机器学习（问题与方法语言）、神经网络（主线）、概率图模型（概率视角）。'],
+    ['五条主线', '机器学习基础、网络结构、概率与生成、决策与交互、现代基础模型。']
+  ],
+  p: [
+    ['全书走向', '判别建模 → 表示与序列建模 → 决策与生成'],
+    ['四条阅读路径', '零基础按顺序；数学强先打通模型—优化—泛化；工程导向直奔 Transformer 与 LLM；研究导向从注意力出发'],
+    ['读生成模型之前', '先看第 14 章的 EM、变分推断和采样']
+  ]
+});
+
+/* ---------- 速记卡 ---------- */
+var MG = [
+  [1, '深度学习要解决的核心问题是什么？', '贡献度分配：多层模型里，最终输出的好坏该归功（归咎）于哪些组件、哪些参数。神经网络用反向传播很好地解决了它。'],
+  [1, '为什么多层网络必须配非线性？', '线性层叠多少层仍等价于一个线性层，深度带不来额外的表达能力。'],
+  [2, '机器学习的三要素？', '模型（假设空间）、学习准则（损失 + 风险）、优化算法。'],
+  [2, '偏差—方差分解说了什么？', '期望误差 = 偏差² + 方差 + 噪声；模型越复杂偏差越小、方差越大，正则化用一点偏差换方差。'],
+  [3, 'Logistic 回归为什么还是线性模型？', '决策边界 wᵀx + b = 0 是超平面；σ 只是把得分映射成概率。'],
+  [3, 'SVM 的“间隔最大化”换来了什么？', '只由支持向量决定的稀疏解，好的泛化；配合核函数在高维特征空间里找线性边界。'],
+  [4, '反向传播本质上是什么？', '在计算图上按链式法则反向累积梯度（反向模式自动微分），一次反传得到所有参数的梯度。'],
+  [4, '通用近似定理说了什么、没说什么？', '一个足够宽的隐藏层能以任意精度逼近连续函数；没说需要多宽、能否学到、是否泛化。'],
+  [5, '卷积的两个关键性质？', '局部连接、权重共享；参数量与输入尺寸无关，并带来平移等变性。'],
+  [5, '输出尺寸公式？', '(M − K + 2P)/S + 1。'],
+  [6, '简单 RNN 为什么难学长程依赖？', 'BPTT 中梯度要连乘很多次雅可比矩阵，容易指数衰减（或爆炸）。'],
+  [6, 'LSTM 怎么缓解梯度消失？', '内部状态 c 通过遗忘门做加性更新，梯度沿 c 可以较少衰减地传播。'],
+  [7, '高维非凸优化的主要障碍？', '鞍点和平坦区域，而不是坏的局部最小值。'],
+  [7, '批量规范化 vs 层规范化？', 'BN 在一个批内对每个特征做规范化；LN 在单个样本内对所有特征做规范化，不依赖批大小，Transformer 常用。'],
+  [8, '缩放点积注意力为什么除以 √D？', '点积方差随维度 D 增长，不缩放会让 softmax 饱和、梯度变小。'],
+  [8, '自注意力的计算复杂度？', '对序列长度 N 是 O(N²D)；推断时用 KV 缓存避免重复计算。'],
+  [9, 'GCN 一层在做什么？', '用归一化邻接矩阵聚合邻居（含自环）特征，再做线性变换和非线性：H′ = σ(D̃^{-1/2}ÃD̃^{-1/2}HW)。'],
+  [9, '过平滑是什么？', '层数增多后节点表示趋于相同（Dirichlet 能量趋于 0），残差、跳连等可缓解。'],
+  [10, 'PCA 的两种等价理解？', '投影后方差最大；重构误差最小。解是协方差矩阵最大特征值对应的特征向量。'],
+  [10, '自监督学习的两大类？', '生成式 / 预测式（如下一个词元预测、掩码预测）与对比式（如 InfoNCE）。'],
+  [11, '集成为什么有效、何时无效？', 'R(F) ≤ 平均 R(f)；误差不相关时降到 1/M，完全相关时毫无收益——关键是差异性。'],
+  [11, 'EWC 怎么防遗忘？', '按 Fisher 信息衡量参数对旧任务的重要性，惩罚重要参数偏离旧任务最优值。'],
+  [12, 'SARSA 与 Q 学习的区别？', 'SARSA 目标用实际采到的 Q(s′, a′)，同策略；Q 学习用 max Q(s′, a′)，异策略、直接逼近 Q*。'],
+  [12, 'PPO 的裁剪在防什么？', '概率比 r 超出 [1 − ε, 1 + ε] 后不再获得额外奖励，限制每次策略更新的幅度。'],
+  [13, 'Chinchilla 法则？', '固定算力下参数和数据同比例增长，D* ≈ 20N*；考虑推理成本时常“过度训练”。'],
+  [13, 'DPO 关键的一步？', '用 RLHF 最优策略的解析解反解奖励，β log Z(x) 在偏好对相减时消去，对齐变成二分类损失。'],
+  [14, '解释消除？', '汇聚结构中观测共同结果后，原本独立的原因变得相关。'],
+  [14, 'EM 为什么单调？', 'log p = ELBO + KL；E 步让 KL = 0，M 步提高 ELBO，所以 log p 不降。'],
+  [15, 'RBM 的关键性质？', '二分图结构：给定一层，另一层条件独立，可以整层并行吉布斯采样。'],
+  [15, '对比散度 CD-k？', '吉布斯链从训练样本出发只走 k 步，用来近似模型期望——高效的有偏近似。'],
+  [16, 'GAN 判别器最优时生成器在优化什么？', '2·JS(p_r, p_θ) − 2 log 2；分布不重叠时 JS 恒为 log 2，梯度消失。'],
+  [16, '扩散模型最常用的训练目标？', 'ℒ = 𝔼‖ε − ε_θ(x_t, t)‖²，其中 x_t = √ᾱ_t x₀ + √(1 − ᾱ_t) ε 一步采得。']
+];
+var order = MG.map(function (_, i) { return i; }), opened = {};
+function mgDraw() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var m = MG[i], b = S.h('button', { class: 'mcard' + (opened[i] ? ' open' : ''), type: 'button' }, g);
+    b.innerHTML = '<small>第 ' + m[0] + ' 篇 · ' + chs[m[0] - 1][1] + '</small><span class="q">' + m[1] + '</span><span class="a">' + m[2] + '</span>';
+    b.addEventListener('click', function () { opened[i] = !opened[i]; b.classList.toggle('open', !!opened[i]); mgCount(); });
+  });
+  mgCount();
+}
+function mgCount() {
+  var on = $('#mgG').classList.contains('test'), k = Object.keys(opened).filter(function (x) { return opened[x]; }).length;
+  $('#mgC').textContent = on ? '已翻开 ' + k + ' / ' + MG.length + ' 张' : '共 ' + MG.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = !$('#mgG').classList.contains('test');
+  $('#mgG').classList.toggle('test', on); this.setAttribute('aria-pressed', on);
+  this.textContent = on ? '退出自测：显示全部' : '自测模式：遮住答案';
+  opened = {}; mgDraw();
+});
+$('#mgS').addEventListener('click', function () {
+  var r = S.rng(Date.now() % 100000);
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
+  mgDraw();
+});
+mgDraw();
+
+/* ---------- 易混辨析 ---------- */
+var CF = [[1, "era", "提示、上下文学习、提示学习", ["<b>提示（prompting）</b>：用自然语言描述任务，是一种使用方式。", "<b>上下文学习（in-context learning）</b>：模型只靠输入里的几个示例或说明完成任务适配，参数不变。", "<b>提示学习（Prompt Learning）</b>：把提示本身设计成<strong>可学习的参数化结构</strong>，要训练。原书第 7 页专门把这三个区分开。", "<b>大模型 vs 基础模型</b>：大模型强调规模，基础模型强调通用性和可迁移性，高度相关但不等同。<b>模型 vs 智能体</b>：模型是能力载体；智能体是模型 + 工具调用 + 外部记忆 + 规划执行 + 环境反馈组成的系统。"]], [1, "deep", "表示学习 vs 深度学习 vs 神经网络", ["<b>表示学习</b>是目标：学到有用的表示。它不必然是深度学习，PCA 也算一种特征学习。", "<b>深度学习</b>是手段：用多层可学习结构自动学出多层次表示，并和最终任务联合优化。它是一种<strong>方法范式</strong>。", "<b>神经网络</b>是载体：深度学习最成功、最常用的模型。深度学习也可以用别的深层模型（比如和概率图模型相关的深度生成模型）。"]], [2, "theory", "易混辨析", ["<b>期望风险 vs 经验风险 vs 泛化错误</b>：期望风险是真实分布上的平均损失（算不出）；经验风险是训练集上的平均损失（能算）；泛化错误是两者之差。", "<b>参数 vs 超参数</b>：参数由优化算法直接学；超参数定义模型结构或优化策略（λ、学习率、层数），靠验证集选。在贝叶斯方法里，超参数可以理解为“参数的参数”（控制参数分布的参数）。", "<b>验证集 vs 测试集</b>：验证集参与模型选择，测试集只做最终评估。用测试集调参就是数据泄露。", "<b>特征选择 vs 特征抽取</b>：前者在原特征里挑子集，后者构造新的特征空间（x′ = Wx）。"]], [3, "loss", "易混辨析", ["<b>判别函数 vs 决策函数</b>：判别函数是线性打分 f = wᵀx + b；决策函数 g 把打分变成类别（sgn、argmax）或概率（σ、softmax）。", "<b>激活函数 vs 联系函数</b>：Logistic 回归里 σ 叫激活函数，它的逆函数（logit）在统计文献里叫联系函数。", "<b>投票感知器 vs 平均感知器</b>：前者保存全部 K 个权重、加权投票；后者只保存平均权重 w̄，用一次内积预测，是前者的近似简化。", "<b>硬间隔 vs 软间隔</b>：硬间隔要求所有样本 y(wᵀx + b) ≥ 1，只适用于线性可分；软间隔允许违规但按 C 罚，等价于 Hinge 损失 + ℓ2 正则。"]], [4, "glu", "易混辨析", ["<b>净输入 vs 活性值</b>：z = wᵀx + b 是加权和；a = f(z) 是过激活后的输出。", "<b>多层感知器 vs 前馈网络</b>：常混用，但感知器是不连续阈值单元，前馈网络是连续非线性的复合。", "<b>反向传播 vs 自动微分</b>：反向传播是神经网络上的反向模式自动微分；自动微分适用于任意数值程序。", "<b>自动微分 vs 符号微分</b>：前者作用于数值程序、输出数值；后者作用于表达式、输出导数表达式。", "<b>Swish vs GELU</b>：形状接近（GELU ≈ xσ(1.702x)），动机不同：前者是自门控，后者用高斯 CDF 加权。"]], [5, "more", "易混辨析", ["<b>卷积 vs 互相关</b>：卷积要翻转核，互相关不翻；核可学习时两者等价，框架里的“卷积”都是互相关。", "<b>等变 vs 不变</b>：卷积带来平移等变；分类需要的平移不变来自汇聚、步长、GAP、数据增强。", "<b>转置卷积 vs 反卷积</b>：常被混称，但转置卷积不是卷积的逆运算。", "<b>空洞卷积 vs 汇聚</b>：都能扩大感受野；空洞卷积不丢分辨率、不加参数，汇聚会丢信息。", "<b>分组卷积 vs 深度可分离卷积</b>：逐通道卷积是分组数 = 输入通道数的分组卷积；深度可分离 = 逐通道卷积 + 1×1 逐点卷积。"]], [6, "deep", "易混辨析", ["<b>循环神经网络 vs 递归神经网络</b>：英文都缩写成 RNN。前者（Recurrent）在时间链上共享参数；后者（Recursive，RvNN）在树结构上组合，退化成链时等价于前者。", "<b>短期记忆 / 长短期记忆 / 长期记忆</b>：h 每步重写；c 可保留一段时间；网络参数存的是训练中学到的经验。", "<b>教师强制 vs 暴露偏差</b>：前者是训练方法（喂真实历史）；后者是它带来的训练 / 生成不一致。", "<b>BPTT vs RTRL</b>：反向模式 vs 前向模式自动微分在时间上的应用。", "<b>LSTM 遗忘门</b>：f = 1 是“不遗忘”，f = 0 才是“全忘”，名字容易让人想反。"]], [7, "reg", "易混辨析", ["<b>权重衰减 vs ℓ2 正则化</b>：SGD 下等价（β = αλ）；Adam 下不等价，所以有 AdamW（解耦权重衰减）。AdamW 不是不用正则化，而是换了施加方式。", "<b>BN vs LN</b>：同一个矩阵，BN 沿样本（一行 / 一个神经元跨 K 个样本），LN 沿神经元（一列 / 一个样本跨 M 个神经元）。", "<b>LN vs RMSNorm</b>：后者不减均值、没有 β，只按均方根缩放。", "<b>轮 vs 迭代</b>：1 轮 = 把训练集过一遍 = N/K 次迭代。", "<b>暂退法的保留率 vs 丢弃率</b>：原书用保留率 p；很多框架参数是丢弃率 1 − p，注意别弄反。"]], [8, "sys", "易混辨析", ["<b>注意力 vs 自注意力</b>：前者的查询来自任务（如解码器状态）；后者的查询、键、值都来自同一输入序列。", "<b>自注意力 vs 交叉注意力</b>：交叉注意力的查询来自解码器，键值来自编码器。", "<b>FlashAttention vs 稀疏 / 线性注意力</b>：前者结果与标准注意力完全相同，只改实现；后者改变了连接模式或用近似。", "<b>MQA vs GQA vs MHA</b>：键值组数 G = 1 / 1 &lt; G &lt; M / G = M。", "<b>Pre-Norm vs Post-Norm</b>：先规范化再进子层（残差路径上不过规范化）vs 先加残差再规范化。"]], [9, "prob", "易混辨析", ["<b>异质图 vs 异配性</b>：异质图是节点 / 边<strong>类型</strong>多样；异配性是相连节点的<strong>标签</strong>倾向不同。一个同质图也可以是异配的。", "<b>过度平滑 vs 过压缩</b>：表示趋同 vs 信息被挤压丢失。前者和层数关系密切，后者和图结构的瓶颈关系密切。", "<b>归纳 vs 转导</b>：能否推广到训练时没出现的节点或图。", "<b>GAT vs 图 Transformer</b>：GAT 只在邻域内注意；图 Transformer 走向全局注意力（原书列为扩展方向）。", "<b>1-WL 区分出 vs 没区分出</b>：分出来 ⇒ 一定不同构；没分出来 ⇏ 同构。"]], [10, "ae", "两种“SAE”", ["<b>稀疏自编码器</b>（Sparse Autoencoder）和<b>堆叠自编码器</b>（Stacked Auto-Encoder）的英文缩写都是 SAE。前者约束隐藏层稀疏、通常更宽；后者是多层逐层训练的深自编码器。", "<b>稀疏编码 vs 稀疏自编码器</b>：前者没有显式的编码器，每个样本的编码靠优化求出（推断慢）；后者用一个前馈编码器一次算出编码。", "<b>自编码器 vs PCA</b>：线性 + 平方误差时学到的子空间相当于 PCA 的主子空间；非线性自编码器能表示弯曲的数据流形。"]], [11, "tl", "几种“利用额外知识”的方式", ["<b>多任务学习</b>：多个任务<strong>同时</strong>学，想提高<strong>所有</strong>任务。<b>迁移学习</b>：<strong>先后</strong>两阶段，<strong>单向</strong>，只关心目标任务。<b>半监督学习</b>：任务不变，额外利用<strong>无标注数据</strong>。", "<b>归纳迁移 vs 转导迁移</b>：先学一般知识再迁移 vs 训练时直接用目标域的样本做样本到样本的迁移。", "<b>协变量 / 概念 / 先验偏移</b>：p(x) 变 / p(y|x) 变 / p(y) 变。", "<b>领域 vs 任务</b>：(𝒳, p(x)) vs (𝒴, p(y|x))。"]], [12, "td", "易混辨析", ["<b>SARSA vs Q 学习</b>：目标里用实际采到的 Q(s′, a′) vs 用 max<sub>a′</sub>Q(s′, a′)。前者学的是“带着探索噪声时”的价值，所以离悬崖远一点；后者学的是最优策略的价值，路线最短但训练时会因探索不断掉崖（习题 12-2）。", "<b>同策略 vs 异策略</b>：采样策略和被优化的策略是否同一个。", "<b>蒙特卡罗 vs 时序差分</b>：等完整回报（无偏、方差大）vs 一步自举（有偏、方差小、样本效率高）。", "<b>基于模型 vs 模型无关</b>：这里的“模型”是环境的转移与奖励，不是神经网络。", "<b>目标网络 vs 经验回放</b>：前者稳住“目标”，后者打散“样本相关性”（习题 12-7）。"]], [13, "align", "易混辨析", ["<b>SFT vs 偏好对齐</b>：模仿参考回答（解决“怎么做”）vs 学“哪个更好”（解决“做到什么程度”）。", "<b>RLHF-PPO vs DPO vs GRPO</b>：在线 RL + 奖励模型 + 价值网络（四个模型）vs 离线二分类、不要奖励模型和采样 vs 在线 RL、用组内相对奖励代替价值网络（三个模型，规则奖励时两个）。三者常在不同阶段组合使用。", "<b>β 的作用</b>：在 RLHF 和 DPO 里都控制偏离参考策略的程度；DPO 实践中常取 0.1–0.5。", "<b>奖励模型的绝对值</b>：Bradley-Terry 只能确定相对值，加一个只依赖 x 的常数不改变偏好概率——这正是 DPO 能消掉 Z(x) 的原因。"]], [13, "reason", "ORM vs PRM", ["<b>ORM</b>：对整个回答一个标量。便宜，但信用分配粗——过程有错而答案对、或只差一步而答案错，它都分不清。", "<b>PRM</b>：每步一个分数，路径分常取最小值 min<sub>k</sub> r(x, s₁, …, s<sub>k</sub>)。贵，但能定位错误，还能在推理时引导束搜索 / 树搜索。"]], [14, "ud", "易混辨析", ["<b>有向图 vs 无向图</b>：局部条件概率之积（自带归一化）vs 团势能之积再除以配分函数 Z。", "<b>团 vs 最大团</b>：任意全连通子图 vs 不能再被更大的团包含的团。", "<b>Sigmoid 信念网络 vs Logistic 回归</b>：生成模型、建模联合分布 vs 判别模型、只建模 p(y|x)。", "<b>最大熵模型 vs CRF</b>：输出 y 是单个类别（Softmax 回归）vs y 是随机向量（序列标注等）。", "<b>有向边 vs 因果</b>：有向边只表示分解结构里的直接依赖，需要额外的因果假设才能读成“因 → 果”。"]], [14, "vi", "易混辨析", ["<b>EM vs 变分推断</b>：E 步能精确算后验（q = p(z|x)）vs 后验算不出，在简单分布族里找最接近的 q。两者都在最大化同一个 ELBO。", "<b>ELBO 的两种写法</b>：Σq log(p(x, z)/q)（Jensen 下界）＝ log p(x) − KL(q ‖ p(z|x))（差多少就是 KL）。", "<b>平均场 vs 摊销</b>：把 q 拆成独立因子、逐个坐标上升 vs 用一个网络 x ↦ q 的参数，所有样本共用。"]], [15, "rbm", "易混辨析", ["<b>玻尔兹曼机 vs 受限玻尔兹曼机</b>：所有节点全连接、只能逐个变量采样 vs 二分图、给定一层另一层条件独立、可以整层并行采样。", "<b>Hopfield 网络 vs 玻尔兹曼机</b>：确定性、能量只降不升 vs 随机性、以一定概率让能量上升；T → 0 时后者退化为前者。", "<b>热平衡 vs 能量最低</b>：热平衡是所有状态上的一个稳定分布，不是停在能量最低点。"]], [16, "flow", "易混辨析", ["<b>VAE vs 自编码器</b>：输出分布并做概率推断、能采样 vs 确定性编码解码。", "<b>显式 vs 隐式密度模型</b>：写出 p(x) 做最大似然（VAE、DBN、自回归）vs 只建模生成过程（GAN）。", "<b>前向 KL vs 逆向 KL</b>：KL(p<sub>r</sub> ‖ p<sub>θ</sub>) 覆盖所有模式（mass-covering）vs KL(p<sub>θ</sub> ‖ p<sub>r</sub>) 只抓一个模式（mode-seeking）。", "<b>DDPM vs DDIM</b>：随机祖先采样、步数多 vs 同一网络、非马尔可夫路径、η = 0 确定性、少步。", "<b>反向 SDE vs 概率流 ODE</b>：有随机项 vs 确定性轨迹，二者边际分布相同。", "<b>扩散 vs 流匹配</b>：先定义前向加噪、学分数 / 噪声，路径弯 vs 直接回归速度场，路径可设计为直线。"]]];
+function cfDraw() {
+  var q = $('#cfQ').value.trim().toLowerCase(), box = $('#cfL'); box.innerHTML = ''; var hits = 0;
+  CF.forEach(function (g) {
+    var list = g[3].filter(function (p) { return !q || p.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + g[0] + '/#' + g[1], html: (g[0] < 10 ? '0' : '') + g[0] + ' · ' + chs[g[0] - 1][1] + ' · ' + g[2] }, hd);
+    list.forEach(function (p) { S.h('p', { html: p }, box); hits++; });
+  });
+  $('#cfN').textContent = '共 ' + hits + ' 条';
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的条目。' }, box);
+}
+$('#cfQ').addEventListener('input', cfDraw); cfDraw();
+
+/* ---------- 公式速查 ---------- */
+var FX = {"2": ["期望风险 ℛ(θ) = 𝔼<sub>(x,y)∼p_r</sub>[ℒ(y, f(x; θ))]　　经验风险 ℛ_emp = (1/N) Σ ℒ(y⁽ⁿ⁾, f(x⁽ⁿ⁾; θ))", "ERM：θ* = argmin ℛ_emp　　SRM：θ* = argmin ℛ_emp + λΩ(θ)", "交叉熵 ℒ = −Σ y_c log f_c = −log f_y　　Hinge ℒ = max(0, 1 − yf)", "GD：θ ← θ − α ∂ℛ/∂θ　　小批量：θ ← θ − (α/K) Σ_{(x,y)∈S_t} ∂ℒ/∂θ", "P = TP/(TP+FP)　R = TP/(TP+FN)　F_β = (1+β²)PR/(β²P + R)", "最小二乘 = MLE：w* = (XXᵀ)⁻¹Xy　　岭回归 = MAP：w* = (XXᵀ + λI)⁻¹Xy，λ = σ²/ν²", "ℛ(f) = (bias)² + variance + ε", "PAC：N(ε, δ) ≥ (1/2ε²)(log|ℱ| + log(2/δ))"], "3": ["有向距离 γ = f(x; w)/‖w‖　　线性可分：∃w，y⁽ⁿ⁾f(x⁽ⁿ⁾; w) &gt; 0 ∀n", "Logistic：p(y=1|x) = σ(wᵀx)，wᵀx = log [p/(1−p)]，∂ℛ/∂w = −(1/N) Σ x(y − ŷ)", "Softmax：ŷ = softmax(Wᵀx)，∂ℛ/∂W = −(1/N) Σ x(y − ŷ)ᵀ", "感知器：ywᵀx ≤ 0 时 w ← w + yx；更新次数 K ≤ R²/γ²", "SVM：min ½‖w‖² s.t. y(wᵀx + b) ≥ 1；w = Σ λ_n y⁽ⁿ⁾x⁽ⁿ⁾；软间隔 = Hinge + (1/2C)‖w‖²", "核：k(x, z) = φ(x)ᵀφ(z)；(1 + xᵀz)²；exp(−γ‖x − z‖²)", "损失（关于 yf）：LR log(1+e^{−yf})　感知器 max(0, −yf)　Hinge max(0, 1−yf)　平方 (1−yf)²"], "4": ["z⁽ˡ⁾ = W⁽ˡ⁾a⁽ˡ⁻¹⁾ + b⁽ˡ⁾，a⁽ˡ⁾ = f_l(z⁽ˡ⁾)；W⁽ˡ⁾ ∈ ℝ^{M_l×M_{l−1}}", "通用近似：F(x) = Σ_m v_m φ(w_mᵀx + b_m)，|F − f| &lt; ε", "ℛ = (1/N) Σ ℒ(y, ŷ) + ½λ‖W‖²_F（不正则化 b）", "δ⁽ˡ⁾ = f′_l(z⁽ˡ⁾) ⊙ (W⁽ˡ⁺¹⁾)ᵀδ⁽ˡ⁺¹⁾；δ⁽ᴸ⁾ = ŷ − y（Logistic / Softmax + 交叉熵）", "∂ℒ/∂W⁽ˡ⁾ = δ⁽ˡ⁾(a⁽ˡ⁻¹⁾)ᵀ，∂ℒ/∂b⁽ˡ⁾ = δ⁽ˡ⁾", "σ′ = σ(1 − σ) ≤ 0.25；tanh′ = 1 − tanh² ≤ 1；tanh(x) = 2σ(2x) − 1", "Swish = xσ(βx)；GELU = xΦ(x) ≈ xσ(1.702x)；SwiGLU(x) = swish(W_g x) ⊙ (W_v x)"], "5": ["卷积 y_ij = Σ_u Σ_v w_uv x_{i−u+1, j−v+1}；互相关 y_ij = Σ_u Σ_v w_uv x_{i+u−1, j+v−1}；W ⊗ X = rot180(W) ∗ X", "输出尺寸 M′ = ⌊(M − K + 2P)/S⌋ + 1；窄 P = 0，宽 P = K − 1，等宽 P = (K − 1)/2", "卷积层：Z⁽ᵖ⁾ = Σ_d W⁽ᵖ,ᵈ⁾ ⊗ X⁽ᵈ⁾ + b⁽ᵖ⁾；参数 P × D × U × V + P", "梯度：∂ℒ/∂W = δ ⊗ X；∂ℒ/∂b = Σ_ij δ_ij；δ⁽ˡ⁾ = f′ ⊙ Σ_p rot180(W) ⊗̃ δ⁽ˡ⁺¹⁾", "残差：h(x) = x + f(x; θ)；空洞：K′ = K + (K − 1)(D − 1)", "深度可分离：K²D + DP vs K²DP，比值 ≈ 1/P + 1/K²"], "6": ["SRN：h_t = f(U h_{t−1} + W x_t + b)；按时间展开 = 时间上共享参数的深层网络", "BPTT：δ_{t,k} = diag(f′(z_k)) Uᵀ δ_{t,k+1}；∂ℒ/∂U = Σ_t Σ_{k≤t} δ_{t,k} h_{k−1}ᵀ", "长程依赖：δ_{t,k} ≈ γ^{t−k} δ_{t,t}，γ ≈ ‖diag(f′)Uᵀ‖", "LSTM：c_t = f_t ⊙ c_{t−1} + i_t ⊙ c̃_t，h_t = o_t ⊙ tanh(c_t)，门 = σ(W x_t + U h_{t−1} + b)", "GRU：h_t = z_t ⊙ h_{t−1} + (1 − z_t) ⊙ tanh(W_h x_t + U_h(r_t ⊙ h_{t−1}) + b_h)", "Bi-RNN：h_t = h_t⁽¹⁾ ⊕ h_t⁽²⁾；RvNN：h_i = f(h_{π_i})"], "7": ["统一形式：Δθ_t = −α_t M_t / √(G_t + ε)", "AdaGrad G = Σg²；RMSprop G = βG + (1−β)g²；动量 Δθ = ρΔθ − αg；Nesterov 在 θ + ρΔθ 处求梯度", "Adam：M = β₁M + (1−β₁)g，G = β₂G + (1−β₂)g²，M̂ = M/(1−β₁ᵗ)，Ĝ = G/(1−β₂ᵗ)，Δθ = −αM̂/√(Ĝ+ε)", "余弦 α_t = ½α₀(1 + cos(tπ/T))；预热 α′_t = (t/T′)α₀；1 轮 = N/K 次迭代", "Xavier var = 2/(M_{l−1} + M_l)；He var = 2/M_{l−1}；均匀分布 r = √(3σ²)", "BN：(z − μ_ℬ)/√(σ²_ℬ + ε) ⊙ γ + β；LN 沿神经元；RMSNorm：z/RMS(z) ⊙ γ", "权重衰减 θ ← (1−β)θ − αg（SGD 下 β = αλ）；AdamW θ ← (1−αλ)θ − αM̂/√(Ĝ+ε)", "反向缩放暂退：训练 m ⊙ x / p，测试 x；标签平滑 [ε/(K−1), …, 1−ε, …]"], "8": ["α_t = softmax(s(x_t, q))；att(X, q) = Σ α_t x_t；键值对 att((K,V), q) = Σ α_t v_t", "打分：加性 vᵀtanh(Wx + Uq)；点积 xᵀq；缩放点积 xᵀq/√D；双线性 xᵀWq", "自注意力：Q = W_q X, K = W_k X, V = W_v X；H = V softmax(KᵀQ/√D_k)（行写法 softmax(QKᵀ/√d_k)V）", "多头：MultiHead(H) = W_o[head₁; …; head_M]", "正弦 PE：p_{t,2i} = sin(t/10000^{2i/D})；RoPE：q_tᵀk_j = q̃_tᵀ R_{j−t} k̃_j；ALiBi：s = kᵀq/√d_k + b_{j,t}", "因果掩码 M_{j,t} = 0（j ≤ t），−∞（j > t）；LM 损失 ℒ = −Σ log p(w_{t+1}|w_{1:t})", "Pre-Norm Z = H + Attn(norm(H))；SwiGLU = W₂(swish(W₁z) ⊙ W₃z)；MoE = Σ_{TopK} α_e Expert_e", "KV 缓存 = 2 × L × G × d_head × T × B × 字节数"], "9": ["L = D − A；(Lx)_i = Σ_j A_ij(x_i − x_j)；xᵀLx = ½ Σ A_ij(x_i − x_j)²；L_norm = I − D^{−1/2}AD^{−1/2}", "H_ratio = 同类边数 / 总边数", "消息传递：m_{u→v} = f(h_v, h_u, h_e)，m_v = AGG({m_{u→v}})，h_v = UPDATE(h_v, m_v)；读出 h_𝒢 = Σ h_v", "谱图卷积 U g_θ(Λ) Uᵀ x；GCN：H⁽ˡ⁺¹⁾ = σ(D̃^{−1/2} Ã D̃^{−1/2} H⁽ˡ⁾ W⁽ˡ⁾)，Ã = A + I", "GraphSAGE：h_v = σ(W[h_v ⊕ AGG(h_u, u ∈ 𝒩_S(v))])", "GAT：e_vu = LeakyReLU(aᵀ[Wh_v ⊕ Wh_u])，α = softmax，h′_v = σ(Σ α_vu W h_u)", "GIN：h_v = MLP((1 + ε) h_v + Σ_{u∈𝒩(v)} h_u)；WL：c_v = HASH(c_v, {{c_u}})", "Dirichlet 能量 E(H) = ½ Σ A_vu ‖h_v − h_u‖²"], "10": ["PCA：max wᵀΣw s.t. wᵀw = 1 ⇒ Σw = λw，投影方差 = λ", "稀疏编码：Σ ‖x − Az‖² + ηρ(z)，ρ = ℓ1 / log(1+z²) / −exp(−z²)", "自编码器：Σ ‖x − g(f(x))‖²；稀疏 AE 加 η Σ_j KL(ρ*‖ρ̂_j)", "正态 MLE：μ = (1/N)Σx，Σ = (1/N)Σ(x−μ)(x−μ)ᵀ；多项 MLE：μ_k = m_k/N", "非参数：p(x) ≈ K/(NV)；直方图 K_m/(NΔ)；KDE (1/N)Σ φ((x⁽ⁿ⁾−x)/H)/Hᴰ", "K-Means：min Σ ‖x⁽ⁿ⁾ − μ_{r_n}‖²（分配 ↔ 更新中心）", "NTP：−Σ log p(x_t | x_{&lt;t})；MLM：−Σ_{t∈m} log p(x_t | x_{∖m})", "InfoNCE：−log exp(s⁺/τ) / (exp(s⁺/τ) + Σ exp(s⁻/τ))"], "11": ["R(F) = (1/M²) Σ_m Σ_n 𝔼[ε_m ε_n] ≤ R̄(f)；不相关时 = R̄(f)/M", "AdaBoost：α_m = ½ log((1 − ε_m)/ε_m)，w ← w·exp(−α_m y f_m(x))，F = sgn(Σ α_m f_m)；等价于指数损失 exp(−yF) 的分步优化", "多任务：ℒ(θ) = Σ_m Σ_n η_m ℒ_m(f_m(x⁽ᵐ'ⁿ⁾; θ), y⁽ᵐ'ⁿ⁾)", "领域 𝒟 = (𝒳, p(x))，任务 𝒯 = (𝒴, p(y|x))；协变量偏移下 ℛ_T = 𝔼_S[(p_T(x)/p_S(x)) ℒ]", "领域对抗：max_{θc} ℒ_c；min_{θf,θg} Σ ℒ(f(g(x_S)), y_S) − γℒ_c", "LoRA：ΔW = BA，A ∈ ℝ^{r×d_in}，B ∈ ℝ^{d_out×r}", "EWC：ℒ(θ) = ℒ_B(θ) + (λ/2) Σ_i F_i^A (θ_i − θ*_{A,i})²；F = 𝔼[∇log p ∇log pᵀ]", "MAML：θ′_m = θ − α∇ℒ_m(θ)；θ ← θ − β∇_θ Σ ℒ_m(θ′_m)"], "12": ["G_t = Σ_k γ^k r_{t+k+1}；𝒥(θ) = 𝔼_τ[G₀]", "贝尔曼方程：V^π(s) = 𝔼_{a~π} 𝔼_{s′}[r + γV^π(s′)]；Q^π(s,a) = 𝔼_{s′}[r + γ𝔼_{a′}Q^π(s′,a′)]", "贝尔曼最优：V*(s) = max_a 𝔼_{s′}[r + γV*(s′)]；Q*(s,a) = 𝔼_{s′}[r + γ max_{a′} Q*(s′,a′)]", "TD：SARSA 目标 r + γQ(s′,a′)；Q 学习目标 r + γ max_{a′} Q(s′,a′)；DQN 损失 (r + γ max Q_φ̂(s′,a′) − Q_φ(s,a))²", "策略梯度：∇𝒥 = 𝔼[Σ_t ∇log π_θ(a_t|s_t) γ^t (G_t − b(s_t))]", "控制变量：var(f̂) = (1 − corr(f,g)²) var(f)", "AC：δ = r + γV_φ(s′) − V_φ(s)；A(s,a) = Q(s,a) − V(s)", "PPO：𝔼[min(r_t A_t, clip(r_t, 1−ε, 1+ε) A_t)]，r_t = π_θ/π_old；GAE：Â_t = Σ_l (γλ)^l δ_{t+l}"], "13": ["p(x) = Π_t p(x_t|x_{&lt;t})；PPL = exp(−(1/T) Σ log p(x_t|x_{&lt;t}))", "Top-p：V_p = 累积概率 ≥ p 的最小集合；温度 p_τ ∝ exp(z/τ)", "Kaplan：L(N) ≈ (N_c/N)^{0.076}；Chinchilla：C ≈ 6ND，N*, D* ∝ C^{0.5}，D* ≈ 20N*", "CoT：p(y|x) = Σ_c p(c|x) p(y|x,c)", "Bradley-Terry：p(y_w ≻ y_l|x) = σ(r(x,y_w) − r(x,y_l))；ℒ_RM = −log σ(r_φ(y_w) − r_φ(y_l))", "RLHF：max 𝔼[r_φ(x,y)] − β KL(π_θ ‖ π_ref)；π* = π_ref exp(r/β)/Z(x)", "DPO：ℒ = −log σ(β log(π_θ(y_w)/π_ref(y_w)) − β log(π_θ(y_l)/π_ref(y_l)))", "GRPO：Â_i = (r_i − mean(r)) / std(r)，配 PPO 裁剪 + β KL", "PRM：R(x,y) = min_k r_PRM(x, s₁…s_k)；RAG：𝒟_k = Top-k sim(q, d_i)，y = LLM(q, 𝒟_k)"], "14": ["有向图：p(x) = Π_k p(x_k | x_{π_k})；无向图：p(x) = (1/Z) Π_c φ_c(x_c)，φ = exp(−E)", "链 / 分叉：观测中间点阻断；汇聚：观测汇聚点（或后代）打通——解释消除", "无向图 MLE 梯度：𝔼_{p̃}[f_c] − 𝔼_{p(x;θ)}[f_c]", "log p(x;θ) = ELBO(q,x;θ) + KL(q(z) ‖ p(z|x;θ))；ELBO = Σ_z q(z) log(p(x,z;θ)/q(z))", "GMM：γ_nk = π_k 𝒩(x_n;μ_k,σ_k)/Σ_j π_j 𝒩(x_n;μ_j,σ_j)；π_k = N_k/N，μ_k = Σγ x/N_k，σ_k² = Σγ(x−μ_k)²/N_k", "BP：μ_{t−1,t}(x_t) = Σ_{x_{t−1}} φ(x_{t−1},x_t) μ_{t−2,t−1}(x_{t−1})；p(x_t) ∝ μ_{t−1,t} μ_{t+1,t}；O(TK²)", "平均场：q_j* ∝ exp(𝔼_{q(z∖j)}[log p(x,z)])", "重要性采样：𝔼_p[f] = 𝔼_q[f p/q]；MH：A = min(1, p(x̂)q(x_t|x̂) / (p(x_t)q(x̂|x_t)))"], "15": ["玻尔兹曼机：p(x) = (1/Z) exp(−E(x)/T)，E(x) = −(Σ_{i&lt;j} w_ij x_i x_j + Σ b_i x_i)；p_α/p_β = exp((E_β − E_α)/T)", "全条件概率：p(x_i = 1 | x_∖i) = σ((Σ_j w_ij x_j + b_i)/T)", "学习：Δw_ij ∝ ⟨x_i x_j⟩_data − ⟨x_i x_j⟩_model", "RBM：E(v,h) = −aᵀv − bᵀh − vᵀWh；p(h=1|v) = σ(Wᵀv + b)，p(v=1|h) = σ(Wh + a)", "RBM 边际：p(v) ∝ exp(aᵀv) Π_j (1 + exp(b_j + Σ_i w_ij v_i))", "CD-1：W ← W + α(v̂ hᵀ − v′ h′ᵀ)，a ← a + α(v̂ − v′)，b ← b + α(h − h′)", "DBN：p(v, h⁽¹⁾…h⁽ᴸ⁾) = Π_{l=0}^{L−2} p(h⁽ˡ⁾|h⁽ˡ⁺¹⁾) · p(h⁽ᴸ⁻¹⁾, h⁽ᴸ⁾)"], "16": ["VAE：ELBO = 𝔼_{q(z|x)}[log p(x|z)] − KL(q(z|x) ‖ p(z))；z = μ + σ ⊙ ε", "KL(𝒩(μ, σ²I) ‖ 𝒩(0, I)) = ½ Σ (σ² + μ² − 1 − log σ²)", "GAN：min_G max_D 𝔼_{p_r}[log D] + 𝔼_z[log(1 − D(G(z)))]；D* = p_r/(p_r + p_θ)；ℒ(G|D*) = 2JS − 2log2", "W-GAN：W₁ = sup_{‖f‖_L ≤ 1} 𝔼_{p_r}[f] − 𝔼_{p_θ}[f]", "扩散：x_t = √ᾱ_t x₀ + √(1−ᾱ_t) ε；ℒ_simple = 𝔼‖ε − ε_θ(x_t, t)‖²；∇log q(x_t|x₀) = −ε/√(1−ᾱ_t)", "v = √ᾱ_t ε − √(1−ᾱ_t) x₀；x̂₀ = √ᾱ_t x_t − √(1−ᾱ_t) v̂", "DDIM：x_{t−1} = √ᾱ_{t−1} x̂₀ + √(1−ᾱ_{t−1}−σ_t²) ε̂ + σ_t z；CFG：ε̂ = (1+w)ε(x,c) − wε(x,∅)", "流匹配：x_t = (1−t)x₀ + t x₁，ℒ_CFM = 𝔼‖v_θ(x_t, t) − (x₁ − x₀)‖²；采样解 dx/dt = v_θ(x, t)"]};
+var fxP = '0';
+function fxDraw() {
+  var q = $('#fxQ').value.trim().toLowerCase(), box = $('#fxL'); box.innerHTML = ''; var hits = 0;
+  chs.forEach(function (c) {
+    var n = c[0], grp = n <= 3 ? '1' : n <= 9 ? '2' : '3';
+    if (fxP !== '0' && fxP !== grp) return;
+    var list = (FX[n] || []).filter(function (f) { return !q || f.toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return;
+    var hd = S.h('h4', null, box); S.h('a', { href: P + n + '/#back', text: (n < 10 ? '0' : '') + n + ' · ' + c[1] }, hd);
+    list.forEach(function (f) { S.h('div', { class: 'fx', html: f }, box); hits++; });
+  });
+  if (!hits) S.h('p', { class: 'note', text: '没有匹配的公式。' }, box);
+}
+S.seg($('#fxP'), function (v) { fxP = v; fxDraw(); });
+$('#fxQ').addEventListener('input', fxDraw); fxDraw();
+
+S.notes($('#n-back'), {
+  c: [
+    ['① 这本书要建立什么', '一副“既知其然，也知其所以然”的知识骨架：方法背后的假设、优势、局限和适用条件，而不是某一时期技术细节的罗列。'],
+    ['② 怎么读', '三部分沿“判别建模 → 表示与序列建模 → 决策与生成”展开。零基础按顺序；数学强先打通模型—优化—泛化；工程导向直奔卷积、循环、Transformer 再到 LLM；研究导向从注意力出发，读生成模型前先补概率图模型。'],
+    ['③ 怎么复习', '先翻速记卡自测，答不上来的回到对应篇；再用易混辨析和公式速查按关键词定位。每篇的“记下来”都有遮住解释的自测模式。']
+  ],
+  p: [
+    ['原书一句话', '教材的价值在于帮助读者抓住一个领域中相对稳定、可以迁移、能够不断生长的知识骨架。'],
+    ['这个系列的做法', '每节先铺垫问题，再动手实验，最后用“记下来”自测；演示数据标“示意”，原书内容标节号和页码。']
+  ],
+  ph: '一句话'
+});

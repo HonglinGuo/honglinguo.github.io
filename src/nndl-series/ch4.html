@@ -1,0 +1,794 @@
+---
+title: 前馈神经网络：结构、反向传播与激活函数
+desc: 神经网络与深度学习（第二版）学习笔记（四）：神经元与前馈网络的层间计算、通用近似定理、交叉熵与正则化经验风险、反向传播的误差项与梯度、数值微分 / 符号微分 / 自动微分与前向 / 反向模式、非凸优化与梯度消失 / 爆炸、Sigmoid 型 / ReLU 族 / Swish / GELU 激活函数与 GLU、Maxout 门控单元。在浏览器里从零训练多层网络。
+kicker: <span>技术学习</span><span>神经网络与深度学习 · 04</span><span>对应原书第 4 章（第 89–116 页）</span><span>约 60 分钟</span>
+h1: 一层仿射，一层非线性，<em>再来一层</em>
+lead: 前馈神经网络把第 3 章的线性模型一层层叠起来，层与层之间插入非线性激活函数。第 4 章回答三个问题：这样的网络能表示什么（通用近似定理）？参数怎么学（反向传播与自动微分）？激活函数怎么选（从 Sigmoid 到 ReLU 再到 SwiGLU）？这一篇的主角是一个在浏览器里从零写的小型神经网络：你可以调层宽、换激活函数，看它在异或、圆环、螺旋数据上一步步学出非线性边界。
+nav: neuron|神经元与网络;uat|通用近似;play|训练游乐场;bp|反向传播;ad|自动微分;vg|优化难题;act|激活函数;glu|门控单元;back|三个问题
+---
+<style>
+.netsvg { width: 100%; height: auto; display: block; }
+.netsvg circle { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.5; }
+.netsvg line { stroke: var(--rule); stroke-width: 1; }
+.netsvg text { font-size: 15px; fill: var(--ink-3); font-family: var(--f-num); }
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.toggles button { font: inherit; font-size: 15px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-3); cursor: pointer; }
+.toggles button[aria-pressed="true"] { color: var(--ink); border-color: var(--ink-2); background: var(--panel); }
+.toggles button i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.cg { width: 100%; height: auto; display: block; margin: 8px 0; }
+.cg rect { fill: var(--panel); stroke: var(--ink-2); stroke-width: 1.5; rx: 6; }
+.cg rect.on { stroke: var(--s2); stroke-width: 2.5; fill: var(--s2-soft); }
+.cg text { font-size: 15px; fill: var(--ink); font-family: var(--f-num); }
+.cg text.v { fill: var(--s1); font-weight: 700; }
+.cg text.g { fill: var(--s2); font-weight: 700; }
+.cg path { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+.datasets { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>
+===BODY===
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>前馈网络每一层在算什么？一个隐藏层就“能逼近任何连续函数”，为什么还要深？</li>
+  <li>反向传播里的误差项 δ 是什么？它和自动微分的“反向模式”是什么关系？</li>
+  <li>为什么深层网络会梯度消失？ReLU、GELU、SwiGLU 分别解决了什么问题？</li>
+</ol></div>
+
+<section class="part" id="neuron">
+  <div class="part-head"><h2>神经元与前馈网络</h2><span class="meta">原书 4.1.1–4.1.2 节 · 第 90–92 页</span></div>
+  <div class="sec-lede">
+    <p>一个神经元做两件事：先算<strong>净输入</strong> z = wᵀx + b（输入的加权和），再过<strong>激活函数</strong>得到<strong>活性值</strong> a = f(z)。1943 年的 MP 神经元结构和今天几乎一样，区别只在激活函数：MP 用 0/1 阶跃函数，现代神经元要求分段连续、几乎处处可导（允许 ReLU 在 0 点这种有限个不可导点），这样才能用梯度下降学习。</p>
+    <p>把神经元分层排列就是<strong>前馈神经网络</strong>（也常叫多层感知器 MLP，但原书提醒这个叫法不严格：感知器是不连续的阈值单元）。第 0 层是输入层，最后一层是输出层，中间是隐藏层；信号单向传播，整个网络是一个有向无环图。令 a⁽⁰⁾ = x，每层迭代两步：</p>
+    <p class="fx" style="margin:10px 0">z⁽ˡ⁾ = W⁽ˡ⁾a⁽ˡ⁻¹⁾ + b⁽ˡ⁾　　a⁽ˡ⁾ = f<sub>l</sub>(z⁽ˡ⁾)</p>
+    <p>所以<strong>每一层就是一个仿射变换加一个非线性变换</strong>，W⁽ˡ⁾ 的形状是 M<sub>l</sub> × M<sub>l−1</sub>。整个网络是一个复合函数 φ(x; W, b)。原书再次强调：如果所有激活函数都是恒等映射，多层仿射的复合仍是一个仿射变换，网络就退化成第 3 章的线性模型。</p>
+    <p class="go">先算一个神经元，再估一个网络有多少参数。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">一个神经元</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>x₁ <output id="nX1">1.0</output></span><input type="range" id="nX1s" min="-2" max="2" step="0.1" value="1"></label>
+        <label class="ctl"><span>x₂ <output id="nX2">−0.5</output></span><input type="range" id="nX2s" min="-2" max="2" step="0.1" value="-0.5"></label>
+        <label class="ctl"><span>w₁ <output id="nW1">0.8</output></span><input type="range" id="nW1s" min="-2" max="2" step="0.1" value="0.8"></label>
+        <label class="ctl"><span>w₂ <output id="nW2">1.2</output></span><input type="range" id="nW2s" min="-2" max="2" step="0.1" value="1.2"></label>
+        <label class="ctl"><span>b <output id="nB">0.1</output></span><input type="range" id="nBs" min="-2" max="2" step="0.1" value="0.1"></label>
+      </div>
+      <div class="selrow"><span>激活函数</span><div class="seg" id="nAct"><button data-v="sig" aria-pressed="true">Logistic</button><button data-v="tanh">Tanh</button><button data-v="relu">ReLU</button><button data-v="step">阶跃（MP）</button></div></div>
+      <div class="read"><div><div class="v" id="nZ">0</div><div class="k">净输入 z = wᵀx + b</div></div><div class="hl"><div class="v" id="nA">0</div><div class="k">活性值 a = f(z)</div></div></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">网络有多少参数</p>
+      <label class="ctl"><span>各层神经元数（逗号分隔，第一个是输入）</span><input id="arch" value="784, 256, 128, 10" style="font:inherit;width:100%;padding:6px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);color:var(--ink);box-sizing:border-box;margin-top:6px"></label>
+      <svg class="netsvg" id="archG" viewBox="0 0 420 150" role="img" aria-label="网络结构"></svg>
+      <table class="calc" id="archT"></table>
+      <div id="archGs"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-neuron"></div>
+</section>
+
+<section class="part" id="uat">
+  <div class="part-head"><h2>通用近似定理：一层就够“能表示”</h2><span class="meta">原书 4.1.3 节 · 第 93 页</span></div>
+  <div class="sec-lede">
+    <p><strong>通用近似定理</strong>（Cybenko 1989；Hornik 等 1989）：设 φ 是非常数、有界、单调递增的连续函数，对单位超立方体上的任意连续函数 f 和任意 ε &gt; 0，都存在 M 和一组参数，使 <strong>F(x) = Σ<sub>m=1</sub><sup>M</sup> v<sub>m</sub>φ(w<sub>m</sub>ᵀx + b<sub>m</sub>)</strong> 处处满足 |F(x) − f(x)| &lt; ε。换句话说：<strong>一个线性输出层加一个带“挤压”激活的隐藏层，只要隐藏神经元够多，就能以任意精度逼近有界闭集上的连续函数</strong>。后来证明对 ReLU 也成立。</p>
+    <p>但原书紧接着泼了冷水：定理只说<strong>存在</strong>这样的网络，没说<strong>怎么找到</strong>，也没说是否最优；而且机器学习里真实函数未知，只能靠经验风险最小化和正则化去学，表示能力越强越容易过拟合。“能表示”和“学得到”“泛化好”是三回事。</p>
+    <p class="go">用 M 个“台阶”去拼一个目标函数：每个隐藏单元是一个平移了的 Sigmoid（或 ReLU），只学输出层的权重 v（最小二乘，示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">F(x) = Σ v_m φ(k(x − c_m))</p>
+    <div class="lab-split">
+      <div><div id="uaC"></div></div>
+      <div>
+        <div class="selrow"><span>目标函数</span><div class="seg" id="uaF"><button data-v="sin" aria-pressed="true">正弦</button><button data-v="step">阶梯</button><button data-v="bump">凹凸</button><button data-v="abs">折线</button></div></div>
+        <div class="selrow"><span>隐藏单元</span><div class="seg" id="uaA"><button data-v="sig" aria-pressed="true">Sigmoid</button><button data-v="relu">ReLU</button></div></div>
+        <label class="ctl"><span>隐藏神经元数 M <output id="uaM">4</output></span><input type="range" id="uaMs" min="1" max="40" value="4"></label>
+        <label class="ctl"><span>Sigmoid 陡峭度 k <output id="uaK">20</output></span><input type="range" id="uaKs" min="2" max="80" value="20"></label>
+        <div class="read"><div class="hl"><div class="v" id="uaE">0</div><div class="k">最大误差 max|F − f|</div></div></div>
+        <p class="cap" id="uaW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-uat"></div>
+</section>
+
+<section class="part" id="play">
+  <div class="part-head"><h2>训练游乐场：看网络学出非线性边界</h2><span class="meta">原书 4.2.1–4.2.2 节 · 第 93–95 页</span></div>
+  <div class="sec-lede">
+    <p>从机器学习的角度看，多层前馈网络可以理解成一个<strong>特征转换器</strong>：先把原始输入 x 映射成更有效的特征 φ(x)，再交给分类器 g(·)。如果 g 是 Logistic 回归或 Softmax 回归，它就是网络的最后一层：二分类时输出层一个神经元配 Logistic 函数，ŷ = a⁽ᴸ⁾ = p(y=1|x)；多分类时 C 个神经元配 Softmax。反过来，Logistic 回归也可以看成只有一层的神经网络。</p>
+    <p>训练目标是正则化的经验风险：<strong>ℛ(W, b) = (1/N) Σ ℒ(y⁽ⁿ⁾, ŷ⁽ⁿ⁾) + ½λ‖W‖²<sub>F</sub></strong>。注意正则化项只含权重、不含偏置（习题 4-9 问为什么）。然后用梯度下降更新每一层的 W⁽ˡ⁾ 和 b⁽ˡ⁾。</p>
+    <p>原书推荐了 TensorFlow 游乐场来观察训练过程。下面是一个简化的本地版本：所有计算在你的浏览器里用几十行代码完成，每一步都是“前向计算 → 反向传播 → 梯度下降”。</p>
+    <p class="go">先选“异或”，只用 1 个隐藏神经元训练——学不会；加到 3 个再试。然后挑战螺旋。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">两层 / 三层网络，全批量梯度下降，交叉熵损失</p>
+    <div class="lab-split">
+      <div>
+        <div id="pgF"></div>
+        <div id="pgC"></div>
+      </div>
+      <div>
+        <div class="selrow"><span>数据</span><div class="seg" id="pgD"><button data-v="xor" aria-pressed="true">异或</button><button data-v="circle">圆环</button><button data-v="moons">月牙</button><button data-v="spiral">螺旋</button></div></div>
+        <div class="selrow"><span>激活</span><div class="seg" id="pgA"><button data-v="tanh" aria-pressed="true">Tanh</button><button data-v="relu">ReLU</button><button data-v="sig">Logistic</button><button data-v="lin">线性</button></div></div>
+        <label class="ctl"><span>第 1 隐藏层神经元 <output id="pgH1">4</output></span><input type="range" id="pgH1s" min="1" max="16" value="4"></label>
+        <label class="ctl"><span>第 2 隐藏层神经元（0 = 不要） <output id="pgH2">0</output></span><input type="range" id="pgH2s" min="0" max="16" value="0"></label>
+        <label class="ctl"><span>学习率 α <output id="pgLr">0.3</output></span><input type="range" id="pgLrs" min="0.01" max="1.5" step="0.01" value="0.3"></label>
+        <div class="btnrow" style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><button class="btn pri" type="button" id="pgGo">开始训练</button><button class="btn" type="button" id="pgStep">走 10 步</button><button class="btn" type="button" id="pgR">重新初始化</button></div>
+        <div class="read"><div class="hl"><div class="v" id="pgL">0</div><div class="k">训练损失</div></div><div><div class="v" id="pgAcc">0</div><div class="k">训练准确率</div></div><div><div class="v" id="pgT">0</div><div class="k">迭代步数</div></div></div>
+        <p class="cap" id="pgW"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-play"></div>
+</section>
+
+<section class="part" id="bp">
+  <div class="part-head"><h2>反向传播：误差项一层层往回传</h2><span class="meta">原书 4.2.3 节 · 第 95–99 页</span></div>
+  <div class="sec-lede">
+    <p>对每个参数单独用链式法则求导太慢。反向传播的关键是定义第 l 层的<strong>误差项</strong> <strong>δ⁽ˡ⁾ = ∂ℒ/∂z⁽ˡ⁾</strong>：损失对该层净输入的偏导，它反映了最终损失对这一层神经元的敏感程度——这也正是第 1 篇说的“贡献度分配”。有了 δ⁽ˡ⁾，参数梯度只需一步：<strong>∂ℒ/∂W⁽ˡ⁾ = δ⁽ˡ⁾(a⁽ˡ⁻¹⁾)ᵀ</strong>，<strong>∂ℒ/∂b⁽ˡ⁾ = δ⁽ˡ⁾</strong>——误差项和上一层输出的外积。</p>
+    <p>δ 本身怎么算？由 z⁽ˡ⁺¹⁾ = W⁽ˡ⁺¹⁾a⁽ˡ⁾ + b⁽ˡ⁺¹⁾ 和 a⁽ˡ⁾ = f(z⁽ˡ⁾) 用链式法则：</p>
+    <p class="fx" style="margin:10px 0">δ⁽ˡ⁾ = f′<sub>l</sub>(z⁽ˡ⁾) ⊙ (W⁽ˡ⁺¹⁾)ᵀδ⁽ˡ⁺¹⁾</p>
+    <p>原书的解读：<strong>第 l 层一个神经元的误差项，是所有与它相连的第 l+1 层神经元误差项的加权和，再乘上它自己激活函数的导数</strong>。起点在输出层，而且很简单：Logistic + 交叉熵，或 Softmax + 交叉熵，都有 <strong>δ⁽ᴸ⁾ = ŷ − y</strong>。所以训练分三步：前向算每层 z、a；反向算每层 δ；用 δ 算梯度并更新（原书算法 4.1）。</p>
+    <p class="go">在一个 2-2-1 的小网络上用真实数字走一遍（权重为示意），最后用数值微分核对。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">2-2-1 网络：x = [1.0, 0.5]，y = 1，隐藏层 Logistic，输出 Logistic + 交叉熵</p>
+    <div id="bpS"></div>
+    <div class="lab-split">
+      <div><svg class="cg" id="bpG" viewBox="0 0 440 220" role="img" aria-label="网络与数值"></svg></div>
+      <div><p class="stepinfo" id="bpW" style="font-size:16px;color:var(--ink-2);min-height:5em"></p><table class="calc" id="bpT"></table></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书习题 4-5：两个 ReLU 隐藏神经元解异或（一种解法）</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>x₁</th><th>x₂</th><th>h₁ = ReLU(x₁ + x₂)</th><th>h₂ = ReLU(x₁ + x₂ − 1)</th><th>y = h₁ − 2h₂</th><th>异或</th></tr></thead>
+      <tbody><tr><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr><tr><td>0</td><td>1</td><td>1</td><td>0</td><td>1</td><td>1</td></tr><tr><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>1</td></tr><tr class="on"><td>1</td><td>1</td><td>2</td><td>1</td><td>0</td><td>0</td></tr></tbody>
+    </table></div>
+    <p class="cap">h₂ 只在两个输入都为 1 时才被激活，用来把 h₁ 多算的部分减掉。单层感知器做不到，因为隐藏层先把四个点映射到了一个新空间，在那里它们线性可分。</p>
+  </div>
+  <div class="notes" id="n-bp"></div>
+</section>
+
+<section class="part" id="ad">
+  <div class="part-head"><h2>自动微分：前向模式与反向模式</h2><span class="meta">原书 4.3 节 · 第 99–104 页</span></div>
+  <div class="sec-lede">
+    <p>手推反向传播琐碎易错，现代框架都把求导交给计算机。三种方法：<strong>数值微分</strong>用 (f(x+Δx) − f(x))/Δx 近似，Δx 太小有舍入误差、太大有截断误差，常用中心差分 (f(x+Δx) − f(x−Δx))/2Δx 减小截断误差；而且 N 个参数要扰动 N 次，总复杂度 O(N²)。<strong>符号微分</strong>对表达式做代数变换得到导数表达式，平台无关，但编译慢、要专门的语言、难调试。<strong>自动微分</strong>介于两者之间：它作用在<strong>具体的数值计算过程</strong>上，把程序拆成 +、−、×、/、exp、log 等基本操作构成<strong>计算图</strong>，在计算中按链式法则累积导数，既保持机器精度又高效。</p>
+    <p>原书的例子是 f(x; w, b) = 1/(exp(−(wx + b)) + 1)，拆成 6 个基本函数 h₁…h₆。导数是路径上所有局部导数的连乘（多条路径则相加）。累积有两种顺序：<strong>前向模式</strong>沿计算方向，<strong>反向模式</strong>逆计算方向。对 f: ℝᴺ → ℝᴹ，前向模式适合输入少、输出多；反向模式适合输入多、输出少。神经网络的损失是标量、参数成千上万，所以用反向模式——<strong>反向传播就是神经网络上的反向模式自动微分</strong>。代价是要保存前向的中间结果，大模型训练常配合重计算节省显存。</p>
+    <p>原书还提到：前向模式对应雅可比向量积（JVP），反向模式对应向量雅可比积（VJP）；PyTorch 动态记录计算图后 backward()，TensorFlow 2 用 GradientTape，JAX 把 grad、jvp、vjp 当作可组合的程序变换。</p>
+    <p class="go">在图 4.3 的计算图上分别用两种模式走一遍。默认 x = 1、w = 0、b = 0，原书算出 ∂f/∂w = 0.25。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">计算图：f(x; w, b) = 1/(exp(−(wx + b)) + 1)</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>x <output id="adX">1</output></span><input type="range" id="adXs" min="-2" max="2" step="0.1" value="1"></label>
+      <label class="ctl"><span>w <output id="adW">0</output></span><input type="range" id="adWs" min="-2" max="2" step="0.1" value="0"></label>
+      <label class="ctl"><span>b <output id="adB">0</output></span><input type="range" id="adBs" min="-2" max="2" step="0.1" value="0"></label>
+    </div>
+    <div class="selrow"><span>累积方式</span><div class="seg" id="adM"><button data-v="fwd" aria-pressed="true">前向模式（求 ∂·/∂w）</button><button data-v="rev">反向模式（求 ∂f/∂·）</button></div></div>
+    <div id="adS"></div>
+    <svg class="cg" id="adG" viewBox="0 0 760 170" role="img" aria-label="计算图"></svg>
+    <p class="stepinfo" id="adW2"></p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">数值微分的误差：Δx 不是越小越好</p>
+      <div id="ndG"></div>
+      <div id="ndC"></div>
+      <p class="cap">对 f(x) = sin x 在 x = 1 处求导（真值 cos 1），双精度浮点。右侧上翘是截断误差，左侧上翘是舍入误差。</p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">三种求导方式对比</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th></th><th>数值微分</th><th>符号微分</th><th>自动微分</th></tr></thead>
+        <tbody>
+          <tr><td>作用对象</td><td>函数值</td><td>数学表达式</td><td>数值程序</td></tr>
+          <tr><td>输出</td><td>近似数值</td><td>导数表达式</td><td>精确数值</td></tr>
+          <tr><td>精度</td><td>截断 + 舍入误差</td><td>精确</td><td>机器精度</td></tr>
+          <tr><td>代价</td><td>N 个参数 O(N²)</td><td>编译慢、表达式膨胀</td><td>反向模式需存中间结果</td></tr>
+          <tr><td>控制流</td><td>可</td><td>难</td><td>可</td></tr>
+        </tbody>
+      </table></div>
+      <div id="fmG"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-ad"></div>
+</section>
+
+<section class="part" id="vg">
+  <div class="part-head"><h2>训练为什么难：非凸与梯度消失</h2><span class="meta">原书 4.4 节 · 第 104–106 页</span></div>
+  <div class="sec-lede">
+    <p>就算梯度能算得又快又准，神经网络还是比线性模型难训练，原书给出两个原因。第一，<strong>非凸</strong>：哪怕最简单的 1-1-1 网络 ŷ = σ(w₂σ(w₁x))，对一个样本 (1, 1) 的平方损失和交叉熵损失，关于 (w₁, w₂) 都是非凸的（原书图 4.5）。</p>
+    <p>第二，<strong>梯度消失</strong>。看反向传播的公式 δ⁽ˡ⁾ = f′(z⁽ˡ⁾) ⊙ (W⁽ˡ⁺¹⁾)ᵀδ⁽ˡ⁺¹⁾：误差每往回传一层，都要乘一次激活函数的导数。Logistic 的导数最大只有 <strong>0.25</strong>，Tanh 最大是 1，饱和区更是接近 0。层数一多，误差一路衰减到几乎为零，底层参数学不动。反过来，权重矩阵的范数大于 1 时误差会指数增长，叫<strong>梯度爆炸</strong>，严重时溢出成 NaN，常用<strong>梯度截断</strong>处理。</p>
+    <p>缓解办法原书列了一串，后面几篇会逐个展开：导数较大的激活函数（ReLU）、合理的参数初始化（Xavier、He）、逐层规范化、残差连接（第 5、7 篇）。</p>
+    <p class="go">先估一下，再在一个随机初始化的 32 宽网络里实测每层误差项的大小（模拟）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">误差项 ‖δ⁽ˡ⁾‖ 随层数的变化（从输出层往回看）</p>
+    <div id="vgG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>网络深度 L <output id="vgL">12</output></span><input type="range" id="vgLs" min="2" max="40" value="12"></label>
+      <label class="ctl"><span>初始化尺度（相对 Xavier / He） <output id="vgS">×1.0</output></span><input type="range" id="vgSs" min="0.4" max="2" step="0.05" value="1"></label>
+    </div>
+    <div class="selrow"><span>激活函数</span><div class="seg" id="vgA"><button data-v="sig" aria-pressed="true">Logistic</button><button data-v="tanh">Tanh</button><button data-v="relu">ReLU</button></div></div>
+    <div id="vgC"></div>
+    <p class="cap" id="vgW"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">原书图 4.5 的切面：ŷ = σ(w₂σ(w₁x)) 在样本 (1, 1) 上，固定 w₂ 看损失随 w₁ 的变化</p>
+    <div class="lab-split">
+      <div id="ncC"></div>
+      <div>
+        <div class="seg" id="ncS"><button data-v="sq" aria-pressed="true">平方损失 (y − ŷ)²</button><button data-v="ce">交叉熵 −log ŷ</button></div>
+        <label class="ctl"><span>固定 w₂ <output id="ncW2">3.0</output></span><input type="range" id="ncW2s" min="-6" max="6" step="0.1" value="3"></label>
+        <p class="cap" id="ncW" style="margin-top:12px"></p>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-vg"></div>
+</section>
+
+<section class="part" id="act">
+  <div class="part-head"><h2>激活函数：从 Sigmoid 到 GELU</h2><span class="meta">原书 4.5.1–4.5.4 节 · 第 106–111 页</span></div>
+  <div class="sec-lede">
+    <p>原书提出激活函数的三条要求：<strong>连续可导的非线性</strong>（允许少数点不可导）；函数及其导数<strong>尽量简单</strong>；导数的值域<strong>不能太大也不能太小</strong>。</p>
+    <p><strong>Sigmoid 型</strong>（Logistic、Tanh）两端饱和。Logistic 输出可以解释成概率，也可以当“软性门”；Tanh = 2σ(2x) − 1，输出<strong>零中心化</strong>。Logistic 输出恒正，会让下一层产生<strong>偏置偏移</strong>，拖慢梯度下降。</p>
+    <p><strong>ReLU</strong> = max(0, x)：只需加、乘、比较；单侧抑制、宽兴奋边界、约 50% 神经元激活的稀疏性（人脑同一时刻只有 1%~4% 神经元活跃）；x &gt; 0 时导数为 1，缓解梯度消失。缺点是非零中心化，以及<strong>死亡 ReLU</strong>：一次糟糕的更新后某个神经元在所有数据上都不激活，梯度永远是 0。变体：Leaky ReLU（负半轴斜率 γ，如 0.01）、PReLU（γ 可学习）、ELU（负半轴 γ(eˣ − 1)，近似零中心化）、Softplus（log(1 + eˣ)，ReLU 的平滑版，导数正好是 Logistic，但没有稀疏性）。</p>
+    <p><strong>Swish</strong> = xσ(βx)：σ(βx) 是一个自门控。β = 0 时是线性函数 x/2，β = 1 时叫 SiLU，β → ∞ 时趋近 ReLU——在线性和 ReLU 之间插值。<strong>GELU</strong> = xΦ(x)，Φ 是标准正态分布的累积分布函数，可近似为 xσ(1.702x)，形状和 Swish 很像，但设计动机不同。</p>
+    <p class="go">点开想比较的函数；打开“看导数”，看谁会饱和、谁有死区。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">激活函数图谱（原书图 4.7–4.9、表 4.3）</p>
+    <div class="toggles" id="acT"></div>
+    <div class="ctrls"><div class="seg" id="acD"><button data-v="f" aria-pressed="true">看函数</button><button data-v="d">看导数</button></div>
+      <label class="ctl" style="min-width:220px"><span>Swish 的 β <output id="acB">1</output></span><input type="range" id="acBs" min="0" max="10" step="0.1" value="1"></label></div>
+    <div id="acC"></div>
+    <p class="cap" id="acW"></p>
+  </div>
+  <div class="notes" id="n-act"></div>
+</section>
+
+<section class="part" id="glu">
+  <div class="part-head"><h2>门控单元：GLU、SwiGLU 与 Maxout</h2><span class="meta">原书 4.5.5–4.5.6 节 · 第 111–113 页</span></div>
+  <div class="sec-lede">
+    <p>前面的激活函数都是逐元素作用在标量上。现代大模型里还有另一种思路：<strong>门控线性单元</strong>（GLU）——对输入做两组线性变换，一组当“值”，一组过非线性当“门”，逐元素相乘：<strong>h = φ(W<sub>g</sub>x + b<sub>g</sub>) ⊙ (W<sub>v</sub>x + b<sub>v</sub>)</strong>，再接一个输出线性层 o = W<sub>o</sub>h + b<sub>o</sub>。门分支用 Swish 就是 <strong>SwiGLU</strong>，用 GELU 就是 <strong>GeGLU</strong>，它们已成为 Transformer 前馈子层的常见形式。</p>
+    <p>原书特意强调：<strong>GLU 不是严格意义上的激活函数</strong>，而是自带可学习参数的复合模块，更接近“线性层 + 激活函数”这一整套的替代品。</p>
+    <p><strong>Maxout</strong> 单元同理：有 K 组 (w<sub>k</sub>, b<sub>k</sub>)，输出 max<sub>k</sub>(w<sub>k</sub>ᵀx + b<sub>k</sub>)。它可以看作<strong>任意凸函数的分段线性近似</strong>；Leaky ReLU = max(x, γx) 就是最简单的 Maxout。</p>
+    <p class="go">用 K 段直线的最大值去逼近一个凸函数 x²。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">Maxout：K 条直线取最大</p>
+      <div id="mxC"></div>
+      <label class="ctl"><span>K <output id="mxK">3</output></span><input type="range" id="mxKs" min="1" max="12" value="3"></label>
+      <p class="cap" id="mxW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">经典 FFN 与 GLU 结构对比</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th></th><th>经典 FFN</th><th>GLU 族</th></tr></thead>
+        <tbody>
+          <tr><td>结构</td><td>W₂ f(W₁x + b₁) + b₂</td><td>W_o [φ(W_g x) ⊙ (W_v x)]</td></tr>
+          <tr><td>非线性</td><td>逐元素激活</td><td>门分支 × 值分支</td></tr>
+          <tr><td>线性变换数</td><td>2</td><td>3</td></tr>
+          <tr><td>门 φ 的取法</td><td>—</td><td>σ → GLU；Swish → SwiGLU；GELU → GeGLU</td></tr>
+          <tr><td>是激活函数吗</td><td>f 是</td><td>不是，是带参数的模块</td></tr>
+        </tbody>
+      </table></div>
+      <p class="cap">补充（非原书内容）：在相同参数量下比较时，GLU 的隐藏宽度通常取经典 FFN 的约 2/3，因为它多了一组矩阵。</p>
+    </div>
+  </div>
+  <div class="confuse"><h4>易混辨析</h4>
+    <p><b>净输入 vs 活性值</b>：z = wᵀx + b 是加权和；a = f(z) 是过激活后的输出。</p>
+    <p><b>多层感知器 vs 前馈网络</b>：常混用，但感知器是不连续阈值单元，前馈网络是连续非线性的复合。</p>
+    <p><b>反向传播 vs 自动微分</b>：反向传播是神经网络上的反向模式自动微分；自动微分适用于任意数值程序。</p>
+    <p><b>自动微分 vs 符号微分</b>：前者作用于数值程序、输出数值；后者作用于表达式、输出导数表达式。</p>
+    <p><b>Swish vs GELU</b>：形状接近（GELU ≈ xσ(1.702x)），动机不同：前者是自门控，后者用高斯 CDF 加权。</p>
+  </div>
+  <div class="notes" id="n-glu"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">z⁽ˡ⁾ = W⁽ˡ⁾a⁽ˡ⁻¹⁾ + b⁽ˡ⁾，a⁽ˡ⁾ = f_l(z⁽ˡ⁾)；W⁽ˡ⁾ ∈ ℝ^{M_l×M_{l−1}}</div>
+    <div class="fx">通用近似：F(x) = Σ_m v_m φ(w_mᵀx + b_m)，|F − f| &lt; ε</div>
+    <div class="fx">ℛ = (1/N) Σ ℒ(y, ŷ) + ½λ‖W‖²_F（不正则化 b）</div>
+    <div class="fx">δ⁽ˡ⁾ = f′_l(z⁽ˡ⁾) ⊙ (W⁽ˡ⁺¹⁾)ᵀδ⁽ˡ⁺¹⁾；δ⁽ᴸ⁾ = ŷ − y（Logistic / Softmax + 交叉熵）</div>
+    <div class="fx">∂ℒ/∂W⁽ˡ⁾ = δ⁽ˡ⁾(a⁽ˡ⁻¹⁾)ᵀ，∂ℒ/∂b⁽ˡ⁾ = δ⁽ˡ⁾</div>
+    <div class="fx">σ′ = σ(1 − σ) ≤ 0.25；tanh′ = 1 − tanh² ≤ 1；tanh(x) = 2σ(2x) − 1</div>
+    <div class="fx">Swish = xσ(βx)；GELU = xΦ(x) ≈ xσ(1.702x)；SwiGLU(x) = swish(W_g x) ⊙ (W_v x)</div>
+  </div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+/* ---------- 激活函数库 ---------- */
+function erf(x) { var s = x < 0 ? -1 : 1; x = Math.abs(x); var t = 1 / (1 + 0.3275911 * x); var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return s * y; }
+function Phi(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+var ACT = {
+  sig: [function (z) { return S.sigmoid(z); }, function (z) { var s = S.sigmoid(z); return s * (1 - s); }],
+  tanh: [Math.tanh, function (z) { var t = Math.tanh(z); return 1 - t * t; }],
+  relu: [function (z) { return Math.max(0, z); }, function (z) { return z > 0 ? 1 : 0; }],
+  lin: [function (z) { return z; }, function () { return 1; }],
+  step: [function (z) { return z >= 0 ? 1 : 0; }, function () { return 0; }]
+};
+
+/* ---------- 神经元 ---------- */
+var nAct = 'sig';
+function neu() {
+  var v = {}; ['X1', 'X2', 'W1', 'W2', 'B'].forEach(function (k) { v[k] = +$('#n' + k + 's').value; $('#n' + k).textContent = S.f(v[k], 1); });
+  var z = v.W1 * v.X1 + v.W2 * v.X2 + v.B;
+  $('#nZ').textContent = S.f(z, 2); $('#nA').textContent = S.f(ACT[nAct][0](z), 3);
+}
+['nX1s', 'nX2s', 'nW1s', 'nW2s', 'nBs'].forEach(function (id) { $('#' + id).addEventListener('input', neu); });
+S.seg($('#nAct'), function (v) { nAct = v; neu(); }); neu();
+function arch() {
+  var L = $('#arch').value.split(/[,，\s]+/).map(Number).filter(function (x) { return x > 0 && isFinite(x); }).map(Math.round);
+  if (L.length < 2) return;
+  var g = $('#archG'); g.innerHTML = '';
+  var W = 420, H = 150, n = L.length;
+  var xs = L.map(function (_, i) { return 30 + (W - 60) * i / (n - 1); });
+  var shown = L.map(function (m) { return Math.min(m, 6); });
+  var ys = shown.map(function (m) { var a = []; for (var i = 0; i < m; i++) a.push(20 + (H - 50) * (m === 1 ? 0.5 : i / (m - 1))); return a; });
+  for (var l = 0; l < n - 1; l++) ys[l].forEach(function (y1) { ys[l + 1].forEach(function (y2) { S.svg('line', { x1: xs[l], y1: y1, x2: xs[l + 1], y2: y2 }, g); }); });
+  ys.forEach(function (col, l) { col.forEach(function (y) { S.svg('circle', { cx: xs[l], cy: y, r: 7 }, g); }); S.svg('text', { x: xs[l], y: H - 6, 'text-anchor': 'middle', text: L[l] + (L[l] > 6 ? '' : '') }, g); });
+  var rows = '', tot = 0;
+  for (var k = 1; k < n; k++) { var p = L[k] * L[k - 1] + L[k]; tot += p; rows += '<tr><td>W⁽' + k + '⁾ ' + L[k] + '×' + L[k - 1] + ' + b⁽' + k + '⁾ ' + L[k] + '</td><td class="n">' + S.big(p) + '</td></tr>'; }
+  rows += '<tr class="tot"><td>合计（' + (n - 1) + ' 层，不算输入层）</td><td class="n">' + tot.toLocaleString() + '</td></tr>';
+  $('#archT').innerHTML = rows;
+}
+$('#arch').addEventListener('input', arch); arch();
+S.guess($('#archGs'), { q: '一个 784-256-128-10 的全连接网络（MNIST 常见配置）一共有多少参数（含偏置）？', unit: '个', ans: 235146, fmt: function (x) { return Math.round(x).toLocaleString(); }, why: '784×256 + 256 = 200,960；256×128 + 128 = 32,896；128×10 + 10 = 1,290；合计 235,146。第一层就占了 85%——全连接层的参数量由“输入维 × 输出维”决定，这也是第 5 篇卷积网络要解决的问题。' });
+S.notes($('#n-neuron'), {
+  c: [
+    ['净输入', 'z = wᵀx + b，也叫净活性值。'],
+    ['活性值', 'a = f(z)，神经元的输出。'],
+    ['MP 神经元', '1943 年提出，激活函数是 0/1 阶跃。'],
+    ['前馈网络', '分层、单向传播、无反馈连接的有向无环图。']
+  ],
+  p: [
+    ['层间计算', 'z⁽ˡ⁾ = W⁽ˡ⁾a⁽ˡ⁻¹⁾ + b⁽ˡ⁾，a⁽ˡ⁾ = f(z⁽ˡ⁾)'],
+    ['形状', 'W⁽ˡ⁾ 为 M_l × M_{l−1}，b⁽ˡ⁾ 为 M_l'],
+    ['一层 = ', '仿射变换 + 非线性变换'],
+    ['层数 L', '一般只数隐藏层和输出层。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 通用近似 ---------- */
+var uaF = 'sin', uaA = 'sig';
+var UAF = {
+  sin: function (x) { return Math.sin(2 * Math.PI * x); },
+  step: function (x) { return x < 0.3 ? -0.5 : x < 0.65 ? 0.6 : 0; },
+  bump: function (x) { return Math.exp(-80 * (x - 0.3) * (x - 0.3)) - 0.7 * Math.exp(-120 * (x - 0.72) * (x - 0.72)); },
+  abs: function (x) { return Math.abs(x - 0.4) - 0.3; }
+};
+var uaChart = S.chart($('#uaC'), { h: 260, x: [0, 1], y: [-1.3, 1.3], xt: [0, 0.25, 0.5, 0.75, 1], yt: [-1, 0, 1] });
+function ua() {
+  var M = +$('#uaMs').value, k = +$('#uaKs').value, f = UAF[uaF];
+  $('#uaM').textContent = M; $('#uaK').textContent = k;
+  var cs = []; for (var m = 0; m < M; m++) cs.push(M === 1 ? 0.5 : (m + 0.5) / M);
+  function phi(x, c) { return uaA === 'sig' ? S.sigmoid(k * (x - c)) : Math.max(0, x - c + (M === 1 ? 0.5 : 0.5 / M)); }
+  var X = []; for (var i = 0; i <= 200; i++) X.push(i / 200);
+  var n = M + 1, A = [], b = [];
+  for (var r = 0; r < n; r++) { A.push(new Array(n).fill(0)); b.push(0); }
+  X.forEach(function (x) { var ph = cs.map(function (c) { return phi(x, c); }).concat([1]); for (var r = 0; r < n; r++) { b[r] += ph[r] * f(x); for (var q = 0; q < n; q++) A[r][q] += ph[r] * ph[q]; } });
+  for (var d = 0; d < n; d++) A[d][d] += 1e-6;
+  var v = solve(A, b);
+  function F(x) { var s = v[M]; for (var m = 0; m < M; m++) s += v[m] * phi(x, cs[m]); return s; }
+  var err = 0; X.forEach(function (x) { err = Math.max(err, Math.abs(F(x) - f(x))); });
+  var curves = [{ f: f, c: 'ok', w: 3 }, { f: F, c: 'c2', w: 2.5 }];
+  if (M <= 8) cs.forEach(function (c, m) { curves.push({ f: function (x) { return v[m] * phi(x, c); }, c: 'c1', w: 1 }); });
+  uaChart({ curves: curves });
+  $('#uaE').textContent = S.f(err, 3);
+  $('#uaW').innerHTML = '<span style="color:var(--ok)">绿</span>：目标 f；<span style="color:var(--s2)">橙</span>：网络 F' + (M <= 8 ? '；细蓝线：每个隐藏单元的贡献 v<sub>m</sub>φ(·)' : '') + '。' + (uaA === 'sig' ? '每个 Sigmoid 是一个“台阶”，台阶够多、够陡就能拼出任何形状。' : '每个 ReLU 是一个“折角”，折线段够多就能逼近曲线。') + ' 误差随 M 增加而下降——但这里隐藏层参数是手工摆好的，只学了输出层；定理没告诉你梯度下降能不能自己找到它们。';
+}
+function solve(A, b) {
+  var n = b.length, M = A.map(function (r, i) { return r.concat([b[i]]); });
+  for (var c = 0; c < n; c++) {
+    var p = c; for (var r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    var t = M[c]; M[c] = M[p]; M[p] = t;
+    if (Math.abs(M[c][c]) < 1e-14) M[c][c] = 1e-14;
+    for (var r2 = c + 1; r2 < n; r2++) { var f = M[r2][c] / M[c][c]; for (var k = c; k <= n; k++) M[r2][k] -= f * M[c][k]; }
+  }
+  var x = new Array(n);
+  for (var i = n - 1; i >= 0; i--) { var s = M[i][n]; for (var j = i + 1; j < n; j++) s -= M[i][j] * x[j]; x[i] = s / M[i][i]; }
+  return x;
+}
+S.seg($('#uaF'), function (v) { uaF = v; ua(); });
+S.seg($('#uaA'), function (v) { uaA = v; ua(); });
+['uaMs', 'uaKs'].forEach(function (id) { $('#' + id).addEventListener('input', ua); }); ua();
+S.notes($('#n-uat'), {
+  c: [
+    ['通用近似定理', '一个“挤压”激活的隐藏层 + 线性输出层，神经元足够多即可任意精度逼近有界闭集上的连续函数。'],
+    ['“挤压”函数', '像 Sigmoid 这样的有界函数；对 ReLU 定理也成立（习题 4-10）。']
+  ],
+  p: [
+    ['形式', 'F(x) = Σ v_m φ(w_mᵀx + b_m)'],
+    ['只说存在', '不告诉你怎么找到、是否最优。'],
+    ['表示能力强的代价', '更容易在训练集上过拟合。']
+  ]
+});
+
+/* ---------- 小型神经网络 ---------- */
+function makeNet(sizes, act, seed) {
+  var r = S.rng(seed), L = [];
+  for (var l = 1; l < sizes.length; l++) {
+    var fan = sizes[l - 1], sc = act === 'relu' ? Math.sqrt(2 / fan) : Math.sqrt(1 / fan);
+    var W = []; for (var i = 0; i < sizes[l]; i++) { var row = []; for (var j = 0; j < fan; j++) row.push(S.randn(r) * sc); W.push(row); }
+    var b = new Array(sizes[l]).fill(act === 'relu' ? 0.05 : 0);
+    L.push({ W: W, b: b });
+  }
+  return { L: L, act: act };
+}
+function fwd(net, x) {
+  var a = [x], z = [], f = ACT[net.act][0];
+  net.L.forEach(function (ly, l) {
+    var zz = ly.W.map(function (row, i) { var s = ly.b[i]; for (var j = 0; j < row.length; j++) s += row[j] * a[l][j]; return s; });
+    z.push(zz);
+    a.push(l === net.L.length - 1 ? zz.map(S.sigmoid) : zz.map(f));
+  });
+  return { a: a, z: z };
+}
+function trainStep(net, data, lr) {
+  var G = net.L.map(function (ly) { return { W: ly.W.map(function (r) { return r.map(function () { return 0; }); }), b: ly.b.map(function () { return 0; }) }; });
+  var loss = 0, acc = 0, df = ACT[net.act][1];
+  data.forEach(function (p) {
+    var o = fwd(net, [p[0], p[1]]), L = net.L.length, yh = o.a[L][0], y = p[2];
+    loss -= y ? Math.log(yh + 1e-12) : Math.log(1 - yh + 1e-12);
+    if ((yh > 0.5) === (y === 1)) acc++;
+    var d = [yh - y];
+    for (var l = L - 1; l >= 0; l--) {
+      var ly = net.L[l];
+      for (var i = 0; i < d.length; i++) { G[l].b[i] += d[i]; for (var j = 0; j < o.a[l].length; j++) G[l].W[i][j] += d[i] * o.a[l][j]; }
+      if (l > 0) {
+        var nd = [];
+        for (var j2 = 0; j2 < o.a[l].length; j2++) { var s = 0; for (var i2 = 0; i2 < d.length; i2++) s += ly.W[i2][j2] * d[i2]; nd.push(s * df(o.z[l - 1][j2])); }
+        d = nd;
+      }
+    }
+  });
+  var N = data.length;
+  net.L.forEach(function (ly, l) {
+    for (var i = 0; i < ly.b.length; i++) { ly.b[i] -= lr * G[l].b[i] / N; for (var j = 0; j < ly.W[i].length; j++) ly.W[i][j] -= lr * G[l].W[i][j] / N; }
+  });
+  return [loss / N, acc / N];
+}
+function genData(kind) {
+  var r = S.rng(kind.length * 97 + 3), pts = [], i;
+  if (kind === 'xor') for (i = 0; i < 120; i++) { var x = -1.8 + 3.6 * r(), y = -1.8 + 3.6 * r(); if (Math.abs(x) < 0.15 || Math.abs(y) < 0.15) { i--; continue; } pts.push([x, y, x * y > 0 ? 1 : 0]); }
+  if (kind === 'circle') for (i = 0; i < 140; i++) { var a = 2 * Math.PI * r(), rr = i % 2 ? 0.2 + 0.7 * r() : 1.25 + 0.6 * r(); pts.push([rr * Math.cos(a), rr * Math.sin(a), i % 2 ? 1 : 0]); }
+  if (kind === 'moons') for (i = 0; i < 140; i++) { var t = Math.PI * r(), c = i % 2; pts.push(c ? [1 - Math.cos(t) - 0.5 + 0.12 * S.randn(r), 0.5 - Math.sin(t) + 0.12 * S.randn(r) - 0.05, 1] : [Math.cos(t) - 0.5 + 0.12 * S.randn(r), Math.sin(t) - 0.2 + 0.12 * S.randn(r), 0]); }
+  if (kind === 'spiral') for (i = 0; i < 160; i++) { var c2 = i % 2, tt = 0.25 + 3.2 * (Math.floor(i / 2) / 80); var rad = 0.35 * tt, ang = tt * 1.9 + c2 * Math.PI; pts.push([rad * Math.cos(ang) + 0.04 * S.randn(r), rad * Math.sin(ang) + 0.04 * S.randn(r), c2]); }
+  return pts;
+}
+var pgKind = 'xor', pgAct = 'tanh', pgData = genData('xor'), pgNet, pgT = 0, pgRun = false, pgSeed = 1, pgHist = [], pgLast = [0.69, 0.5];
+function pgInit() {
+  var h1 = +$('#pgH1s').value, h2 = +$('#pgH2s').value, sizes = [2, h1];
+  if (h2) sizes.push(h2);
+  sizes.push(1);
+  pgNet = makeNet(sizes, pgAct, pgSeed); pgT = 0; pgHist = [];
+  pgLast = evalNet();
+}
+function evalNet() {
+  var L = 0, acc = 0;
+  pgData.forEach(function (p) { var yh = fwd(pgNet, [p[0], p[1]]).a[pgNet.L.length][0]; L -= p[2] ? Math.log(yh + 1e-12) : Math.log(1 - yh + 1e-12); if ((yh > 0.5) === (p[2] === 1)) acc++; });
+  return [L / pgData.length, acc / pgData.length];
+}
+var pgField = S.field($('#pgF'), { xr: [-2, 2], yr: [-2, 2], res: 44, size: 340, pts: pgData, f: function (x, y) { return fwd(pgNet, [x, y]).a[pgNet.L.length][0]; } });
+var pgChart = S.chart($('#pgC'), { h: 150, x: [0, 100], y: [0, 0.8], xt: [0], yt: [0, 0.4, 0.8], yl: '训练损失' });
+function pgDraw() {
+  pgField({ pts: pgData });
+  var mx = Math.max(100, pgT);
+  pgChart({ x: [0, mx], xt: [0, Math.round(mx / 2), mx], curves: [{ pts: pgHist, c: 'c2' }] });
+  $('#pgL').textContent = S.f(pgLast[0], 3); $('#pgAcc').textContent = S.pct(pgLast[1], 0); $('#pgT').textContent = pgT;
+  var h1 = +$('#pgH1s').value, h2 = +$('#pgH2s').value;
+  var tip = pgAct === 'lin' ? '<b>线性激活</b>：不管叠几层、多少神经元，边界永远是一条直线——这就是“没有非线性，深度没用”。' :
+    pgKind === 'xor' && h1 === 1 && !h2 ? '只有 1 个隐藏神经元时，网络本质上还是在一条直线的两侧做判断，异或学不会。' :
+    pgKind === 'spiral' && pgLast[1] < 0.9 ? '螺旋很难：试试 Tanh、两层隐藏层各 8 个以上、学习率 0.3 左右，多训练一会儿。' :
+    pgLast[1] >= 0.97 ? '学会了。观察边界的形状：Tanh 是平滑曲线，ReLU 是由折线拼成的多边形。' : '背景颜色是网络输出的 p(y=1|x)；白色过渡带就是决策边界。';
+  $('#pgW').innerHTML = tip;
+}
+function pgTick() {
+  if (!pgRun) return;
+  for (var i = 0; i < 8; i++) { pgLast = trainStep(pgNet, pgData, +$('#pgLrs').value); pgT++; if (pgT % 4 === 0) pgHist.push([pgT, Math.min(pgLast[0], 0.8)]); }
+  pgDraw();
+  if (pgT > 6000) { pgRun = false; $('#pgGo').textContent = '继续训练'; return; }
+  requestAnimationFrame(pgTick);
+}
+$('#pgGo').addEventListener('click', function () { pgRun = !pgRun; this.textContent = pgRun ? '暂停' : '继续训练'; if (pgRun) pgTick(); });
+$('#pgStep').addEventListener('click', function () { for (var i = 0; i < 10; i++) { pgLast = trainStep(pgNet, pgData, +$('#pgLrs').value); pgT++; pgHist.push([pgT, Math.min(pgLast[0], 0.8)]); } pgDraw(); });
+$('#pgR').addEventListener('click', function () { pgSeed++; pgInit(); pgDraw(); });
+function pgReset() { pgRun = false; $('#pgGo').textContent = '开始训练'; pgInit(); pgDraw(); }
+S.seg($('#pgD'), function (v) { pgKind = v; pgData = genData(v); pgReset(); });
+S.seg($('#pgA'), function (v) { pgAct = v; pgReset(); });
+['pgH1s', 'pgH2s'].forEach(function (id) { $('#' + id).addEventListener('input', function () { $('#pgH1').textContent = $('#pgH1s').value; $('#pgH2').textContent = $('#pgH2s').value; pgReset(); }); });
+$('#pgLrs').addEventListener('input', function () { $('#pgLr').textContent = S.f(+this.value, 2); });
+pgInit(); pgDraw();
+S.notes($('#n-play'), {
+  c: [
+    ['网络即特征转换', '多层网络把 x 映射成 φ(x)，再交给最后一层分类器。'],
+    ['输出层', '二分类：1 个神经元 + Logistic；多分类：C 个神经元 + Softmax。'],
+    ['Frobenius 范数', '‖W‖²_F = 所有层所有权重的平方和。']
+  ],
+  p: [
+    ['正则化经验风险', 'ℛ = (1/N) Σ ℒ + ½λ‖W‖²_F'],
+    ['更新', 'W⁽ˡ⁾ ← W⁽ˡ⁾ − α(∂ℛ/∂W⁽ˡ⁾)，b 同理'],
+    ['不正则化 b', '偏置只平移、不增加模型复杂度（习题 4-9）。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 反向传播分步 ---------- */
+var BP = (function () {
+  var x = [1, 0.5], y = 1, W1 = [[0.5, -0.3], [0.2, 0.8]], b1 = [0, 0.1], W2 = [0.7, -0.4], b2 = 0.05;
+  var z1 = W1.map(function (r, i) { return r[0] * x[0] + r[1] * x[1] + b1[i]; }), a1 = z1.map(S.sigmoid);
+  var z2 = W2[0] * a1[0] + W2[1] * a1[1] + b2, yh = S.sigmoid(z2), L = -Math.log(yh);
+  var d2 = yh - y, gW2 = [d2 * a1[0], d2 * a1[1]];
+  var d1 = a1.map(function (a, i) { return a * (1 - a) * W2[i] * d2; });
+  var gW1 = d1.map(function (d) { return [d * x[0], d * x[1]]; });
+  function loss(W1x) { var z = W1x.map(function (r, i) { return r[0] * x[0] + r[1] * x[1] + b1[i]; }).map(S.sigmoid); return -Math.log(S.sigmoid(W2[0] * z[0] + W2[1] * z[1] + b2)); }
+  var e = 1e-5, Wp = [[0.5 + e, -0.3], [0.2, 0.8]], Wm = [[0.5 - e, -0.3], [0.2, 0.8]];
+  var num = (loss(Wp) - loss(Wm)) / (2 * e);
+  return { x: x, y: y, W1: W1, b1: b1, W2: W2, b2: b2, z1: z1, a1: a1, z2: z2, yh: yh, L: L, d2: d2, gW2: gW2, d1: d1, gW1: gW1, num: num };
+})();
+var BPS = [
+  ['前向 ①：隐藏层', function (B) { return 'z⁽¹⁾ = W⁽¹⁾x + b⁽¹⁾ = [' + B.z1.map(function (v) { return S.f(v, 3); }).join(', ') + ']，a⁽¹⁾ = σ(z⁽¹⁾) = [' + B.a1.map(function (v) { return S.f(v, 3); }).join(', ') + ']。'; }, ['h1', 'h2']],
+  ['前向 ②：输出层与损失', function (B) { return 'z⁽²⁾ = w⁽²⁾ᵀa⁽¹⁾ + b⁽²⁾ = ' + S.f(B.z2, 3) + '，ŷ = σ(z⁽²⁾) = <b>' + S.f(B.yh, 3) + '</b>，交叉熵 ℒ = −log ŷ = ' + S.f(B.L, 3) + '。'; }, ['o']],
+  ['反向 ①：输出层误差项', function (B) { return 'Logistic + 交叉熵的输出层误差项直接就是 <b>δ⁽²⁾ = ŷ − y = ' + S.f(B.d2, 3) + '</b>（负数：预测偏小，要往大推）。'; }, ['o']],
+  ['反向 ②：输出层权重的梯度', function (B) { return '∂ℒ/∂w⁽²⁾ = δ⁽²⁾ a⁽¹⁾ = [' + B.gW2.map(function (v) { return S.f(v, 4); }).join(', ') + ']，∂ℒ/∂b⁽²⁾ = δ⁽²⁾。误差项 × 上一层的输出。'; }, ['o', 'e2']],
+  ['反向 ③：误差项传回隐藏层', function (B) { return 'δ⁽¹⁾ = σ′(z⁽¹⁾) ⊙ (w⁽²⁾ δ⁽²⁾) = [' + B.a1.map(function (a) { return S.f(a * (1 - a), 3); }).join(', ') + '] ⊙ [' + B.W2.map(function (w) { return S.f(w * B.d2, 3); }).join(', ') + '] = <b>[' + B.d1.map(function (v) { return S.f(v, 4); }).join(', ') + ']</b>。注意 σ′ 最大只有 0.25，误差项一下缩小了 4 倍以上。'; }, ['h1', 'h2']],
+  ['反向 ④：隐藏层权重的梯度', function (B) { return '∂ℒ/∂W⁽¹⁾ = δ⁽¹⁾xᵀ = [[' + B.gW1[0].map(function (v) { return S.f(v, 4); }).join(', ') + '], [' + B.gW1[1].map(function (v) { return S.f(v, 4); }).join(', ') + ']]。'; }, ['h1', 'h2', 'e1']],
+  ['核对：数值微分', function (B) { return '给 w⁽¹⁾₁₁ 加减 10⁻⁵，用中心差分算 ∂ℒ/∂w⁽¹⁾₁₁ ≈ <b>' + S.f(B.num, 6) + '</b>，反向传播给出 <b>' + S.f(B.gW1[0][0], 6) + '</b>。一致。实际框架里这种“梯度检查”常用于调试。'; }, ['e1']]
+];
+function bpDraw(k) {
+  var g = $('#bpG'); g.innerHTML = '';
+  var on = BPS[k][2];
+  function box(id, x, y, t1, t2, cls2) {
+    S.svg('rect', { x: x - 48, y: y - 26, width: 96, height: 52, class: on.indexOf(id) >= 0 ? 'on' : '' }, g);
+    S.svg('text', { x: x, y: y - 6, 'text-anchor': 'middle', text: t1 }, g);
+    if (t2) S.svg('text', { x: x, y: y + 16, 'text-anchor': 'middle', text: t2, class: cls2 || 'v' }, g);
+  }
+  [[60, 60], [60, 160]].forEach(function (p, i) { [[220, 50], [220, 170]].forEach(function (q) { S.svg('path', { d: 'M' + (p[0] + 48) + ' ' + p[1] + ' L' + (q[0] - 48) + ' ' + q[1], class: '' }, g); }); });
+  [[220, 50], [220, 170]].forEach(function (p) { S.svg('path', { d: 'M' + (p[0] + 48) + ' ' + p[1] + ' L' + (372) + ' 110' }, g); });
+  var B = BP;
+  box('x1', 60, 60, 'x₁ = 1.0', ''); box('x2', 60, 160, 'x₂ = 0.5', '');
+  var back = k >= 4;
+  box('h1', 220, 50, 'a₁ = ' + S.f(B.a1[0], 3), back ? 'δ = ' + S.f(B.d1[0], 4) : 'z = ' + S.f(B.z1[0], 2), back ? 'g' : 'v');
+  box('h2', 220, 170, 'a₂ = ' + S.f(B.a1[1], 3), back ? 'δ = ' + S.f(B.d1[1], 4) : 'z = ' + S.f(B.z1[1], 2), back ? 'g' : 'v');
+  if (k >= 1) box('o', 372 + 20, 110, 'ŷ = ' + S.f(B.yh, 3), k >= 2 ? 'δ = ' + S.f(B.d2, 3) : 'ℒ = ' + S.f(B.L, 3), k >= 2 ? 'g' : 'v');
+  else box('o', 392, 110, 'ŷ = ?', '');
+  $('#bpW').innerHTML = '<b>' + BPS[k][0] + '</b><br>' + BPS[k][1](B);
+  $('#bpT').innerHTML = '<tr><td>W⁽¹⁾</td><td class="n">[[0.5, −0.3], [0.2, 0.8]]</td></tr><tr><td>b⁽¹⁾</td><td class="n">[0, 0.1]</td></tr><tr><td>w⁽²⁾ / b⁽²⁾</td><td class="n">[0.7, −0.4] / 0.05</td></tr>';
+}
+S.stepper($('#bpS'), BPS.length, bpDraw, BPS.map(function (s) { return s[0]; }));
+S.notes($('#n-bp'), {
+  c: [
+    ['误差项', 'δ⁽ˡ⁾ = ∂ℒ/∂z⁽ˡ⁾：损失对该层净输入的敏感程度。'],
+    ['反向传播', '误差项从输出层一层层往回算，每层只用到下一层的 δ。'],
+    ['分母布局', '标量对列向量求导得到同维列向量；原书推导都用它。'],
+    ['梯度检查', '用数值微分核对反向传播的结果。']
+  ],
+  p: [
+    ['递推', 'δ⁽ˡ⁾ = f′(z⁽ˡ⁾) ⊙ (W⁽ˡ⁺¹⁾)ᵀδ⁽ˡ⁺¹⁾'],
+    ['起点', 'δ⁽ᴸ⁾ = ŷ − y（Logistic / Softmax + 交叉熵）'],
+    ['梯度', '∂ℒ/∂W⁽ˡ⁾ = δ⁽ˡ⁾(a⁽ˡ⁻¹⁾)ᵀ，∂ℒ/∂b⁽ˡ⁾ = δ⁽ˡ⁾'],
+    ['三步', '前向算 z、a → 反向算 δ → 算梯度并更新。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 自动微分 ---------- */
+var adMode = 'fwd', adStepN = 0;
+function adVals() {
+  var x = +$('#adXs').value, w = +$('#adWs').value, b = +$('#adBs').value;
+  var h1 = x * w, h2 = h1 + b, h3 = -h2, h4 = Math.exp(h3), h5 = h4 + 1, h6 = 1 / h5;
+  var loc = [x, 1, -1, h4, 1, -1 / (h5 * h5)]; // ∂h1/∂w, ∂h2/∂h1, ∂h3/∂h2, ∂h4/∂h3, ∂h5/∂h4, ∂h6/∂h5
+  return { x: x, w: w, b: b, h: [h1, h2, h3, h4, h5, h6], loc: loc };
+}
+var AD_N = [['h₁', 'x × w'], ['h₂', 'h₁ + b'], ['h₃', '−h₂'], ['h₄', 'exp(h₃)'], ['h₅', 'h₄ + 1'], ['h₆', '1/h₅']];
+function adDraw(k) {
+  adStepN = k;
+  var V = adVals();
+  ['X', 'W', 'B'].forEach(function (s) { $('#ad' + s).textContent = S.f(+$('#ad' + s + 's').value, 1); });
+  var g = $('#adG'); g.innerHTML = '';
+  var acc = [], a;
+  if (adMode === 'fwd') { a = 1; for (var i = 0; i < 6; i++) { a *= V.loc[i]; acc.push(a); } }
+  else { a = 1; var tmp = []; for (var j = 5; j >= 0; j--) { tmp[j] = a; a *= V.loc[j]; } acc = tmp; acc.push(a); }
+  for (var n = 0; n < 6; n++) {
+    var cx = 70 + n * 122, cy = 70;
+    var active = adMode === 'fwd' ? n <= k - 1 : (5 - n) <= k - 1;
+    var cur = adMode === 'fwd' ? n === k - 1 : (5 - n) === k - 1;
+    S.svg('rect', { x: cx - 52, y: cy - 34, width: 104, height: 68, class: cur ? 'on' : '' }, g);
+    S.svg('text', { x: cx, y: cy - 12, 'text-anchor': 'middle', text: AD_N[n][0] + ' = ' + AD_N[n][1] }, g);
+    S.svg('text', { x: cx, y: cy + 10, 'text-anchor': 'middle', text: '= ' + S.f(V.h[n], 3), class: 'v' }, g);
+    if (active) S.svg('text', { x: cx, y: cy + 29, 'text-anchor': 'middle', class: 'g', text: (adMode === 'fwd' ? '∂h' + (n + 1) + '/∂w = ' : '∂f/∂h' + (n + 1) + ' = ') + S.f(adMode === 'fwd' ? acc[n] : acc[n], 3) }, g);
+    if (n < 5) S.svg('path', { d: 'M' + (cx + 52) + ' ' + cy + ' L' + (cx + 70) + ' ' + cy }, g);
+    S.svg('text', { x: cx + (n < 5 ? 61 : 0), y: cy + 58 + (n % 2) * 18, 'text-anchor': 'middle', text: n < 6 ? '局部 ' + S.f(V.loc[n], 2) : '' }, g);
+  }
+  var fin = adMode === 'fwd' ? acc[5] : acc[6];
+  var msg;
+  if (k === 0) msg = '前向计算已经完成，各节点的值（蓝色）都已知。' + (adMode === 'fwd' ? '前向模式：从 ∂h₁/∂w = x 开始，<b>顺着</b>计算方向，每过一个节点乘上它的局部导数。' : '反向模式：从 ∂f/∂h₆ = 1 开始，<b>逆着</b>计算方向，每过一个节点乘上它的局部导数。');
+  else if (k < 6) msg = adMode === 'fwd' ? '∂h' + k + '/∂w = ∂h' + k + '/∂h' + (k - 1) + ' × ∂h' + (k - 1) + '/∂w = ' + S.f(acc[k - 1], 4) + '。' : '∂f/∂h' + (7 - k) + ' = ∂f/∂h' + (8 - k) + ' × ∂h' + (8 - k) + '/∂h' + (7 - k) + ' = ' + S.f(acc[6 - k], 4) + '。';
+  else msg = '<b>∂f/∂w = ' + S.f(fin, 4) + '</b>' + (V.x === 1 && V.w === 0 && V.b === 0 ? '，和原书的 0.25 一致。' : '。') + (adMode === 'fwd' ? ' 前向模式一趟只算出了对 w 这一个输入的导数；要得到 ∂f/∂b 还得再走一趟。' : ' 反向模式这一趟顺带得到了 f 对每个中间节点的导数——∂f/∂b 就是 ∂f/∂h₂ × 1 = ' + S.f(acc[1], 4) + '，不用再走一趟。参数越多，这个优势越大。');
+  $('#adW2').innerHTML = msg;
+}
+var adGo = S.stepper($('#adS'), 7, adDraw);
+S.seg($('#adM'), function (v) { adMode = v; adGo(0); });
+['adXs', 'adWs', 'adBs'].forEach(function (id) { $('#' + id).addEventListener('input', function () { adDraw(adStepN); }); });
+(function () {
+  var pts1 = [], pts2 = [], d = Math.cos(1);
+  for (var e = -16; e <= 0.01; e += 0.25) {
+    var hh = Math.pow(10, e);
+    var f1 = Math.abs((Math.sin(1 + hh) - Math.sin(1)) / hh - d), f2 = Math.abs((Math.sin(1 + hh) - Math.sin(1 - hh)) / (2 * hh) - d);
+    pts1.push([e, Math.log10(Math.max(f1, 1e-17))]); pts2.push([e, Math.log10(Math.max(f2, 1e-17))]);
+  }
+  var best1 = pts1.reduce(function (a, p) { return p[1] < a[1] ? p : a; }), best2 = pts2.reduce(function (a, p) { return p[1] < a[1] ? p : a; });
+  var draw = S.chart($('#ndC'), { h: 240, x: [-16, 0], y: [-12, 1], xt: [-16, -12, -8, -4, 0], yt: [-12, -8, -4, 0], xl: 'log₁₀Δx', ml: 40,
+    curves: [{ pts: pts1, c: 'c2', label: '前向差分' }, { pts: pts2, c: 'c1', label: '中心差分' }],
+    dots: [{ x: best1[0], y: best1[1], c: 'c2' }, { x: best2[0], y: best2[1], c: 'c1' }] });
+  draw();
+  S.guess($('#ndG'), { q: '用前向差分 (f(x+Δx) − f(x))/Δx 求导，双精度下误差最小的 Δx 大约是 10 的几次方？（填指数，如 −3）', ans: best1[0], fmt: function (x) { return S.f(x, 1); }, why: '前向差分的截断误差 ∝ Δx，舍入误差 ∝ ε/Δx（ε ≈ 10⁻¹⁶），两者平衡在 Δx ≈ √ε ≈ 10⁻⁸，最小误差约 10⁻⁸。中心差分截断误差 ∝ Δx²，最优 Δx 约 10⁻⁵，误差能降到 10⁻¹¹ 左右。不管怎么调，数值微分都达不到自动微分的机器精度。', hint: '例如 −3' });
+})();
+S.guess($('#fmG'), { q: '一个有 10⁹ 个参数、输出标量损失的模型，用<strong>前向模式</strong>求完整梯度需要遍历计算图多少次？（反向模式只要 1 次）', unit: '次', ans: 1e9, fmt: function (x) { return x >= 1e4 ? S.sci(x, 0) : S.f(x, 0); }, why: '前向模式一次只能得到对一个输入方向的导数（一个雅可比向量积），所以要 N = 10⁹ 次；反向模式一次得到标量对所有输入的导数（一个向量雅可比积）。这就是神经网络训练都用反向模式的原因。' });
+S.notes($('#n-ad'), {
+  c: [
+    ['数值微分', '有限差分近似，Δx 小了舍入误差、大了截断误差；O(N²)。'],
+    ['符号微分', '对表达式做代数变换，得到导数表达式。'],
+    ['自动微分', '把数值程序拆成基本操作构成计算图，边算边累积导数。'],
+    ['前向 / 反向模式', '顺 / 逆计算方向累积；对应 JVP / VJP。'],
+    ['静态 / 动态计算图', '先建图再执行（利于优化）/ 运行时即时建图（灵活、易调试）。']
+  ],
+  p: [
+    ['中心差分', '(f(x+Δx) − f(x−Δx))/2Δx，截断误差更小。'],
+    ['选择模式', 'ℝᴺ → ℝᴹ：N 小 M 大用前向；N 大 M 小用反向。'],
+    ['反向传播 =', '神经网络上的反向模式自动微分。'],
+    ['反向模式的代价', '要保存前向中间结果；大模型配合重计算省显存。']
+  ]
+});
+
+/* ---------- 梯度消失 ---------- */
+var vgAct = 'sig';
+var vgChart = S.chart($('#vgC'), { h: 240, x: [0, 12], y: [-8, 2], xt: [1], yt: [-8, -6, -4, -2, 0, 2], xl: '层号 l（右边是输出层）', yl: 'log₁₀‖δ⁽ˡ⁾‖', ml: 40 });
+function vg() {
+  var L = +$('#vgLs').value, sc = +$('#vgSs').value, n = 32;
+  $('#vgL').textContent = L; $('#vgS').textContent = '×' + S.f(sc, 2);
+  var r = S.rng(17), f = ACT[vgAct][0], df = ACT[vgAct][1];
+  var base = vgAct === 'relu' ? Math.sqrt(2 / n) : vgAct === 'sig' ? Math.sqrt(1 / n) * 4 : Math.sqrt(1 / n);
+  var Ws = [], zs = [], a = []; for (var i = 0; i < n; i++) a.push(S.randn(r));
+  for (var l = 0; l < L; l++) {
+    var W = []; for (var i2 = 0; i2 < n; i2++) { var row = []; for (var j = 0; j < n; j++) row.push(S.randn(r) * base * sc); W.push(row); }
+    Ws.push(W);
+    var z = W.map(function (row) { var s = 0; for (var j2 = 0; j2 < n; j2++) s += row[j2] * a[j2]; return s; });
+    zs.push(z); a = z.map(f);
+  }
+  var d = []; for (var k = 0; k < n; k++) d.push(S.randn(r) / Math.sqrt(n));
+  var norms = [];
+  for (var l2 = L - 1; l2 >= 0; l2--) {
+    d = d.map(function (v, i3) { return v * df(zs[l2][i3]); });
+    norms[l2] = Math.sqrt(d.reduce(function (s, v) { return s + v * v; }, 0));
+    if (l2 > 0) { var W2 = Ws[l2], nd = []; for (var j3 = 0; j3 < n; j3++) { var s2 = 0; for (var i4 = 0; i4 < n; i4++) s2 += W2[i4][j3] * d[i4]; nd.push(s2); } d = nd; }
+  }
+  var pts = norms.map(function (v, i) { return [i + 1, Math.log10(Math.max(v, 1e-30))]; });
+  var lo = Math.min(-8, Math.floor(Math.min.apply(null, pts.map(function (p) { return p[1]; })))), hi = Math.max(2, Math.ceil(Math.max.apply(null, pts.map(function (p) { return p[1]; }))));
+  var yt = []; for (var t = lo; t <= hi; t += Math.max(1, Math.ceil((hi - lo) / 6))) yt.push(t);
+  vgChart({ x: [0.5, L + 0.5], xt: [1, Math.ceil(L / 2), L], y: [lo, hi], yt: yt, curves: [{ pts: pts, c: 'c2' }], dots: pts.map(function (p) { return { x: p[0], y: p[1], c: 'c2', r: 3.5 }; }) });
+  var ratio = norms[0] / norms[L - 1];
+  $('#vgW').innerHTML = '从输出层（第 ' + L + ' 层）传到第 1 层，误差项的大小变成了原来的 <b>' + (ratio < 1e-3 || ratio > 1e3 ? S.sci(ratio, 1) : S.f(ratio, 3)) + '</b> 倍。' +
+    (ratio < 0.05 ? ' <b>梯度消失</b>：底层收到的训练信号比顶层弱得多。' : ratio > 20 ? ' <b>梯度爆炸</b>：底层的更新会大到失控。' : ' 误差在各层大致保持了量级。') +
+    (vgAct === 'sig' ? ' Logistic 的导数最大 0.25，即使把初始化放大 4 倍来补偿，深了还是会衰减。' : vgAct === 'relu' ? ' ReLU 正半轴导数为 1，配合 He 初始化（×1.0）能较好保持量级；把尺度调到 ×0.6 或 ×1.6 看看。' : '');
+}
+['vgLs', 'vgSs'].forEach(function (id) { $('#' + id).addEventListener('input', vg); });
+S.seg($('#vgA'), function (v) { vgAct = v; vg(); }); vg();
+S.guess($('#vgG'), { q: '如果每层激活函数的导数都取 Logistic 导数的最大值 0.25（权重的作用先不管），误差传过 10 层后剩下原来的多少？', ans: Math.pow(0.25, 10), fmt: function (x) { return S.sci(x, 2); }, why: '0.25¹⁰ ≈ 9.5 × 10⁻⁷，还不到百万分之一——而且这已经是最乐观的情况，饱和区的导数远小于 0.25。所以原书说 Sigmoid 型函数的饱和性是梯度消失的主因。' });
+var ncMode = 'sq';
+var ncChart = S.chart($('#ncC'), { h: 240, x: [-8, 8], y: [0, 1.1], xt: [-8, -4, 0, 4, 8], yt: [0, 0.5, 1], xl: 'w₁' });
+function ncL(w1, w2) { var yh = S.sigmoid(w2 * S.sigmoid(w1)); return ncMode === 'sq' ? (1 - yh) * (1 - yh) : -Math.log(yh); }
+function nc() {
+  var w2 = +$('#ncW2s').value; $('#ncW2').textContent = S.f(w2, 1);
+  var mx = 0; for (var t = -8; t <= 8; t += 0.1) mx = Math.max(mx, ncL(t, w2));
+  var top = Math.max(0.3, mx * 1.1);
+  ncChart({ y: [0, top], yt: [0, Math.round(top * 50) / 100, Math.round(top * 100) / 100], curves: [{ f: function (w1) { return ncL(w1, w2); }, c: 'c2' }] });
+  $('#ncW').innerHTML = (ncMode === 'sq' ? '平方损失' : '交叉熵') + '关于 w₁ 的切面是一条 S 形曲线：两端是<b>平台</b>（σ(w₁) 饱和，梯度接近 0），中间有拐点——' + (w2 > 0 ? '它不是凸函数（凸函数的切面不会先凹后凸）。' : 'w₂ ≤ 0 时 ŷ 不会超过 0.5，怎么调 w₁ 损失都下不来，只能先改 w₂。') + ' 二维的完整损失面就是这种切面拼起来的，有平台也有弯曲的山谷。' + (ncMode === 'ce' ? ' 交叉熵在预测很差时数值更大，梯度信号更强。' : '');
+}
+$('#ncW2s').addEventListener('input', nc);
+S.seg($('#ncS'), function (v) { ncMode = v; nc(); }); nc();
+S.notes($('#n-vg'), {
+  c: [
+    ['非凸', '即使 ŷ = σ(w₂σ(w₁x)) 这种最简单网络，损失关于参数也是非凸的。'],
+    ['梯度消失', '误差逐层乘以小于 1 的导数，指数衰减，底层学不动。'],
+    ['梯度爆炸', '权重范数大于 1 时误差指数增长，可能溢出成 NaN。'],
+    ['梯度截断', '梯度范数超过阈值时等比例缩小。']
+  ],
+  p: [
+    ['Sigmoid 导数', 'σ′ ∈ [0, 0.25]；tanh′ ∈ [0, 1]'],
+    ['缓解手段', 'ReLU、Xavier / He 初始化、规范化、残差连接（第 7 篇）。'],
+    ['加大学习率有用吗', '不能根治：各层衰减程度不同，统一放大会让顶层先发散（习题 4-13）。']
+  ]
+});
+
+/* ---------- 激活函数图谱 ---------- */
+var AF = [
+  ['Logistic', 'c1', function (x) { return S.sigmoid(x); }, function (x) { var s = S.sigmoid(x); return s * (1 - s); }, true],
+  ['Tanh', 'c3', Math.tanh, function (x) { var t = Math.tanh(x); return 1 - t * t; }, true],
+  ['ReLU', 'c2', function (x) { return Math.max(0, x); }, function (x) { return x > 0 ? 1 : 0; }, true],
+  ['Leaky ReLU', 'dim', function (x) { return x > 0 ? x : 0.1 * x; }, function (x) { return x > 0 ? 1 : 0.1; }, false],
+  ['ELU', 'ok', function (x) { return x > 0 ? x : Math.exp(x) - 1; }, function (x) { return x > 0 ? 1 : Math.exp(x); }, false],
+  ['Softplus', 'ink', function (x) { return Math.log(1 + Math.exp(x)); }, function (x) { return S.sigmoid(x); }, false],
+  ['Swish', 'c1', null, null, false],
+  ['GELU', 'c2', function (x) { return x * Phi(x); }, function (x) { return Phi(x) + x * Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI); }, false]
+];
+var acDer = false;
+function swF(x) { var b = +$('#acBs').value; return x * S.sigmoid(b * x); }
+function swD(x) { var b = +$('#acBs').value, s = S.sigmoid(b * x); return s + b * x * s * (1 - s); }
+AF[6][2] = swF; AF[6][3] = swD;
+(function () {
+  var box = $('#acT');
+  AF.forEach(function (a, i) {
+    var b = h('button', { type: 'button', 'aria-pressed': a[4] ? 'true' : 'false', html: '<i style="background:var(--' + ({ c1: 's1', c2: 's2', c3: 's3', ok: 'ok', dim: 'dim', ink: 'ink' })[a[1]] + ')"></i>' + a[0] + (i >= 6 ? '（虚线）' : '') }, box);
+    b.addEventListener('click', function () { a[4] = !a[4]; b.setAttribute('aria-pressed', String(a[4])); ac(); });
+  });
+})();
+var acChart = S.chart($('#acC'), { h: 300, x: [-5, 5], y: [-1.5, 4], xt: [-4, -2, 0, 2, 4], yt: [-1, 0, 1, 2, 3, 4] });
+function ac() {
+  $('#acB').textContent = S.f(+$('#acBs').value, 1);
+  acChart({ y: acDer ? [-0.2, 1.3] : [-1.5, 4], yt: acDer ? [0, 0.25, 0.5, 1] : [-1, 0, 1, 2, 3, 4],
+    curves: AF.filter(function (a) { return a[4]; }).map(function (a, i) { return { f: acDer ? a[3] : a[2], c: a[1], dash: AF.indexOf(a) >= 6, w: 2.5 }; }) });
+  var on = AF.filter(function (a) { return a[4]; }).map(function (a) { return a[0]; });
+  var b = +$('#acBs').value;
+  $('#acW').innerHTML = acDer ? '导数图：Logistic 最高只到 0.25（虚线水平参考），两端趋于 0——<b>两端饱和</b>；Tanh 最高 1；ReLU 在负半轴导数恒为 0（死区），正半轴恒为 1；Leaky ReLU 负半轴保留 0.1；GELU / Swish 的导数在 0 附近平滑过渡，还会略超过 1。' :
+    '函数图。' + (on.indexOf('Swish') >= 0 ? ' Swish 当前 β = ' + S.f(b, 1) + '：' + (b < 0.05 ? '退化成直线 x/2。' : b > 5 ? '已经很接近 ReLU。' : Math.abs(b - 1) < 0.05 ? '这就是 SiLU，注意负半轴有一个小的下凹（非单调）。' : '介于线性和 ReLU 之间。') : '') + (on.indexOf('GELU') >= 0 ? ' GELU 和 β ≈ 1.702 的 Swish 几乎重合。' : '');
+}
+S.seg($('#acD'), function (v) { acDer = v === 'd'; ac(); });
+$('#acBs').addEventListener('input', ac); ac();
+S.notes($('#n-act'), {
+  c: [
+    ['饱和', 'x → ±∞ 时导数 → 0；两端都满足叫两端饱和。'],
+    ['零中心化', '输出均值在 0 附近（Tanh 是，Logistic、ReLU 不是）；否则会偏置偏移、减慢收敛。'],
+    ['死亡 ReLU', '某神经元在所有数据上都不激活，梯度恒为 0，再也恢复不了。'],
+    ['自门控', 'Swish 用 σ(βx) 作软性门控制 x 通过多少。']
+  ],
+  p: [
+    ['激活函数三条要求', '连续可导的非线性；函数与导数简单；导数值域适中。'],
+    ['ReLU 族', 'Leaky ReLU（γ = 0.01）、PReLU（γ 可学）、ELU（γ(eˣ − 1)）、Softplus（log(1+eˣ)）'],
+    ['Swish', 'β = 0 → x/2；β = 1 → SiLU；β → ∞ → ReLU'],
+    ['GELU', 'xΦ(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³))) ≈ xσ(1.702x)']
+  ]
+});
+
+/* ---------- Maxout ---------- */
+var mxChart = S.chart($('#mxC'), { h: 220, x: [-2, 2], y: [-0.5, 4], xt: [-2, -1, 0, 1, 2], yt: [0, 1, 2, 3, 4] });
+function mx() {
+  var K = +$('#mxKs').value; $('#mxK').textContent = K;
+  var cs = []; for (var k = 0; k < K; k++) cs.push(K === 1 ? 0 : -2 + 4 * (k + 0.5) / K);
+  function lineAt(c) { return function (x) { return 2 * c * x - c * c; }; }
+  function F(x) { return Math.max.apply(null, cs.map(function (c) { return lineAt(c)(x); })); }
+  var err = 0; for (var x = -2; x <= 2; x += 0.01) err = Math.max(err, x * x - F(x));
+  mxChart({ curves: cs.map(function (c) { return { f: lineAt(c), c: 'dim', w: 1 }; }).concat([{ f: function (x) { return x * x; }, c: 'ok', w: 2 }, { f: F, c: 'c2', w: 3 }]) });
+  $('#mxW').innerHTML = '灰线是 K 个 z<sub>k</sub> = w<sub>k</sub>x + b<sub>k</sub>，橙线是它们的最大值，绿线是 x²。K = ' + K + ' 时最大误差 ' + S.f(err, 3) + '。凸函数都能这样用“切线取最大”逼近。';
+}
+$('#mxKs').addEventListener('input', mx); mx();
+S.notes($('#n-glu'), {
+  c: [
+    ['GLU', '值分支 ⊙ 门分支，再接输出线性层；不是激活函数，是带参数的模块。'],
+    ['SwiGLU / GeGLU', '门分支用 Swish / GELU；Transformer 前馈子层的常见形式。'],
+    ['Maxout', 'K 组线性函数取最大；任意凸函数的分段线性近似。']
+  ],
+  p: [
+    ['GLU', 'h = φ(W_g x + b_g) ⊙ (W_v x + b_v)，o = W_o h + b_o'],
+    ['Leaky ReLU 与 Maxout', 'LeakyReLU(x) = max(x, γx)，最简单的 Maxout。'],
+    ['演化脉络', '从“能表示复杂函数”走向“更易训练、更适合深层和大规模”。']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 小结 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 每层算什么、为什么要深', '每层是仿射变换 + 非线性。通用近似定理保证一层隐藏层“能表示”，但不保证学得到、泛化好；实践中多层能复用中间特征，用更少的神经元表示复杂函数。'],
+    ['② δ 与自动微分', 'δ⁽ˡ⁾ = ∂ℒ/∂z⁽ˡ⁾，从输出层 ŷ − y 开始，按 δ⁽ˡ⁾ = f′ ⊙ Wᵀδ⁽ˡ⁺¹⁾ 往回传，参数梯度 = δ 与上一层输出的外积。这就是神经网络上的反向模式自动微分：一次反向遍历得到标量损失对所有参数的梯度。'],
+    ['③ 梯度消失与激活函数', '误差每层乘一次 f′，Sigmoid 导数 ≤ 0.25 且两端饱和，深了就消失。ReLU 正半轴导数为 1 缓解了它（代价是死亡 ReLU）；GELU / Swish 平滑；SwiGLU 是门控模块，成为大模型 FFN 的常用结构。']
+  ],
+  p: [
+    ['原书一句话', '非线性结构的演化，反映了神经网络设计从“能够表示复杂函数”走向“更加易于训练、更适合深层和大规模模型”。'],
+    ['下一篇', '全连接参数太多、不懂图像的局部结构：卷积神经网络。']
+  ],
+  ph: '一句话'
+});

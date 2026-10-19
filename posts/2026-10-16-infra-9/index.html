@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分布式推理：PD 分离、AF 分离、专家放置与 KV 分布</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（九）：PD 分离的 KV 交接与阶段配比、同构分离为何不涨吞吐、AF 与 CPU/GPU 协作的复用门槛、大 EP 的 skew 与专家副本回本批数、KV 多级存储与缓存亲和性路由、八卡部署的排空期限与成本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .l1 { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.rsvg .l2 { stroke: var(--s2); stroke-width: 2.5; fill: none; }
+.rsvg .gl { stroke: var(--hair); stroke-dasharray: 3 3; }
+.cards2 { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; margin: 8px 0; }
+.cards2 button { font: inherit; font-size: 13px; padding: 10px 2px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.cards2 button.p { border-color: var(--s1); background: var(--s1-soft); color: var(--s1); }
+.cards2 button.d { border-color: var(--s2); background: color-mix(in srgb, var(--s2) 15%, transparent); color: var(--s2); }
+.cards2 small { display: block; font-size: 11px; color: var(--ink-3); }
+</style>
+</head>
+<body data-series="infra-series" data-part="9">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 09</span><span>对应原书第 9 章</span><span>约 40 分钟</span></p>
+  <h1>同一个请求，<em>拆到哪几台机器上</em></h1>
+  <p class="lead">八张卡、每秒 3.5 个请求、输入 8192 输出 1025——四张 A100 加四张 H20，到底该怎么分？原书把 PD 分离、AF 分离、专家副本和共享 KV 四件事放在同一组资源上比：同构分离其实不涨吞吐，异构分离涨 1.51 倍；前缀一命中最佳配比就变了；专家副本在同机三批回本、跨机要二十三批。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" aria-current="page" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#pd">PD 分离</a><a href="#ratio">阶段配比</a><a href="#af">AF 与 CPU</a><a href="#skew">专家 skew</a><a href="#replica">专家副本</a><a href="#kv">KV 分布</a><a href="#route">路由</a><a href="#plan">八卡部署</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>把 prefill 和 decode 拆开，什么时候真能涨吞吐？配比怎么定？</li>
+  <li>EP 越大为什么越不均衡？专家副本要跑几批才回本？</li>
+  <li>缓存命中的机器排队 250 ms，没缓存的只等 20 ms，该发给谁？</li>
+</ol></div>
+
+<section class="part" id="pd">
+  <div class="part-head"><h2>PD 分离：先算那份要交接的 KV</h2><span class="meta">原书 9.2.1–9.2.2 节</span></div>
+  <div class="sec-lede">
+    <p>prefill 一次处理很多 token（算力受限），decode 每步只处理一个（带宽受限）。混在一起跑，长 prefill 会推迟已有请求的输出。PD 分离把两个阶段放进不同的池，各有独立队列和配比；代价是<strong>要把上下文 KV 从 P 交给 D</strong>，而且两个池都要有完整权重。</p>
+    <p>交接量先算清楚：<strong>V<sub>KV</sub> = 2nLh<sub>kv</sub>d<sub>h</sub>b</strong>。Qwen3-8B（36 层、8 个 KV 头、头维 128、BF16）每 token 144 KiB，8192 token 是 <strong>1.125 GiB</strong>，经 25 GB/s 链路 48.3 ms（启动 5 μs 只占万分之一）。MLA 存的是上投影之前的潜变量：<strong>V = nL(d<sub>c</sub> + d<sub>r</sub>)b</strong>，DeepSeek-V3（61 层、512 + 64）每 token 68.6 KiB，8192 token 只有 549 MiB，同一条链路 23.0 ms。</p>
+    <p>对比很说明问题：若把 V3 的 128 个头也展开保存，每 token 要 4.77 MiB，是紧凑表示的 <strong>71 倍</strong>；而紧凑 MLA 比只有 8 个 KV 头的 Qwen3-8B GQA 还小，只有它的 0.48 倍。</p>
+    <p>持续到达时链路还决定队列涨不涨：每秒 8 次 GQA 交接要 9.7 GB/s，16 次要 19.3 GB/s。<strong>100 GbE 单向 12.5 GB/s 能撑前者、撑不住后者</strong>（每秒积累 6.8 GB）；换成紧凑 MLA，两种到达率都只要 4.6 和 9.2 GB/s，同一个端口都能满足。</p>
+    <p class="go">先猜 GQA 和紧凑 MLA 的交接量差多少。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">KV 交接：状态大小与链路</p>
+    <div id="hdG"></div>
+    <div class="selrow"><span>状态表示</span><div class="seg" id="hdF"><button data-v="gqa" aria-pressed="true">Qwen3-8B BF16 GQA</button><button data-v="mla">DeepSeek-V3 紧凑 MLA</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>上下文（K token） <output id="hdL">8</output></span><input type="range" id="hdLs" min="1" max="128" value="8"></label>
+      <label class="ctl"><span>链路带宽（GB/s） <output id="hdB">25</output></span><input type="range" id="hdBs" min="5" max="100" step="5" value="25"></label>
+      <label class="ctl"><span>到达率（请求/s） <output id="hdR">8</output></span><input type="range" id="hdRs" min="1" max="40" value="8"></label>
+    </div>
+    <div class="read"><div><div class="v" id="hdV">0</div><div class="k">单请求交接量</div></div><div class="hl"><div class="v" id="hdT">0</div><div class="k">单份交接时间</div></div><div class="warn"><div class="v" id="hdN">0</div><div class="k">持续需要的带宽</div></div></div>
+    <p class="verdict3" id="hdW"></p>
+  </div>
+  <div class="notes" id="n-pd"></div>
+</section>
+
+<section class="part" id="ratio">
+  <div class="part-head"><h2>配比：同构分离不涨，异构分离涨 1.51 倍</h2><span class="meta">原书 9.2.3–9.2.4 节</span></div>
+  <div class="sec-lede">
+    <p>每请求的资源需求 <strong>d<sub>P</sub> = L<sub>new</sub>/r<sub>P</sub>，d<sub>D</sub> = (G−1)/r<sub>D</sub></strong>。两种卡恰好强弱相反：A100 是 312 TFLOP/s + 2039 GB/s，H20 是 148 TFLOP/s + 4096 GB/s（<strong>算力不到一半，带宽约两倍</strong>）。按峰值 50% 的有效能力算 8192 输入 / 1025 输出的请求：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>卡</th><th>P 能力（新 token/s）</th><th>D 能力（调用/s）</th><th>每请求 P GPU·s</th><th>每请求 D GPU·s</th></tr></thead>
+      <tbody><tr><td>A100 80GB SXM</td><td>9566</td><td>580</td><td>0.856</td><td>1.764</td></tr>
+      <tr><td>H20 SXM5 96GB</td><td>4538</td><td>1166</td><td>1.805</td><td>0.878</td></tr></tbody>
+    </table></div>
+    <p><strong>同构（八张 A100）分离不划算</strong>：共置每请求 0.856 + 1.764 = 2.62 GPU·s，八卡 3.05 请求/s；分离只能按整数分（3 张 P 给 3.50、5 张 D 给 2.83），上限 2.83，<strong>反而低 7%</strong>——每请求消耗的 GPU 秒没变，整数划分还让两池能力对不齐。同构分离换来的是延迟稳定（否则每 3.2 秒就要插一次 0.86 秒的 prefill，相当于错过 16 个 55 ms 的 decode 步）。而且同构还有更好的办法：<strong>分块捎带</strong>——A100 一步 decode 访存 55.1 ms、矩阵只要 4.2 ms，空闲算力够处理约 490 个 prefill token，8192 输入分 17 块捎带，首 token 约 0.94 秒而输出间隔不变，八卡上限升到 <strong>4.50</strong> 请求/s。</p>
+    <p><strong>异构分离才是正解</strong>：<strong>μ<sub>PD</sub> = min(μ<sub>P</sub>, μ<sub>D</sub>, B<sub>net</sub>/V<sub>KV</sub>)</strong>。四 A100 做 P（4.67）+ 四 H20 做 D（4.55），链路 20.7，取 <strong>4.55 请求/s</strong>，是共置 3.02 的 1.51 倍。角色对调（H20 做 P）只剩 2.22，不到一半。H20 一步 decode 的空闲算力只够 85 个 prefill token，<strong>分块捎带在异构上替代不了分离</strong>（理想捎带 4.17 &lt; 4.55）。</p>
+    <p>配比一偏就掉：A100 从 P 调到 D，P 降到 3.50（整体被它限制）；H20 从 D 调到 P，D 降到 3.42。<strong>最优配比就是让两池能力接近相等。</strong></p>
+    <p>负载一变配比也得变：前缀命中 6144 个 token 后，A100 的 P 能力从 1.17 涨到 4.20 请求/s，<strong>该把两张 A100 调去做 D</strong>（5.69 请求/s）；输出缩到 129 个 token 后 D 几乎不是瓶颈，<strong>三张 H20 要转去做 P</strong>（6.33，但共置已有 5.84，分离只多 8.5%）。三种请求的最佳 P 卡数分别是 4、2、7。</p>
+    <p class="go">拖动滑块分配八张卡，看两池能力。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四 A100 + 四 H20 的配比</p>
+    <div id="rtG"></div>
+    <div class="selrow"><span>请求类型</span><div class="seg" id="rqS"><button data-v="base" aria-pressed="true">8192 入 / 1025 出</button><button data-v="hit">前缀命中 6144</button><button data-v="short">输出缩到 129</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>A100 分给 P 的张数 <output id="raA">4</output></span><input type="range" id="raAs" min="0" max="4" value="4"></label>
+      <label class="ctl"><span>H20 分给 P 的张数 <output id="raH">0</output></span><input type="range" id="raHs" min="0" max="4" value="0"></label>
+    </div>
+    <div class="cards2" id="raC"></div>
+    <div class="read"><div><div class="v" id="raP">0</div><div class="k">P 池能力</div></div><div><div class="v" id="raD">0</div><div class="k">D 池能力</div></div><div class="hl"><div class="v" id="raM">0</div><div class="k">整体上限 μ_PD</div></div><div class="good"><div class="v" id="raC2">0</div><div class="k">共置对照</div></div></div>
+    <p class="cap" id="raW"></p>
+  </div>
+  <div class="notes" id="n-ratio"></div>
+</section>
+
+<section class="part" id="af">
+  <div class="part-head"><h2>AF 分离：搬权重还是搬激活</h2><span class="meta">原书 9.3 节</span></div>
+  <div class="sec-lede">
+    <p>AF 在层内切：注意力产出隐状态，FFN 或选中的专家处理它再送回。MoE 特别适合——总权重大但每 token 只用一部分。两条路径：<strong>把权重搬给 GPU</strong>（花链路带宽换 GPU 算力），或者<strong>让 CPU 用本地权重算、只传激活</strong>（花 CPU 算力换少得多的流量）。选哪条，看<strong>同一个专家这批收到多少行</strong>。</p>
+    <p>原书用 KTransformers 的实验机算这笔账（两颗 Xeon 8452Y 各 36 核 + 1 TB DDR5，MLC 实测插槽内带宽 220 GB/s；PyTorch AVX-512 kernel 最高 1.8 TFLOP/s，KTransformers 的 AMX kernel 最高 21.3 TFLOP/s；A100 40GB PCIe 取峰值 50% 即 156 TFLOP/s、778 GB/s，PCIe 4.0 按 25 GB/s）。Qwen3-235B-A22B 一个专家 BF16 36 MiB。</p>
+    <p><strong>八个热点专家各处理一个 token</strong>（权重 288 MiB）：CPU 路径读主存 1.37 ms + 激活交接 ≈ 1.46 ms；搬到 GPU 光传权重就 12.1 ms，加启动和计算约 12.5 ms。<strong>低复用时，避免搬大块权重比提高矩阵算力更值钱。</strong>行数多起来之后，天平才倒向 GPU。</p>
+    <p class="go">调每个专家的行数，看两条路径谁快。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">CPU 本地算 vs 搬到 GPU 算</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>活跃专家数 <output id="afE">8</output></span><input type="range" id="afEs" min="1" max="64" value="8"></label>
+      <label class="ctl"><span>每专家收到的行数 <output id="afR">1</output></span><input type="range" id="afRs" min="0" max="9" value="0"></label>
+      <label class="ctl"><span>CPU 矩阵能力（TFLOP/s） <output id="afC">21.3</output></span><input type="range" id="afCs" min="1" max="30" step="0.1" value="21.3"></label>
+    </div>
+    <div id="afBars" class="wide"></div>
+    <p class="verdict3" id="afW"></p>
+    <p class="note">CPU 路径 = max(权重读取 / 220 GB/s, 计算 / CPU 算力) + 激活交接；GPU 路径 = 权重经 PCIe 25 GB/s 搬入 + 计算 / 156 TFLOP/s。每专家 36 MiB、每行 6×4096×1536 FLOPs、激活 8 KiB/行。</p>
+  </div>
+  <div class="notes" id="n-af"></div>
+</section>
+
+<section class="part" id="skew">
+  <div class="part-head"><h2>大 EP：每卡专家越少，越不均衡</h2><span class="meta">原书 9.4.1 节</span></div>
+  <div class="sec-lede">
+    <p>最忙的卡决定一层什么时候算完：<strong>max(F<sub>r</sub>/C<sub>r</sub>, W<sub>r</sub>/B<sub>r</sub>)</strong>。512 次分派放到八张 H100（按峰值 50% 即 494.7 TFLOP/s）：均分时每卡 2.42 GFLOPs、4.9 μs；八个热点专家都在一张卡上时该卡 19.3 GFLOPs、<strong>39.1 μs，八倍</strong>。集中路由把权重读取从 4.5 GiB 降到 288 MiB（利于读取受限），却把最忙卡的计算放大八倍（不利于计算受限）——<strong>先确定瓶颈，再决定追求复用还是分散</strong>。</p>
+    <p>EP 越大，同一个热点越被放大。n = 1024、k = 8、E = 256（8192 次分派、平均每专家 32 行），假设一个专家收到 128 行（4 倍）：<strong>EP8 每卡 32 个专家，热点卡只多 8%；EP32 每卡 8 个，多 36%；EP256 每卡就一个，热点卡 128 行是平均 32 行的 4 倍</strong>。小 EP 里热点被同卡的其他专家冲淡，大 EP 里它独占一张卡。</p>
+    <p>就算没有热点也一样：均匀随机选择时，固定种子模拟 1000 批，<strong>EP8 的最忙卡只比平均多 4%，EP256 多 52%</strong>。两种效应同源——EP 越大，每卡上能相互抵消的专家越少，要等的卡却越多。（DeepSeek 公开的 decode 部署用 EP144、每卡 2 个路由专家，正在曲线右端，所以它额外配了 32 个冗余专家按负载调副本。）</p>
+    <p>通信也跟着偏。原书例 9.5（1024 token × 8 专家 × 8 KiB，两台 HGX H100 之间每方向 200 GB/s）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>分布与路径</th><th>dispatch</th><th>最忙卡计算</th><th>combine</th><th>阶段屏障总计</th></tr></thead>
+      <tbody>
+        <tr><td>四组均衡，跨服务器</td><td>0.336 ms</td><td>0.156 ms</td><td>0.336 ms</td><td>0.827 ms</td></tr>
+        <tr><td>热点组，跨服务器</td><td>0.839</td><td>0.391</td><td>0.839</td><td>2.068</td></tr>
+        <tr><td>均衡，但只剩一条 400 Gbit/s</td><td>1.342</td><td>0.156</td><td>1.342</td><td>2.841</td></tr>
+        <tr><td>热点组，dispatch 改 FP8</td><td>0.419</td><td>0.391</td><td>0.839</td><td>1.649</td></tr>
+        <tr class="on"><td>热点组，两池同在一台 HGX</td><td>0.093</td><td>0.391</td><td>0.093</td><td>0.577</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">跨服务器时两次交换占八成（H100 算一份专家任务 76 ns，网卡传一份 8 KiB 要 164 ns）。<strong>热点让三段都变成 2.5 倍</strong>；只改 dispatch 的精度不会同比缩短 combine 和计算；搬进同一台 HGX 后，热点卡的计算反倒成了最长的一段——<strong>这时该上专家副本，而不是再提带宽</strong>。</p>
+    <p class="go">调 EP 规模和热点倍数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">EP 规模与最忙卡（E = 256、k = 8、n = 1024）</p>
+    <div id="skG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>EP 规模 <output id="skE">8</output></span><input type="range" id="skEs" min="0" max="5" value="0"></label>
+      <label class="ctl"><span>热点专家的倍数 <output id="skH">4</output></span><input type="range" id="skHs" min="1" max="16" value="4"></label>
+    </div>
+    <div class="read"><div><div class="v" id="skA">0</div><div class="k">每卡平均行数</div></div><div class="warn"><div class="v" id="skM">0</div><div class="k">热点卡行数</div></div><div class="hl"><div class="v" id="skR">0</div><div class="k">比平均多</div></div></div>
+    <div id="skBars" class="wide"></div>
+    <p class="cap">原书：热点 4 倍时 EP8 多 8%、EP32 多 36%、EP256 是 4 倍；即使没有热点，纯随机波动也让 EP256 的最忙卡多 52%（EP8 只多 4%）。</p>
+  </div>
+  <div class="notes" id="n-skew"></div>
+</section>
+
+<section class="part" id="replica">
+  <div class="part-head"><h2>专家副本：跑几批才回本</h2><span class="meta">原书 9.4.2–9.4.3 节</span></div>
+  <div class="sec-lede">
+    <p>复制热点专家不改变 top-k 规则（只要权重相同、路由权重用对、合并无误）——<strong>改专家选择规则是改模型行为，两件事要分开评价</strong>。但副本占显存：每卡每层加一个 36 MiB 专家、94 层要 3384 MiB（3.30 GiB）；<strong>只给八个最挤的层各加一个，只要 288 MiB，差近 12 倍</strong>。</p>
+    <p>回本公式：<strong>N<sub>min</sub> = ⌊T<sub>copy</sub>/Δt⌋ + 1</strong>。原书例 9.6（八张 H100，一批 128 token 全选卡 0 上的八个热点专家，复制七个到卡 1–7 共 252 MiB）：卡 0 每批从 0.550 降到 0.309 ms，省 0.240 ms；<strong>经 NVLink（450 GB/s）复制 0.622 ms，第 3 批回本</strong>，持续 16 批净省 3.2 ms、64 批净省 14.8 ms。但<strong>原副本若在另一台服务器上，经 50 GB/s 网卡要 5.32 ms，得到第 23 批才回本</strong>——热点只持续 16 批反而净亏 1.5 ms。</p>
+    <p>CRAFT（SGLang v0.4.8、8 × p4de.24xlarge A100）按层分配副本预算，报告端到端吞吐平均 1.14 倍、最高 1.2 倍。原书提醒：这说明<strong>应把副本预算优先给收益大的层</strong>，不表示随便复制热点都有这个增幅。</p>
+    <p>还有两件实现层的事决定 MFU 为什么达不到峰值。<strong>补齐</strong>：八个本地专家收到 [32,16,8,4,2,1,1,0] 共 64 个有效行，每个非空专家补到 32 行要执行 224 行，全按最大值补要 256 行——<strong>3.5 到 4 倍</strong>。<strong>争用</strong>：均衡分布下 dispatch 0.336 + 计算 0.156 + combine 0.336 = 0.827 ms，分两个 micro-batch 流水理想情况 0.581 ms（省 0.246）；但<strong>如果网卡 DMA 和 GEMM 抢 HBM 让两次通信各慢 49%，流水就回到 0.827 ms——通信确实重叠了，整批却没变快</strong>（反过来专家计算要慢 3.1 倍才会抵消同样的收益）。</p>
+    <p class="go">先猜同机复制几批回本。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">专家副本的回本批数</p>
+    <div id="rpG"></div>
+    <div class="selrow"><span>复制路径</span><div class="seg" id="rpP"><button data-v="450" aria-pressed="true">同机 NVLink 450 GB/s</button><button data-v="50">跨机网卡 50 GB/s</button></div></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>复制的专家数 <output id="rpN">7</output></span><input type="range" id="rpNs" min="1" max="16" value="7"></label>
+      <label class="ctl"><span>每批节省 Δt（ms） <output id="rpD">0.240</output></span><input type="range" id="rpDs" min="0.02" max="2" step="0.01" value="0.24"></label>
+      <label class="ctl"><span>热点持续批数 <output id="rpB">16</output></span><input type="range" id="rpBs" min="1" max="200" value="16"></label>
+    </div>
+    <div class="read"><div><div class="v" id="rpT">0</div><div class="k">复制耗时 T_copy</div></div><div class="hl"><div class="v" id="rpM">0</div><div class="k">回本批数 N_min</div></div><div class="good"><div class="v" id="rpS">0</div><div class="k">净收益</div></div></div>
+    <p class="verdict3" id="rpW"></p>
+  </div>
+  <div class="notes" id="n-replica"></div>
+</section>
+
+<section class="part" id="kv">
+  <div class="part-head"><h2>KV 分布：缓存键、多级存储与重启后的页</h2><span class="meta">原书 9.5.1–9.5.3 节</span></div>
+  <div class="sec-lede">
+    <p><strong>“相同文本”不足以确定能复用</strong>：模型和 adapter 版本、token 序列、位置索引、状态格式、编码配置都要进缓存键——同样的 token 配不同 adapter 投影出的 K、V 就不同；同样的后缀接在不同前文后面，注意力看到的上下文也不同。滑动窗口和递推状态还要带上对应的 token 位置索引和更新时刻。</p>
+    <p><strong>容量相加不等于共享。</strong>两个实例各有 4 GiB 私有主机缓存时，同一份 1.125 GiB 前缀两边各存一份共占 2.25 GiB，而且谁也用不了对方那份。接到同一个共享存储后端才能一份服务两边（但各自生成前可能还要取回本地）。还要分清<strong>目录</strong>（缓存标识 → 位置的映射）和<strong>对象</strong>（实际 KV 字节）：GPU 副本被淘汰时 CPU 副本可能还在，事件遗漏或延迟会让记录的位置不再可用。</p>
+    <p>重启后恢复有个很细但很重要的点：某请求读了 64 页（1024 token），但<strong>可连续接上的前缀只有 63 页</strong>，多读的那一页占 2.25 MiB 却没省下相应重算。原书的说法比"读 144 MiB 用上 142 MiB"更准确：<strong>读入 64 页、用上 63 页</strong>——限制发生在读取之后，磁盘读得再快也改变不了那末页要重算。</p>
+    <p>页面缺失时该等还是该重算：A100 上重算整段 8192 token 约 0.856 秒，<strong>如果为取回一个不可用对象已经等了 1 秒，这次等待就已经超过整段重算</strong>。原书的截断页实验里，无条件等待的请求 60 秒都没完成，允许放弃等待后靠重算拿到了结果。</p>
+    <p class="go">看看一份 1.125 GiB 前缀放在四级存储上各要多久。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多级存储：取回 1.125 GiB 前缀</p>
+    <div id="tiBars" class="wide"></div>
+    <p class="cap">按 DGX A100 每张 GPU 分到的一份计（8 × A100 80GB、2 TB 主机内存、8 块 D7-P5520 NVMe 顺序读 7.1 GB/s、8 张 200 Gbit/s 网卡）。HBM 直接命中不需要搬移，列出的是逐级取回的载荷时间下界。对照：A100 上重算这 8192 个 token 要 856 ms。</p>
+  </div>
+  <div class="notes" id="n-kv"></div>
+</section>
+
+<section class="part" id="route">
+  <div class="part-head"><h2>路由：比的是完成时间，不是命中率</h2><span class="meta">原书 9.5.4 节</span></div>
+  <div class="sec-lede">
+    <p>有缓存的机器可能正忙，没缓存的可能先做完。所以比的是 <strong>T<sub>first</sub> = max(Q, R) + C</strong>（Q 是 GPU 最早可执行时刻，R 是状态就绪时刻，C 是状态可用后的剩余计算）。<strong>依赖关系比字节数更要紧</strong>：Q = 80 ms、取回 60 ms、剩余计算 10 ms，并行就绪只要 90 ms；等 GPU 空闲再启动取回要 150 ms——计算量和传输量完全一样，差 60 ms。</p>
+    <p>例 9.7：请求带 8192 token 前缀 + 256 token 新输入。A 实例本地命中但要排 250 ms；B 实例只等 20 ms 但没缓存。按 A100 峰值 50%（156 TFLOP/s）：完整重算 8448 token 要 138.4 TFLOPs ≈ 887 ms，命中后只算 256 个新 token ≈ 30.9 ms。</p>
+    <p class="go">自己调排队和链路，看该发给谁。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">发给 A 还是 B</p>
+    <div id="rtG2"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>A 实例排队 Q<sub>A</sub>（ms） <output id="roA">250</output></span><input type="range" id="roAs" min="0" max="900" step="10" value="250"></label>
+      <label class="ctl"><span>B 实例排队 Q<sub>B</sub>（ms） <output id="roB">20</output></span><input type="range" id="roBs" min="0" max="900" step="10" value="20"></label>
+      <label class="ctl"><span>B 的远端取回链路（GB/s） <output id="roL">25</output></span><input type="range" id="roLs" min="1" max="50" step="0.25" value="25"></label>
+    </div>
+    <div id="roBars" class="wide"></div>
+    <p class="verdict3" id="roW"></p>
+    <p class="note">远端取回含 10 ms 查找固定开销；B 直接重算 887 ms，命中后只需 30.9 ms。</p>
+  </div>
+  <div class="notes" id="n-route"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>八卡部署：能不能在 60 秒内排空</h2><span class="meta">原书 9.7 节</span></div>
+  <div class="sec-lede">
+    <p>例 9.8：四 A100 + 四 H20，每秒到达 3.5 个请求（8192 入 / 1025 出），从停止状态启动、10 秒就绪，要求<strong>持续处理新请求，并在开始启动后 60 秒内消除启动积压</strong>。</p>
+    <p>容量先过一遍：每请求 1024 次 decode 后 KV 覆盖 9216 token ≈ 1.27 GiB；H20 按 batch 32 驻留共 40.5 GiB + 1.125 GiB 接收缓冲 + 15.3 GiB 权重 ≈ 56.9 GiB，放得进 96 GB。A100 一侧只需同时保存正在计算和正在发送的两份，2.25 GiB。</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>方案</th><th>每请求通道载荷</th><th>计算能力</th><th>通道能力</th><th>总体吞吐</th></tr></thead>
+      <tbody>
+        <tr><td>八个完整副本</td><td>0</td><td>3.02</td><td>—</td><td>3.02 请求/s</td></tr>
+        <tr class="on"><td>直接 PD（4 A100 做 P + 4 H20 做 D）</td><td>1.125 GiB</td><td>4.55</td><td>20.7</td><td>4.55</td></tr>
+        <tr><td>PD + 共享池中转</td><td>2.25 GiB</td><td>4.55</td><td>10.3</td><td>4.55</td></tr>
+        <tr><td>直接 PD，紧凑 MLA</td><td>549 MiB</td><td>4.55</td><td>43.4</td><td>4.55</td></tr>
+      </tbody>
+    </table></div>
+    <p>完整副本 3.02 &lt; 3.5，先排除。两种 PD 的稳态吞吐一样，但<strong>这批请求的前缀不会被复用</strong>，中转白白让通道流量翻倍、每请求多等 48.3 ms，64 GiB 池里存的 56 份前缀一份也用不上——所以选<strong>直接 PD</strong>。</p>
+    <p>排空检查：<strong>μ − 3.5 ≥ 35/50 → μ ≥ 4.2 请求/s</strong>。直接 PD 的 4.55 有 8% 余量，约第 43 秒排空；完整副本就绪后每秒还在增加 0.5 个，到第 60 秒积压从 35 涨到 59。<strong>但余量很薄</strong>：实际 kernel 效率只有假设的九成时，D 池降到 4.10，每秒只能消化 0.60 个，排空推到第 68.5 秒，错过目标。</p>
+    <p>条件一变结论全变：<strong>前缀命中 6144 后</strong>，完整副本 4.90、原 PD 配比 4.55、两 A100 做 P 的新配比 5.69——<strong>完整副本反而比原 PD 配比排空更早</strong>（35.1 vs 43.2 秒），原配比已经不合适了。<strong>输出增到 4097 后</strong>，最佳分工也只有 1.26 请求/s，八张卡怎么分都处理不了 3.5：复制三组勉强持续（3.78），<strong>要满足排空期限得四组、32 张卡</strong>。</p>
+    <p>成本按合格结果算：<strong>C<sub>effective</sub> = 统计期总成本 / 满足质量与时限的请求数</strong>。八卡每小时八元、3.5 请求/s 即每千请求 0.63 元；满负载时 3.02 和 4.55 请求/s 对应 0.74 和 0.49 元；但<strong>若只有四分之一合格，每千个合格请求就升到 1.95 元</strong>。提前退出的 Agent 少生成 token 也少占资源，但没完成任务，不计入分母。</p>
+    <p class="go">先猜直接 PD 从启动算起几秒排空。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">启动积压的排空</p>
+    <div id="dpG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>服务能力 μ（请求/s） <output id="dqM">4.55</output></span><input type="range" id="dqMs" min="3" max="8" step="0.05" value="4.55"></label>
+      <label class="ctl"><span>到达率 λ（请求/s） <output id="dqL">3.5</output></span><input type="range" id="dqLs" min="1" max="7" step="0.1" value="3.5"></label>
+      <label class="ctl"><span>启动耗时（s） <output id="dqS">10</output></span><input type="range" id="dqSs" min="0" max="30" value="10"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="dqQ">0</div><div class="k">就绪时的积压</div></div><div class="hl"><div class="v" id="dqT">0</div><div class="k">从启动算起排空时刻</div></div><div><div class="v" id="dqR">0</div><div class="k">满足 60 s 所需的最低 μ</div></div></div>
+    <svg class="rsvg" id="dqSvg" viewBox="0 0 560 190" role="img" aria-label="积压排空"></svg>
+    <p class="verdict3" id="dqW"></p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">V_KV = 2nL·h_kv·d_h·b；　MLA：V = nL(d_c + d_r)b</div>
+    <div class="fx">d_P = L_new/r_P，　d_D = (G−1)/r_D</div>
+    <div class="fx">μ_PD = min(μ_P, μ_D, B_net/V_KV)；　链路成为约束 ⇔ B_net &lt; μ·V_KV</div>
+    <div class="fx">每卡时间 ≥ max(F_r/C_r, W_r/B_r)；　合并时等最慢的卡</div>
+    <div class="fx">s_expert = max_j m_j / (nk/R)</div>
+    <div class="fx">T_X ≥ max(发送方, 接收方, 割集) 三者中的最大值</div>
+    <div class="fx">N_min = ⌊T_copy/Δt⌋ + 1</div>
+    <div class="fx">T_t = max_{e∈E(t)} L_{t,e} + T_merge,t</div>
+    <div class="fx">T_first = max(Q, R) + C</div>
+    <div class="fx">μ − λ ≥ Q₀/T_remain；　C_effective = 总成本 / 合格请求数</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>1.125 GiB vs 549 MiB</b><span>8K 上下文：GQA vs 紧凑 MLA</span></div>
+      <div><b>71 倍</b><span>V3 展开保存 vs 紧凑 MLA</span></div>
+      <div><b>3.05 → 2.83</b><span>同构八卡：共置 vs 分离（反而低 7%）</span></div>
+      <div><b>3.02 → 4.55</b><span>异构八卡：共置 vs PD 分离（1.51 倍）</span></div>
+      <div><b>4 / 2 / 7</b><span>三种请求下的最佳 P 卡数</span></div>
+      <div><b>1.46 vs 12.5 ms</b><span>八个专家各一行：CPU 本地 vs 搬到 GPU</span></div>
+      <div><b>8% / 36% / 4 倍</b><span>同一热点在 EP8 / EP32 / EP256 下的放大</span></div>
+      <div><b>4% vs 52%</b><span>纯随机波动下 EP8 / EP256 的最忙卡</span></div>
+      <div><b>3 批 vs 23 批</b><span>专家副本回本：同机 vs 跨机</span></div>
+      <div><b>读 64 页用 63 页</b><span>重启后可连续接上的前缀</span></div>
+    </div>
+    <p class="src">数字均取自原书第 9 章。</p>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-8/"><small>上一篇</small><span>08 · 推理优化</span></a><a class="nx" href="../2026-10-16-infra-10/"><small>下一篇</small><span>10 · 训练系统</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+function ms9(x) { return S.f(x, x < 10 ? 2 : 1) + ' ms'; }
+function gib3(x) { return x >= 1024 ? S.f(x / 1024, 3) + ' GiB' : S.f(x, x >= 100 ? 0 : 1) + ' MiB'; }
+function rps(x) { return S.f(x, 2) + ' 请求/s'; }
+
+/* ---------- KV 交接 ---------- */
+var hdF = 'gqa';
+function hd() {
+  var L = +$('#hdLs').value * 1024, B = +$('#hdBs').value, R = +$('#hdRs').value;
+  $('#hdL').textContent = L / 1024; $('#hdB').textContent = B; $('#hdR').textContent = R;
+  var per = hdF === 'gqa' ? 144 : 68.6; // KiB per token
+  var mib = L * per / 1024, bytes = mib * 1048576;
+  var t = bytes / (B * 1e9) * 1000, need = bytes * R / 1e9;
+  $('#hdV').textContent = gib3(mib); $('#hdT').textContent = ms9(t); $('#hdN').textContent = S.f(need, 2) + ' GB/s';
+  var w = $('#hdW'); w.className = 'verdict3' + (need <= B ? '' : ' bad');
+  w.innerHTML = need <= B ? '链路撑得住：余量 ' + S.f(B - need, 2) + ' GB/s，每份状态仍要等 ' + ms9(t) + '。' :
+    '<b>队列会持续增长</b>：每秒多出 ' + S.f(need - B, 2) + ' GB 待传数据。原书对照：100 GbE（12.5 GB/s）撑得住每秒 8 次 GQA 交接，撑不住 16 次；换成紧凑 MLA 两者都能满足。';
+}
+S.seg($('#hdF'), function (v) { hdF = v; hd(); });
+['hdLs', 'hdBs', 'hdRs'].forEach(function (id) { $('#' + id).addEventListener('input', hd); }); hd();
+S.guess($('#hdG'), { q: '同样 8192 个 token 的上下文，Qwen3-8B 的 GQA 要交接 1.125 GiB，DeepSeek-V3 的紧凑 MLA 要多少 MiB？', unit: 'MiB', ans: 549, fmt: function (x) { return S.f(x, 0); }, why: '原书：V = nL(d_c + d_r)b = 61 × 8192 × (512+64) × 2 ≈ 549 MiB，每 token 68.6 KiB。注意 V3 有 128 个头，若展开保存每 token 要 4.77 MiB（紧凑的 71 倍）；而紧凑 MLA 比只有 8 个 KV 头的 Qwen3-8B GQA 还小（0.48 倍）。' });
+S.notes($('#n-pd'), {
+  c: [
+    ['PD 分离', '两个阶段独立队列和配比；两池都要完整权重，KV 从 P 交给 D。'],
+    ['V_KV', '2nL·h_kv·d_h·b；MLA 是 nL(d_c + d_r)b。'],
+    ['缓存在变换的哪一侧', 'GQA 存展开的 K、V；MLA 存上投影之前的潜变量。'],
+    ['队列涨不涨', '看状态字节数 × 到达率与链路带宽的比较。']
+  ],
+  p: [
+    ['大块交接看带宽', '1.125 GiB 下 5 μs 启动只占万分之一。'],
+    ['AF 相反', '逐层小数据量交接里固定开销占比大得多。'],
+    ['换表示就翻转', '同一条 100 GbE，GQA 撑不住 16 次/s，紧凑 MLA 能撑住。']
+  ]
+});
+
+/* ---------- 配比 ---------- */
+var reqType = 'base';
+var reqs = {
+  base: { lnew: 8192, g: 1025, label: '8192 入 / 1025 出' },
+  hit: { lnew: 2048, g: 1025, label: '前缀命中 6144' },
+  short: { lnew: 8192, g: 129, label: '输出缩到 129' }
+};
+var A100 = { rp: 9566, rd: 580 }, H20 = { rp: 4538, rd: 1166 };
+function ra() {
+  var na = +$('#raAs').value, nh = +$('#raHs').value, r = reqs[reqType];
+  $('#raA').textContent = na; $('#raH').textContent = nh;
+  var dPa = r.lnew / A100.rp, dDa = (r.g - 1) / A100.rd, dPh = r.lnew / H20.rp, dDh = (r.g - 1) / H20.rd;
+  var muP = na / dPa + nh / dPh, muD = (4 - na) / dDa + (4 - nh) / dDh;
+  var link = 1.125 * 1073741824 / 25e9; var muL = 1 / link;
+  var mu = (muP > 0 && muD > 0) ? Math.min(muP, muD, muL) : 0;
+  var co = 4 / (dPa + dDa) + 4 / (dPh + dDh);
+  $('#raP').textContent = muP ? rps(muP) : '0（没有 P 卡）'; $('#raD').textContent = muD ? rps(muD) : '0（没有 D 卡）';
+  $('#raM').textContent = mu ? rps(mu) : '0（缺一个阶段）'; $('#raC2').textContent = rps(co);
+  var box = $('#raC'); box.innerHTML = '';
+  for (var i = 0; i < 4; i++) h('button', { class: i < na ? 'p' : 'd', type: 'button', html: 'A100<small>' + (i < na ? 'P' : 'D') + '</small>' }, box);
+  for (var j = 0; j < 4; j++) h('button', { class: j < nh ? 'p' : 'd', type: 'button', html: 'H20<small>' + (j < nh ? 'P' : 'D') + '</small>' }, box);
+  var best = -1, bi = null;
+  for (var a = 0; a <= 4; a++) for (var hh = 0; hh <= 4; hh++) {
+    var p = a / dPa + hh / dPh, d = (4 - a) / dDa + (4 - hh) / dDh;
+    var m = (p > 0 && d > 0) ? Math.min(p, d, muL) : 0;
+    if (m > best) { best = m; bi = [a, hh]; }
+  }
+  $('#raW').innerHTML = '最优配比：<b>' + bi[0] + ' 张 A100 + ' + bi[1] + ' 张 H20 做 P</b>，上限 ' + rps(best) + '，是共置的 ' + S.f(best / co, 2) + ' 倍。' +
+    (mu < best ? ' 当前配比被' + (muP < muD ? ' P ' : ' D ') + '池限制。' : '') +
+    (reqType === 'short' ? ' 输出短时共置已有 ' + rps(co) + '，分离只多 ' + S.pct(best / co - 1, 1) + '。' : '');
+}
+S.seg($('#rqS'), function (v) { reqType = v; ra(); });
+['raAs', 'raHs'].forEach(function (id) { $('#' + id).addEventListener('input', ra); }); ra();
+S.guess($('#rtG'), { q: '四 A100 做 P、四 H20 做 D，整体吞吐上限是多少请求/s？（共置是 3.02）', unit: '请求/s', ans: 4.55, fmt: function (x) { return S.f(x, 2); }, why: '原书例 9.2：P 池 4/0.856 = 4.67，D 池 4/0.878 = 4.55，链路 20.7，取最小值 4.55——是共置 3.02 的 1.51 倍。角色对调（H20 做 P）只剩 2.22，不到一半。同构八张 A100 分离反而比共置低 7%，因为每请求消耗的 GPU 秒没变、整数划分还让两池对不齐。' });
+S.notes($('#n-ratio'), {
+  c: [
+    ['μ_PD', 'min(μ_P, μ_D, B_net/V_KV)。'],
+    ['同构分离不涨吞吐', '每请求 GPU 秒不变，整数划分还让两池能力对不齐。'],
+    ['分块捎带', 'A100 一步 decode 的空闲算力够处理约 490 个 prefill token。'],
+    ['最优配比', '让两池能力接近相等；偏了就被慢的那池限制。']
+  ],
+  p: [
+    ['两种卡强弱相反', 'H20 算力不到 A100 一半，带宽约两倍。'],
+    ['负载一变配比就变', '三种请求最佳 P 卡数是 4、2、7。'],
+    ['异构才是分离的理由', 'H20 的空闲算力只够 85 个 prefill token，捎带替代不了分离。'],
+    ['紧凑 MLA 的代价', '上投影挪到查询侧，每条请求每步多 27.7 μs（1024 步 28.3 ms）。']
+  ]
+});
+
+/* ---------- AF ---------- */
+var rowsN = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
+function af() {
+  var E = +$('#afEs').value, rws = rowsN[+$('#afRs').value], C = +$('#afCs').value;
+  $('#afE').textContent = E; $('#afR').textContent = rws; $('#afC').textContent = C.toFixed(1);
+  var wBytes = E * 36 * 1048576, flops = E * rws * 6 * 4096 * 1536;
+  var cpuT = Math.max(wBytes / 220e9, flops / (C * 1e12)) * 1000 + E * rws * 8192 * 2 / 25e9 * 1000;
+  var gpuT = wBytes / 25e9 * 1000 + flops / 156e12 * 1000 + 0.3;
+  var mx = Math.max(cpuT, gpuT);
+  S.bars($('#afBars'), [{ label: 'CPU 本地算（只传激活）', value: cpuT / mx, text: ms9(cpuT), cls: cpuT <= gpuT ? 'ok' : 'alt' },
+    { label: '搬权重到 GPU 算', value: gpuT / mx, text: ms9(gpuT), cls: gpuT < cpuT ? 'ok' : 'alt' }]);
+  var w = $('#afW'); w.className = 'verdict3' + (cpuT <= gpuT ? '' : '');
+  w.innerHTML = cpuT <= gpuT ? '<b>CPU 本地算更快</b>（每专家 ' + rws + ' 行，复用不足以摊平搬权重的代价）。原书：八个专家各一行时 1.46 vs 12.5 ms。' :
+    '<b>搬到 GPU 更快</b>：每专家 ' + rws + ' 行时，同一份权重被足够多的行复用，GPU 的算力优势显现出来。';
+}
+['afEs', 'afRs', 'afCs'].forEach(function (id) { $('#' + id).addEventListener('input', af); }); af();
+S.notes($('#n-af'), {
+  c: [
+    ['AF 分离', '层内切：注意力产隐状态，FFN / 专家处理再送回。'],
+    ['两条路径', '搬权重给 GPU（花带宽换算力）vs CPU 本地算（花算力换流量）。'],
+    ['看什么', '本次分派给同一个专家的行数——这些行复用同一份权重。']
+  ],
+  p: [
+    ['低复用时 CPU 赢', '八专家各一行：1.46 vs 12.5 ms。'],
+    ['AMX 的作用', 'AVX-512 kernel 1.8 TFLOP/s，AMX 到 21.3。'],
+    ['分支汇合', '下一层要等两侧都完成。']
+  ]
+});
+
+/* ---------- EP skew ---------- */
+var eps = [8, 16, 32, 64, 128, 256];
+function sk() {
+  var E = eps[+$('#skEs').value], hot = +$('#skHs').value;
+  $('#skE').textContent = E; $('#skH').textContent = hot;
+  var totalRows = 1024 * 8, perExpert = totalRows / 256;
+  var expertsPerCard = 256 / E, avg = totalRows / E;
+  var hotRows = perExpert * hot, rest = (totalRows - hotRows) / 255;
+  var hotCard = hotRows + (expertsPerCard - 1) * rest;
+  $('#skA').textContent = S.f(avg, 0) + ' 行'; $('#skM').textContent = S.f(hotCard, 0) + ' 行';
+  $('#skR').textContent = S.pct(hotCard / avg - 1, 0);
+  S.bars($('#skBars'), eps.map(function (e) {
+    var epc = 256 / e, av = totalRows / e, hc = hotRows + (epc - 1) * rest;
+    return { label: 'EP' + e, value: Math.min(1, (hc / av - 1) / 4), text: '+' + S.pct(hc / av - 1, 0), cls: e === E ? 'alt' : 'dim' };
+  }));
+}
+['skEs', 'skHs'].forEach(function (id) { $('#' + id).addEventListener('input', sk); }); sk();
+S.guess($('#skG'), { q: '一个专家收到平均 4 倍的行数。EP256 时热点卡比平均多百分之几？', unit: '%', ans: 300, fmt: function (x) { return S.f(x, 0); }, why: '原书：EP256 每卡只剩这一个专家，128 行是平均 32 行的 4 倍（多 300%）。EP8 每卡 32 个专家，热点被冲淡，只多 8%；EP32 多 36%。即使完全随机、没有热点，EP256 的最忙卡也比平均多 52%，而 EP8 只多 4%。' });
+S.notes($('#n-skew'), {
+  c: [
+    ['最忙卡决定完成时刻', 'max(F_r/C_r, W_r/B_r)；合并时等最慢的。'],
+    ['复用 vs 分散', '集中路由省权重读取（4.5 GiB → 288 MiB），放大最忙卡计算（8 倍）。'],
+    ['EP 越大越偏', '每卡能相互抵消的专家越少，要等的卡却越多。'],
+    ['三个层次', '专家选择频率 → 每卡负载 → 每方向流量；上一层均匀不代表下一层均匀。']
+  ],
+  p: [
+    ['两次通信夹着计算', 'dispatch → 专家计算 → combine；跨服务器时通信占八成。'],
+    ['热点让三段都变 2.5 倍', '接收、计算、返回同时被拖慢。'],
+    ['改一段不够', '只把 dispatch 改 FP8 不会同比缩短 combine 和计算。'],
+    ['搬进同机后', 'NVLink 把两次交换压到 0.093 ms，热点卡的计算反成最长。']
+  ]
+});
+
+/* ---------- 专家副本 ---------- */
+var rpP = 450;
+function rp() {
+  var n = +$('#rpNs').value, dt = +$('#rpDs').value, batches = +$('#rpBs').value;
+  $('#rpN').textContent = n; $('#rpD').textContent = dt.toFixed(3); $('#rpB').textContent = batches;
+  var copy = n * 36 * 1048576 / (rpP * 1e9) * 1000 + n * 0.005;
+  var nmin = Math.floor(copy / dt) + 1, net = batches * dt - copy;
+  $('#rpT').textContent = ms9(copy); $('#rpM').textContent = nmin + ' 批';
+  $('#rpS').textContent = (net >= 0 ? '+' : '') + ms9(net);
+  var w = $('#rpW'); w.className = 'verdict3' + (net >= 0 ? '' : ' bad');
+  w.innerHTML = net >= 0 ? '热点持续 ' + batches + ' 批，净省 ' + ms9(net) + '（第 ' + nmin + ' 批回本）。' :
+    '热点只持续 ' + batches + ' 批，<b>净亏 ' + ms9(-net) + '</b>——还没到第 ' + nmin + ' 批就结束了。频繁跟着热点迁移副本会一直收不回成本。';
+}
+S.seg($('#rpP'), function (v) { rpP = +v; rp(); });
+['rpNs', 'rpDs', 'rpBs'].forEach(function (id) { $('#' + id).addEventListener('input', rp); }); rp();
+S.guess($('#rpG'), { q: '复制 7 个热点专家到同机其他卡（NVLink 450 GB/s），每批省 0.240 ms。第几批回本？', unit: '批', ans: 3, fmt: function (x) { return S.f(x, 0); }, why: '原书例 9.6：复制 252 MiB 经 NVLink 加启动共 0.622 ms，N_min = ⌊0.622/0.240⌋ + 1 = 3。但原副本若在另一台服务器上（50 GB/s 网卡），复制要 5.32 ms，第 23 批才回本——热点只持续 16 批反而净亏 1.5 ms。' });
+S.notes($('#n-replica'), {
+  c: [
+    ['专家复制', '不改 top-k 规则；改选择规则是改模型行为。'],
+    ['N_min', '⌊T_copy/Δt⌋ + 1。'],
+    ['副本预算按层分', '每层各加一个要 3.30 GiB，只给八个最挤的层只要 288 MiB。'],
+    ['补齐', '64 个有效行按 32 补齐要执行 224–256 行（3.5–4 倍）。']
+  ],
+  p: [
+    ['同机 vs 跨机', '0.622 ms / 3 批 vs 5.32 ms / 23 批。'],
+    ['重叠也可能白干', '通信重叠了但 DMA 和 GEMM 抢 HBM，流水回到原时间。'],
+    ['MFU 的两大来源', '补齐算零行、通信计算互相拖慢——都在实现层。'],
+    ['合并等最慢分支', 'T_t = max L_{t,e} + T_merge；只加速快的那条没用。']
+  ]
+});
+
+/* ---------- 多级存储 ---------- */
+var tiers = [['HBM（本地命中）', 0, '不需要搬移'], ['主机内存 → GPU（PCIe 4.0 x16，25 GB/s）', 1.125 * 1073741824 / 25e9 * 1000, ''],
+  ['本地 NVMe（顺序读 7.1 GB/s）', 1.125 * 1073741824 / 7.1e9 * 1000, ''], ['远端存储（200 Gbit/s = 25 GB/s）', 1.125 * 1073741824 / 25e9 * 1000 + 10, '含 10 ms 查找'],
+  ['直接重算（A100）', 856, '对照']];
+S.bars($('#tiBars'), tiers.map(function (t) {
+  return { label: t[0] + (t[2] ? '（' + t[2] + '）' : ''), value: Math.min(1, t[1] / 900), text: t[1] === 0 ? '0' : ms9(t[1]), cls: t[1] === 0 ? 'ok' : t[1] > 500 ? 'alt' : '' };
+}));
+S.notes($('#n-kv'), {
+  c: [
+    ['缓存键', '模型/adapter 版本、token 序列、位置索引、状态格式、编码配置。'],
+    ['目录 vs 对象', '标识→位置的映射 vs 实际 KV 字节。'],
+    ['容量相加 ≠ 共享', '两个私有缓存各存一份，谁也用不了对方的。'],
+    ['读 64 页用 63 页', '只有能连续接上的页才替代计算。']
+  ],
+  p: [
+    ['等还是重算', '为一个不可用对象等 1 秒，已经超过整段重算的 0.856 秒。'],
+    ['页布局', '72 个 32 KiB 连续段 vs 一个 2.25 MiB 对象：前者受每秒操作次数限制。'],
+    ['修复坏页', '不隔离的话下一个请求还会卡在同一处。']
+  ]
+});
+
+/* ---------- 路由 ---------- */
+function ro() {
+  var QA = +$('#roAs').value, QB = +$('#roBs').value, L = +$('#roLs').value;
+  $('#roA').textContent = QA; $('#roB').textContent = QB; $('#roL').textContent = L;
+  var fetch = 10 + 1.125 * 1073741824 / (L * 1e9) * 1000;
+  var a = QA + 30.9, bRe = QB + 887, bFetch = Math.max(QB, fetch) + 30.9;
+  var mx = Math.max(a, bRe, bFetch), best = Math.min(a, bRe, bFetch);
+  S.bars($('#roBars'), [
+    { label: 'A：本地命中（排队 ' + QA + ' ms）', value: a / mx, text: ms9(a), cls: a === best ? 'ok' : 'dim' },
+    { label: 'B：直接重算', value: bRe / mx, text: ms9(bRe), cls: bRe === best ? 'ok' : 'dim' },
+    { label: 'B：远端取回（' + L + ' GB/s）', value: bFetch / mx, text: ms9(bFetch), cls: bFetch === best ? 'ok' : 'dim' }
+  ]);
+  var names = ['A 本地命中', 'B 直接重算', 'B 远端取回'];
+  var w = $('#roW'); w.className = 'verdict3';
+  w.innerHTML = '最快：<b>' + names[[a, bRe, bFetch].indexOf(best)] + '</b>（' + ms9(best) + '）。原书例 9.7：A 命中但排 250 ms 要 281 ms；B 重算 907 ms；B 经 50 GbE 取回 282 ms、经 200 GbE 只要 137 ms。';
+}
+['roAs', 'roBs', 'roLs'].forEach(function (id) { $('#' + id).addEventListener('input', ro); }); ro();
+S.guess($('#rtG2'), { q: 'A 本地命中但排队 250 ms，B 没缓存但只等 20 ms、能经 200 GbE 远端取回。谁的首 token 更快？填 B 的毫秒数。', unit: 'ms', ans: 137, fmt: function (x) { return S.f(x, 0); }, why: '原书例 9.7：B 经 200 GbE（25 GB/s）取回约 137 ms，快于 A 本地命中的 281 ms，也远快于 B 直接重算的 907 ms。关键是 T_first = max(Q, R) + C——取回和 GPU 排队可以重叠；如果要等 GPU 空闲再启动取回，同样的字节数就要 150 ms 而不是 90 ms。' });
+S.notes($('#n-route'), {
+  c: [
+    ['T_first', 'max(Q, R) + C：取回与排队能否重叠决定结果。'],
+    ['比完成时间不比命中率', '有缓存的机器正忙时，没缓存的可能先做完。']
+  ],
+  p: [
+    ['依赖关系值 60 ms', '并行就绪 90 ms vs 串行 150 ms，字节数完全一样。'],
+    ['逐层流水要更细的图', '整份到齐才执行只是最简单的模型。']
+  ]
+});
+
+/* ---------- 八卡部署 ---------- */
+function dq() {
+  var mu = +$('#dqMs').value, lam = +$('#dqLs').value, st = +$('#dqSs').value;
+  $('#dqM').textContent = mu.toFixed(2); $('#dqL').textContent = lam.toFixed(1); $('#dqS').textContent = st;
+  var Q0 = lam * st, net = mu - lam;
+  var drain = net > 0 ? st + Q0 / net : Infinity;
+  $('#dqQ').textContent = S.f(Q0, 1) + ' 个';
+  $('#dqT').textContent = isFinite(drain) ? S.f(drain, 1) + ' s' : '永不排空';
+  $('#dqR').textContent = S.f(lam + Q0 / (60 - st), 2);
+  var w = $('#dqW'); w.className = 'verdict3' + (isFinite(drain) && drain <= 60 ? '' : ' bad');
+  w.innerHTML = isFinite(drain) && drain <= 60 ? '满足 60 秒目标，余量 ' + S.f(60 - drain, 1) + ' s。' :
+    (isFinite(drain) ? '<b>错过 60 秒目标</b>（第 ' + S.f(drain, 1) + ' 秒才排空）。' : '<b>服务能力低于到达率</b>，积压会一直增长。');
+  var g = $('#dqSvg'); g.innerHTML = '';
+  var X = S.scale(0, 90, 50, 540), Y = S.scale(0, Math.max(Q0 * 1.4, 10), 165, 12);
+  S.svg('line', { x1: 50, y1: 165, x2: 540, y2: 165, class: 'ax' }, g);
+  S.svg('line', { x1: 50, y1: 165, x2: 50, y2: 12, class: 'ax' }, g);
+  S.svg('line', { x1: X(60), y1: 12, x2: X(60), y2: 165, class: 'gl', stroke: 'var(--alert)' }, g);
+  var pts = [];
+  for (var t = 0; t <= 90; t += 0.5) {
+    var q = t < st ? lam * t : Math.max(0, Q0 - net * (t - st));
+    pts.push([X(t), Y(q)]);
+  }
+  S.svg('path', { d: S.path(pts), class: 'l1' }, g);
+  [0, 30, 60, 90].forEach(function (t2) { var tx = S.svg('text', { x: X(t2), y: 181, 'text-anchor': 'middle' }, g); tx.textContent = t2 + ' s'; });
+  var yl = S.svg('text', { x: 46, y: 16, 'text-anchor': 'end' }, g); yl.textContent = S.f(Math.max(Q0 * 1.4, 10), 0) + ' 个';
+}
+['dqMs', 'dqLs', 'dqSs'].forEach(function (id) { $('#' + id).addEventListener('input', dq); }); dq();
+S.guess($('#dpG'), { q: '直接 PD（4.55 请求/s）、到达 3.5/s、启动 10 秒，从开始启动算起大约第几秒排空积压？', unit: '秒', ans: 43, fmt: function (x) { return S.f(x, 0); }, why: '原书：10 秒启动积压 35 个，净排空能力 4.55 − 3.5 = 1.05 个/s，35/1.05 ≈ 33 秒，共约 43 秒，满足 60 秒目标。要求 μ ≥ 3.5 + 35/50 = 4.2，余量只有 8%——kernel 效率只有假设的九成时 D 池降到 4.10，排空推到 68.5 秒就错过了。' });
+S.notes($('#n-plan'), {
+  c: [
+    ['排空条件', 'μ − λ ≥ Q₀/剩余时间。'],
+    ['共享池值不值', '看后续是否真有复用：没有复用时中转只是让流量翻倍、多等 48.3 ms。'],
+    ['C_effective', '总成本 ÷ 合格请求数；提前退出的 Agent 不计入分母。'],
+    ['分析顺序', '工作量 → 整数分配找最忙池 → 计入传输和内存 → 用 μ−λ 求排空时间。']
+  ],
+  p: [
+    ['余量很薄', '效率差一成（4.55 → 4.10）就错过期限。'],
+    ['条件变结论变', '前缀命中后完整副本反而比原 PD 配比排空更早。'],
+    ['输出翻倍要四组', '32 张卡才满足同样的排空期限。'],
+    ['加速一个阶段 = 省资源', 'D 快四倍后，1P : 4D 改成 1P : 1D，释放三个 D 实例。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① PD 什么时候值', '同构分离不涨吞吐（每请求 GPU 秒没变，整数划分还对不齐），该用分块捎带（八卡 3.05 → 4.50）；异构才有真收益（3.02 → 4.55，1.51 倍），配比就是让 μ_P ≈ μ_D，而且前缀命中或输出变短都会改变最佳配比（最佳 P 卡数 4 / 2 / 7）。'],
+    ['② EP 与副本', 'EP 越大每卡专家越少，热点越没法被同卡冲淡：同一个 4 倍热点在 EP8 多 8%、EP256 是 4 倍；纯随机波动也让 EP256 的最忙卡多 52%。副本回本 N_min = ⌊T_copy/Δt⌋+1：同机 3 批，跨机 23 批。'],
+    ['③ 路由看完成时间', 'T_first = max(Q, R) + C。A 命中但排 250 ms 要 281 ms；B 经 200 GbE 取回只要 137 ms。取回能否和排队重叠，比字节数更要紧（90 vs 150 ms）。']
+  ],
+  p: [
+    ['方法', '先把每请求换算成各类资源需求，按整数分配找最忙的池，计入传输和内存，再用 μ−λ 求排空时间。'],
+    ['下一篇', '换到训练侧：并行、checkpoint、故障恢复和 RL 的资源配比。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>

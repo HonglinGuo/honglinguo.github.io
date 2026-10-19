@@ -1,0 +1,315 @@
+---
+title: 流程编排：提示词链、路由、并行
+desc: 智能体设计模式学习笔记（一）：提示词链（管道）、路由（LLM / 嵌入 / 规则 / 分类器四种实现）、并行化，以及原书在第 1 章顺带讲的上下文工程。三个模式是后面所有复杂工作流的积木。
+kicker: <span>技术学习</span><span>智能体设计模式 · 01</span><span>对应原书第 1–3 章</span><span>约 20 分钟</span>
+h1: 先把流程搭起来：<em>串、分、并</em>
+lead: 原书前三章讲的是最朴素的三种控制流：一步接一步（提示词链）、按情况走不同的路（路由）、能同时做的就同时做（并行化）。它们像程序里的顺序、分支和并发，后面的反思、规划、多智能体，几乎都是在这三块积木上叠出来的。
+nav: chain|提示词链;ctx|上下文工程;route|路由;para|并行化;mix|组合起来;recap|回扣三问
+---
+<style>
+.inv { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; white-space: pre-wrap; color: var(--ink); }
+.gate { margin: 10px 0 0; padding: 8px 12px; border-radius: 6px; font-size: 16px; }
+.gate.bad { background: var(--alert-soft); border-left: 4px solid var(--alert); }
+.gate.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+.gate.tool { background: var(--s3-soft); border-left: 4px solid var(--s3); }
+.rt-in { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.rt-in input { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 16px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.routes div { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 10px; font-size: 15px; color: var(--ink-2); background: var(--bg); }
+.routes div b { display: block; color: var(--ink); font-size: 16px; }
+.routes div.on { border-color: var(--s1); background: var(--s1-soft); }
+.gantt { margin-top: 10px; }
+.gantt .row { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; font-size: 15px; }
+.gantt .lane { position: relative; height: 22px; background: var(--bg); border-radius: 4px; border: 1px solid var(--hair); }
+.gantt .seg2 { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 13px; line-height: 18px; color: #fff; padding: 0 4px; overflow: hidden; white-space: nowrap; }
+.gantt .s { background: var(--s1); } .gantt .m { background: var(--s3); } .gantt .y { background: var(--s2); }
+.gantt h5 { margin: 12px 0 4px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>单个复杂提示词有哪五种典型毛病？提示词链除了拆分，还带来了什么能力？</li>
+    <li>路由有哪四种实现？规则路由的弱点是什么？</li>
+    <li>并行化在什么情况下收益最大？Python 的 asyncio 算真并行吗？</li>
+  </ol>
+</div>
+
+<section class="part" id="chain">
+  <div class="part-head"><h2>提示词链：一次只让模型做一件事</h2><span class="meta">原书第 1 章</span></div>
+  <div class="sec-lede">
+    <p>把“分析市场研究报告、总结发现、找出趋势、再起草一封邮件”塞进一个提示词，模型很可能把总结写得不错，却漏掉数据或邮件。原书列了单个复杂提示词的五种典型毛病：<strong>指令忽略</strong>、<strong>上下文偏离</strong>（忘了最初的上下文）、<strong>错误传播</strong>（早期错误被放大）、<strong>上下文窗口不够</strong>、以及认知负荷带来的<strong>幻觉</strong>。</p>
+    <p>提示词链（Prompt Chaining，也叫管道模式）的做法是分而治之：第一步只总结，第二步拿摘要找出三个趋势和支撑数据，第三步拿趋势写邮件。每一步还可以换一个角色（市场分析师、贸易分析师、文档撰写者）。原书特别强调两点：一是步骤之间传递的数据要用 <strong>JSON、XML 这类结构化格式</strong>，否则下一步拿到含糊的输入就会出错；二是链的好处不只是拆分，还能在两次模型调用<strong>之间插入确定性逻辑</strong>：校验输出、条件分支、调用外部工具。</p>
+    <p class="go">下面是原书“数据提取和转换”用例的走法：从发票里抽字段，校验不过就针对缺的字段再问一次，算术交给计算器。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">发票字段提取链（示意数据）</p>
+      <div id="invStep"></div>
+      <div id="invBody"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">模式卡 · 提示词链</p>
+      <div class="card2" style="margin-top:0;border:0;padding:0;background:none">
+        <dl>
+          <dt>问题</dt><dd>多约束、多阶段的任务塞进一个提示词，模型顾此失彼。</dd>
+          <dt>做法</dt><dd>拆成顺序子任务，<strong>上一步输出 = 下一步输入</strong>，步骤间用结构化格式。</dd>
+          <dt>何时用</dt><dd>任务对单个提示词太复杂、有多个不同处理阶段、步骤之间要和外部工具交互。</dd>
+          <dt>代价</dt><dd>调用次数和延迟增加；前一步出错会沿链传下去，所以要在步骤间校验。</dd>
+          <dt>实现</dt><dd>脚本里顺序调用即可；LangChain 的 LCEL 用 <code>|</code> 串起来，LangGraph 支持带状态和循环的图。</dd>
+          <dt>相关</dt><dd>需要分支时接<strong>路由</strong>，有独立子任务时接<strong>并行化</strong>，需要回头改时接<strong>反思</strong>（第 2 篇）。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-chain"></div>
+</section>
+
+<section class="part" id="ctx">
+  <div class="part-head"><h2>上下文工程：比措辞更重要的是给模型看什么</h2><span class="meta">原书第 1 章末节</span></div>
+  <div class="sec-lede">
+    <p>原书在第 1 章末尾插了一节上下文工程（Context Engineering），把它定义为：在模型生成 token 之前，<strong>系统地设计、构建并提供完整信息环境</strong>的学科。它的主张是，输出质量较少取决于模型架构本身，而更多取决于上下文有多丰富。传统提示工程主要优化用户当前那句话的措辞；上下文工程把范围扩展到多层信息：<strong>系统提示词</strong>（“你是一名技术作家，语气必须正式精确”）、<strong>检索到的文档</strong>、<strong>工具输出</strong>（查日历得到的空闲时间），以及<strong>隐式数据</strong>（用户身份、交互历史、环境状态）。</p>
+    <p>原书的例子：一个做过上下文工程的智能体在回复会议邀请前，会先整合日历空闲（工具输出）、和收件人的工作关系（隐式数据）、上次会议的笔记（检索文档）。“工程”二字指的是要建管道在运行时取数、转换，并用反馈循环持续改进上下文质量，比如用 Vertex AI 提示优化器这类工具，按样本输入和评估指标自动调整系统指令。</p>
+    <p class="go">把下面这些信息归到上下文的四层里。</p>
+  </div>
+  <div class="lab"><div id="ctxSort"></div></div>
+  <p class="xref">这个话题在另一个系列里讲得更细：<a href="../2026-10-16-agent-2/">深入理解 AI Agent · 02 上下文工程</a>。</p>
+  <div class="notes" id="n-ctx"></div>
+</section>
+
+<section class="part" id="route">
+  <div class="part-head"><h2>路由：先判断是什么，再决定交给谁</h2><span class="meta">原书第 2 章</span></div>
+  <div class="sec-lede">
+    <p>提示词链是一条固定的路。真实系统常要按情况选路：客服智能体先给请求分类，“查订单”交给能查订单库的子智能体，“产品信息”去搜目录，“技术支持”去查排障指南或升级给人工，意图不清就转到澄清环节。这种<strong>把控制流导向不同函数、工具或子流程</strong>的条件逻辑，就是路由。</p>
+    <p>原书列了四种实现。<strong>基于 LLM</strong>：让模型只输出一个类别名，系统据此分发。<strong>基于嵌入</strong>：把查询转成向量，和每条路由的代表向量比相似度，适合按语义而不是关键词分流。<strong>基于规则</strong>：if-else、关键词、正则，更快、更确定，但对细微或新颖的说法不够灵活。<strong>基于机器学习分类器</strong>：在小规模标注数据上做监督微调的判别模型，路由逻辑编码在权重里；LLM 可以帮忙造训练数据，但不参与实时决策。</p>
+    <p>路由的位置也不只在入口：可以在开头给主任务分类，在链的中间决定下一步，也可以在子程序里从一组工具中挑一个。LangGraph 用状态图显式定义节点间的跳转；Google ADK 则多半把能力定义成工具或子智能体，让框架根据模型判断自动委托。</p>
+    <p class="go">先分一分四种实现，再试试规则路由：换个说法，它还认得出来吗？</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">这句话描述的是哪种路由</p>
+      <div id="routeSort"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">一个真实运行的关键词路由器</p>
+      <p class="lab-s">规则：含“订单 / 物流 / 发货”→ 订单；含“价格 / 参数 / 型号”→ 产品；含“报错 / 打不开 / 故障”→ 技术支持；都没有 → 澄清。</p>
+      <div class="rt-in"><input id="rtQ" value="我的订单到哪了" aria-label="用户请求"><button class="btn pri" type="button" id="rtGo">路由</button></div>
+      <div class="ctrls" id="rtPre"></div>
+      <div class="routes" id="rtOut"></div>
+      <p class="cap" id="rtWhy"></p>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 路由</h3><p class="en">Routing</p>
+    <dl>
+      <dt>问题</dt><dd>线性流程无法应对多样的输入，没有机制为不同情况选择合适的工具或子流程。</dd>
+      <dt>做法</dt><dd>先分析输入（意图、状态），再把控制流导向最合适的工具、函数或子智能体。</dd>
+      <dt>何时用</dt><dd>智能体要在多个工作流、工具或子智能体之间做选择，典型是客服机器人区分销售、技术支持、账户问题。</dd>
+      <dt>四种实现</dt><dd>LLM（灵活）· 嵌入相似度（语义）· 规则（快、确定、脆）· 微调分类器（权重里编码路由）。</dd>
+      <dt>相关</dt><dd>多智能体里的“协调者”本质是路由（第 6 篇）；按成本挑模型的路由器见“资源感知优化”（第 6 篇）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-route"></div>
+</section>
+
+<section class="part" id="para">
+  <div class="part-head"><h2>并行化：不互相等的，就别排队</h2><span class="meta">原书第 3 章</span></div>
+  <div class="sec-lede">
+    <p>研究一个主题，顺序做法是：搜 A、总结 A、搜 B、总结 B、再综合。并行做法是：A、B <strong>同时搜</strong>，都回来后<strong>同时总结</strong>，最后综合（综合这一步仍要等前面全部完成）。核心是找出工作流里<strong>不依赖彼此输出</strong>的部分。等待外部 API、数据库这类 I/O 时收益最明显，因为可以一次发出多个请求。</p>
+    <p>原书的用例很广：公司调研时同时查新闻、股价、社媒和内部库；对一批反馈同时做情感分析、关键词抽取、分类、紧急识别；旅行规划同时查航班、酒店、活动、餐厅；同时生成三个标题做 A/B 选择。框架层面，LangChain 用 <code>RunnableParallel</code> 把多个链放进一个字典并发执行；Google ADK 有 <code>ParallelAgent</code>，常和 <code>SequentialAgent</code> 组合成“先并行研究、再合并”的流水线。</p>
+    <p>两个容易忽略的提醒：原书指出 Python 的 <strong>asyncio 提供的是并发而不是真并行</strong>，单线程事件循环在等待网络时切换任务，受 GIL 限制；以及并发会给设计、调试和日志带来<strong>显著的复杂度和成本</strong>。</p>
+    <p class="go">拖动滑块，看顺序和并行两种排法的总耗时。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">搜三个来源、分别总结、再综合（耗时单位：秒，自行设定）</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>搜索 A <output id="pA">3</output></span><input type="range" id="pAs" min="1" max="10" value="3"></label>
+      <label class="ctl"><span>搜索 B <output id="pB">6</output></span><input type="range" id="pBs" min="1" max="10" value="6"></label>
+      <label class="ctl"><span>搜索 C <output id="pC">2</output></span><input type="range" id="pCs" min="1" max="10" value="2"></label>
+      <label class="ctl"><span>每次总结 <output id="pM">4</output></span><input type="range" id="pMs" min="1" max="10" value="4"></label>
+      <label class="ctl"><span>最终综合 <output id="pY">5</output></span><input type="range" id="pYs" min="1" max="10" value="5"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="pSeq">0</div><div class="k">顺序执行</div></div><div class="good"><div class="v" id="pPar">0</div><div class="k">按原书的并行排法</div></div></div>
+    <div class="gantt" id="pG"></div>
+    <p class="note">按原书描述排法：搜索全部并发，全部回来后总结全部并发，最后综合。总耗时 = 最慢的搜索 + 最慢的总结 + 综合。若每个来源搜完就立刻总结（不等别人），还能再省一点，这已经是更细的调度了。</p>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 并行化</h3><p class="en">Parallelization</p>
+    <dl>
+      <dt>问题</dt><dd>纯顺序执行时，总耗时等于所有子任务之和；外部 I/O 等待成为主要瓶颈。</dd>
+      <dt>做法</dt><dd>识别互不依赖的子任务，并发执行，在汇聚点等全部完成后再进入下一步。</dd>
+      <dt>何时用</dt><dd>需要从多个 API 取数、处理不同数据块、生成多个片段供后续综合时。</dd>
+      <dt>代价</dt><dd>设计、调试、系统日志都更复杂，成本也更高。</dd>
+      <dt>实现</dt><dd>LangChain <code>RunnableParallel</code>；LangGraph 从一个节点分出多个分支；ADK <code>ParallelAgent</code> + <code>SequentialAgent</code>。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-para"></div>
+</section>
+
+<section class="part" id="mix">
+  <div class="part-head"><h2>三块积木组合起来</h2><span class="meta">原书第 1–3 章</span></div>
+  <div class="sec-lede">
+    <p>原书在第 1 章就举了组合的例子：自动研究智能体先检索大量文章，<strong>从每篇里提取要点可以并行</strong>；但提取完之后，整合、起草、审校这几步<strong>彼此依赖，必须顺序</strong>。所以复杂操作常常是“并行做独立的数据收集，链式做有依赖的综合与打磨”。第 3 章结尾也说，把并行（并发）、链（顺序）和路由（条件）结合起来，才能搭出高效的复杂系统。</p>
+    <p class="go">几个场景，各自主要靠哪种控制流？</p>
+  </div>
+  <div class="lab"><div id="mixQ"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：提示词链 vs 规划</h4>
+    <p><b>提示词链</b>的步骤是开发者事先写死的；<b>规划</b>（第 2 篇）的步骤由模型按请求动态生成，遇到障碍还能改。原书第 6 章的判断标准同样适用于这里：方法已知就用固定的链，方法需要被发现才用规划。</p>
+  </div>
+  <div class="notes" id="n-mix"></div>
+</section>
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 单个复杂提示词有哪五种典型毛病？提示词链除了拆分，还带来了什么能力？</summary><p class="ans">指令忽略、上下文偏离、错误传播、上下文窗口不足、幻觉。除了拆分，链还允许在两次模型调用之间插入确定性逻辑：校验输出、条件分支、调用工具；步骤间用 JSON / XML 结构化传递数据。</p></details>
+    <details><summary>2. 路由有哪四种实现？规则路由的弱点是什么？</summary><p class="ans">基于 LLM、基于嵌入、基于规则、基于监督微调的分类器。规则路由快且确定，但对细微或新颖的说法不够灵活，换个说法就可能认不出来。</p></details>
+    <details><summary>3. 并行化在什么情况下收益最大？Python 的 asyncio 算真并行吗？</summary><p class="ans">等待外部 API、数据库等 I/O 时收益最大。asyncio 是单线程事件循环上的并发，不是真并行，受 GIL 限制；并发还会让设计、调试、日志更复杂。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 提示词链：发票 ---------- */
+var inv = [
+  { t: '提示词 1：提取字段', b: '<div class="inv">输入：发票扫描文字\n“开票人 张三，北京市海淀区… 金额：一千零五十元，数量 3”\n\n模型输出（JSON）：\n{ "name": "张三", "address": "北京市海淀区…", "amount": "一千零五十元" }</div>' },
+  { t: '处理：确定性校验', b: '<div class="inv">检查：必需字段都在吗？金额是数字吗？</div><p class="gate bad">amount 格式不符合要求（不是数字）。这一步是普通代码，不调用模型。</p>' },
+  { t: '提示词 2（条件性）', b: '<div class="inv">“上次提取中 amount 不是数字：『一千零五十元』。\n请只把它规范化成阿拉伯数字。”\n\n模型输出：{ "amount": 1050 }</div><p class="gate ok">再次校验通过。原书说：必要时可重复这一步。</p>' },
+  { t: '交给工具做算术', b: '<div class="inv">需要计算：单价 × 数量 = 1050 × 3</div><p class="gate tool">原书指出 LLM 做精确数学很吃力，所以模型只负责识别“需要算什么”，数字交给计算器工具：结果 3150。</p>' },
+  { t: '输出', b: '<div class="inv">{ "name": "张三", "address": "北京市海淀区…", "amount": 1050, "total": 3150 }</div><p class="gate ok">提取 → 规范化 → 工具计算，每步都可单独检查和调试。单个提示词很难稳定做到这一点。</p>' }
+];
+S.stepper($('#invStep'), inv.length, function (i) { $('#invBody').innerHTML = '<p class="lab-s">' + inv[i].t + '</p>' + inv[i].b; }, inv.map(function (x) { return x.t; }));
+S.notes($('#n-chain'), {
+  c: [
+    ['提示词链', '也叫管道模式：把复杂任务拆成顺序子任务，上一步输出作下一步输入。'],
+    ['单提示词五毛病', '指令忽略、上下文偏离、错误传播、上下文窗口不足、幻觉。'],
+    ['结构化输出', '步骤间用 JSON / XML 传数据，保证下一步能无歧义地解析。'],
+    ['步骤间确定性逻辑', '两次模型调用之间插入校验、条件分支、工具调用。']
+  ],
+  p: [
+    ['给每步分配角色', '例如市场分析师 → 贸易分析师 → 文档撰写者。'],
+    ['算术交给工具', '模型识别要算什么，计算器给精确结果。'],
+    ['LCEL vs LangGraph', 'LCEL 适合线性序列；LangGraph 支持状态和循环。']
+  ]
+});
+
+/* ---------- 上下文工程 ---------- */
+S.sortGame($('#ctxSort'), {
+  bins: [{ k: 's', t: '系统提示词' }, { k: 'r', t: '检索到的文档' }, { k: 'o', t: '工具输出' }, { k: 'i', t: '隐式数据' }],
+  items: [
+    { t: '“你是一名技术作家，语气必须正式精确”', k: 's', why: '定义模型操作参数的基础指令。' },
+    { t: '项目的技术规格文档', k: 'r', why: '从知识库主动检索的资料。' },
+    { t: '上次会议的笔记', k: 'r', why: '原书例子中归为检索的文档。' },
+    { t: '查日历得到的空闲时段', k: 'o', why: '通过外部 API 得到的实时数据。' },
+    { t: '用户身份', k: 'i', why: '隐式数据：用户身份、交互历史、环境状态。' },
+    { t: '与收件人的工作关系', k: 'i', why: '原书例子中归为隐式数据。' }
+  ]
+});
+S.notes($('#n-ctx'), {
+  c: [
+    ['上下文工程', '在生成 token 前系统地设计、构建、提供完整信息环境。'],
+    ['与提示工程的区别', '提示工程优化当前请求的措辞；上下文工程管所有层的信息。'],
+    ['四层信息', '系统提示词、检索文档、工具输出、隐式数据（身份、历史、环境）。']
+  ],
+  p: [
+    ['原书主张', '输出质量较少取决于模型架构，更多取决于上下文的丰富程度。'],
+    ['“工程”指什么', '运行时取数和转换的管道 + 持续改进上下文质量的反馈循环。'],
+    ['自动优化', '如 Vertex AI 提示优化器：按样本和指标自动改写提示与系统指令。']
+  ]
+});
+
+/* ---------- 路由 ---------- */
+S.sortGame($('#routeSort'), {
+  bins: [{ k: 'l', t: '基于 LLM' }, { k: 'e', t: '基于嵌入' }, { k: 'r', t: '基于规则' }, { k: 'm', t: '基于 ML 分类器' }],
+  items: [
+    { t: '提示模型“只输出类别：订单状态 / 产品信息 / 技术支持 / 其他”', k: 'l', why: '决策由推理时执行提示词的生成模型做出。' },
+    { t: '查询转成向量，和各路由的代表向量比相似度', k: 'e', why: '按语义而不是关键词路由。' },
+    { t: 'switch-case 按关键词分流', k: 'r', why: '快且确定，但对新颖说法不灵活。' },
+    { t: '在小规模标注数据上微调一个判别模型', k: 'm', why: '路由逻辑编码在权重里，LLM 不参与实时决策。' },
+    { t: '用 LLM 生成合成数据来扩充训练集', k: 'm', why: '原书说 LLM 可以在预处理时造数据，但实时路由仍是分类器做。' }
+  ]
+});
+var rules = [
+  { k: '订单', w: ['订单', '物流', '发货'] }, { k: '产品', w: ['价格', '参数', '型号'] }, { k: '技术支持', w: ['报错', '打不开', '故障'] }
+];
+var preset = ['我的订单到哪了', '买的东西怎么还没到', '这款有几种型号', 'App 一直闪退', '帮我看看'];
+preset.forEach(function (p) {
+  var b = h('button', { class: 'btn', type: 'button', text: p }, $('#rtPre'));
+  b.addEventListener('click', function () { $('#rtQ').value = p; route(); });
+});
+function route() {
+  var q = $('#rtQ').value, hit = null, word = '';
+  rules.some(function (r) { return r.w.some(function (w) { if (q.indexOf(w) >= 0) { hit = r.k; word = w; return true; } return false; }); });
+  var dest = hit || '澄清';
+  $('#rtOut').innerHTML = ['订单', '产品', '技术支持', '澄清'].map(function (d) {
+    return '<div class="' + (d === dest ? 'on' : '') + '"><b>' + d + '</b>' + ({ '订单': '查订单库的子智能体', '产品': '搜产品目录', '技术支持': '排障指南 / 升级人工', '澄清': '反问用户' })[d] + '</div>';
+  }).join('');
+  $('#rtWhy').innerHTML = hit ? '命中关键词“' + word + '”。' : '没有命中任何关键词，落到“澄清”。' +
+    (/到|没到|闪退/.test(q) ? '其实这句的意图并不模糊，只是换了说法。这正是原书说的规则路由“对细微或新颖输入不够灵活”；LLM 或嵌入路由能处理这种情况，代价是一次模型调用或向量计算。' : '');
+}
+$('#rtGo').addEventListener('click', route);
+$('#rtQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') route(); });
+route();
+S.notes($('#n-route'), {
+  c: [
+    ['路由', '在智能体里引入条件逻辑，按输入或状态把控制流导向不同的工具、函数、子智能体。'],
+    ['四种实现', 'LLM 输出类别；嵌入相似度；规则；监督微调的分类器。'],
+    ['路由的位置', '入口分类、链中间决定下一步、子程序里挑工具。']
+  ],
+  p: [
+    ['规则路由', '最快最确定，但对换个说法的输入很脆。'],
+    ['分类器路由', 'LLM 可造训练数据，但不参与实时决策。'],
+    ['框架差异', 'LangGraph 显式状态图；ADK 定义子智能体 / 工具，框架自动委托。']
+  ]
+});
+
+/* ---------- 并行 ---------- */
+function para() {
+  var A = +$('#pAs').value, B = +$('#pBs').value, C = +$('#pCs').value, M = +$('#pMs').value, Y = +$('#pYs').value;
+  $('#pA').textContent = A; $('#pB').textContent = B; $('#pC').textContent = C; $('#pM').textContent = M; $('#pY').textContent = Y;
+  var seq = A + B + C + 3 * M + Y, mx = Math.max(A, B, C), par = mx + M + Y;
+  $('#pSeq').textContent = seq + ' 秒'; $('#pPar').textContent = par + ' 秒';
+  var T = seq, g = $('#pG'); g.innerHTML = '';
+  function lane(label, segs) {
+    var r = h('div', { class: 'row' }, g); h('span', { text: label }, r);
+    var l = h('div', { class: 'lane' }, r);
+    segs.forEach(function (s) { h('span', { class: 'seg2 ' + s[2], style: 'left:' + s[0] / T * 100 + '%;width:' + s[1] / T * 100 + '%', text: s[3] }, l); });
+  }
+  h('h5', { text: '顺序' }, g);
+  var t = 0, segs = [];
+  [['搜A', A, 's'], ['总结', M, 'm'], ['搜B', B, 's'], ['总结', M, 'm'], ['搜C', C, 's'], ['总结', M, 'm'], ['综合', Y, 'y']].forEach(function (x) { segs.push([t, x[1], x[2], x[0]]); t += x[1]; });
+  lane('单线', segs);
+  h('h5', { text: '并行' }, g);
+  [['来源 A', A], ['来源 B', B], ['来源 C', C]].forEach(function (x) { lane(x[0], [[0, x[1], 's', '搜'], [mx, M, 'm', '总结']]); });
+  lane('汇聚', [[mx + M, Y, 'y', '综合']]);
+}
+['pAs', 'pBs', 'pCs', 'pMs', 'pYs'].forEach(function (id) { $('#' + id).addEventListener('input', para); });
+para();
+S.notes($('#n-para'), {
+  c: [
+    ['并行化', '并发执行互不依赖的 LLM 调用、工具调用或子智能体，在汇聚点合并结果。'],
+    ['并发 ≠ 并行', 'asyncio 是单线程事件循环，在等待 I/O 时切换任务，受 GIL 限制。'],
+    ['汇聚点', '综合一步要等所有并行分支完成，通常仍是顺序的。']
+  ],
+  p: [
+    ['收益最大处', '等待外部 API、数据库等 I/O 的任务。'],
+    ['代价', '设计、调试、日志都更复杂，成本更高。'],
+    ['框架构造', 'RunnableParallel；ADK ParallelAgent + SequentialAgent。']
+  ]
+});
+
+/* ---------- 组合 ---------- */
+S.quiz($('#mixQ'), [
+  { q: '研究智能体：检索 20 篇文章，从每篇提取要点，再整合成报告并审校。', o: ['只用提示词链', '只用并行', '提取并行，整合 → 起草 → 审校用链'], a: 2, why: '原书第 1 章原话：并行处理用于独立的数据收集，提示词链用于有依赖关系的综合与完善。' },
+  { q: '客服入口：同一个输入框里既有退款、也有产品咨询、也有报障。', o: ['路由', '并行', '提示词链'], a: 0, why: '需要先判断意图，再把请求交给不同的子流程。' },
+  { q: '写长文：先出 5 个选题 → 选一个出大纲 → 按大纲逐段写 → 整体润色。', o: ['路由', '提示词链', '并行'], a: 1, why: '原书第 1 章“内容生成工作流”用例，每步依赖上一步。' },
+  { q: '一条社媒帖子同时有文字和图片，需要文字情感分析和图片物体识别。', o: ['并行', '路由', '提示词链'], a: 0, why: '原书第 3 章“多模态处理”用例：两种模态的分析互不依赖，可同时进行。' }
+]);
+S.notes($('#n-mix'), {
+  c: [
+    ['顺序 / 分支 / 并发', '链、路由、并行分别对应程序里的三种基本控制流。'],
+    ['典型组合', '并行收集独立数据 → 链式综合、起草、审校。']
+  ],
+  p: [
+    ['判断依据', '步骤之间有没有依赖？输入要不要分情况？'],
+    ['往后看', '反思给链加回路，规划让链由模型自己生成（第 2 篇）。']
+  ]
+});

@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工具、MCP、RAG 与 A2A</title>
+<meta name="description" content="智能体设计模式学习笔记（三）：工具调用的六步流程、MCP 与函数调用的区别及其设计陷阱、RAG 的嵌入 / 分块 / 混合检索、GraphRAG 与 Agentic RAG、A2A 协议的 Agent 卡片与四种交互机制。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5' fill='%232340D6'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.emb { width: 100%; max-width: 420px; display: block; margin: 6px auto; }
+.emb text { font-size: 15px; fill: var(--ink); }
+.emb .ax { stroke: var(--hair); }
+.emb .pt { fill: var(--s1); }
+.emb .q { fill: var(--s2); }
+.emb .ln { stroke: var(--s2); stroke-dasharray: 4 3; }
+.ctxbox { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; }
+.ctxbox ul { margin: 4px 0 0; padding-left: 18px; }
+.ctxbox li.drop { color: var(--ink-3); text-decoration: line-through; }
+.ctxbox li.add { color: var(--ok); }
+.json { font-family: var(--f-num); font-size: 14px; line-height: 1.6; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; white-space: pre; overflow-x: auto; color: var(--ink); max-height: 360px; }
+.json .hl { background: var(--s1-soft); color: var(--s1); border-radius: 3px; }
+.kw td.n { font-family: var(--f-num); text-align: right; }
+</style>
+</head>
+<body data-series="adp-series" data-part="3">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>智能体设计模式 · 03</span><span>对应原书第 5、10、14、15 章</span><span>约 25 分钟</span></p>
+  <h1>让智能体<em>伸出手</em>：接工具、接知识、接同伴</h1>
+  <p class="lead">前两篇的模式都在模型内部打转。这一篇讲智能体怎么和外面连起来：工具调用让它能行动，MCP 把“怎么接工具”标准化，RAG 让它能查资料，A2A 让不同框架做的智能体能互相委托。四章放在一起读，最值得记住的是它们各自管哪一段连接。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">Agentic Design Patterns 智能体设计模式</a>》（Antonio Gulli 著，xindoo 等中文翻译）的学习笔记。21 个模式按主题重新分成 7 篇。每个模式先讲它要解决的问题，再用一张统一格式的模式卡收住，最后配一个小实验；原书的 LangChain / ADK / CrewAI 代码不复述，建议对照原书阅读。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-adp/"><b>总览</b>模式地图</a>
+  <a href="../2026-10-16-adp-1/" data-part="1"><b>01</b>流程编排</a>
+  <a href="../2026-10-16-adp-2/" data-part="2"><b>02</b>反思与规划</a>
+  <a href="../2026-10-16-adp-3/" aria-current="page" data-part="3"><b>03</b>连接外部</a>
+  <a href="../2026-10-16-adp-4/" data-part="4"><b>04</b>记忆与成长</a>
+  <a href="../2026-10-16-adp-5/" data-part="5"><b>05</b>稳健可信</a>
+  <a href="../2026-10-16-adp-6/" data-part="6"><b>06</b>协作与调度</a>
+  <a href="../2026-10-16-adp-7/" data-part="7"><b>07</b>附录速览</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#tool">工具调用</a><a href="#mcp">MCP</a><a href="#rag">RAG 基础</a><a href="#arag">Agentic RAG</a><a href="#a2a">A2A</a><a href="#map">四者分工</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>工具调用的六步里，真正执行工具的是谁？</li>
+    <li>原书对 MCP 提了哪两条设计提醒？</li>
+    <li>Agentic RAG 比标准 RAG 多了哪四种能力？代价是什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="tool">
+  <div class="part-head"><h2>工具调用：模型只出主意，框架去执行</h2><span class="meta">原书第 5 章</span></div>
+  <div class="sec-lede">
+    <p>LLM 的知识是静态的，也不能自己做事。工具使用模式通常借助<strong>函数调用（Function Calling）</strong>实现，原书拆成六步：<strong>工具定义</strong>（名称、用途、参数及类型）→ <strong>LLM 决策</strong>（要不要用、用哪个）→ <strong>生成调用</strong>（一个指定工具名和参数的 JSON）→ <strong>工具执行</strong>（由框架或编排层拦截并真正执行）→ <strong>观察结果</strong> → <strong>LLM 处理</strong>（据结果回答，或决定下一步，可能再调另一个工具）。要点在第 4 步：<strong>执行的不是模型，是框架</strong>。</p>
+    <p>原书建议把“函数调用”理解得更宽，叫<strong>工具调用</strong>：工具可以是普通函数、复杂 API、数据库查询，甚至是<strong>发给另一个专门智能体的指令</strong>。这样看，主智能体就是一个在数字资源和其他智能体之间做编排的角色。框架方面，LangChain 用 <code>@tool</code> 装饰器定义工具，ADK 自带 Google 搜索、代码执行、Vertex AI 搜索等预置工具。</p>
+    <p class="go">走一遍原书金融智能体的例子：查股价，再算利润（价格为示意）。</p>
+  </div>
+  <div class="lab">
+    <div id="tlStep"></div>
+    <div class="chat" id="tlChat"></div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 工具使用</h3><p class="en">Tool Use / Function Calling</p>
+    <dl>
+      <dt>问题</dt><dd>LLM 与外部世界断开：知识静态，不能取实时数据，不能执行操作。</dd>
+      <dt>做法</dt><dd>向模型描述工具；模型生成结构化调用；编排层执行并把结果交回模型。</dd>
+      <dt>何时用</dt><dd>需要实时数据（天气、股价）、私有数据（公司数据库）、精确计算、执行代码、触发外部动作（发邮件、控制设备）。</dd>
+      <dt>六类用例</dt><dd>检索信息、操作数据库 / API、计算与分析、发送通信、执行代码、控制设备。</dd>
+      <dt>相关</dt><dd>工具多了要标准化接入 → MCP；工具是“另一个智能体” → A2A / 多智能体。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-tool"></div>
+</section>
+
+<section class="part" id="mcp">
+  <div class="part-head"><h2>MCP：通用插座，但插座不保证电器好用</h2><span class="meta">原书第 10 章</span></div>
+  <div class="sec-lede">
+    <p>原书用了一个比喻：函数调用像给 AI 一套特定的扳手和螺丝刀，适合任务固定的车间；MCP（Model Context Protocol）像<strong>标准化电源插座</strong>，本身不提供工具，但任何厂商的兼容工具都能插上用。函数调用是专有的、一对一的，模型被明确告知可用哪些工具；MCP 是开放协议、客户端—服务器架构，<strong>客户端可以动态查询服务器有哪些能力</strong>，服务器可被任何兼容应用复用。</p>
+    <p>MCP 服务器暴露三类东西：<strong>资源</strong>（静态数据，如 PDF、数据库记录）、<strong>工具</strong>（执行操作的函数，如发邮件、查 API）、<strong>提示</strong>（指导模型如何与资源或工具交互的模板）。本地用基于 STDIO 的 JSON-RPC，远程用可流式 HTTP 和 SSE。交互流程：发现 → 模型制定请求 → 客户端发标准化调用 → 服务器鉴权、校验、执行 → 返回标准化响应、更新上下文。</p>
+    <p>原书这一章最值得记的是两条提醒。其一，MCP 只是“智能体接口”契约，效果取决于底下的 API：把一个只能逐条取完整工单的老 API 原样包一层，智能体要总结高优先级工单时会又慢又不准，应该先给 API 加上<strong>过滤、排序这类确定性功能</strong>。原书原话的意思是：智能体不能神奇地替代确定性工作流，反而常常需要更强的确定性支持。其二，MCP 不保证数据格式对智能体友好：文档库返回 PDF 而智能体解析不了，接上也没用，<strong>先提供 Markdown 文本版</strong>更好。</p>
+    <p class="go">先分清三类原语，再判断几个设计决策。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">资源、工具，还是提示</p>
+      <div id="mcpSort"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">MCP 设计判断</p>
+      <div id="mcpQ"></div>
+    </div>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th>维度</th><th>工具函数调用</th><th>MCP</th></tr></thead>
+    <tbody>
+      <tr><td>标准化</td><td>专有、各厂商格式不同</td><td>开放协议，跨模型、跨工具互操作</td></tr>
+      <tr><td>范围</td><td>模型请求执行某个预定义函数</td><td>定义模型与外部工具如何互相发现和通信</td></tr>
+      <tr><td>架构</td><td>模型与应用里的工具逻辑一对一</td><td>客户端—服务器，一个客户端接多个服务器</td></tr>
+      <tr><td>发现</td><td>明确告知当前可用哪些工具</td><td>客户端可动态查询服务器能力</td></tr>
+      <tr><td>复用</td><td>与具体应用和模型紧耦合</td><td>独立的 MCP 服务器，任何兼容应用可用</td></tr>
+    </tbody>
+  </table></div>
+  <p class="cap">整理自原书第 10 章的对比表。原书的结论：简单应用用特定工具就够；需要适应变化的复杂互联系统，才需要 MCP 这样的通用标准。</p>
+  <p class="xref">MCP 的安全风险（描述投毒、同名遮蔽）在另一个系列里有展开：<a href="../2026-10-16-agent-4/">深入理解 AI Agent · 04 工具</a>。</p>
+  <div class="notes" id="n-mcp"></div>
+</section>
+
+<section class="part" id="rag">
+  <div class="part-head"><h2>RAG 基础：先查资料，再回答</h2><span class="meta">原书第 14 章</span></div>
+  <div class="sec-lede">
+    <p>RAG（检索增强生成）的流程：查询不直接发给 LLM，而是先在外部知识库里做<strong>语义搜索</strong>，取出最相关的“块”，把它们<strong>增强</strong>进原始提示，再交给 LLM。原书把它概括为把模型从“闭卷”变成“开卷”。好处有四个：用上最新信息、减少幻觉、用上企业私有知识、能给出<strong>引用</strong>。</p>
+    <p>几个核心概念：<strong>嵌入</strong>是文本的向量表示，含义相近的文本在向量空间里靠得近。原书举了二维的例子：cat 在 (2, 3)，kitten 在 (2.1, 3.1)，car 远在 (8, 1)；实际维度是几百到几千。<strong>分块</strong>是把 50 页手册按章节、段落切开，让“故障排除”和“安装指南”成为不同的块。检索方法有<strong>向量搜索</strong>（按语义）、<strong>BM25</strong>（按词频，不懂语义）和二者结合的<strong>混合搜索</strong>。向量存在专门的<strong>向量数据库</strong>里，用 HNSW 这类算法在数百万向量中找最近邻。</p>
+    <p>原书也列了 RAG 的难处：答案散落在多个块或多个文档里时，检索器可能凑不全；检索到无关块会引入噪声；来源互相矛盾时难以综合；知识库要预处理、持续更新；整体增加延迟、成本和 token。</p>
+    <p class="go">左边按原书的坐标算距离；右边看关键词匹配为什么找不到“猫”。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">二维嵌入里找最近的词</p>
+      <svg class="emb" id="embSvg" viewBox="0 0 300 220" role="img" aria-label="二维嵌入示意"></svg>
+      <div class="seg" id="embQ"><button data-v="0" aria-pressed="true">查询 (2.2, 2.8)</button><button data-v="1">查询 (7, 2)</button><button data-v="2">查询 (5, 2)</button></div>
+      <p class="cap" id="embOut"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">关键词重叠打分（真实计算）</p>
+      <p class="lab-s">查询：<b>a furry feline companion</b>（原书例子）</p>
+      <div class="tblw"><table class="cmpt kw"><thead><tr><th>文档</th><th>共有词（去掉 a）</th></tr></thead><tbody id="kwT"></tbody></table></div>
+      <p class="cap">按词面重叠，“a furry rug”排第一，真正讲猫的 “a domestic cat” 得 0 分。原书说能理解语义的模型会认为后者与查询高度相似，因为它们的嵌入很近。这就是混合搜索要把 BM25 的字面精度和向量搜索的语义理解结合起来的原因。（“a furry rug” 等两条是为对比加的示意文档。）</p>
+    </div>
+  </div>
+  <div class="card2">
+    <h3>模式卡 · 知识检索（RAG）</h3><p class="en">Knowledge Retrieval / Retrieval-Augmented Generation</p>
+    <dl>
+      <dt>问题</dt><dd>模型知识静态，不含实时信息和私有领域数据，回答可能过时或缺乏上下文。</dd>
+      <dt>做法</dt><dd>检索相关片段 → 附加进提示 → 生成有依据、可引用的回答。</dd>
+      <dt>何时用</dt><dd>基于特定、最新或专有信息回答：内部文档问答、客服机器人、需要引用的应用。</dd>
+      <dt>代价</dt><dd>知识库预处理与更新成本；延迟、token 增加；碎片化与矛盾信息难处理。</dd>
+      <dt>变体</dt><dd><strong>GraphRAG</strong>：用知识图谱的实体关系跨文档综合，适合金融关联分析、基因—疾病研究；但建图维护成本高、更不灵活、延迟更高。<strong>Agentic RAG</strong>：见下一节。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-rag"></div>
+</section>
+
+<section class="part" id="arag">
+  <div class="part-head"><h2>Agentic RAG：检索结果先过一道“守门人”</h2><span class="meta">原书第 14 章</span></div>
+  <div class="sec-lede">
+    <p>标准 RAG 被动地接受检索结果。Agentic RAG 加了一个推理和决策层：智能体主动质疑检索结果的质量、相关性和完整性。原书给了四个场景，正好对应四种能力：<strong>来源验证</strong>（按元数据挑出最新、最权威的文档）、<strong>协调冲突</strong>（两个数字打架时优先更可靠的来源）、<strong>多步分解</strong>（把比较类问题拆成多个子查询再综合）、<strong>发现缺口并用工具</strong>（内部库没有就调网络搜索）。</p>
+    <p>代价同样明确：复杂度、成本和延迟显著增加；而且智能体本身可能成为<strong>新的错误来源</strong>：推理出错时会陷入无用循环、误解任务，或错误地丢掉相关信息。</p>
+    <p class="go">选一个原书场景，对比标准 RAG 和 Agentic RAG 最终交给 LLM 的上下文。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="aragS"><button data-v="0" aria-pressed="true">远程办公政策</button><button data-v="1">Alpha 项目预算</button><button data-v="2">和竞品 X 比较</button><button data-v="3">昨天的新品反响</button></div>
+    <p class="lab-s" id="aragQ" style="margin-top:10px"></p>
+    <div class="lab-row" style="margin-top:6px">
+      <div class="ctxbox"><b>标准 RAG</b><ul id="aragA"></ul></div>
+      <div class="ctxbox"><b>Agentic RAG</b><ul id="aragB"></ul></div>
+    </div>
+    <p class="cap" id="aragW"></p>
+  </div>
+  <div class="notes" id="n-arag"></div>
+</section>
+
+<section class="part" id="a2a">
+  <div class="part-head"><h2>A2A：智能体之间的“名片”和“工单”</h2><span class="meta">原书第 15 章</span></div>
+  <div class="sec-lede">
+    <p>A2A（Agent2Agent）是 Google 发起的开放协议，让用 LangGraph、CrewAI、ADK 等不同框架做的智能体能够协作。三类参与者：<strong>用户</strong>、<strong>A2A 客户端</strong>（代表用户发请求的应用或智能体）、<strong>A2A 服务器</strong>（远程智能体，以“不透明”方式运行，客户端不需要知道其内部）。</p>
+    <p><strong>Agent 卡片</strong>是智能体的数字身份，一个 JSON：名称、端点 URL、版本、能力（是否支持流式、推送通知）、技能、默认输入输出模式、认证要求。发现卡片有三种方式：放在<strong>标准路径</strong> <code>/.well-known/agent.json</code>、发布到<strong>精选注册表</strong>（适合企业集中管控）、<strong>直接配置</strong>（紧耦合的私有系统）。</p>
+    <p>通信围绕<strong>异步任务</strong>组织：每个任务有唯一 ID，经历已提交、工作中、已完成等状态（还有需要补充信息的 <code>input-required</code>）；消息由属性（元数据）和若干部分（文本、文件、JSON）组成；任务产出叫<strong>工件</strong>，可以流式返回；<code>contextId</code> 把相关任务串起来保持上下文。全部走 HTTP(S) + JSON-RPC 2.0。安全上靠双向 TLS、审计日志、卡片里声明认证要求、凭据放在 HTTP 头里。</p>
+    <p class="go">看一张原书的 Agent 卡片，再为不同任务挑交互机制。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">WeatherBot 的 Agent 卡片（原书示例，节选）</p>
+      <div class="seg" id="cardS"><button data-v="id" aria-pressed="true">身份与端点</button><button data-v="cap">能力</button><button data-v="auth">认证</button><button data-v="sk">技能</button></div>
+      <div class="json" id="cardJ" style="margin-top:8px"></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">选哪种交互机制</p>
+      <div id="a2aQ"></div>
+    </div>
+  </div>
+  <div class="notes" id="n-a2a"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>四者分工：谁连谁</h2><span class="meta">原书第 5、10、14、15 章</span></div>
+  <div class="sec-lede">
+    <p>原书第 15 章明确说 A2A 是 MCP 的<strong>补充</strong>：MCP 管智能体和外部数据、工具之间的交互，A2A 管智能体和智能体之间的发现与委托。把这一篇的四个模式放在一张表里：</p>
+  </div>
+  <div class="tblw"><table class="cmpt">
+    <thead><tr><th></th><th>连接的两端</th><th>解决什么</th><th>关键概念</th></tr></thead>
+    <tbody>
+      <tr><td><b>工具使用</b></td><td>模型 ↔ 外部函数 / API</td><td>让模型能行动、取实时数据</td><td>工具定义、结构化调用、框架执行</td></tr>
+      <tr><td><b>MCP</b></td><td>应用（客户端）↔ 工具服务器</td><td>工具接入的标准化、动态发现、复用</td><td>资源 / 工具 / 提示；STDIO、HTTP + SSE</td></tr>
+      <tr><td><b>RAG</b></td><td>模型 ↔ 知识库</td><td>让回答有依据、可引用</td><td>嵌入、分块、向量库、混合检索</td></tr>
+      <tr><td><b>A2A</b></td><td>智能体 ↔ 智能体</td><td>跨框架委托任务、协作</td><td>Agent 卡片、异步任务、四种交互机制</td></tr>
+    </tbody>
+  </table></div>
+  <div class="lab" style="margin-top:18px"><div id="mapQ"></div></div>
+  <div class="notes" id="n-map"></div>
+</section>
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 工具调用的六步里，真正执行工具的是谁？</summary><p class="ans">是智能体框架 / 编排层。模型只负责决定要不要用、用哪个，并生成包含工具名和参数的结构化调用。</p></details>
+    <details><summary>2. 原书对 MCP 提了哪两条设计提醒？</summary><p class="ans">一是底层 API 要对智能体友好：老 API 原样包装（例如只能逐条取工单）会又慢又不准，应先补过滤、排序等确定性能力；二是数据格式要可读：返回 PDF 而智能体解析不了就没用，先提供 Markdown 文本版。</p></details>
+    <details><summary>3. Agentic RAG 比标准 RAG 多了哪四种能力？代价是什么？</summary><p class="ans">来源验证、协调冲突、多步分解、发现缺口并调用外部工具。代价是复杂度、成本、延迟上升，而且智能体本身可能成为新的错误来源（陷入循环、误解任务、错误丢弃信息）。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-adp-2/"><small>上一篇</small><span>02 · 反思、规划与推理技术</span></a><a class="nx" href="../2026-10-16-adp-4/"><small>下一篇</small><span>04 · 记忆、学习、目标与探索</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/xindoo/agentic-design-patterns" rel="noopener">xindoo/agentic-design-patterns</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 工具 ---------- */
+var tl = [
+  { r: 'sys', b: '① 工具定义', t: '<code>get_stock_price(symbol: str)</code> 返回当前股价；<code>calculator(expression: str)</code> 计算表达式。' },
+  { r: 'user', t: 'AAPL 现在多少钱？如果我以 150 美元买了 100 股，潜在利润是多少？' },
+  { r: 'asst', b: '② 决策 + ③ 生成调用', t: '需要实时股价，模型内部知识做不到。<br><code>{"name": "get_stock_price", "args": {"symbol": "AAPL"}}</code>' },
+  { r: 'tool', b: '④ 框架执行 → ⑤ 观察', t: '框架拦截这段 JSON，真正调用股票 API：返回 <code>180.00</code>（示意）' },
+  { r: 'asst', b: '⑥ 处理 → 再生成调用', t: '还要精确计算。<br><code>{"name": "calculator", "args": {"expression": "(180-150)*100"}}</code>' },
+  { r: 'tool', b: '执行 → 观察', t: '<code>3000</code>' },
+  { r: 'asst', b: '⑥ 最终回答', t: 'AAPL 当前约 180 美元；按 150 美元买入 100 股，潜在利润约 3000 美元。' }
+];
+S.stepper($('#tlStep'), tl.length, function (i) {
+  var c = $('#tlChat'); c.innerHTML = '';
+  for (var k = 0; k <= i; k++) S.msg(c, tl[k], k === i);
+}, ['定义', '请求', '调用', '执行', '再调用', '执行', '回答']);
+S.notes($('#n-tool'), {
+  c: [
+    ['六步', '定义 → 决策 → 生成调用 → 执行 → 观察 → 处理。'],
+    ['谁执行', '模型只生成结构化调用，框架 / 编排层真正执行。'],
+    ['工具调用（广义）', '工具可以是函数、API、数据库查询，甚至另一个智能体。']
+  ],
+  p: [
+    ['为什么必需', '打破训练数据限制：实时信息、私有数据、精确计算、真实动作。'],
+    ['框架', 'LangChain @tool、create_tool_calling_agent；ADK 预置搜索、代码执行。']
+  ]
+});
+
+/* ---------- MCP ---------- */
+S.sortGame($('#mcpSort'), {
+  bins: [{ k: 'r', t: '资源' }, { k: 't', t: '工具' }, { k: 'p', t: '提示' }],
+  items: [
+    { t: 'customer_database 里的客户记录', k: 'r', why: '静态数据。' },
+    { t: '一份 PDF 产品手册', k: 'r', why: '静态数据。' },
+    { t: 'send_email', k: 't', why: '执行操作的函数。' },
+    { t: '查询天气 API', k: 't', why: '执行操作的函数。' },
+    { t: '“按以下步骤分析这份财报”的交互模板', k: 'p', why: '指导模型如何与资源或工具交互的模板。' }
+  ]
+});
+S.quiz($('#mcpQ'), [
+  { q: '工单系统 API 只能逐条取完整详情。直接包成 MCP 给智能体“总结高优先级工单”，会怎样？', o: ['没问题，MCP 会处理', '又慢又不准，应先给 API 加过滤和排序'], a: 1, why: '原书原例：要先用确定性功能改进底层 API，智能体常常需要更强的确定性支持。' },
+  { q: '文档库 MCP 服务器返回 PDF，智能体解析不了。', o: ['MCP 协议会自动转换格式', '先提供返回 Markdown 文本的接口'], a: 1, why: 'MCP 不保证数据格式对智能体友好，要考虑交换数据的性质。' },
+  { q: '只有三个固定函数的小应用，要不要上 MCP？', o: ['直接函数调用就够', '必须上 MCP'], a: 0, why: '原书实践建议：固定有限的预定义函数，直接函数调用就够了。' },
+  { q: '敏感数据、追求速度，MCP 服务器放哪？', o: ['本地', '远程'], a: 0, why: '本地服务器因速度和敏感数据安全被选择；远程便于组织内共享和扩展。' }
+]);
+S.notes($('#n-mcp'), {
+  c: [
+    ['MCP', '开放标准，客户端—服务器架构，统一 LLM 与外部工具、数据的交互方式。'],
+    ['三类原语', '资源（静态数据）、工具（可执行函数）、提示（交互模板）。'],
+    ['四个角色', 'LLM、MCP 客户端、MCP 服务器、可选的第三方服务。'],
+    ['传输', '本地 STDIO 上的 JSON-RPC；远程可流式 HTTP、SSE。']
+  ],
+  p: [
+    ['vs 函数调用', '专有一对一 vs 开放协议 + 动态发现 + 可复用服务器。'],
+    ['陷阱一', '原样包老 API；底层要先补过滤、排序等确定性能力。'],
+    ['陷阱二', '数据格式不友好（PDF）；先提供文本版。'],
+    ['FastMCP', '用装饰器和类型提示自动生成 schema，简化服务器开发。']
+  ]
+});
+
+/* ---------- RAG ---------- */
+var pts = [['cat', 2, 3], ['kitten', 2.1, 3.1], ['car', 8, 1]];
+var qs = [[2.2, 2.8], [7, 2], [5, 2]];
+var sx = S.scale(0, 10, 30, 290), sy = S.scale(0, 5, 200, 20);
+function emb(qi) {
+  var g = $('#embSvg'); g.innerHTML = '';
+  S.svg('line', { x1: 30, y1: 200, x2: 290, y2: 200, class: 'ax' }, g); S.svg('line', { x1: 30, y1: 200, x2: 30, y2: 20, class: 'ax' }, g);
+  var q = qs[qi];
+  var d = pts.map(function (p) { return [p[0], Math.hypot(p[1] - q[0], p[2] - q[1])]; }).sort(function (a, b) { return a[1] - b[1]; });
+  var best = pts.filter(function (p) { return p[0] === d[0][0]; })[0];
+  S.svg('line', { x1: sx(q[0]), y1: sy(q[1]), x2: sx(best[1]), y2: sy(best[2]), class: 'ln' }, g);
+  pts.forEach(function (p) {
+    S.svg('circle', { cx: sx(p[1]), cy: sy(p[2]), r: 5, class: 'pt' }, g);
+    var t = S.svg('text', { x: sx(p[1]) + (p[0] === 'kitten' ? 8 : -10), y: sy(p[2]) + (p[0] === 'kitten' ? -8 : 20), 'text-anchor': p[0] === 'kitten' ? 'start' : 'middle' }, g); t.textContent = p[0];
+  });
+  S.svg('circle', { cx: sx(q[0]), cy: sy(q[1]), r: 6, class: 'q' }, g);
+  $('#embOut').innerHTML = '欧氏距离：' + d.map(function (x) { return x[0] + ' ' + x[1].toFixed(2); }).join('，') + '。最近的是 <b>' + d[0][0] + '</b>。' + (qi === 2 ? '这个点离谁都不近，检索仍会返回“最近”的结果，但相关性可能很低，这就是无关块带来噪声的来源之一。' : '');
+}
+S.seg($('#embQ'), function (v) { emb(+v); });
+emb(0);
+var q = ['furry', 'feline', 'companion'];
+var docs = ['a domestic cat', 'a furry rug', 'feline vaccine schedule'];
+$('#kwT').innerHTML = docs.map(function (d) { return [d, d.split(' ').filter(function (w) { return q.indexOf(w) >= 0; })]; })
+  .sort(function (a, b) { return b[1].length - a[1].length; })
+  .map(function (r) { return '<tr><td>' + r[0] + '</td><td class="n">' + r[1].length + (r[1].length ? '（' + r[1].join(', ') + '）' : '') + '</td></tr>'; }).join('');
+S.notes($('#n-rag'), {
+  c: [
+    ['RAG', '检索相关片段 → 增强提示 → 生成；闭卷变开卷。'],
+    ['嵌入', '文本的向量表示，含义相近则距离近。'],
+    ['分块', '把大文档切成章节、段落等可检索单位。'],
+    ['BM25 / 向量 / 混合', '词频匹配 / 语义匹配 / 两者结合。'],
+    ['向量数据库', '存嵌入，用 HNSW 等算法做近似最近邻；如 Pinecone、Milvus、pgvector。']
+  ],
+  p: [
+    ['四个好处', '最新信息、减少幻觉、私有知识、可引用。'],
+    ['难处', '信息分散在多块、无关块噪声、来源矛盾、更新成本、延迟和 token。'],
+    ['GraphRAG', '实体关系跨文档综合；建图贵、延迟高、依赖图质量。']
+  ]
+});
+
+/* ---------- Agentic RAG ---------- */
+var ar = [
+  { q: '“我们公司的远程工作政策是什么？”', a: ['2020 年的博客文章', '2025 年的官方政策文档'], b: [['2020 年的博客文章', 'drop'], ['2025 年的官方政策文档', '']], w: '<b>来源验证</b>：智能体看元数据，认定 2025 年官方政策最新最权威，丢掉过时博客。' },
+  { q: '“Alpha 项目第一季度预算是多少？”', a: ['初始提案：50,000 欧元', '最终财务报告：65,000 欧元'], b: [['初始提案：50,000 欧元', 'drop'], ['最终财务报告：65,000 欧元', '']], w: '<b>协调冲突</b>：识别出矛盾，优先更可靠的财务报告。' },
+  { q: '“我们产品的功能和定价与竞争对手 X 相比如何？”', a: ['一次检索返回的混杂片段'], b: [['子查询：我方功能', 'add'], ['子查询：我方定价', 'add'], ['子查询：X 的功能', 'add'], ['子查询：X 的定价', 'add'], ['综合成结构化比较', 'add']], w: '<b>多步推理</b>：拆成四个子查询，分别检索后综合成比较上下文。' },
+  { q: '“市场对我们昨天推出的新产品反应如何？”', a: ['（每周更新的内部库里没有相关内容）'], b: [['内部库：未找到', 'drop'], ['调用实时网络搜索 API', 'add'], ['最新新闻和社媒情绪', 'add']], w: '<b>发现缺口、使用工具</b>：内部知识库是静态的，智能体识别缺口后调用外部搜索。' }
+];
+function arag(i) {
+  var s = ar[i];
+  $('#aragQ').innerHTML = '用户问：' + s.q;
+  $('#aragA').innerHTML = s.a.map(function (x) { return '<li>' + x + '</li>'; }).join('');
+  $('#aragB').innerHTML = s.b.map(function (x) { return '<li class="' + x[1] + '">' + x[0] + '</li>'; }).join('');
+  $('#aragW').innerHTML = s.w;
+}
+S.seg($('#aragS'), function (v) { arag(+v); });
+arag(0);
+S.notes($('#n-arag'), {
+  c: [
+    ['Agentic RAG', '在检索和生成之间加一个推理、决策层，主动评估和精炼检索结果。'],
+    ['四种能力', '来源验证、协调冲突、多步分解、发现缺口并调用工具。']
+  ],
+  p: [
+    ['代价', '复杂度、成本、延迟显著增加。'],
+    ['新错误来源', '推理出错会陷入循环、误解任务、错误丢弃相关信息。']
+  ]
+});
+
+/* ---------- A2A ---------- */
+var card = {
+  id: '{\n  <span class="hl">"name": "WeatherBot",\n  "description": "Provides accurate weather forecasts and historical data.",\n  "url": "http://weather-service.example.com/a2a",\n  "version": "1.0.0",</span>\n  "capabilities": { ... },\n  "authentication": { ... },\n  "defaultInputModes": ["text"],\n  "defaultOutputModes": ["text"],\n  "skills": [ ... ]\n}',
+  cap: '{\n  "name": "WeatherBot",\n  ...\n  <span class="hl">"capabilities": {\n    "streaming": true,\n    "pushNotifications": false,\n    "stateTransitionHistory": true\n  },</span>\n  ...\n}',
+  auth: '{\n  "name": "WeatherBot",\n  ...\n  <span class="hl">"authentication": {\n    "schemes": ["apiKey"]\n  },</span>\n  ...\n}',
+  sk: '{\n  ...\n  <span class="hl">"skills": [{\n    "id": "get_current_weather",\n    "name": "Get Current Weather",\n    "description": "Retrieve real-time weather for any location.",\n    "inputModes": ["text"], "outputModes": ["text"],\n    "examples": ["What\'s the weather in Paris?",\n                 "Current conditions in Tokyo"],\n    ...\n  }]</span>\n}'
+};
+var cardNote = { id: '身份、端点 URL、版本：客户端靠它知道“你是谁、在哪”。', cap: '这张卡声明支持流式（SSE），不支持推送通知（Webhook）。', auth: '认证要求写在卡片里，凭据通过 HTTP 头传递。', sk: '技能带示例问法，方便客户端判断该不该把任务交给它。' };
+function showCard(k) { $('#cardJ').innerHTML = card[k] + '\n\n// ' + cardNote[k]; }
+S.seg($('#cardS'), showCard);
+showCard('id');
+S.quiz($('#a2aQ'), [
+  { q: '查一下当前汇率，马上要结果。', o: ['同步请求 / 响应', '异步轮询', '流式（SSE）', '推送通知（Webhook）'], a: 0, why: '快速、即时的操作，在一次同步交换里拿到完整响应。' },
+  { q: '生成一份报告要几分钟，客户端想边等边干别的，隔一会儿问一次。', o: ['同步请求 / 响应', '异步轮询', '流式（SSE）', '推送通知（Webhook）'], a: 1, why: '服务器先回“工作中”和任务 ID，客户端定期查状态。' },
+  { q: '希望实时看到增量结果和状态变化。', o: ['同步请求 / 响应', '异步轮询', '流式（SSE）', '推送通知（Webhook）'], a: 2, why: '服务器到客户端的持久单向连接，推送部分结果。' },
+  { q: '任务要跑好几个小时，保持连接或频繁轮询都太浪费。', o: ['同步请求 / 响应', '异步轮询', '流式（SSE）', '推送通知（Webhook）'], a: 3, why: '客户端注册 webhook URL，状态重大变化时服务器推送通知。' }
+]);
+S.notes($('#n-a2a'), {
+  c: [
+    ['A2A', 'Google 发起的开放协议，基于 HTTP(S) + JSON-RPC 2.0，让跨框架智能体协作。'],
+    ['三类参与者', '用户、A2A 客户端、A2A 服务器（不透明的远程智能体）。'],
+    ['Agent 卡片', '数字身份 JSON：端点、版本、能力、技能、输入输出模式、认证。'],
+    ['任务 / 消息 / 工件', '异步任务有 ID 和状态；消息 = 属性 + 部分；产出叫工件；contextId 串上下文。']
+  ],
+  p: [
+    ['发现三法', '/.well-known/agent.json、精选注册表、直接配置。'],
+    ['四种交互', '同步、异步轮询、SSE 流式、Webhook 推送。'],
+    ['方法名', '同步 sendTask（tasks/send）；流式 sendTaskSubscribe。'],
+    ['安全', '双向 TLS、审计日志、卡片声明认证、凭据放 HTTP 头。']
+  ]
+});
+
+/* ---------- 分工 ---------- */
+S.quiz($('#mapQ'), [
+  { q: '一个用 CrewAI 写的研究智能体，要把数据分析委托给同事用 ADK 写的分析智能体。', o: ['MCP', 'A2A', 'RAG'], a: 1, why: '智能体与智能体之间、跨框架的任务委托。' },
+  { q: '让智能体能读写公司的 BigQuery 数据集，并且换个模型也能用同一套接入。', o: ['MCP', 'A2A', 'RAG'], a: 0, why: '原书 MCP 用例：数据库集成，且强调跨模型互操作。' },
+  { q: '员工问 HR 政策，回答要附上出处。', o: ['MCP', 'A2A', 'RAG'], a: 2, why: '企业搜索和问答，基于检索片段生成并给出引用。' }
+]);
+S.notes($('#n-map'), {
+  c: [
+    ['MCP 与 A2A', '互补：MCP 管智能体 ↔ 工具 / 数据；A2A 管智能体 ↔ 智能体。'],
+    ['RAG 与工具', '原书 ADK 示例把 Google 搜索工具称作“内置检索机制的直接示例”；Agentic RAG 里检索还要配合其他工具使用。']
+  ],
+  p: [
+    ['一句话区分', '工具让它能做，MCP 让接工具变标准，RAG 让它有据可查，A2A 让它能找同伴。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

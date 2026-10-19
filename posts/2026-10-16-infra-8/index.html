@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推理优化：批处理、KV 缓存、压缩与推测解码</title>
+<meta name="description" content="深入理解 AI Infra 学习笔记（八）：每输出 token 的读取量 D_w/b + Lk、连续批处理与分块 prefill、分页分配与前缀复用、换出与重算的命中率门槛、KV 量化、权重卸载、推测解码的平均输出数与草稿长度判据，以及 SLO 下的有效吞吐与四方案选择。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232340D6'/%3E%3Cpath d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<style>
+.rsvg { width: 100%; height: auto; display: block; margin-top: 8px; }
+.rsvg text { font-size: 11px; fill: var(--ink-3); font-family: var(--f-num); }
+.rsvg .ax { stroke: var(--rule); }
+.rsvg .c1 { stroke: var(--s1); stroke-width: 2.5; fill: none; }
+.rsvg .c2 { stroke: var(--s2); stroke-width: 2.5; fill: none; stroke-dasharray: 6 4; }
+.rsvg .gl { stroke: var(--hair); }
+.rsvg .dot { fill: var(--s2); }
+.blocks { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0; }
+.blocks span { width: 26px; height: 20px; border-radius: 3px; font-size: 11px; line-height: 20px; text-align: center; font-family: var(--f-num); background: var(--dim-soft); color: var(--ink-3); }
+.blocks span.used { background: var(--s1); color: #fff; }
+.blocks span.shared { background: var(--s3); color: #fff; }
+.blocks span.waste { background: var(--alert-soft); color: var(--alert); }
+</style>
+</head>
+<body data-series="infra-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>深入理解 AI Infra · 08</span><span>对应原书第 8 章</span><span>约 40 分钟</span></p>
+  <h1>一张卡、16 条请求、<em>7 秒</em></h1>
+  <p class="lead">原书第 8 章给了一道贯穿全章的题：RTX PRO 6000 上留 12 GiB 给 KV，16 条请求同时到达，每条输入 8192（前 6144 相同）、输出 256，7 秒内完成。四种方案里只有一种能过——不共享前缀的放不下，共享了的要 9.01 秒，压缩的反而 14.55 秒。这一章就是把批处理、缓存、压缩、推测这四类手段的账一笔笔算清楚。</p>
+  <p class="credit">本系列是开源书《<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">深入理解 AI Infra：量化分析与系统设计</a>》（李博杰 著，Apache-2.0 协议，初稿持续修订中）的学习笔记。原书的方法是“从约束推导设计”，所以每篇以计算器为主：先自己代入数字估一遍，再对照原书的结论。公式、硬件参数和算例数字都取自原书，为演示设的默认值会标注“示意”。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-16-infra/"><b>总览</b>估算地图</a>
+  <a href="../2026-10-16-infra-1/" data-part="1"><b>01</b>初识 Infra</a>
+  <a href="../2026-10-16-infra-2/" data-part="2"><b>02</b>模型架构</a>
+  <a href="../2026-10-16-infra-3/" data-part="3"><b>03</b>负载</a>
+  <a href="../2026-10-16-infra-4/" data-part="4"><b>04</b>加速器</a>
+  <a href="../2026-10-16-infra-5/" data-part="5"><b>05</b>算子运行时</a>
+  <a href="../2026-10-16-infra-6/" data-part="6"><b>06</b>超节点</a>
+  <a href="../2026-10-16-infra-7/" data-part="7"><b>07</b>数据中心网络</a>
+  <a href="../2026-10-16-infra-8/" aria-current="page" data-part="8"><b>08</b>推理优化</a>
+  <a href="../2026-10-16-infra-9/" data-part="9"><b>09</b>分布式推理</a>
+  <a href="../2026-10-16-infra-10/" data-part="10"><b>10</b>训练系统</a>
+  <a href="../2026-10-16-infra-11/" data-part="11"><b>11</b>调度与环境</a>
+  <a href="../2026-10-16-infra-12/" data-part="12"><b>12</b>端边云</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#batch">批处理</a><a href="#sched">调度</a><a href="#kv">KV 分配</a><a href="#prefix">前缀复用</a><a href="#comp">压缩与卸载</a><a href="#spec">推测解码</a><a href="#slo">有效吞吐</a><a href="#plan">四方案</a><a href="#back">三个问题</a></div>
+</nav>
+<div class="wrap">
+<div class="q3"><h3>本篇要回答的 3 个问题</h3><ol>
+  <li>batch 从 1 加到 64，每个输出 token 的读取量能降多少？什么时候就降不动了？</li>
+  <li>前缀复用、KV 压缩、权重卸载各省什么，各自的门槛在哪？</li>
+  <li>推测解码一轮多输出几个 token 才划算？那道 16 条请求 7 秒的题怎么解？</li>
+</ol></div>
+
+<section class="part" id="batch">
+  <div class="part-head"><h2>批处理：权重被摊薄，KV 摊不薄</h2><span class="meta">原书 8.1–8.2.1 节</span></div>
+  <div class="sec-lede">
+    <p>一条请求的时间线分两段：<strong>TTFT = t₁ − t<sub>a</sub></strong>（排队 + prefill）和后面 G−1 个输出间隔。原书算例：2K 输入短请求 prefill 到首 token 0.096 s，之后每 26.5 ms 一个，排队 0.1 s，<strong>0.1 + 0.096 + 255 × 0.0265 = 6.95 s</strong>。中间插进另一条请求的 prefill，某个间隔就从 26.5 变成 123 ms，总耗时 7.05 s——<strong>计算内容没变，只是换了执行顺序，就超时了</strong>。</p>
+    <p>合批之所以有效，是因为同一份权重被多行复用：<strong>I<sub>weight</sub> ≈ 2b/s<sub>w</sub></strong>。但各请求的 KV 是各读各的：</p>
+    <p class="fx" style="margin:10px 0">D(b, L) = D_w + b·L·k　　d(b, L) = D_w/b + L·k</p>
+    <p>Qwen3-8B 的 D<sub>w</sub> ≈ 14.1 GiB，每 token KV k = 144 KiB。2K 上下文时 batch 1 → 64，每输出 token 的读取从 14.38 降到 0.50 GiB（约 1/29）；但<strong>权重项和 KV 项相等的 batch b<sub>KV</sub> = ⌈D<sub>w</sub>/(Lk)⌉</strong>：2K 时 51，8K 时只要 <strong>13</strong>。上下文一长，KV 读取很快就超过权重读取。</p>
+    <p>代价是首 token 和输出间隔都变长：batch 1 → 64，总吞吐 37 → 1165 token/s，但首 token 从 96 ms 延后到 <strong>3.29 s</strong>，平均输出间隔从 27 增到 40 ms。</p>
+    <p>LoRA 是个有意思的对照：一套 Q、V 投影 r = 16 的 BF16 adapter 只占 14.6 MiB，100 套 1.43 GiB；而 100 条互不共享的 8K 上下文，KV 要 <strong>112.5 GiB</strong>。<strong>能放多少套 adapter 由小矩阵决定，能服务多少条请求仍由 KV 决定。</strong></p>
+    <p class="go">先猜 8K 上下文下 KV 读取超过权重读取的 batch。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">每个输出 token 的读取量 D_w/b + Lk</p>
+    <div id="bkG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>batch b <output id="bkB">16</output></span><input type="range" id="bkBs" min="0" max="8" value="4"></label>
+      <label class="ctl"><span>上下文 L（K token） <output id="bkL">2</output></span><input type="range" id="bkLs" min="1" max="32" value="2"></label>
+    </div>
+    <div id="bkBars" class="wide"></div>
+    <div class="read"><div class="hl"><div class="v" id="bkD">0</div><div class="k">每输出 token 读取</div></div><div><div class="v" id="bkK">0</div><div class="k">b_KV = ⌈D_w/(Lk)⌉</div></div><div class="warn"><div class="v" id="bkM">0</div><div class="k">整批 KV 容量</div></div></div>
+    <p class="cap" id="bkW"></p>
+  </div>
+  <div class="notes" id="n-batch"></div>
+</section>
+
+<section class="part" id="sched">
+  <div class="part-head"><h2>调度：连续批处理省总时间，却可能拉长一次停顿</h2><span class="meta">原书 8.2.2–8.2.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>固定批处理</strong>整组进整组出，短请求空出的位置一直闲着；<strong>连续批处理</strong>在迭代边界重排活跃请求。原书算例（最多同时两条，每轮耗时按实测拟合：固定 26.22 ms + 每新 token 30.4 μs + 每对因果查询键 3 ns）：固定批处理 870 ms；连续批处理 766 ms（<strong>省 12%</strong>），但 r0 的下一次输出要等 r2 的 8K prefill，<strong>最大输出间隔从 26 ms 涨到 376 ms，14 倍</strong>。把 r2 的 prefill 按 2048 分块、每轮上限 4096，最大间隔降到 133 ms，总时间 844 ms。</p>
+    <p>分块也不是越小越好。本块 c 个新 token、已有上下文 h 时 <strong>N<sub>pair</sub> = ch + c(c+1)/2</strong>：c = 512 时首块 131,328 对全来自块内，8K 输入的末块（h = 7680）有 4,063,488 对，<strong>约 31 倍</strong>；实测末块主干矩阵运算多 32%、时间从 25.3 增到 35.1 ms（多 39%）。而块减半又让同一份权重多读一遍（一层 FFN 288 MiB → 576 MiB）。</p>
+    <p>还有个容易忽略的：<strong>少处理一个 token 不一定少做计算</strong>。预先捕获 16 行和 32 行两种 CUDA Graph 时，17–32 行都填充到 32 行；18 → 17 行仍执行 32 行图，17 → 16 行才换小图。token 预算从 512 增到 8192：后到请求的排队从 149 ms 降到不足 0.1 ms，<strong>最长输出间隔却从 32 增到 183 ms</strong>。</p>
+    <p class="go">看分块大小怎么影响注意力配对数。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">分块 prefill：N_pair = ch + c(c+1)/2</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>块长 c <output id="ckC">512</output></span><input type="range" id="ckCs" min="6" max="12" value="9"></label>
+        <label class="ctl"><span>总输入（K token） <output id="ckL">8</output></span><input type="range" id="ckLs" min="1" max="32" value="8"></label>
+      </div>
+      <div class="read"><div><div class="v" id="ckN">0</div><div class="k">块数</div></div><div><div class="v" id="ckF">0</div><div class="k">首块配对数</div></div><div class="warn"><div class="v" id="ckE">0</div><div class="k">末块配对数</div></div></div>
+      <p class="cap" id="ckW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">token 预算的两面</p>
+      <div class="tblw"><table class="cmpt">
+        <thead><tr><th>每轮 token 上限</th><th>后到请求排队</th><th>最长输出间隔</th></tr></thead>
+        <tbody>
+          <tr><td>512</td><td>约 149 ms</td><td>约 32 ms</td></tr>
+          <tr><td>8192</td><td>&lt; 0.1 ms</td><td>约 183 ms</td></tr>
+        </tbody>
+      </table></div>
+      <p class="cap">原书六条请求（每 80 ms 到达一条）的回放记录。<strong>上限越高，新请求越早离队，已有请求等下一次输出越久。</strong>确定方法：先按允许的输出间隔定一轮最多执行多久，再按上下文长度和预设执行形状换算成可处理的新 token 数。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-sched"></div>
+</section>
+
+<section class="part" id="kv">
+  <div class="part-head"><h2>KV 分配：分页、共享、写时复制</h2><span class="meta">原书 8.3.1–8.3.2 节</span></div>
+  <div class="sec-lede">
+    <p>整段预留会浪费尾部，逐步扩展又要求连续。分页分配像活页册：<strong>逻辑块</strong>是页码、<strong>物理块</strong>是实际内存、<strong>块表</strong>记录映射，物理块可以分散放。每块容 p 个 token 时浪费 <strong>p⌈L/p⌉ − L ≤ p − 1</strong>。块越小浪费越少，块表项和分配次数越多。</p>
+    <p>原书算例：A、B、C、D 长度 9、13、5、15，上限 16。整段预留共 64 个 token 的空间；p = 4 分页分别给 12、16、8、16 共 <strong>52</strong>，实际用 42，未用从 22 降到 10。若 A、B 前八个 token 相同再共用两块，降到 <strong>44</strong>。<strong>分页减的是没用上的预留，共享减的是重复保存的上下文——两回事。</strong></p>
+    <p>共享要靠<strong>引用计数</strong>：最后一个引用释放、且加速器不再访问时才回空闲池。写共享尾块要<strong>写时复制</strong>（先复制再各自追加，已填满的只读块继续共享）。四分支实验：公共前缀 95 块、每分支私有 9 块，块表共 4 × (95 + 9) = 416 次引用，物理块只有 <strong>95 + 4 × 9 = 131</strong>。</p>
+    <p class="go">调块大小和共享前缀，看物理块数。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分页与共享</p>
+    <div id="pgG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每块 token 数 p <output id="pgP">4</output></span><input type="range" id="pgPs" min="1" max="16" value="4"></label>
+      <label class="ctl"><span>A、B 共同前缀长度 <output id="pgS">0</output></span><input type="range" id="pgSs" min="0" max="9" value="0"></label>
+    </div>
+    <div class="blocks" id="pgB"></div>
+    <table class="calc" id="pgT"></table>
+  </div>
+  <div class="notes" id="n-kv"></div>
+</section>
+
+<section class="part" id="prefix">
+  <div class="part-head"><h2>前缀复用：命中率要多高才值得留着</h2><span class="meta">原书 8.3.3–8.3.4 节</span></div>
+  <div class="sec-lede">
+    <p>复用沿前缀<strong>连续</strong>发生：两条提示前 100 个 token 相同、第 101 个不同，后面即使又相同也不能复用。所以<strong>把动态时间戳放在最前面，会让后面很长的工具定义失去复用机会</strong>；稳定的系统提示和工具定义在前、本轮变化追加在后，才能保住长前缀。</p>
+    <p>换出到主机值不值，有个明确门槛。原书算例：6144 个 token 的前缀（864 MiB），重算 T<sub>r</sub> = 308 ms；经 PCIe Gen5 x16 取回 T<sub>f</sub> = 14.2 ms、换出 T<sub>m</sub> = 14.2 ms。<strong>p<sub>h</sub> &gt; T<sub>m</sub>/(T<sub>r</sub> − T<sub>f</sub>) = 14.2/293.7 = 4.8%</strong>。换成 Gen4 x16（32 GB/s），取回和换出各 28.3 ms，门槛升到 <strong>10.1%</strong>。</p>
+    <p>该保留哪个前缀，比的是<strong>单位容量的收益</strong>：A（6144 token、864 MiB、重算 308 ms、命中 50%）期望省 132.7 ms，约 0.154 ms/MiB；三个 B（2048 token、288 MiB、重算 94.7 ms）合计 120.9 ms，约 0.140 ms/MiB。<strong>重算时间随长度超线性增长（6144 的 prefill 是 2048 的 3.25 倍），所以同样的内存留长前缀更划算。</strong></p>
+    <p>还有个对照很说明问题：12 轮 Agent 输入共 19,556 个 token，<strong>6 GiB 缓存池命中 16,304 个（只需重算 3252），1 GiB 池一个也没命中</strong>；把轮间等待延长 0.2 秒，命中数一点没变——<strong>是容量不够，不是时间不够</strong>。</p>
+    <p class="go">调带宽和重算时间，看门槛命中率。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">换出到主机的命中率门槛</p>
+      <div id="swG"></div>
+      <div class="ctl-grid">
+        <label class="ctl"><span>前缀长度（K token） <output id="swL">6</output></span><input type="range" id="swLs" min="1" max="32" value="6"></label>
+        <label class="ctl"><span>主机链路（GB/s） <output id="swB">64</output></span><input type="range" id="swBs" min="8" max="128" step="8" value="64"></label>
+      </div>
+      <table class="calc" id="swT"></table>
+      <p class="verdict3" id="swV"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">同样的内存，留长前缀还是多个短前缀</p>
+      <div id="pfBars" class="wide"></div>
+      <p class="cap">864 MiB：一个 6144 token 前缀期望省 132.7 ms（0.154 ms/MiB）vs 三个 2048 token 前缀合计 120.9 ms（0.140 ms/MiB）。命中概率都取 50%。</p>
+    </div>
+  </div>
+  <div class="notes" id="n-prefix"></div>
+</section>
+
+<section class="part" id="comp">
+  <div class="part-head"><h2>压缩与卸载：省空间要付多少时间</h2><span class="meta">原书 8.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>量化要连元数据一起算。</strong>Q2_K 每组 256 个值：2-bit 编码 64 B + scale 等 20 B = 84 B，平均每值 2.625 bit，<strong>元数据占 24%</strong>。KV 的 q8_0 是每 32 个值 32 B 码 + 2 B scale = 34/64；q4_0 是 18/64。一条 8K 上下文的 BF16 KV 1152 MiB，q8_0 变 612、q4_0 变 324 MiB——<strong>不是只看位宽得到的 576 和 288</strong>。</p>
+    <p>压缩能否加快执行看净账：<strong>ΔT = ΔD/β − T<sub>c</sub></strong>。8K 从 BF16 改 q8_0 少读 540 MiB，按有效带宽 1.16 TB/s 省 0.487 ms；转换花 0.2 ms 净省 0.287，花 0.8 ms 反而亏 0.313。另一组评估（H100、Llama-3.1-8B）拟合出 BF16 和 FP8 的输出间隔分别是 6.44 + 4.37×10⁻⁵L 和 6.58 + 2.37×10⁻⁵L ms，<strong>交点约 7000 个 token</strong>：2K 时 BF16 更快，16K 时 FP8 更快。</p>
+    <p><strong>权重卸载的账更难算。</strong>Qwen3-8B 每四层卸载一层 FFN（九份 × 288 MiB = 2592 MiB），一组预取缓冲净省 2304 MiB。但每轮都要搬回来：经 PCIe Gen5 x16（64 GB/s）<strong>至少 42.5 ms</strong>，已经超过 batch 1 一轮 decode 的 26.26 ms；255 轮光搬移就 10.8 秒，7 秒时限直接出局。换 GH200 的 NVLink-C2C（450 GB/s）每轮 6.0 ms，255 轮 1.54 s，预取就能被计算盖住。</p>
+    <p>先压缩再搬也要算：<strong>R<sub>dec</sub> &gt; B<sub>link</sub>/(1 − r)</strong>。96 MiB 压到四分之一，PCIe Gen5 直传 1.57 ms、传压缩数据 0.39 ms，<strong>要保住这 1.18 ms，解压器每秒得输出 85.3 GB 原始数据</strong>。链路越快，对解压的要求越高。</p>
+    <p>最后一条提醒：改格式会改答案。一组 Qwen3-8B 实验（权重都是 BF16）：BF16 KV 答对 28/32，原 FP8 实现 26，<strong>保留 FP8 KV 但把 Q 恢复成 BF16 又回到 28</strong>——只改 Q 的精度结果就变了。而且同样答对 28 次，答错的题目还不一样。</p>
+    <p class="go">先猜 q8_0 的实际压缩比，再算卸载的每轮搬移。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">KV 量化：别忘了 scale</p>
+      <div id="qzG"></div>
+      <div class="selrow"><span>格式</span><div class="seg" id="qzF"><button data-v="64" aria-pressed="true">BF16（64 B/32 值）</button><button data-v="34">q8_0（34 B）</button><button data-v="18">q4_0（18 B）</button></div></div>
+      <label class="ctl"><span>上下文（K token） <output id="qzL">8</output></span><input type="range" id="qzLs" min="1" max="64" value="8"></label>
+      <div class="read"><div class="hl"><div class="v" id="qzM">0</div><div class="k">单请求 KV</div></div><div><div class="v" id="qzB">0</div><div class="k">平均每值位宽</div></div><div class="good"><div class="v" id="qzS">0</div><div class="k">相对 BF16 省下</div></div></div>
+      <p class="note" id="qzW"></p>
+    </div>
+    <div class="lab">
+      <p class="lab-t">权重卸载的每轮搬移</p>
+      <div class="ctl-grid">
+        <label class="ctl"><span>卸载的层数 <output id="olN">9</output></span><input type="range" id="olNs" min="1" max="36" value="9"></label>
+        <label class="ctl"><span>主机链路（GB/s） <output id="olB">64</output></span><input type="range" id="olBs" min="16" max="450" step="16" value="64"></label>
+      </div>
+      <div class="read"><div class="good"><div class="v" id="olF">0</div><div class="k">释放的显存（一组缓冲）</div></div><div class="warn"><div class="v" id="olT">0</div><div class="k">每轮搬移下界</div></div></div>
+      <p class="verdict3" id="olV"></p>
+    </div>
+  </div>
+  <div class="notes" id="n-comp"></div>
+</section>
+
+<section class="part" id="spec">
+  <div class="part-head"><h2>推测解码：一轮多输出几个才划算</h2><span class="meta">原书 8.5 节</span></div>
+  <div class="sec-lede">
+    <p>先用草稿模型写一段，再让目标模型一次验证多个位置。贪心时：四个草稿，前两个对、第三个错，<strong>保留两个 + 修正一个 = 3 个输出</strong>（第四个因为依赖错误的第三个也丢掉）；全对时通常还能多生成一个。随机采样要保分布：以 <strong>α(x) = min(1, p(x)/q(x))</strong> 接受，拒绝后从归一化的 [p−q]<sub>+</sub> 重采样，最终仍是 p(x)。</p>
+    <p>平均输出数：前面全接受时第 j 位的条件接受率 a<sub>j</sub>，则 <strong>E[N<sub>m</sub>] = 1 + Σ<sub>j</sub> Π<sub>i≤j</sub> a<sub>i</sub></strong>。原书两符号例：草稿恒为 A 时 a = 1/4，平均 1.33 个；恒为 B 时 a = 3/4，平均 3.05 个。<strong>算平均耗时必须用总时间 ÷ 总 token</strong>：两轮各 1.5 ms、分别输出 1 和 5 个，是 3/6 = 0.5 ms，不是 (1.5 + 0.3)/2 = 0.9 ms。</p>
+    <p>要不要加长草稿，判据是 <strong>ΔT/ΔN &lt; T/N</strong>，其中 ΔN = Π<sub>i≤m</sub> a<sub>i</sub>——<strong>越靠后的草稿 token 保留概率越低，越难赚回时间</strong>。预设执行形状也影响 ΔT：验证 4 个和 5 个都补到八行图时增量很小，从 8 个增到 9 个要换十六行图，计算量就跳一截。</p>
+    <p>草稿怎么生成也有讲究。DFlash 草稿网络权重 1.95 GiB，按 batch 1 的有效带宽前向一次 3.57 ms：<strong>串行生成四个草稿要 4 次前向共 14.28 ms，并行生成整段只要 3.57 ms</strong>。目标验证都是 26.26 ms，平均输出 3 个时分别是 13.5 和 9.9 ms/token。但如果并行草稿的接受率低到平均只输出 2 个，就变成 14.9 ms——<strong>比串行还慢</strong>。</p>
+    <p>实测也印证了收益递减：Qwen3-8B/DFlash 短提取任务并发 1 时，普通 decode / K7 / K15 的耗时中位数是 90.0 / 30.6 / 29.4 ms——<strong>普通改 K7 省 59 ms，K7 改 K15 只再省 1.2 ms</strong>；逐轮记录里还有两种块长都只接受一个草稿的轮次（K7 丢 6 个、K15 丢 14 个，输出一样长）。</p>
+    <p class="go">调接受率和草稿长度。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">E[N_m] 与平均每 token 耗时</p>
+    <div id="spG"></div>
+    <div class="ctl-grid">
+      <label class="ctl"><span>条件接受率 a <output id="saA">0.75</output></span><input type="range" id="saAs" min="0.05" max="0.95" step="0.05" value="0.75"></label>
+      <label class="ctl"><span>草稿长度 m <output id="saM">4</output></span><input type="range" id="saMs" min="1" max="16" value="4"></label>
+      <label class="ctl"><span>草稿生成耗时（ms） <output id="saD">3.6</output></span><input type="range" id="saDs" min="0" max="30" step="0.1" value="3.6"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="saN">0</div><div class="k">平均每轮输出 E[N]</div></div><div><div class="v" id="saT">0</div><div class="k">平均每 token 耗时</div></div><div class="good"><div class="v" id="saS">0</div><div class="k">相对普通 decode（26.26 ms）</div></div></div>
+    <div id="saBars" class="wide"></div>
+    <p class="cap" id="saW"></p>
+  </div>
+  <div class="notes" id="n-spec"></div>
+</section>
+
+<section class="part" id="slo">
+  <div class="part-head"><h2>有效吞吐：正确且按期才算数</h2><span class="meta">原书 8.6.1–8.6.2 节</span></div>
+  <div class="sec-lede">
+    <p>系统里平均有多少条请求占着状态，由 Little 定律给出：<strong>n̄ = λT̄</strong>。每秒 4 条、平均停留 0.5 s 就是 2 条；停留 2 s 就是 8 条。<strong>准入控制</strong>要在接收前检查 KV 空间和剩余时限——短请求 6.95 s 已经用掉，再排 0.1 s 就超时了。</p>
+    <p>评价服务要同时看正确和按期：<strong>R<sub>good</sub> = Σ Q<sub>i</sub>D<sub>i</sub> / T<sub>obs</sub></strong>。原书的检索实验（336 次回答、294 次正确、<strong>只有 155 次同时满足 3 秒时限</strong>）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>到达率</th><th>策略</th><th>完成吞吐</th><th>有效吞吐</th><th>每个合格结果能耗</th></tr></thead>
+      <tbody>
+        <tr><td>1/s</td><td>两种在线策略</td><td>—</td><td>约 0.90 req/s</td><td>615.0 J</td></tr>
+        <tr><td>4/s</td><td>逐个接纳</td><td>约 1.22</td><td>约 0.31</td><td>1982.3 J</td></tr>
+        <tr class="on"><td>4/s</td><td>连续批处理</td><td>约 2.33</td><td>约 1.02</td><td>652.0 J</td></tr>
+        <tr><td>16/s</td><td>连续批处理</td><td>约 2.38</td><td>约 0.60</td><td>1083.7 J</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">原书 8.6.2、8.6.3 节实测。<strong>16/s 比 4/s 完成吞吐几乎没涨，有效吞吐反而降了 41%</strong>——多到达的请求主要变成了排队时间。所以要先找出有效吞吐开始下降的到达率，再限制接收。</p>
+    <p>再看实测的效率表（Qwen3-8B、RTX PRO 6000、2K 上下文、关 CUDA Graph）：</p>
+    <div class="tblw"><table class="cmpt">
+      <thead><tr><th>batch</th><th>每轮读取</th><th>按 1792 GB/s 的下界</th><th>实测一轮</th><th>MBU</th><th>prefill MFU</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>15.44 GB</td><td>8.62 ms</td><td>26.26 ms</td><td>33%</td><td>62%</td></tr>
+        <tr><td>4</td><td>16.34 GB</td><td>9.12 ms</td><td>26.62 ms</td><td>34%</td><td>61%</td></tr>
+        <tr><td>16</td><td>19.97 GB</td><td>11.14 ms</td><td>27.44 ms</td><td>41%</td><td>61%</td></tr>
+        <tr><td>64</td><td>34.46 GB</td><td>19.23 ms</td><td>29.63 ms</td><td>65%</td><td>58%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap"><strong>MBU 随 batch 上升不是因为读取变快了</strong>：读取量从 15.44 涨到 34.46 GB，一轮只从 26.26 涨到 29.63 ms。batch 1 比下界多出的 17.6 ms 几乎不随读取量变化——按第 1 篇的判据，这不是模型漏项，是逐个提交 kernel 和主机侧调度的开销。</p>
+    <p class="go">调到达率，看有效吞吐什么时候开始掉。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Little 定律与状态占用</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>到达率 λ（req/s） <output id="ltL">4</output></span><input type="range" id="ltLs" min="0.5" max="32" step="0.5" value="4"></label>
+      <label class="ctl"><span>平均停留 T̄（s） <output id="ltT">2</output></span><input type="range" id="ltTs" min="0.2" max="20" step="0.2" value="2"></label>
+      <label class="ctl"><span>每条请求的 KV（MiB） <output id="ltK">1188</output></span><input type="range" id="ltKs" min="100" max="2000" step="20" value="1188"></label>
+    </div>
+    <div class="read"><div class="hl"><div class="v" id="ltN">0</div><div class="k">系统内平均请求数 λT̄</div></div><div class="warn"><div class="v" id="ltM">0</div><div class="k">这些状态要占</div></div></div>
+    <p class="note">停留时间包括排队、生成和等待工具返回——等工具时模型不算，KV 照占。</p>
+  </div>
+  <div class="notes" id="n-slo"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>回到那道题：四个方案，只有一个能过</h2><span class="meta">原书 8.6.3 节</span></div>
+  <div class="sec-lede">
+    <p>条件：RTX PRO 6000 给本实例 32 GiB，扣掉权重和基本工作区后 <strong>12 GiB 给 KV</strong>；16 条请求同时到达，每条输入 8192（前 6144 相同）、输出 256，<strong>7 秒</strong>完成。四个方案：</p>
+    <p class="go">先猜哪个能过，再看逐项核算。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四方案的容量与时间</p>
+    <div id="plG"></div>
+    <div class="tblw"><table class="cmpt" id="plT"></table></div>
+    <svg class="rsvg" id="plSvg" viewBox="0 0 560 260" role="img" aria-label="容量与时间平面"></svg>
+    <p class="cap">横轴：KV 和辅助缓冲（12 GiB 为限）；纵轴：完成时间（7 s 为限）。只有 D 同时落在两条虚线以内。每个合格结果占用 4.56/16 ≈ 0.285 GPU 秒，按 600 W 上限不超过约 171 J；B 占用这张卡 9.01 秒却一个合格结果都没有。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">换条件会怎样</p>
+    <div class="seg" id="altS"><button data-v="mem" aria-pressed="true">内存降到 6 GiB</button><button data-v="out">输出缩到 16 个 token</button></div>
+    <p class="verdict3" id="altW"></p>
+  </div>
+  <div class="fxc">
+    <h3>本章公式卡</h3>
+    <div class="fx">M_w + M_KV + M_a + M_u ≤ C；　k = 2·L·n_KV·d_h·b</div>
+    <div class="fx">T_request = TTFT + Σ ITL_j；　I_weight ≈ 2b/s_w</div>
+    <div class="fx">D(b,L) = D_w + bLk，　d(b,L) = D_w/b + Lk，　b_KV = ⌈D_w/(Lk)⌉</div>
+    <div class="fx">T_step ≈ max(bF/P, (D_w + bLk)/β)</div>
+    <div class="fx">N_pair = ch + c(c+1)/2；　分页浪费 p⌈L/p⌉ − L ≤ p − 1</div>
+    <div class="fx">换出门槛：p_h &gt; T_m/(T_r − T_f)；　压缩净省 ΔT = ΔD/β − T_c</div>
+    <div class="fx">先压再搬划算：R_dec &gt; B_link/(1 − r)</div>
+    <div class="fx">α(x) = min(1, p(x)/q(x))；　E[N_m] = 1 + Σ_j Π_{i≤j} a_i；　加长判据 ΔT/ΔN &lt; T/N</div>
+    <div class="fx">t̄_spec = ΣT_r / ΣN_r；　n̄ = λT̄；　R_good = Σ Q_i D_i / T_obs</div>
+    <div class="fx">t_GPU = L/r_P + (G−1)/r_D；　S_task = 1/((1−f) + f/s)</div>
+  </div>
+  <div class="kvc">
+    <h3>关键数字</h3>
+    <div class="kv">
+      <div><b>14.38 → 0.50 GiB</b><span>2K 上下文 batch 1 → 64 的每输出 token 读取</span></div>
+      <div><b>51 / 13</b><span>2K / 8K 上下文下 KV 读取超过权重的 batch</span></div>
+      <div><b>26 → 376 ms</b><span>连续批处理插入 8K prefill 时的最大输出间隔</span></div>
+      <div><b>31 倍</b><span>8K 输入末块 vs 首块的注意力配对数</span></div>
+      <div><b>4.8% / 10.1%</b><span>Gen5 / Gen4 下换出前缀的命中率门槛</span></div>
+      <div><b>34/64、18/64</b><span>q8_0、q4_0 的实际压缩比（含 scale）</span></div>
+      <div><b>42.5 vs 26.26 ms</b><span>PCIe Gen5 卸载九层 FFN 的每轮搬移 vs 一轮 decode</span></div>
+      <div><b>1.33 / 3.05</b><span>a = 1/4 和 3/4 时四个草稿的平均输出数</span></div>
+      <div><b>2.33 vs 1.02 req/s</b><span>4/s 时连续批处理的完成吞吐 vs 有效吞吐</span></div>
+      <div><b>4.56 s</b><span>方案 D 的完成时间（B 要 9.01、C 要 14.55）</span></div>
+    </div>
+    <p class="src">数字均取自原书第 8 章。</p>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>回到开头的 3 个问题</h2><span class="meta">本篇小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-16-infra-7/"><small>上一篇</small><span>07 · 数据中心网络</span></a><a class="nx" href="../2026-10-16-infra-9/"><small>下一篇</small><span>09 · 分布式推理</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/bojieli/ai-infra-book" rel="noopener">bojieli/ai-infra-book</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+function ms8(x) { return S.f(x, x < 10 ? 2 : 1) + ' ms'; }
+function gib2(x) { return x >= 1024 ? S.f(x / 1024, 2) + ' GiB' : S.f(x, x >= 100 ? 0 : 1) + ' MiB'; }
+
+/* ---------- 批处理 ---------- */
+var Dw = 14.1, kTok = 144 / 1024 / 1024; // GiB
+var bs = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+function bk() {
+  var b = bs[+$('#bkBs').value], L = +$('#bkLs').value * 1024;
+  $('#bkB').textContent = b; $('#bkL').textContent = L / 1024;
+  var wpart = Dw / b, kpart = L * kTok, tot = wpart + kpart;
+  S.bars($('#bkBars'), [{ label: '分摊的权重 D_w/b', value: wpart / (Dw + kpart), text: S.f(wpart, 3) + ' GiB', cls: wpart > kpart ? 'alt' : 'dim' },
+    { label: '本请求的 KV L·k', value: kpart / (Dw + kpart), text: S.f(kpart, 3) + ' GiB', cls: kpart >= wpart ? 'alt' : 'dim' }]);
+  $('#bkD').textContent = S.f(tot, 3) + ' GiB';
+  $('#bkK').textContent = Math.ceil(Dw / kpart);
+  $('#bkM').textContent = gib2(b * L * 144 / 1024);
+  $('#bkW').innerHTML = '相对 batch 1（' + S.f(Dw + kpart, 2) + ' GiB）降到 ' + S.f(tot / (Dw + kpart), 3) + '。' +
+    (b >= Math.ceil(Dw / kpart) ? ' <b>KV 读取已经超过权重读取</b>，继续加 batch 主要是增加整批 KV 容量。' : ' 权重仍是大头，加 batch 还能继续摊薄。');
+}
+['bkBs', 'bkLs'].forEach(function (id) { $('#' + id).addEventListener('input', bk); }); bk();
+S.guess($('#bkG'), { q: 'Qwen3-8B、8K 上下文时，batch 多大 KV 读取就超过权重读取了？', unit: '', ans: 13, fmt: function (x) { return S.f(x, 0); }, why: '原书：b_KV = ⌈D_w/(Lk)⌉，2K 上下文是 51，8K 只要 13。上下文长四倍，KV 读取在小得多的 batch 下就超过了权重读取——这也是长上下文服务里加 batch 收益快速递减的原因。' });
+S.notes($('#n-batch'), {
+  c: [
+    ['两段时间', 'TTFT（排队 + prefill）和 G−1 个输出间隔。'],
+    ['d(b,L)', 'D_w/b + Lk：权重摊薄，KV 摊不薄。'],
+    ['b_KV', '⌈D_w/(Lk)⌉：2K 是 51，8K 是 13。'],
+    ['调度迭代', '调度器选工作、提交、处理结果的一个周期；一条请求跨很多轮。']
+  ],
+  p: [
+    ['吞吐涨、延迟也涨', 'batch 1 → 64：吞吐 37 → 1165 token/s，首 token 96 ms → 3.29 s。'],
+    ['LoRA', '100 套 adapter 1.43 GiB，100 条 8K 上下文的 KV 要 112.5 GiB。'],
+    ['adapter 分散的代价', '低秩计算按 adapter 分组，分得越散每组行数越少，复用越差。']
+  ]
+});
+
+/* ---------- 调度 ---------- */
+function ck() {
+  var c = Math.pow(2, +$('#ckCs').value), L = +$('#ckLs').value * 1024;
+  $('#ckC').textContent = c; $('#ckL').textContent = L / 1024;
+  var n = Math.ceil(L / c);
+  var first = c * (c + 1) / 2, last = (n - 1) * c * c + c * (c + 1) / 2;
+  $('#ckN').textContent = n;
+  $('#ckF').textContent = S.big(first); $('#ckE').textContent = S.big(last);
+  $('#ckW').innerHTML = '末块是首块的 <b>' + S.f(last / first, 1) + ' 倍</b>。块内三角形不变（' + S.big(c * (c + 1) / 2) + '），左边矩形随已有上下文变宽。块长减半能多一次调度机会，但同一份权重要多读一遍。';
+}
+['ckCs', 'ckLs'].forEach(function (id) { $('#' + id).addEventListener('input', ck); }); ck();
+S.notes($('#n-sched'), {
+  c: [
+    ['固定 vs 连续批处理', '整组进出 vs 在迭代边界重排活跃请求。'],
+    ['分块 prefill', '把长输入分散到多个输出间隔里算。'],
+    ['N_pair', 'ch + c(c+1)/2：矩形来自访问旧上下文，三角形来自块内因果。'],
+    ['token 预算', '每轮处理的 token 上限；先排 decode，剩下的给 prefill。']
+  ],
+  p: [
+    ['12% vs 14 倍', '连续批处理省 12% 总时间，一次输出停顿却涨到 14 倍。'],
+    ['分块的代价', '块减半 → 同一份权重多读一遍（288 → 576 MiB）。'],
+    ['执行形状', '18 → 17 行仍用 32 行图；17 → 16 才换小图。'],
+    ['确定块长', '先按允许的输出间隔定一轮多久，再换算成 token 数。']
+  ]
+});
+
+/* ---------- KV 分页 ---------- */
+function pg() {
+  var p = +$('#pgPs').value, sh = +$('#pgSs').value;
+  $('#pgP').textContent = p; $('#pgS').textContent = sh;
+  var lens = [9, 13, 5, 15], names = ['A', 'B', 'C', 'D'];
+  var box = $('#pgB'); box.innerHTML = '';
+  var totAlloc = 0, shBlocks = Math.floor(sh / p);
+  lens.forEach(function (L, i) {
+    var blocks = Math.ceil(L / p), own = blocks;
+    if (i < 2) own = blocks - (i === 1 ? shBlocks : 0);
+    totAlloc += own;
+    var row = h('div', { style: 'width:100%;display:flex;gap:3px;align-items:center;margin-bottom:3px;flex-wrap:wrap' }, box);
+    h('span', { style: 'background:none;color:var(--ink);width:auto', text: names[i] + '（' + L + '）' }, row);
+    for (var j = 0; j < blocks; j++) {
+      var used = Math.min(p, L - j * p);
+      var cls = (i < 2 && j < shBlocks) ? 'shared' : (used === p ? 'used' : 'waste');
+      h('span', { class: cls, text: used }, row);
+    }
+  });
+  var naive = 4 * 16, pagedNoShare = lens.reduce(function (a, L) { return a + Math.ceil(L / p) * p; }, 0);
+  $('#pgT').innerHTML = '<tr><td>整段预留（每条上限 16）</td><td class="n">64 token 的空间</td></tr>' +
+    '<tr><td>分页（p = ' + p + '，不共享）</td><td class="n">' + pagedNoShare + '</td></tr>' +
+    '<tr><td>实际保存的 KV</td><td class="n">42</td></tr>' +
+    '<tr class="tot"><td>分页 + 共享 ' + shBlocks + ' 块</td><td class="n">' + totAlloc * p + '</td></tr>';
+}
+['pgPs', 'pgSs'].forEach(function (id) { $('#' + id).addEventListener('input', pg); }); pg();
+S.guess($('#pgG'), { q: 'A、B、C、D 长 9、13、5、15、上限 16。整段预留要 64 个 token 的空间，p = 4 分页要多少？', unit: 'token', ans: 52, fmt: function (x) { return S.f(x, 0); }, why: '原书：分别分配 12、16、8、16 = 52，实际用 42，未用从 22 降到 10。若 A、B 前八个 token 相同再共用两块，降到 44。分页减的是没用上的预留，共享减的是重复保存的上下文。' });
+S.notes($('#n-kv'), {
+  c: [
+    ['逻辑块 / 物理块 / 块表', '页码 / 实际内存 / 映射；物理块可以分散。'],
+    ['尾部浪费', 'p⌈L/p⌉ − L，最多 p − 1 个 token。'],
+    ['引用计数', '最后一个引用释放、加速器不再访问时才回空闲池。'],
+    ['写时复制', '改共享尾块前先取私有副本，已填满的只读块继续共享。']
+  ],
+  p: [
+    ['PagedAttention', '把操作系统分页的思路用在 KV 上（vLLM，2023）。'],
+    ['两种节省不同', '分页减预留，共享减重复。'],
+    ['416 次引用 vs 131 块', '四分支实验：公共前缀 95 块 + 每分支 9 块。']
+  ]
+});
+
+/* ---------- 前缀复用 ---------- */
+function sw() {
+  var L = +$('#swLs').value * 1024, B = +$('#swBs').value;
+  $('#swL').textContent = L / 1024; $('#swB').textContent = B;
+  var mib = L * 144 / 1024, bytes = mib * 1048576;
+  var Tr = 308 * Math.pow(L / 6144, 1.4);
+  var Tf = bytes / (B * 1e9) * 1000, Tm = Tf;
+  var th = Tm / (Tr - Tf);
+  $('#swT').innerHTML = '<tr><td>前缀 KV</td><td class="n">' + gib2(mib) + '</td></tr>' +
+    '<tr><td>重算 T_r（按超线性外推）</td><td class="n">' + ms8(Tr) + '</td></tr>' +
+    '<tr><td>取回 T_f / 换出 T_m</td><td class="n">' + ms8(Tf) + '</td></tr>' +
+    '<tr class="tot"><td>每次命中净省</td><td class="n">' + ms8(Tr - Tf) + '</td></tr>';
+  var v = $('#swV'); v.className = 'verdict3' + (th < 0.2 ? '' : ' bad');
+  v.innerHTML = '命中率门槛 p_h &gt; T_m/(T_r − T_f) = <b>' + S.pct(th, 1) + '</b>。' + (B >= 64 ? '（原书 Gen5 下 6K 前缀是 4.8%，Gen4 是 10.1%。）' : '');
+}
+['swLs', 'swBs'].forEach(function (id) { $('#' + id).addEventListener('input', sw); }); sw();
+S.guess($('#swG'), { q: '6144 token 的前缀（重算 308 ms、经 PCIe Gen5 取回/换出各 14.2 ms），命中率超过多少才值得换出到主机？', unit: '%', ans: 4.8, fmt: function (x) { return S.f(x, 1); }, why: '原书：p_h > T_m/(T_r − T_f) = 14.2/293.7 = 4.8%。换成 Gen4 x16（32 GB/s），取回和换出各 28.3 ms，门槛升到 10.1%——链路越慢，前缀要越常用才划算。' });
+S.bars($('#pfBars'), [
+  { label: '一个 6144 token 前缀（864 MiB）', value: 1, text: '期望省 132.7 ms', cls: 'ok' },
+  { label: '三个 2048 token 前缀（864 MiB）', value: 120.9 / 132.7, text: '合计 120.9 ms' }
+]);
+S.notes($('#n-prefix'), {
+  c: [
+    ['连续复用', '前缀第一个不同之后，即使文本又相同也不能复用。'],
+    ['换出门槛', 'p_h > T_m/(T_r − T_f)。'],
+    ['单位容量收益', '0.154 vs 0.140 ms/MiB：长前缀更划算。'],
+    ['四种策略', '准入（结束后留不留）、淘汰（先删谁）、换出（移到哪一级）、重计算（重算多少）。']
+  ],
+  p: [
+    ['上下文排版', '稳定的系统提示和工具定义放前面，本轮变化追加在后。'],
+    ['容量 ≠ 时间', '6 GiB 池命中 16,304 个 token，1 GiB 池零命中；延长轮间等待没用。'],
+    ['混合注意力', '递推模型只能从快照恢复：快照越密重算越少，保存的状态越多。']
+  ]
+});
+
+/* ---------- 压缩与卸载 ---------- */
+var qzF = 64;
+function qz() {
+  var L = +$('#qzLs').value * 1024; $('#qzL').textContent = L / 1024;
+  var base = L * 144 / 1024;
+  var m = base * qzF / 64;
+  $('#qzM').textContent = gib2(m);
+  $('#qzB').textContent = S.f(qzF / 4, 1) + ' bit';
+  $('#qzS').textContent = qzF === 64 ? '—' : gib2(base - m);
+  $('#qzW').innerHTML = qzF === 64 ? 'BF16：每 32 个值 64 B。' : '每 32 个值：' + (qzF - 2) + ' B 码值 + 2 B scale = ' + qzF + ' B，<b>不是只看位宽得到的 ' + (qzF - 2) + ' B</b>；scale 也随 KV 长度一起增长。';
+}
+S.seg($('#qzF'), function (v) { qzF = +v; qz(); });
+$('#qzLs').addEventListener('input', qz); qz();
+S.guess($('#qzG'), { q: '一条 8K 上下文的 BF16 KV 是 1152 MiB。改成 q8_0（8 bit）后是多少 MiB？', unit: 'MiB', ans: 612, fmt: function (x) { return S.f(x, 0); }, why: '原书：q8_0 每 32 个值保存 32 B 码值 + 2 B scale = 34 B，所以是 1152 × 34/64 = 612 MiB，而不是只看位宽的 576。q4_0 是 18/64 = 324 MiB。平均每值 8.5 和 4.5 bit。' });
+function ol() {
+  var n = +$('#olNs').value, B = +$('#olBs').value;
+  $('#olN').textContent = n; $('#olB').textContent = B;
+  var mib = n * 288, free = mib - 288, t = mib * 1048576 / (B * 1e9) * 1000;
+  $('#olF').textContent = gib2(Math.max(0, free));
+  $('#olT').textContent = ms8(t);
+  var v = $('#olV'); v.className = 'verdict3' + (t < 26.26 ? '' : ' bad');
+  v.innerHTML = t < 26.26 ? '每轮搬移短于一轮 decode（26.26 ms），预取能被计算掩盖；255 轮共 ' + S.f(t * 255 / 1000, 2) + ' s。' :
+    '每轮搬移 ' + ms8(t) + ' <b>超过一轮 decode 的 26.26 ms</b>，输出间隔至少这么长；255 轮光搬移就要 ' + S.f(t * 255 / 1000, 2) + ' s。';
+}
+['olNs', 'olBs'].forEach(function (id) { $('#' + id).addEventListener('input', ol); }); ol();
+S.notes($('#n-comp'), {
+  c: [
+    ['量化含元数据', 'Q2_K 平均 2.625 bit，元数据占 24%；q8_0 是 34/64 不是 32/64。'],
+    ['压缩净账', 'ΔT = ΔD/β − T_c。'],
+    ['卸载', '每轮都要搬回来；预取要两组缓冲才能重叠。'],
+    ['先压再搬', 'R_dec > B_link/(1 − r)。']
+  ],
+  p: [
+    ['交点约 7000 token', 'FP8 固定项多 0.14 ms，每 token 增长项少 2×10⁻⁵ ms。'],
+    ['PCIe 卸载不可行', '42.5 ms/轮 > 26.26 ms；NVLink-C2C 才 6.0 ms。'],
+    ['精度改答案', '只把 Q 从 FP8 恢复成 BF16，答对次数就从 26 回到 28。'],
+    ['错题还不一样', '同样答对 28 次，BF16 KV 和 FP8 KV+BF16 Q 答错的题目相反。']
+  ]
+});
+
+/* ---------- 推测解码 ---------- */
+function sa() {
+  var a = +$('#saAs').value, m = +$('#saMs').value, d = +$('#saDs').value;
+  $('#saA').textContent = a.toFixed(2); $('#saM').textContent = m; $('#saD').textContent = d.toFixed(1);
+  function EN(k) { var s = 1, p = 1; for (var i = 0; i < k; i++) { p *= a; s += p; } return s; }
+  var N = EN(m), T = 26.26 + d, per = T / N;
+  $('#saN').textContent = S.f(N, 2); $('#saT').textContent = ms8(per);
+  $('#saS').textContent = per < 26.26 ? S.f(26.26 / per, 2) + '× 快' : S.f(per / 26.26, 2) + '× 慢';
+  S.bars($('#saBars'), [1, 2, 4, 8, 16].map(function (k) {
+    var n = EN(k), t = (26.26 + d) / n;
+    return { label: 'm = ' + k + '（E[N] = ' + S.f(n, 2) + '）', value: Math.min(1, 26.26 / t / 3), text: ms8(t) + '/token', cls: k === m ? '' : 'dim' };
+  }));
+  var dN = Math.pow(a, m);
+  $('#saW').innerHTML = '加长到 m+1 平均多输出 ΔN = a^' + (m + 1) + ' = <b>' + S.f(Math.pow(a, m + 1), 3) + '</b> 个；判据是 ΔT/ΔN &lt; T/N = ' + ms8(per) + '。' +
+    (per < 26.26 ? '' : ' <b>当前配置比普通 decode 还慢。</b>');
+}
+['saAs', 'saMs', 'saDs'].forEach(function (id) { $('#' + id).addEventListener('input', sa); }); sa();
+S.guess($('#spG'), { q: '草稿四个 token、条件接受率 a = 3/4，平均每轮输出几个 token？', unit: '个', ans: 3.05, fmt: function (x) { return S.f(x, 2); }, why: '原书：E[N] = 1 + a + a² + a³ + a⁴ = 1 + 0.75 + 0.5625 + 0.4219 + 0.3164 ≈ 3.05。a = 1/4 时只有 1.33。注意算平均耗时要用总时间 ÷ 总 token，不能把各轮的 ms/token 等权平均。' });
+S.notes($('#n-spec'), {
+  c: [
+    ['接受概率', 'α(x) = min(1, p(x)/q(x))；拒绝后从归一化的 [p−q]_+ 重采样。'],
+    ['E[N_m]', '1 + Σ_j Π_{i≤j} a_i；每项是“至少输出这么多”的概率。'],
+    ['加长判据', 'ΔT/ΔN < T/N，ΔN = Π_{i≤m} a_i。'],
+    ['平均耗时', '总时间 ÷ 总 token，不能等权平均各轮。']
+  ],
+  p: [
+    ['串行 vs 并行草稿', '四个草稿：4 次前向 14.28 ms vs 一次 3.57 ms。'],
+    ['快草稿也可能更慢', '并行草稿若平均只输出 2 个，14.9 ms/token 反而不如串行的 13.5。'],
+    ['收益递减', '普通 → K7 省 59 ms，K7 → K15 只再省 1.2 ms。'],
+    ['并发会吃掉收益', '高负载时普通批处理已经充分共享权重，草稿还要抢资源。']
+  ]
+});
+
+/* ---------- 有效吞吐 ---------- */
+function lt() {
+  var l = +$('#ltLs').value, T = +$('#ltTs').value, k = +$('#ltKs').value;
+  $('#ltL').textContent = l; $('#ltT').textContent = T; $('#ltK').textContent = k;
+  $('#ltN').textContent = S.f(l * T, 1) + ' 条';
+  $('#ltM').textContent = gib2(l * T * k);
+}
+['ltLs', 'ltTs', 'ltKs'].forEach(function (id) { $('#' + id).addEventListener('input', lt); }); lt();
+S.notes($('#n-slo'), {
+  c: [
+    ['Little 定律', 'n̄ = λT̄：系统内平均请求数。'],
+    ['准入 / 取消', '接收前查 KV 空间和剩余时限；失去价值就停止安排并释放。'],
+    ['R_good', '只数正确且按期的请求。'],
+    ['t_GPU', 'L/r_P + (G−1)/r_D；批内共享的执行时间只计一次。']
+  ],
+  p: [
+    ['有效吞吐会掉头', '4/s 时 1.02 req/s，16/s 时只剩 0.60（降 41%）。'],
+    ['MBU 上升不是读得快了', '读取 15.44 → 34.46 GB，一轮只 26.26 → 29.63 ms。'],
+    ['17.6 ms 的固定开销', '逐个提交 kernel 和主机侧调度，可以用 CUDA Graph 去掉。'],
+    ['能耗也要按合格结果算', '连续批处理 4/s 时 652 J，逐个接纳 1982 J。']
+  ]
+});
+
+/* ---------- 四方案 ---------- */
+var plans = [
+  ['A', 'BF16，独立上下文', 19008, null, 7.34, '255 轮 × 29.63 ms', '内存放不下'],
+  ['B', 'BF16，共享前缀', 6048, 9.01, 2.04, '255 轮 × 27.35 ms', '超时'],
+  ['C', 'q8_0，独立上下文', 10097, 14.55, 7.34, '255 轮 × 28.26 ms', '超时（还丢了前缀复用）'],
+  ['D', 'BF16，共享前缀 + 推测', 9236, 4.56, 2.23, '85 轮 × 27.35 ms，每轮 3 个 token', '可行']
+];
+function pl() {
+  var html = '<thead><tr><th>方案</th><th>状态组织</th><th>KV + 缓冲</th><th>首 token 前</th><th>首 token 后</th><th>总时间</th><th>结论</th></tr></thead><tbody>';
+  plans.forEach(function (p) {
+    var ok = p[3] !== null && p[3] <= 7 && p[2] <= 12288;
+    html += '<tr' + (ok ? ' class="on"' : '') + '><td>' + p[0] + '</td><td>' + p[1] + '</td><td>' + gib2(p[2]) + '</td><td>' + S.f(p[4], 2) + ' s</td><td>' + p[5] + '</td><td>' + (p[3] === null ? '—' : S.f(p[3], 2) + ' s') + '</td><td>' + p[6] + '</td></tr>';
+  });
+  $('#plT').innerHTML = html + '</tbody>';
+  var g = $('#plSvg'); g.innerHTML = '';
+  var X = S.scale(0, 22, 60, 530), Y = S.scale(0, 16, 220, 20);
+  S.svg('line', { x1: 60, y1: 220, x2: 530, y2: 220, class: 'ax' }, g);
+  S.svg('line', { x1: 60, y1: 220, x2: 60, y2: 20, class: 'ax' }, g);
+  S.svg('line', { x1: X(12), y1: 20, x2: X(12), y2: 220, class: 'gl', stroke: 'var(--alert)', 'stroke-dasharray': '4 3' }, g);
+  S.svg('line', { x1: 60, y1: Y(7), x2: 530, y2: Y(7), class: 'gl', stroke: 'var(--alert)', 'stroke-dasharray': '4 3' }, g);
+  plans.forEach(function (p) {
+    var x = X(p[2] / 1024), y = Y(p[3] === null ? 15.5 : Math.min(p[3], 15.5));
+    S.svg('circle', { cx: x, cy: y, r: 7, class: 'dot', fill: (p[3] !== null && p[3] <= 7 && p[2] <= 12288) ? 'var(--ok)' : 'var(--s2)' }, g);
+    var t = S.svg('text', { x: x, y: y - 11, 'text-anchor': 'middle' }, g); t.textContent = p[0];
+  });
+  [0, 6, 12, 18].forEach(function (v) { var t = S.svg('text', { x: X(v), y: 236, 'text-anchor': 'middle' }, g); t.textContent = v + ' GiB'; });
+  [0, 4, 7, 12, 16].forEach(function (v) { var t = S.svg('text', { x: 55, y: Y(v) + 4, 'text-anchor': 'end' }, g); t.textContent = v + ' s'; });
+}
+pl();
+S.guess($('#plG'), { q: '四个方案里，方案 D（共享前缀 + 推测解码）的总完成时间是多少秒？', unit: '秒', ans: 4.56, fmt: function (x) { return S.f(x, 2); }, why: '原书：prefill 2.23 s（比 B 多 9.4%，因为草稿模型也要处理输入）+ 85 轮 × 27.35 ms = 4.56 s。A 内存放不下（19008 MiB > 12 GiB），B 要 9.01 s，C 丢了前缀复用反而 14.55 s。这张卡上一轮 decode 几乎不随 batch 和上下文变化，所以只有减少轮数才能明显缩短生成阶段。' });
+S.seg($('#altS'), function (v) {
+  $('#altW').innerHTML = v === 'mem' ? '可用内存从 12 GiB 降到 6 GiB：D 要的 9.02 GiB 放不下，B 的 5.91 GiB 能放下却超时——<b>这组请求没有可行方案</b>，只能放宽时限、缩短输出，或改用不占显存的草稿来源。' :
+    '输出缩到 16 个 token：B 要 2.04 + 15 × 0.02735 = 2.45 s，D 要 2.23 + 5 × 0.02735 = 2.37 s。两者都能按期完成，<b>D 只快 0.08 秒</b>——草稿模型多做的 0.19 s prefill 几乎抵消了少执行 10 轮 decode 省下的时间。';
+});
+$('#altW').innerHTML = '可用内存从 12 GiB 降到 6 GiB：D 要的 9.02 GiB 放不下，B 的 5.91 GiB 能放下却超时——<b>这组请求没有可行方案</b>，只能放宽时限、缩短输出，或改用不占显存的草稿来源。';
+S.notes($('#n-plan'), {
+  c: [
+    ['筛选顺序', '先按容量排除，再按时间排除，最后比成本。'],
+    ['每个合格结果的成本', '整批占用时间 ÷ 合格结果数；D 是 0.285 GPU 秒、≤ 171 J。'],
+    ['S_task', '1/((1−f) + f/s)：decode 只占任务的一部分。']
+  ],
+  p: [
+    ['B 的 9.01 s 全浪费', '7 秒时限下没有一个合格结果，时间和电都白花。'],
+    ['条件一变结论就变', '内存减半无解；输出缩到 16 个 token 时 D 只快 0.08 s。'],
+    ['完整 Agent 任务', 'decode 占 50% 时加速四倍整体 1.6×；占 20% 时只有 1.18×。']
+  ]
+});
+
+/* ---------- 三个问题 ---------- */
+S.notes($('#n-back'), {
+  c: [
+    ['① 批处理的极限', 'd = D_w/b + Lk：权重项按 1/b 摊薄，KV 项纹丝不动。2K 上下文 batch 1 → 64 降到 1/29，但 b_KV（2K 是 51、8K 只要 13）之后 KV 就成了大头；而且首 token 从 96 ms 变成 3.29 s。'],
+    ['② 三种手段的门槛', '前缀复用：换出要命中率 > T_m/(T_r−T_f)（Gen5 下 4.8%，Gen4 下 10.1%），留长前缀比留多个短前缀划算；KV 压缩：q8_0 实际是 34/64，净省 ΔD/β − T_c，交点约 7000 token；权重卸载：PCIe 每轮 42.5 ms 已超过一轮 decode，NVLink-C2C 才 6.0 ms。'],
+    ['③ 推测与那道题', 'E[N_m] = 1 + Σ Π a_i，加长判据 ΔT/ΔN < T/N；a = 3/4 四个草稿平均 3.05 个。那道题只有 D（共享前缀 + 推测）能过：4.56 s，因为这张卡上一轮 decode 几乎不随 batch 变化，只有减少轮数才管用。']
+  ],
+  p: [
+    ['方法', '先按容量排除，再按时间排除，最后比每个合格结果的成本和能耗。'],
+    ['下一篇', '把 prefill 和 decode 拆到不同资源上，再看状态该放在哪。']
+  ],
+  ph: '一句话'
+});
+})();
+</script>
+</body>
+</html>
