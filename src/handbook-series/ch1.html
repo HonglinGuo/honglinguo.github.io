@@ -1,0 +1,392 @@
+---
+title: AI 原生应用的新阶段：从生成内容到完成任务
+desc: AI Agent Handbook 学习笔记（一）：Coding Agent 为什么是拐点、Agent = Model + Harness、六个判定特征、应用形态谱系与最低充分架构、L1–L4 成熟度、从管理进程到管理 Run 的操作系统视角。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 01</span><span>对应原书第 1 章</span><span>约 20 分钟</span>
+h1: 不是更强的 Chatbot，<em>是新的执行形态</em>
+lead: 一年前，企业做 AI 应用的起点是“怎么把大模型接进业务”：发提示词、加 RAG、用 Workflow 串 API，结果交给人。现在模型开始持有任务循环：维护状态、分解目标、调工具、改环境、按反馈调整。原书第 1 章要回答两件事：应用形态怎么演进，以及企业该在哪里用哪种形态。
+nav: shift|拐点;define|定义;forms|形态;maturity|成熟度;os|OS 视角;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.quad { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-top: 10px; }
+.quad .ax { font-size: 15px; color: var(--ink-3); display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.4; }
+.quad button { font: inherit; text-align: left; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 10px 12px; cursor: pointer; min-height: 5.2em; color: var(--ink-2); font-size: 15px; line-height: 1.55; }
+.quad button b { display: block; color: var(--ink); font-size: 17px; }
+.quad button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.feat { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin-top: 10px; }
+.feat div { border: 1px solid var(--hair); border-radius: 8px; padding: 9px 12px; background: var(--bg); font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+.feat div b { display: block; color: var(--ink); font-size: 16px; }
+.feat div.y { border-left: 4px solid var(--ok); }
+.feat div.n { border-left: 4px solid var(--rule); }
+.feat div i { font-style: normal; font-weight: 700; margin-right: 6px; }
+.feat div.y i { color: var(--ok); }
+.feat div.n i { color: var(--ink-3); }
+.eq { font-size: clamp(22px, 3vw, 30px); font-weight: 800; text-align: center; margin: 6px 0 12px; letter-spacing: -0.01em; }
+.eq span { color: var(--s1); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>为什么说 Coding Agent 是拐点？它暴露了哪几类工程问题？</li>
+    <li>Agent = Model + Harness 这个公式想强调什么？Long-Horizon Agent 和 Multi-Agent 是“更高级的 Agent”吗？</li>
+    <li>成熟度 L1–L4 看的是什么？为什么说云平台和 Kubernetes 管的是 Pod 而不是 Run？</li>
+  </ol>
+</div>
+
+<section class="part" id="shift">
+  <div class="part-head"><h2>拐点：Coding Agent 把问题一次摆上桌</h2><span class="meta">原书 1.1 节</span></div>
+  <div class="sec-lede">
+    <p>上一阶段的 AI 应用有三个共同点：以“请求—回答”为交互单元，任务多在秒级或分钟级完成；执行路径由应用代码或 Workflow 预先写好，模型最多做分类、填参数、挑工具；模型产出的是<strong>内容</strong>，靠人读一读就能判断好坏。它们背后都有一个前提：要么应用事先知道路径，要么人愿意一路盯着、随时接管。</p>
+    <p>Codex、Claude Code、Qoder 这类编程智能体打破了这个前提。原书认为它们的意义不只是“研发是个高价值场景”，而是<strong>集中暴露了 Agent 进入生产必须处理的大部分工程问题</strong>：代码库比上下文窗口大、任务跨很多步、工具会真实改文件和跑命令、中间会失败、结果不能只靠模型自评、人又不可能逐 token 盯着。Anthropic 把 Session、Harness、Sandbox 分开，OpenAI 强调 Durable Thread、可审阅的外部记忆和 Steering，实现不同，结论相同：<strong>长任务不是把一段对话拉长，而是把认知、状态、执行、控制分层</strong>。</p>
+    <p>这些能力会在研究报告、数据分析、IT 操作、客服工单里反复出现，于是逐步从单个应用里抽出来，沉淀成通用的 Harness 和 Agent Platform。</p>
+    <p class="go">先翻一翻“上一阶段 vs Agentic Application”的对照，再试着拿掉 Coding Agent 依赖的某项能力。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">架构重心的变化（原书表 1-1）</p>
+    <div id="vs11"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Coding Agent 暴露的六类工程问题：缺了哪项会怎样</p>
+    <p class="lab-s">取消勾选某项能力，看一个“修 bug 并跑测试”的任务会卡在哪里。问题来自原书 1.1.2 节，后果描述是按原书逻辑的示意。</p>
+    <div id="ck6"></div>
+  </div>
+  <div class="notes" id="n-shift"></div>
+</section>
+
+<section class="part" id="define">
+  <div class="part-head"><h2>定义：Agent = Model + Harness</h2><span class="meta">原书 1.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书给出一个非形式化公式作为全书的地基：</p>
+    <p class="eq"><span>Agent</span> = Model + Harness</p>
+    <p>它首先是一条<strong>责任边界</strong>：Model 提供理解、推理、生成与决策；上下文准备、任务状态、工具执行、权限控制、故障恢复、结果验证，模型自己担不起，归 <strong>Harness</strong>（模型之外用于组织、约束并承载执行的工程系统）。Harness 也不是黑盒，落地时拆成 Agent Loop；Context、State 与 Memory；Tool、Skill 与 Protocol；Runtime 与 Sandbox；Observability 与 Evaluation；Security 与 Governance。<strong>Agentic Application</strong> 则是 Agent 在应用形态层的完整表达：把这个执行主体放进具体业务，连上数据、工具、环境和用户，交付可验证的结果。</p>
+    <p>判断一个应用是否进入 Agentic 阶段，原书给了六个特征：以目标和结果为中心、运行时决定部分路径、能作用于外部环境、维持跨步骤跨请求的状态、自主行为受确定性机制约束、通过观测与评估持续改进。它们是<strong>判断依据，不是必须全开的功能清单</strong>。</p>
+    <p class="go">选一个应用，看它满足哪几条（判断为示意）；再翻开概念边界表，盖住“不等同于”那一列自测。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">六个判定特征（原书 1.3.2 节）</p>
+    <div class="seg" id="appSeg">
+      <button data-v="0" aria-pressed="true">制度问答 RAG</button><button data-v="1">报销审批流</button><button data-v="2">IDE 补全</button><button data-v="3">修 bug 的 Coding Agent</button><button data-v="4">跨天跟进的运维 Agent</button>
+    </div>
+    <div class="feat" id="feat"></div>
+    <p class="verdict3" id="featV"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">概念边界（原书表 1-3）</p>
+    <div id="vs13"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Agent vs Agent 框架</h4>
+    <p><b>Agent 框架</b>提供 Agent Loop、Tool、Memory 等开发抽象；<b>Agent</b> 是围绕目标持续执行、连接业务环境并交付可验证结果的执行主体。装上一个框架不会自动得到 Agent：上下文组织、状态管理、工具接入、权限约束、运行保障和结果评估仍要结合场景自己补。</p>
+  </div>
+  <div class="notes" id="n-define"></div>
+</section>
+
+<section class="part" id="forms">
+  <div class="part-head"><h2>形态：不是替代链，选“最低充分架构”</h2><span class="meta">原书 1.2 节</span></div>
+  <div class="sec-lede">
+    <p>Chat/RAG、Workflow、Copilot、Single-Agent、Long-Horizon Agent、Multi-Agent 很容易被看成一条产品代际链，仿佛后者必然取代前者。原书明确反对这种读法：它们的根本区别不在界面是不是对话，而在<strong>任务循环由谁掌握、路径在什么时候确定、能在多大程度上影响外部环境、是否要跨会话持续或多主体协作</strong>。</p>
+    <p>Workflow 确定、易测试、易审计；Agent 擅长在路径无法穷举时按反馈动态决策。一个企业流程两类问题往往都有：资格校验、入账、审批适合确定性流程；材料理解、异常调查、方案生成适合 Agent。所以主流会是 <strong>Hybrid</strong>：在 Workflow 里嵌 Agent，把不确定性圈在边界内；或让 Agent 调用测过的 Workflow 和 Skill。低风险可逆操作给高自主，高风险不可逆操作加确定性检查和人工审批。</p>
+    <p>Single-Agent 是基础形态，它可以沿两条<strong>互相独立</strong>的方向扩展：沿时间跨度成为 <strong>Long-Horizon Agent</strong>（核心不是跑得久，而是在长时间尺度上保持目标、状态、责任和结果一致），沿协作结构成为 <strong>Multi-Agent</strong>（价值不是多调几次模型，而是让分工、上下文隔离、专业能力和相互校验成为可设计的结构）。两者都只在“单 Agent 无法以合理成本可靠完成”时才值得引入。</p>
+    <p class="go">点四个象限认识两条扩展方向，再用问答找出一个任务的最低充分形态。</p>
+  </div>
+  <div class="lab-row">
+    <div class="lab">
+      <p class="lab-t">两条独立的扩展方向</p>
+      <div class="quad" id="quad">
+        <div></div><div class="ax">单个执行主体</div><div class="ax">多个执行主体</div>
+        <div class="ax">有界任务<br>（一次闭环）</div><button data-v="sa"><b>Single-Agent</b>基础形态</button><button data-v="ma"><b>Multi-Agent</b>短任务也可以多主体</button>
+        <div class="ax">跨会话<br>持续执行</div><button data-v="lh"><b>Long-Horizon Agent</b>单主体跑长任务</button><button data-v="both"><b>两者组合</b>研究、研发、运维常见</button>
+      </div>
+      <div class="hb-info" id="quadInfo" style="margin-top:10px"><p>点一个象限。</p></div>
+    </div>
+    <div class="lab">
+      <p class="lab-t">原书的判断原则</p>
+      <ul class="pts">
+        <li><strong>自主性与任务风险相匹配</strong>：既决定用 Workflow、Single-Agent 还是 Hybrid，也决定要不要扩展到长程或多主体。</li>
+        <li><strong>最低充分架构</strong>：为每类任务选成本与风险可接受的最低充分形态。</li>
+        <li>任何扩展都要相应补 Runtime、Sandbox、Observability、Evaluation、Governance，并评估延迟、成本、共享状态、失败传播和责任边界。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">找出一个任务的最低充分形态</p>
+    <p class="lab-s">按原书表 1-2 的“典型适用条件”整理成的简化判断，用来练习思路，不替代对价值、风险和成本的实际评估。</p>
+    <div id="dec"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Long-Horizon Agent vs Multi-Agent</h4>
+    <p>两者<b>不是同一维度</b>。Long-Horizon 解决任务如何<b>跨时间</b>持续（持久状态、检查点、调度、恢复、外部记忆）；Multi-Agent 解决多个执行主体如何<b>协作</b>（角色、权限、编排、移交、评审）。单个 Agent 可以跑长任务，多 Agent 也可以只做短任务。</p>
+    <p>它们也<b>不代表更高的智能或成熟度</b>：长程执行增加状态漂移、恢复和成本控制难度；多 Agent 增加通信开销、共享状态、失败传播和责任划分问题。原书建议先验证边界明确的 Single-Agent。</p>
+  </div>
+  <div class="notes" id="n-forms"></div>
+</section>
+
+<section class="part" id="maturity">
+  <div class="part-head"><h2>成熟度：名字里有 Agent 不算数</h2><span class="meta">原书 1.4.1–1.4.2 节</span></div>
+  <div class="sec-lede">
+    <p>一个产品名字里带 Agent，可能只会单轮生成；一个以 Workflow 为核心的系统，可能已经有持久状态、权限控制、可观测和持续评估。所以原书从<strong>任务循环、执行跨度、环境影响、生产治理</strong>四个维度定成熟度，分四级：</p>
+    <p><strong>L1 辅助生成</strong>（Chat、RAG、基础 Copilot，闭环靠人）→ <strong>L2 受控自动化</strong>（Workflow、在 Workflow 里局部用 Agent）→ <strong>L3 Agentic Execution</strong>（Agent 持有任务循环，含 Single / Long-Horizon / Multi 和 Hybrid，开始碰到成本、权限、失败放大和版本漂移）→ <strong>L4 规模运营与持续优化</strong>（多任务多租户、策略控制、离线与在线评估、灰度）。L4 是<strong>运行与治理能力的水平</strong>，不是一种新形态；三种 Agent 形态都可能处在 L3 或 L4。</p>
+    <p>不是每个应用都要一路升级：低风险知识助手可以长期停在 L1，交易审批可以选 L2。只有当前架构无法以可接受的风险和成本交付、而新能力有明确价值时，升级才有必要。从演示走向生产时，架构设计要先于构建，然后依次回答五个问题：<strong>如何设计、如何构建、如何运行、如何治理、如何调优</strong>，这也是全书的骨架。</p>
+    <p class="go">给下面六个场景定级。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这个应用在哪一级？（原书表 1-4，场景为示意）</p>
+    <div id="lv"></div>
+  </div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>原书的五个架构问题</th><th>要回答什么</th><th>本系列对应</th></tr>
+      <tr><td>如何设计</td><td>Workflow、Single-Agent 还是 Hybrid？是否真要长程或多 Agent？自主程度、控制点、参考架构怎么裁剪</td><td><a href="../2026-10-22-handbook-2/">02 参考架构</a></td></tr>
+      <tr><td>如何构建</td><td>Model、Loop、Context、State、Memory、Tool、Skill、Protocol 怎么组合；哪些固化为 Workflow、规则、Skill</td><td>03–06</td></tr>
+      <tr><td>如何运行</td><td>调度、状态持久化、执行环境、失败恢复、租户隔离</td><td>07–09</td></tr>
+      <tr><td>如何治理</td><td>谁负责、以什么身份访问什么、哪些要审批、怎么观测审计和处置</td><td>10–12</td></tr>
+      <tr><td>如何调优</td><td>怎么判断质量、从 Trace 定位问题、调整并经回归 / 仿真 / 灰度验证、不达预期就回滚</td><td>13–14</td></tr>
+    </table>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：应用形态、成熟度、平台形态</h4>
+    <p><b>应用形态</b>（Single / Long-Horizon / Multi）描述任务怎么执行，由任务结构决定；<b>成熟度</b>（L1–L4）描述运行与治理能力是否完备；<b>Agent Platform</b> 是给多个应用共享构建、运行、治理、调优能力的平台。三者分别判断：平台再完整，也不意味着某个应用必须用长程或多 Agent。</p>
+  </div>
+  <div class="notes" id="n-maturity"></div>
+</section>
+
+<section class="part" id="os">
+  <div class="part-head"><h2>OS 视角：从管理进程到管理 Run</h2><span class="meta">原书 1.4.3 节</span></div>
+  <div class="sec-lede">
+    <p>当多个 Agent 应用在同一批机器上长期并发运行，会冒出一个老问题：谁来承载并约束它们？这和操作系统当年要解决的问题同形：多个互不信任的程序共享硬件，必须统一调度、隔离、计量、审计。</p>
+    <p>经典 OS 的前提是<strong>程序路径在编写时就确定</strong>，所以权限可以创建时一次授予、恢复以进程为单位、审计以系统调用为粒度。Agent 的部分路径由模型在运行时决定，这几乎改写了每一条假设。原书强调两点：授权要在每次高影响操作时按策略判定，而且边界必须是模型自己跨不过去的；恢复不能只看进程活没活着，一个 Run 可能正挂起等审批、并且已经对外部系统产生了副作用，<strong>重启不等于正确恢复</strong>。</p>
+    <p>由此原书划了一条线：Harness 承载<strong>任务语义</strong>（什么上下文、什么能力、什么循环），因业务而异，不宜下沉；而沙箱的轻量创建回收、高影响操作的强制拦截、跨会话记忆与工作区快照、预算与授权随子任务派生又能一次撤销，这些会被多个 Agent 重复实现、且更适合由被约束方之外来保证，应当收敛成公共层，原书第 30 章称之为 <strong>Agentic OS</strong>。云平台与 Kubernetes 是它的底座而不是替代：它们管的是 Pod 而不是 Run，重启一个探针失败的容器，不等于正确恢复一个已经发出副作用的任务。</p>
+    <p class="go">先翻对照表，再把七项职责分到 Harness 或公共层。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">管理假设被改写了（原书表 1-5）</p>
+    <div id="vs15"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这项职责该归谁？</p>
+    <div id="osSort"></div>
+  </div>
+  <p class="xref">Agentic OS 的雏形、边界与开放问题在本系列最后一篇：<a href="../2026-10-22-handbook-15/">15 企业实践与 Agentic OS</a>。</p>
+  <div class="notes" id="n-os"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 为什么说 Coding Agent 是拐点？它暴露了哪几类工程问题？</summary><p class="ans">它率先证明了多步骤、有状态、能操作环境的模型系统能产生真实生产力，并把生产必须处理的问题集中暴露：信息超出上下文（检索、摘要、外置）、多步任务（计划与待办）、真实副作用（权限、隔离、不可逆操作审批）、中途失败（观测、重试、检查点、恢复）、结果不能自评（测试、构建、Diff、独立评估器）、人无法逐 token 监督（关键节点的 Steering 与人在回路）。</p></details>
+    <details><summary>2. Agent = Model + Harness 想强调什么？Long-Horizon 和 Multi-Agent 是更高级的 Agent 吗？</summary><p class="ans">强调责任边界：模型只提供认知，上下文、状态、工具执行、权限、恢复、验证由模型之外的 Harness 承担，二者结合才是 Agent。Long-Horizon（跨时间）和 Multi-Agent（多主体协作）是两条独立的扩展方向，不代表更高智能或成熟度，反而带来状态漂移、通信开销、失败传播等新问题，只有单 Agent 无法以合理成本可靠完成时才引入。</p></details>
+    <details><summary>3. 成熟度 L1–L4 看什么？为什么说 K8s 管的是 Pod 而不是 Run？</summary><p class="ans">看任务循环、执行跨度、环境影响和生产治理四个维度，不看产品名称；L4 是规模化运行、统一治理和持续优化的能力水平，不是新形态。K8s 把基础设施调和到声明式描述，重启探针失败的容器即可；但 Agent 的 Run 可能已对外部系统产生副作用、正在等审批，正确恢复需要检查点、幂等和补偿，也要判断任务是否真正安全完成，这需要 Agent 原生的抽象（Run、预算租约、操作记录）。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 拐点 ---------- */
+HB.vs($('#vs11'), {
+  k: '维度', a: '上一阶段的 AI 原生应用', b: 'Agentic Application',
+  rows: [
+    ['交付物', '生成一次回答', '交付一个可验证的任务结果'],
+    ['执行跨度', '单轮或短会话', '多步骤、有状态，可扩展为长时与异步执行'],
+    ['驱动方式', '主要由 Prompt 和 RAG 驱动', '由 Model 与 Harness 共同驱动'],
+    ['谁调用谁', '应用代码调用模型', 'Agent 在受控边界内使用工具并操作环境'],
+    ['怎么评估', '以输入和输出评估质量', '同时评估执行轨迹、环境状态和最终结果'],
+    ['生命周期', '开发完成后上线', '在运行、治理和评估中持续演进']
+  ]
+});
+HB.check($('#ck6'), {
+  items: [
+    { t: '信息外置', d: '检索、筛选、摘要、外置存储', miss: '仓库比上下文窗口大，Agent 只能看到片段，或者把窗口塞满后忽略关键文件。' },
+    { t: '计划与待办', d: '维护计划、进度、待办事项', miss: '跨多步、多次模型调用后忘了做到哪，重复劳动或漏掉子任务。' },
+    { t: '权限与隔离', d: '权限控制、环境隔离、不可逆操作审批', miss: '工具会真实改文件、跑命令、访问网络，一次误操作直接落到真实环境。' },
+    { t: '检查点与恢复', d: '错误观测、重试、检查点', miss: '中途失败只能从头再来；进程一断，前面的进度全丢。' },
+    { t: '外部验证', d: '测试、构建、静态检查、Diff、独立评估器', miss: '只能靠模型自评“已修好”，结果看起来完成但不可信。' },
+    { t: '引导与人在回路', d: '在目标、计划、高风险动作、最终结果处介入', miss: '人无法逐 token 监督，跑偏了也没有节点能拉回来。' }
+  ],
+  verdict: function (on, n) {
+    return on === n ? '<p class="ok"><b>六项都在</b>：这正是原书说的“认知、状态、执行、控制分层”。试着取消一项。</p>'
+      : '<p><span class="big">' + on + ' / ' + n + '</span>　少一项，演示时也许看不出来，进生产就会暴露：</p>';
+  }
+});
+S.notes($('#n-shift'), {
+  c: [
+    ['上一阶段的三个特征', '请求—回答为单元；路径由代码或 Workflow 预定；输出是内容，靠人判断。'],
+    ['Coding Agent 的意义', '不只是场景价值高，而是集中暴露了 Agent 进入生产的大部分工程问题。'],
+    ['长任务的工程结论', '不是延长对话，而是把认知、状态、执行与控制分层。'],
+    ['平台化的来由', '同一批能力在不同应用里反复出现，逐步抽离为通用 Harness 与 Agent Platform。']
+  ],
+  p: [
+    ['六类问题', '上下文不够、跨多步、真实副作用、中途失败、不能自评、人无法逐 token 监督。'],
+    ['评估对象变了', '从“输入—输出”变为“轨迹 + 环境状态 + 最终结果”。'],
+    ['一句话', '从“把模型接入软件”到“让 Agent 在受控系统中完成任务”。']
+  ]
+});
+
+/* ---------- 定义 ---------- */
+var FEAT = ['以目标和结果为中心', '运行时决定部分路径', '能作用于外部环境', '维持跨步骤 / 跨请求状态', '受确定性机制约束', '靠观测与评估持续改进'];
+var APPS = [
+  { y: [0, 0, 0, 0, 1, 0], r: ['交付的是一段回答，不是可验收的结果', '检索—生成的路径是固定的', '只读知识库，不改变任何系统', '短会话，没有任务状态', '有权限过滤、来源引用等约束', '常见做法是看点赞点踩，不一定有轨迹评估'],
+    v: '典型的 L1 内容型应用，不必硬往 Agentic 上靠：低风险知识助手可以长期停在这里。' },
+  { y: [1, 0, 1, 1, 1, 1], r: ['目标是走完审批、入账', '节点和分支在设计时就定了，模型只抽字段', '会写入账务系统', '流程引擎持有状态', '审批、规则校验是确定性的', '流程有审计、可以回放'],
+    v: '缺的是“运行时决定路径”这一条：它是 L2 受控自动化，确定性正是它的优势。' },
+  { y: [0, 0, 0, 0, 0, 0], r: ['补一段代码建议，由人决定收不收', '人决定下一步', '由人决定是否写入', '没有跨请求的任务状态', '主要靠人把关', '一般不记录任务轨迹'],
+    v: '控制权在人手里，这是 Copilot：人驾驶、验收并负责。它的价值是提效，不是自主执行。' },
+  { y: [1, 1, 1, 1, 1, 1], r: ['目标是“测试通过的修复”', '读哪些文件、怎么改由 Agent 决定', '改文件、跑终端和测试', '维护计划、待办、工作区', '沙箱、权限、审批、预算', '轨迹、测试结果可以回放和评估'],
+    v: '六条都具备，是 Single-Agent 形态的 Agentic Application。注意六条是判断依据，不是必须全开的功能清单。' },
+  { y: [1, 1, 1, 1, 1, 1], r: ['目标是“告警闭环”', '调查路径随现场变化', '查监控、开工单、执行处置', '跨天，需要暂停、恢复、交接', '高风险处置走审批', '处置记录进入复盘和评测集'],
+    v: '在 Single-Agent 的基础上沿时间方向扩展，是 Long-Horizon Agent：状态必须外置，进程中断后要能续上。' }
+];
+function feat(i) {
+  var a = APPS[i];
+  $('#feat').innerHTML = FEAT.map(function (f, k) {
+    return '<div class="' + (a.y[k] ? 'y' : 'n') + '"><b><i>' + (a.y[k] ? '✓' : '–') + '</i>' + f + '</b>' + a.r[k] + '</div>';
+  }).join('');
+  $('#featV').textContent = a.v;
+  $('#featV').className = 'verdict3' + (a.y.indexOf(0) < 0 ? '' : ' bad');
+}
+S.seg($('#appSeg'), function (v) { feat(+v); }); feat(0);
+HB.vs($('#vs13'), {
+  k: '概念', a: '在原书中的含义', b: '不等同于',
+  rows: [
+    ['Model', '提供理解、推理、多模态、生成与工具调用决策的概率性认知核心', '完整 Agent 或完整应用'],
+    ['Agent', 'Model + Harness，围绕目标观察、判断、行动并接受反馈的执行主体', '任意使用模型的软件，或单独一次模型调用'],
+    ['Harness', '模型之外组织、约束并承载执行的工程系统', '单一 Prompt、简单 Agent Loop，或某个 Agent 框架'],
+    ['Single-Agent', '单个 Agent 持有任务循环、在明确边界内完成有界任务', '要跨会话持续执行的单 Agent（那是 Long-Horizon），或只调一次模型的对话应用'],
+    ['Long-Horizon Agent', '跨轮次、会话或进程持续执行，靠持久状态、检查点、恢复与人工引导保持连续', '单纯扩大上下文窗口，或一次耗时很长的模型调用'],
+    ['Multi-Agent', '多个角色、能力或权限不同的 Agent，经编排、通信、移交或评审共同完成任务', '简单并发调多个模型，或把一个任务机械拆成多个提示词'],
+    ['Agentic Application', 'Agent 在应用形态层的完整表达，连接业务并交付价值', '单次模型调用、SDK、Agent 框架或共享平台'],
+    ['Agent Platform', '为多个应用提供共享的设计、构建、运行、治理、优化能力', '单个业务 Agent 或具体应用']
+  ]
+});
+S.notes($('#n-define'), {
+  c: [
+    ['Agent = Model + Harness', '非形式化公式，强调责任边界：模型不能独立承担执行所需的工程能力。'],
+    ['Harness', '模型之外，组织、约束并承载模型驱动任务执行的工程系统。'],
+    ['Agentic Application', 'Agent 在应用形态层的完整表达：连接业务逻辑、数据、工具、环境和用户，交付可验证结果。'],
+    ['六个判定特征', '是判断依据，不是必须同时启用的功能清单。']
+  ],
+  p: [
+    ['Harness 的六组能力', 'Agent Loop；Context / State / Memory；Tool / Skill / Protocol；Runtime / Sandbox；Observability / Evaluation；Security / Governance。'],
+    ['六个特征', '目标结果、运行时决定路径、作用外部环境、跨步骤状态、确定性约束、观测评估改进。'],
+    ['第五条的关键', '权限、沙箱、预算、中间件、结构化输出、审批，是模型不能自行绕过的边界。']
+  ]
+});
+
+/* ---------- 形态 ---------- */
+var QUAD = {
+  sa: '<b>Single-Agent</b><p>单个 Agent 持有任务循环，在明确边界内闭环（通常一次任务或一个会话）。适用：路径难以预知、环境能给反馈、结果可验证、能在有界时间内完成。人定义目标、约束和关键审批点，验收结果。</p>',
+  lh: '<b>Long-Horizon Agent</b><p>沿时间跨度扩展：跨会话、跨进程、可暂停恢复。模型上下文不再是任务事实的唯一载体，进程存活也不再是连续性的前提，需要持久状态、检查点、调度、恢复和可审阅的外部记忆。人为长程任务设检查点和例外处理。</p>',
+  ma: '<b>Multi-Agent</b><p>沿协作结构扩展：任务跨多个专业角色、工具权限或组织边界时，把能力全塞进一个 Agent 会导致上下文膨胀、职责冲突、权限过宽、难以定位故障。通过顺序、并行、协调器、层级分解、移交、评审等机制在明确边界内协作。</p>',
+  both: '<b>两者组合</b><p>研究、研发、运维、复杂业务流程里常见：多个 Agent 分工，同时任务跨天推进。两类问题叠加：既要外置状态和恢复，又要角色、权限、共享状态和责任边界。只有收益覆盖新增复杂度时才值得。</p>'
+};
+S.$$('#quad button').forEach(function (b) {
+  b.type = 'button';
+  b.addEventListener('click', function () {
+    S.$$('#quad button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    $('#quadInfo').innerHTML = QUAD[b.getAttribute('data-v')];
+  });
+});
+HB.decide($('#dec'), {
+  qs: [
+    { id: 'drive', q: '1. 每一步由谁拍板？', opts: [['h', '人持续决定目标和下一步'], ['k', '人只在关键节点介入']], def: 'k' },
+    { id: 'out', q: '2. 交付物是什么？', opts: [['c', '内容或答案，不改变外部系统'], ['a', '改变外部系统的任务结果']], def: 'a' },
+    { id: 'path', q: '3. 执行路径能在设计时穷举吗？', opts: [['y', '能，稳定可穷举'], ['n', '不能，要看中间结果']], def: 'n' },
+    { id: 'risk', q: '4. 有高风险、不可逆的步骤吗？', opts: [['n', '没有，都可逆'], ['y', '有（入账、删除、对外发送）']], def: 'n' },
+    { id: 'long', q: '5. 一次任务能在一个会话内闭环吗？', opts: [['n', '能'], ['y', '不能，要跨会话、可暂停恢复']], def: 'n' },
+    { id: 'multi', q: '6. 是否跨多个专业角色或权限边界，单个 Agent 已经装不下？', opts: [['n', '否'], ['y', '是']], def: 'n' }
+  ],
+  decide: function (a) {
+    var form, why, cls = '', add = [];
+    if (a.drive === 'h') { form = 'Copilot'; why = '控制权在人：人驾驶、验收并负责。适合专业判断难以完全自动化、但局部工作可以委托的场景。'; }
+    else if (a.out === 'c') { form = 'Chat / RAG'; why = '结果主要是内容，不直接改变外部系统，不需要 Agent 持有任务循环。'; }
+    else if (a.path === 'y') { form = 'Workflow'; why = '路径稳定可穷举、错误代价高时，确定性流程更易测试、易审计。可以只在局部节点里用模型。'; cls = 'okc'; if (a.risk === 'y') add.push('不可逆步骤保留确定性检查和人工审批。'); }
+    else {
+      form = a.risk === 'y' ? 'Hybrid（Agent + Workflow）' : 'Single-Agent';
+      why = a.risk === 'y' ? '路径要在运行时决定，但有不可逆步骤：让 Agent 处理调查、理解、方案，把入账、审批等高风险动作固化为确定性流程或审批点。' : '路径难以预知、环境能给反馈、结果可验证：由单个 Agent 在明确边界内闭环。';
+      if (a.long === 'y') { form += ' + Long-Horizon'; add.push('补持久状态、检查点、任务调度、失败恢复和可审阅的外部记忆。'); }
+      if (a.multi === 'y') { form += ' + Multi-Agent'; add.push('补角色与权限边界、编排 / 移交 / 评审机制，评估通信开销和失败传播。'); }
+      add.push('相应建设 Runtime、Sandbox、Observability、Evaluation、Governance。');
+    }
+    if ((a.drive === 'h' || a.out === 'c' || a.path === 'y') && (a.long === 'y' || a.multi === 'y')) add.push('第 5、6 题选了“是”，但前面的回答已说明不需要 Agent 持有循环；先确认真的需要长程或多主体。');
+    return '<div class="hb-res ' + cls + '"><h4>' + form + '</h4><p>' + why + '</p>' + (add.length ? '<ul class="hb-miss" style="list-style:disc">' + add.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+  }
+});
+S.notes($('#n-forms'), {
+  c: [
+    ['形态的根本区别', '任务循环谁掌握、路径何时确定、对外部环境影响多大、是否跨会话或多主体。'],
+    ['Hybrid', 'Workflow 里嵌 Agent，或 Agent 调用测过的 Workflow / Skill；企业主流形态。'],
+    ['Long-Horizon Agent', '跨会话持续执行；核心是在长时间尺度上保持目标、状态、责任、结果一致。'],
+    ['Multi-Agent', '多个角色 / 权限不同的 Agent 协作；价值是让分工、隔离和相互校验可设计。']
+  ],
+  p: [
+    ['决策原则', '自主性与任务风险相匹配；选成本与风险可接受的最低充分架构。'],
+    ['Workflow 的长处', '确定性强、易测试、易审计；适合资格校验、入账、审批。'],
+    ['Agent 的长处', '路径无法穷举时按反馈动态决策；适合材料理解、异常调查、方案生成。'],
+    ['什么时候扩展', '单 Agent 受时间跨度、上下文容量、职责冲突、权限隔离或并行效率限制时。']
+  ]
+});
+
+/* ---------- 成熟度 ---------- */
+HB.cards($('#lv'), {
+  opts: ['L1', 'L2', 'L3', 'L4'],
+  items: [
+    { t: '内部制度问答助手，员工看完答案自己判断怎么办。', a: 0, why: '内容生成 + 知识检索，任务闭环由人完成。低风险知识助手可以长期停在 L1。' },
+    { t: '合同审批流程：节点固定，模型只负责抽字段和给出分类建议。', a: 1, why: '预定流程 + 局部动态决策 + 审批，是受控自动化。对未知路径适应性有限，但这里不需要。' },
+    { t: '一个产品叫“智能 Agent 助手”，实际只能单轮生成营销文案。', a: 0, why: '成熟度不由产品名称决定。单轮生成、无执行状态，是 L1。' },
+    { t: 'Agent 自动修复 CI 失败：读仓库、改代码、跑测试、开 PR，带检查点恢复，团队内部使用。', a: 2, why: 'Agent 持有任务循环、操作环境、有持久状态与恢复，是 Agentic Execution。' },
+    { t: '三个 Agent 分工写研究报告，效果不错，但没有轨迹记录、没有评估集，成本也说不清是谁花的。', a: 2, why: '形态是 Multi-Agent，但缺观测、评估和成本归属，达不到 L4。形态由任务结构决定，成熟度由运行与治理能力决定。' },
+    { t: '全公司几十个 Agent 跑在共享平台上：多租户、统一预算与审计、离线 + 在线评估、灰度发布与回滚。', a: 3, why: '规模化运行、统一治理与持续优化，这是 L4 描述的能力水平，而不是一种新形态。' }
+  ]
+});
+S.notes($('#n-maturity'), {
+  c: [
+    ['成熟度看四个维度', '任务循环、执行跨度、环境影响、生产治理；不看产品名。'],
+    ['L1 / L2', '辅助生成（闭环靠人）/ 受控自动化（预定流程 + 局部动态决策）。'],
+    ['L3 / L4', 'Agent 持有任务循环 / 规模化运行、统一治理与持续优化。'],
+    ['架构先于构建', '形态、自主性、权限边界一旦定下，后续成本区间基本锁定。']
+  ],
+  p: [
+    ['L2 → L3 门槛', '明确自主边界，引入 Harness、工具策略和轨迹评估。'],
+    ['L3 → L4 门槛', '建立 Runtime、Sandbox、Observability、Security、Evaluation；再靠共享平台、标准和自动化降低治理成本。'],
+    ['五个架构问题', '如何设计 → 构建 → 运行 → 治理 → 调优。'],
+    ['何时升级', '当前架构无法以可接受的风险和成本交付，且新能力有明确价值。']
+  ]
+});
+
+/* ---------- OS 视角 ---------- */
+HB.vs($('#vs15'), {
+  k: '管理维度', a: '传统软件（确定性程序）', b: 'Agentic Application（运行时决定部分路径）',
+  rows: [
+    ['执行单元', '进程或线程，路径在编写时确定', '任务运行实例（Run），路径运行时决定，可跨进程与副本'],
+    ['状态', '随进程内存存活，进程退出即释放', '外置、持久、可恢复，独立于承载实例'],
+    ['能力接口', '启动时确定的系统调用与设备', '运行时动态接入的工具与 MCP 端点'],
+    ['授权', '创建时一次性授予，越权即拒', '每次高影响操作按策略强制判定，且可撤销'],
+    ['故障恢复', '以进程为单位，退出即回收', '以任务为单位，需要检查点、幂等与跨系统补偿'],
+    ['审计', '系统调用与文件访问粒度', '意图、工具调用、环境反馈与结果的关联链路']
+  ]
+});
+S.sortGame($('#osSort'), {
+  bins: [{ k: 'h', t: 'Harness（任务语义，因业务而异）' }, { k: 'os', t: '公共承载层（Agentic OS）' }],
+  items: [
+    { t: '这一步给模型看哪些上下文', k: 'h', why: '决定任务在什么上下文里执行，属于任务语义。' },
+    { t: '这个任务用哪些工具和 Skill', k: 'h', why: '能力组合因业务而异，留在 Harness。' },
+    { t: '循环何时停止、何时请求审批', k: 'h', why: '按什么循环执行、什么时候停，是任务语义。' },
+    { t: '沙箱的轻量创建与回收', k: 'os', why: '每个 Agent 都要，适合收敛到公共层。' },
+    { t: '高影响操作在哪里被强制拦截', k: 'os', why: '边界要由被约束方之外来保证，模型和 Harness 自己都不该能绕过。' },
+    { t: '跨会话记忆与工作区快照', k: 'os', why: '会被多个 Agent 重复实现，适合作为公共能力。' },
+    { t: '预算与授权随子任务派生、一次性撤销', k: 'os', why: '原书点名的公共职责：派生要可追踪，撤销要一次到位。' }
+  ]
+});
+S.notes($('#n-os'), {
+  c: [
+    ['OS 视角', '多个互不信任的 Agent 共享资源，需要统一调度、隔离、计量、审计。'],
+    ['Run', '任务运行实例；路径运行时决定，可跨进程与副本，是 Agent 原生的执行单元。'],
+    ['Agentic OS', 'Harness 与硬件之间的公共层：不持有任务语义，提供运行对象、能力接入、可强制的边界与统一证据。'],
+    ['Pod ≠ Run', '重启探针失败的容器，不等于正确恢复一个已发出副作用的任务。']
+  ],
+  p: [
+    ['授权', '不能只在启动时授予；每次高影响操作按策略判定，边界模型无法自行跨越。'],
+    ['恢复', '以任务为单位：检查点、幂等、跨系统补偿；挂起等审批的 Run 也要能续上。'],
+    ['云与 K8s 的位置', '是这一层的底座，不是替代；缺的是把容器、配额、IAM 翻译成 Run、预算租约、操作记录的抽象。'],
+    ['何时需要', '进入 L4，规模化运营多个 Agent 与长任务时。']
+  ]
+});

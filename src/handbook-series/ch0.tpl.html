@@ -1,0 +1,275 @@
+---
+title: AI Agent Handbook：学习笔记总览
+desc: 阿里云开源白皮书 AI Agent Handbook 的十五篇互动学习笔记总览：从 Agent = Model + Harness、参考架构，到任务、信息、行动三类契约，运行时、网关、多 Agent 通信，可观测、安全、资产与仿真验证，模型调优与 Agent 调优，再到企业实践与 Agentic OS；全书地图、按问题反查、问答闪卡、易混辨析索引与全系列速记。
+kicker: <span>技术学习</span><span>系列 · 共 15 篇</span><span>覆盖原书 30 章与调研报告</span><span>Apache-2.0</span>
+h1: 模型之外，<em>还需要一整套系统</em>
+lead: 这是阿里云开源白皮书 AI Agent Handbook 的学习笔记。原书的出发点是一句话：模型是认知核心，但可靠性不能寄托于模型本身。它沿“架构设计 → 构建 → 运行 → 治理 → 调优 → 实践”把模型之外需要的工程系统拆开讲，最后讨论这些能力怎样下沉成所有 Agent 共享的一层。十五篇笔记按这条线重排，每篇都有可以点、可以分类、可以走流程的互动。这一页是复习工具：全书地图、按问题反查、问答闪卡、易混辨析和全部速记都在这里。
+nav: why|这本白皮书;map|全书地图;ask|按问题反查;cards|问答闪卡;cf|易混辨析;recap|全系列速记;back|记下来
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin-top: 10px; }
+.qgrid button { font: inherit; font-size: 15px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink-2); line-height: 1.55; }
+.qgrid button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.info { margin-top: 12px; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 4em; }
+.info b { color: var(--ink); }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>这一页要回答的 3 个问题</h3>
+  <ol>
+    <li>这本白皮书想讲清什么？十五篇笔记怎样对应原书的六篇三十章？</li>
+    <li>遇到一个具体的 Agent 工程问题，该回看哪一篇的哪一节？</li>
+    <li>全系列有哪些最容易混淆的概念？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这本白皮书</h2><span class="meta">原书 README、序言与调研报告</span></div>
+  <div class="sec-lede">
+    <p>原书是阿里云在 2025 年《AI 原生应用架构白皮书》之后重写的开源版本，面向正在构建和部署企业级 Agent 的团队。它认为关注点已经从“快速做出 Agent”转向三个新挑战：<strong>工程化</strong>（把概率性的智能变成可靠的生产力）、<strong>规模化</strong>（从孤立实验走向可规模部署的基础设施）、<strong>组织化</strong>（把 Agent 带进核心业务流程）。全书的骨架是一个公式和一条生命周期：<strong>Agent = Model + Harness</strong>，以及<strong>架构设计 → 构建 → 运行 → 治理 → 调优</strong>的闭环，最后用实践案例和 Agentic OS 收尾。</p>
+    <p>读完以后应该能：为业务目标、任务不确定性和风险选出<strong>最低充分架构</strong>；区分模型局限与 Harness、系统工程的问题；设计能长期推进、能从中断恢复、<strong>凭可验证证据完成</strong>的任务；提供执行环境、状态、流量治理、权限、可观测与成本控制；用 Trace、轨迹、黄金数据集和评估实验建立改进闭环。</p>
+    <p>两点说明。<strong>许可</strong>：原书按 Apache-2.0 发布，笔记依据 2026 年 10 月 21 日的仓库版本，用自己的话重讲，并标出每节对应的原书章节。<strong>厂商视角</strong>：原书由阿里云编写，大量使用阿里云及其开源项目（AgentScope、Qoder、AgentCore、Higress、Nacos、Lakebase、LoongSuite、ANOLISA 等）作示例，案例数据多来自内部评测或客户自述；笔记保留与平台无关的方法，产品与数字统一放在“厂商方案说明”框里。原书的“原则”部分写得很克制（大量“不等于”“不能替代”），这也是我觉得它最值得读的地方。</p>
+  </div>
+  <p class="parthd">架构 · 原书第 1–2 章</p>
+  <div class="chap" id="chA"></div>
+  <p class="parthd">构建 · 原书第 3–6 章</p>
+  <div class="chap" id="chB"></div>
+  <p class="parthd">运行 · 原书第 7–12 章</p>
+  <div class="chap" id="chC"></div>
+  <p class="parthd">治理 · 原书第 13–16 章</p>
+  <div class="chap" id="chD"></div>
+  <p class="parthd">调优 · 原书第 17–24 章</p>
+  <div class="chap" id="chE"></div>
+  <p class="parthd">实践与展望 · 调研报告、原书第 25–30 章</p>
+  <div class="chap" id="chF"></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>全书地图</h2><span class="meta">五个责任域 + 实践</span></div>
+  <div class="sec-lede">
+    <p>原书第 2 章把 Agentic Application 分成五个能力责任域，后面各篇基本就是沿着它们展开的。下面把每篇最核心的概念挂在对应的域上：点一个概念，看一句话的定义和它在哪一篇。</p>
+    <p class="go">点一个概念。</p>
+  </div>
+  <div class="lab"><div id="mapL"></div></div>
+</section>
+
+<section class="part" id="ask">
+  <div class="part-head"><h2>按问题反查</h2><span class="meta">遇到问题时回看哪里</span></div>
+  <div class="sec-lede">
+    <p>按“你正在遇到什么”来找，而不是按章节名找。答案给出原书的关键判断和对应的笔记位置。</p>
+    <p class="go">选一个最接近你处境的问题。</p>
+  </div>
+  <div class="qgrid" id="aqQ"></div>
+  <div class="info" id="aqA">选一个问题。</div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>问答闪卡</h2><span class="meta">每篇开头三问的答案</span></div>
+  <div class="sec-lede">
+    <p>每篇开头都有“读完应该能回答的三个问题”，篇末给了参考答案。这里把四十五个问答汇总成闪卡。打开自测模式后答案被遮住：先在心里答，再点卡片翻开对照；答不上来的，回到对应那一篇。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>原书最反复强调的就是“不等于”：发现不等于授权、协议无状态不等于应用无状态、执行完成不等于业务完成……各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找，标题链接回原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 Session、MCP、Checkpoint" aria-label="搜索易混辨析" style="max-width:280px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="recap" id="recap">
+  <h2>全系列速记</h2>
+  <p>每篇各节末尾“记下来”的汇总，按篇折叠。右上角的自测开关对这里同样有效。</p>
+  <div id="rcL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-22-handbook-';
+var chs = __CHS__, CARDS = __CARDS__, CF = __CF__, NOTES = __NOTES__;
+var read = S.readList();
+var GRP = [[1, 2, '#chA'], [3, 6, '#chB'], [7, 9, '#chC'], [10, 12, '#chD'], [13, 14, '#chE'], [15, 15, '#chF']];
+chs.forEach(function (c) {
+  var n = c[0], g = GRP.filter(function (x) { return n >= x[0] && n <= x[1]; })[0], done = read.indexOf(String(n)) >= 0;
+  var a = h('a', { href: P + n + '/', class: done ? 'done' : '' }, $(g[2]));
+  a.innerHTML = '<b>' + (n < 10 ? '0' : '') + n + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3][0] + '</p><span class="tag">' + c[5] + ' · ' + c[4] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-why'), {
+  c: [
+    ['三个新挑战', '工程化、规模化、组织化。'],
+    ['Agent = Model + Harness', '模型提供认知，模型之外的工程系统组织、约束、承载执行。'],
+    ['生命周期', '架构设计 → 构建 → 运行 → 治理 → 调优，由生产事实驱动新版本。']
+  ],
+  p: [
+    ['最低充分架构', '为每类任务选成本与风险可接受的最低充分形态。'],
+    ['阅读路径（原书建议）', '新接触：调研 → 1–2 → 3–6 → 13–16；进生产：7–9 → 13–14 → 18–23；多 Agent：4–6 → 10–12 → 13、16。'],
+    ['厂商视角', '方法与原则通用，产品与数字是厂商自述，单独标注。']
+  ]
+});
+
+/* ---------- 全书地图 ---------- */
+function L(n, sec) { return '<a href="' + P + n + '/' + (sec ? '#' + sec : '') + '">' + (n < 10 ? '0' : '') + n + ' ' + chs[n - 1][1] + '</a>'; }
+HB.layers($('#mapL'), {
+  hint: '点任意概念。',
+  layers: [
+    { t: '架构', sub: '用什么形态、多大自主性、什么边界', cls: 'c5', items: [
+      { t: 'Agent = Model + Harness', d: '责任边界：上下文、状态、工具执行、权限、恢复、验证都不是模型能独立承担的。见 ' + L(1, 'define') },
+      { t: '最低充分架构', d: '自主性与任务风险相匹配；Long-Horizon 和 Multi-Agent 是两条独立扩展方向，不是更高级。见 ' + L(1, 'forms') },
+      { t: '五个责任域 · 三个平面', d: '业务与应用、构建与编排、生产运行、治理与控制、调优；执行面、数据与资源面、控制面。见 ' + L(2, 'domains') },
+      { t: 'Agent Release', d: '最小可复现发布单元，绑定模型、编排、Prompt / Skill / 知识、能力与权限、环境、评估基线。见 ' + L(2, 'life') }
+    ] },
+    { t: '构建', sub: '任务、信息、行动三类契约', items: [
+      { t: 'Agent Contract', d: '先写任务契约（为谁、输入、交付、允许影响的系统、要审批的动作、完成证据），再挑框架。见 ' + L(3, 'contract') },
+      { t: '权威任务状态', d: '不靠消息历史；模型只能申请完成，Harness 依据证据提交完成。见 ' + L(4, 'loop') },
+      { t: 'Context 编译 · Manifest', d: '先过滤权限再排序，每次调用记录模型看到了什么。见 ' + L(5, 'compile') },
+      { t: 'Action Plane', d: '看见 ≠ 注册 ≠ 授权；ALLOW / DENY / ASK；Preview—Approve—Commit—Verify。见 ' + L(6, 'plane') }
+    ] },
+    { t: '运行', sub: '跨时间、跨请求、跨主体', cls: 'c2', items: [
+      { t: 'Sandbox · 围栏', d: '会话亲和、动态挂载、分层休眠；执行代次 + 受保护写入拒绝旧实例。见 ' + L(7, 'long') },
+      { t: 'Event Log + Checkpoint', d: 'Durable Execution 保证状态续行，不保证外部动作恰好一次。见 ' + L(7, 'durable') },
+      { t: 'AI 网关三语义', d: 'LLM / MCP / Agent Gateway；严格预算要原子预留；网关管准入不管任务成败。见 ' + L(8, 'edge') },
+      { t: '四面 × 四档通信', d: '人机、能力、协作、内构面 × 请求响应、流式、任务句柄、持久通道。见 ' + L(9, 'comm') }
+    ] },
+    { t: '治理', sub: '看见、约束、盘点、验证', cls: 'c3', items: [
+      { t: 'Session / Trace / Span', d: 'Trace 是一次外部输入触发的活跃执行；TOOL 是实际执行不是意图。见 ' + L(10, 'model') },
+      { t: '盾与缰绳', d: '既不被打穿，也不越边界；Token Exchange、出站默认拒绝、会话级隔离。见 ' + L(11, 'two') },
+      { t: '有效 Prompt · 资源中心', d: '标签移动、版本不可变；相关性决定排序，治理规则决定资格。见 ' + L(12, 'prompt') },
+      { t: 'Agent Simulation', d: '边界是授权和后果；SUT 不进仿真；Run 的四种状态独立。见 ' + L(12, 'sim') }
+    ] },
+    { t: '调优', sub: '让系统持续变好', cls: 'c4', items: [
+      { t: '先归因再训练', d: '环境 → Harness → 模型；SFT / Agentic RL / 蒸馏按学习信号选。见 ' + L(13, 'attr') },
+      { t: '奖励投机', d: '验证器只查什么，模型就只学什么；训练奖励、独立评测、系统约束分开。见 ' + L(13, 'rl') },
+      { t: '黄金数据集', d: '题目 + 判断依据，经业务确认；优化题与验证题分开。见 ' + L(14, 'gold') },
+      { t: '受控自进化', d: '经验、Skill、SQL、Workflow、Harness；采用前四项检查。见 ' + L(14, 'evo') }
+    ] },
+    { t: '实践与展望', sub: '从一个 Agent 到一层系统', cls: 'c5', items: [
+      { t: '在做 46%，上线 18%', d: '卡点是持续演进的工程能力；评估 55% 靠人工抽查。见 ' + L(15, 'survey') },
+      { t: 'Agentic OS', d: '三条下沉判据；九类管理对象；不持有任务语义。见 ' + L(15, 'why') },
+      { t: '自治阶梯', d: '上限由可撤销范围与可证明范围决定；强制边界 ≠ 观测边界。见 ' + L(15, 'auto') }
+    ] }
+  ]
+});
+
+/* ---------- 按问题反查 ---------- */
+var AQ = [
+  ['老板想做 Agent，但我不确定这个场景需不需要。', '先判断任务循环由谁掌握、路径能否预先穷举、结果是内容还是改变外部系统、风险是否可逆；路径稳定就用 Workflow，Hybrid 是企业主流。', [1, 'forms']],
+  ['该用框架自己写，还是用 Claude Code / 托管 Agent？', '差别不在模型，而在 Harness 由谁实现、Runtime 与 Sandbox 由谁提供、你还要补哪些责任；先写任务契约。', [3, 'entry']],
+  ['长任务总在上下文压缩后“忘事”。', '任务事实必须在权威状态里，压缩前先 Commit；摘要要保留目标、事实、决定、副作用、Todo、引用、审批、失败尝试。', [5, 'compact']],
+  ['工具超时后 Agent 又提交了一次，结果重复下单。', '有副作用的动作重试前先回答“上一次有没有发生”：幂等键 + 请求记录 + 先查状态；无法证明未执行就不重复。', [4, 'verify']],
+  ['Agent 说“修好了”，但我不放心。', '模型只能申请完成，Harness 依据证据提交；按风险选结构、环境、确定性、独立模型或人工验收。', [4, 'verify']],
+  ['Worker 宕机重启后，旧实例好像还在写。', '失联不等于已停；用执行代次 + 受保护的写入入口拒绝旧代次（围栏），只改控制面编号挡不住。', [7, 'long']],
+  ['预算设了上限，月底还是超了。', '“先查余额、后扣减”挡不住并发；严格预算要原子预留最大可计费消耗，重试单独占额度，缺失 usage 不能记零。', [8, 'budget']],
+  ['SDK 和网关都设了重试，故障时上游被打爆。', '多层重试乘积放大：传递绝对截止时间和剩余尝试额度，网关按 call_id 原子扣减。', [8, 'llm']],
+  ['MCP 工具接了一堆，怎么管权限？', '发现、授权、健康、执行成功分别检查；list 过滤后 call 仍要鉴权；权限取各方授权的交集；网关不可绕过有前提。', [8, 'mcp']],
+  ['多 Agent 协作总是互相覆盖、信息不一致。', '共享的是上下文来源而不是同一个 Context；消息说发生了什么，Task State 与 Artifact 才是当前事实；分支写、按版本合并。', [9, 'share']],
+  ['断线重连后前端状态对不上。', '事件要有序号或游标，带游标续传、服务端去重；状态、审批、Artifact、终态事件不能因背压丢弃。', [6, 'stream']],
+  ['想知道 Agent 到底做了什么、慢在哪、贵在哪。', 'Session / Trace / Span 分层，十二种执行语义；高基数字段不做指标标签；推理侧看 TTFT / TPOT 组合与并发视图。', [10, 'model']],
+  ['担心 Agent 被提示注入后把数据发出去。', '区分指令与数据；出站默认拒绝、封禁元数据地址、统一出站关口；护栏是信号不是唯一边界。', [11, 'net']],
+  ['Prompt 改了一版，效果说不清是变好还是变了。', '版本不可变 + 标签移动；有效 Prompt 指纹写进 Manifest；用黄金集让新旧两版做同一批题。', [12, 'prompt']],
+  ['想把一个外部 Skill 用到生产里。', '来源核实 → 完整性校验 → 静态检查 → 隔离验证 → 人工评审 → 内部发布；运行时不继承 Agent 的全部能力。', [12, 'skill']],
+  ['上线前想验证 Agent 在异常场景下的表现。', '仿真边界是授权和后果；超时分三个位置注入；300 次零违规 ≈ 违规率上界 1%，不是零。', [12, 'run']],
+  ['模型总选错工具，要不要微调？', '先归因：信息、接口、反馈都充分且跨任务稳定出错才是模型问题；有示范 SFT，可验证的多路径 RL，降成本蒸馏。', [13, 'attr']],
+  ['Agent 成本太高，输入 token 占了大头。', '缓存命中率就是成本：固定的系统提示词和工具定义放前面，新增追加在后，开头别放时间。', [13, 'infer']],
+  ['每次修一个问题，过几周换个说法又出现。', '把运行事实变成题目：轨迹 → Pipeline → 黄金集 → 评估 → 实验 → 回归；调优题与验证题分开。', [14, 'fly']],
+  ['多个团队各搞各的 Agent，治理重复建设。', '复用性 + 强制性 / 可验证性的能力下沉成共享层；任务语义留在应用侧；描述接入能力时区分强制与观测。', [15, 'why']]
+];
+AQ.forEach(function (q, i) {
+  var b = h('button', { type: 'button', text: q[0] }, $('#aqQ'));
+  b.addEventListener('click', function () {
+    S.$$('#aqQ button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    $('#aqA').innerHTML = '<b>' + q[0] + '</b><br>' + q[1] + '<br>回看：' + L(q[2][0], q[2][1]);
+  });
+  void i;
+});
+
+/* ---------- 闪卡 ---------- */
+var order = CARDS.map(function (c, i) { return i; });
+function drawCards() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var c = CARDS[i];
+    var b = h('button', { type: 'button', class: 'mcard', html: '<small>' + (c[0] < 10 ? '0' : '') + c[0] + ' · ' + chs[c[0] - 1][1] + '</small><span class="q">' + c[1] + '</span><span class="a">' + c[2] + '</span>' }, g);
+    b.addEventListener('click', function () { if (g.classList.contains('test')) b.classList.toggle('open'); });
+  });
+  $('#mgC').textContent = '共 ' + CARDS.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = $('#mgG').classList.toggle('test');
+  this.setAttribute('aria-pressed', String(on)); this.textContent = on ? '显示全部答案' : '自测模式：遮住答案';
+  S.$$('#mgG .mcard').forEach(function (x) { x.classList.remove('open'); });
+});
+$('#mgS').addEventListener('click', function () {
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = order[i]; order[i] = order[j]; order[j] = t; }
+  drawCards();
+  if ($('#mgG').classList.contains('test')) S.$$('#mgG .mcard').forEach(function (x) { x.classList.remove('open'); });
+});
+drawCards();
+
+/* ---------- 易混辨析 ---------- */
+function drawCf() {
+  var q = ($('#cfQ').value || '').trim().toLowerCase(), n = 0, html = '';
+  CF.forEach(function (c) {
+    var txt = (c[2] + c[3].join('')).replace(/<.*?>/g, '').toLowerCase();
+    if (q && txt.indexOf(q) < 0) return;
+    n++;
+    html += '<h4><a href="' + P + c[0] + '/#' + c[1] + '">' + (c[0] < 10 ? '0' : '') + c[0] + ' · ' + c[2] + '</a></h4>' + c[3].map(function (p) { return '<p>' + p + '</p>'; }).join('');
+  });
+  $('#cfL').innerHTML = html || '<p class="note">没有匹配的条目。</p>';
+  $('#cfN').textContent = n + ' / ' + CF.length + ' 条';
+}
+$('#cfQ').addEventListener('input', drawCf); drawCf();
+
+/* ---------- 全系列速记 ---------- */
+NOTES.forEach(function (x) {
+  var n = x[0];
+  var d = h('details', null, $('#rcL'));
+  h('summary', { html: (n < 10 ? '0' : '') + n + ' ' + chs[n - 1][1] + '<small>' + x[1].length + ' 个概念 · ' + x[2].length + ' 条要点</small>' }, d);
+  var box = h('div', null, d);
+  S.notes(box, { c: x[1], p: x[2] });
+});
+
+S.notes($('#n-back'), {
+  c: [
+    ['一句话', '模型是认知核心，可靠性不能寄托于模型本身。'],
+    ['三类构建契约', '任务（Loop、状态、完成证据）、信息（Context、State、Memory、Knowledge、Skill）、行动（Action Plane、权限、反馈）。'],
+    ['四件治理套', '可观测看见行为，安全约束行为，资产管理盘点行为，仿真在上线前验证行为。'],
+    ['数据飞轮', '轨迹 → 样本 → 黄金集 → 评估 → 实验 → 采用 → 新轨迹。']
+  ],
+  p: [
+    ['反复出现的“不等于”', '发现 ≠ 授权；执行完成 ≠ 业务完成；协议兼容 ≠ 能力等价；能观测 ≠ 能控制。'],
+    ['判断一项能力是否成立', '被约束方不配合时能否生效？效果能否用独立证据证明？能否随版本持续维护？'],
+    ['复习方法', '先刷闪卡，答不上的回到对应篇；遇到实际问题用“按问题反查”。']
+  ]
+});

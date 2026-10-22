@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 资产管理与行为验证</title>
+<meta name="description" content="AI Agent Handbook 学习笔记（十二）：Prompt 的结构化模板、变更分类、标签灰度与有效 Prompt；Skill 包、外部 Skill 的可信准入与运行时限制；MCP 能力定义与运行端点分离；Agent Registry、AgentSpec 与 RAD；统一发布 Pipeline；稳态 Agent 的声明式依赖与动态 Agent 的 ARD 发现；从发现结果到 Context；Agent Simulation 的边界、三种执行模式、数据契约、Run 的四种状态、超时的三个位置与零违规的置信上界。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.6'/%3E%3Ccircle cx='15' cy='12' r='2.4' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.vers { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.vers > div { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px; background: var(--bg); min-width: 7.5em; font-size: 15px; }
+.vers b { display: block; font-family: var(--f-num); font-size: 17px; }
+.vers .tg { display: inline-block; font-size: 13px; border-radius: 999px; padding: 0 8px; margin: 3px 4px 0 0; color: #fff; }
+.vers .tg.st { background: var(--ok); } .vers .tg.cn { background: var(--s2); } .vers .tg.lt { background: var(--ink-3); }
+.vers .bad { border-color: var(--alert); }
+.ochain { font-family: var(--f-num); font-size: 15px; line-height: 1.9; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; white-space: pre; overflow-x: auto; }
+.ochain button { font: inherit; font-family: var(--f-num); font-size: 15px; background: none; border: 0; padding: 0 4px; border-radius: 4px; cursor: pointer; color: var(--s1); font-weight: 700; }
+.ochain button[aria-pressed="true"] { background: var(--s1); color: #fff; }
+.st4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; }
+.st4 > div { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px; background: var(--bg); font-size: 15px; }
+.st4 b { display: block; color: var(--ink-3); font-weight: 500; }
+.st4 .v { font-family: var(--f-num); font-size: 18px; font-weight: 700; }
+.st4 .v.ok { color: var(--ok); } .st4 .v.bad { color: var(--alert); } .st4 .v.mid { color: var(--s2); }
+</style>
+</head>
+<body data-series="handbook-series" data-part="12">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>AI Agent Handbook · 12</span><span>对应原书第 15、16 章</span><span>约 40 分钟</span></p>
+  <h1>用了哪个版本，<em>上线前验过吗</em></h1>
+  <p class="lead">治理篇的后两章补齐两个维度。第 15 章把 Prompt、Skill、MCP Server、Agent 当作会改变 Agent 行为的依赖来管：有稳定标识、不可变版本、发布流程、运行时解析和可回放记录。第 16 章回答上线前能拿到什么证据：在角色标准、失败代价、身份连续都还缺位的今天，把 Agent 放进一个可以安全失败的模拟环境跑一遍，是当下就能做的事。</p>
+  <p class="credit">本系列是开源白皮书《<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">AI Agent Handbook（企业级 Agent 白皮书）</a>》（阿里云团队编写的开源白皮书，Apache-2.0 协议；本笔记依据 2026 年 10 月 21 日的仓库版本）的学习笔记。原书按“架构 → 构建 → 运行 → 治理 → 调优 → 实践”组织三十章，这里重排成十五篇，用自己的话重讲，并把关键表格做成可以点、可以分类、可以走流程的互动。概念与结论取自原书，每节标出对应章节；为演示设的场景和数值标“示意”。原书由阿里云编写，涉及阿里云产品的方案与数字属于厂商自述，文中会单独标出。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-handbook/"><b>总览</b>架构地图</a>
+  <a href="../2026-10-22-handbook-1/" data-part="1"><b>01</b>新阶段</a>
+  <a href="../2026-10-22-handbook-2/" data-part="2"><b>02</b>参考架构</a>
+  <a href="../2026-10-22-handbook-3/" data-part="3"><b>03</b>Harness</a>
+  <a href="../2026-10-22-handbook-4/" data-part="4"><b>04</b>任务</a>
+  <a href="../2026-10-22-handbook-5/" data-part="5"><b>05</b>信息</a>
+  <a href="../2026-10-22-handbook-6/" data-part="6"><b>06</b>行动</a>
+  <a href="../2026-10-22-handbook-7/" data-part="7"><b>07</b>运行与状态</a>
+  <a href="../2026-10-22-handbook-8/" data-part="8"><b>08</b>AI 网关</a>
+  <a href="../2026-10-22-handbook-9/" data-part="9"><b>09</b>异步与多 Agent</a>
+  <a href="../2026-10-22-handbook-10/" data-part="10"><b>10</b>可观测</a>
+  <a href="../2026-10-22-handbook-11/" data-part="11"><b>11</b>安全</a>
+  <a href="../2026-10-22-handbook-12/" aria-current="page" data-part="12"><b>12</b>资产与验证</a>
+  <a href="../2026-10-22-handbook-13/" data-part="13"><b>13</b>模型调优</a>
+  <a href="../2026-10-22-handbook-14/" data-part="14"><b>14</b>Agent 调优</a>
+  <a href="../2026-10-22-handbook-15/" data-part="15"><b>15</b>实践与展望</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#prompt">Prompt</a><a href="#skill">Skill</a><a href="#mcp">MCP 与 Agent</a><a href="#pipe">发布与资源中心</a><a href="#disc">稳态与动态</a><a href="#sim">为什么模拟</a><a href="#run">数据契约</a><a href="#scn">场景与证据</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>什么是“有效 Prompt”？运行记录为什么要保存解析后的精确版本而不是标签？外部 Skill 为什么不能下载后直接用？</li>
+    <li>稳态 Agent 和动态 Agent 获取能力的方式有什么不同？ARD 的相关性分数为什么不等于可用资格？</li>
+    <li>Agent Simulation 的边界由什么划定？一次 Run 的四种状态是什么？300 次零违规说明什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>Prompt：模板、版本、标签与有效 Prompt</h2><span class="meta">原书 15.1 节</span></div>
+  <div class="sec-lede">
+    <p>当 Agent、团队和环境变多，Prompt、Skill、MCP、Agent 会从单个应用的局部内容变成被多方依赖的公共资源。原书把承载它们注册、版本、治理、发现和分发的基础设施称为 <strong>Agentic Resource Registry</strong>，并以开源的 Nacos（3.3 版本线的 AI Registry）作为贯穿全章的参考实现。先看 Prompt：一项可发布的 Prompt 应当是结构化内容，包括<strong>指令层</strong>（来源明确，低优先级不能覆盖高优先级）、<strong>模板与变量</strong>（名称、类型、必填、默认值、长度限制）、<strong>输入输出要求</strong>（输出 Schema）、<strong>运行依赖</strong>（适用模型、所需工具、知识来源）、<strong>验证材料</strong>（样例与评测集）。变量替换在受控渲染中完成，用户输入、检索结果、工具返回作为数据进入指定位置，而不是先随意拼接再让模型判断哪些是指令。</p>
+    <p>变更分三类：<strong>文字修订</strong>（预期不改目标和结构，仍要评测确认）、<strong>接口变化</strong>（增加必填变量、改输出 Schema、改工具依赖，直接影响调用方）、<strong>行为变化</strong>（改判断规则、拒绝范围、结果偏好，输入输出形式不变也可能改变行为）。自然语言的细微调整也可能改变输出，所以<strong>很难靠语义化版本号推断兼容性</strong>，版本号首先是唯一标识，行为能否接受要靠评测和人工判断；评测记录还要绑定模型版本、推理参数、工具定义和评测集版本，只记一个总分说明不了变化来自哪里。</p>
+    <p>发布时，确定性要求高的 Agent 固定精确版本；需要集中维护的绑定 <code>stable</code>、<code>canary</code> 等标签，由平台调整指向，历史版本内容永不变，变的只是指向关系。<strong>已开始的长任务不宜中途换 Prompt</strong>，应在任务或会话开始时解析一次并在该边界内保持不变。模板只是开始，模型实际收到的是<strong>有效 Prompt = Prompt 版本 + 变量快照 + 模型与参数 + 工具定义版本 + 策略版本 + Context 来源</strong>，运行时为这一组合生成可查询的指纹并写入 Context Manifest，结果偏离时才能分清是 Prompt 变更、模型升级、变量错误还是上下文变化。</p>
+    <p class="go">先给变更分类，再操作一次标签灰度和回滚。</p>
+  </div>
+  <div class="lab"><p class="lab-t">这次 Prompt 变更属于哪类？</p><div id="pc"></div></div>
+  <div class="lab">
+    <p class="lab-t">标签只移动指向，版本内容不变（示意）</p>
+    <div class="btnrow"><button class="btn" type="button" id="lbNew">发布 v3.2 并打 canary</button><button class="btn" type="button" id="lbProm">canary 验证通过：stable → v3.2</button><button class="btn" type="button" id="lbBad">发现 v3.2 有问题：stable 回滚</button><button class="btn" type="button" id="lbRe">重来</button></div>
+    <div class="vers" id="vers"></div>
+    <p class="note" id="lbN"></p>
+  </div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="skill">
+  <div class="part-head"><h2>Skill：完整能力包与可信准入</h2><span class="meta">原书 15.2 节</span></div>
+  <div class="sec-lede">
+    <p>Skill 的管理对象是完整能力包，而不只是 <code>SKILL.md</code>：使用说明、<code>manifest.yaml</code>（标识、发现信息、依赖、所需工具、权限范围、资源限制、来源、许可证）、脚本、模板、参考资料、测试和许可。发现效果取决于描述能否准确表达<strong>能力边界</strong>：“数据分析助手”太宽泛，要说清解决什么任务、需要什么输入、产生什么结果、哪些情况不适用。发布后包内容和依赖锁定信息不能覆盖，摘要要覆盖<strong>完整能力包</strong>（只对 SKILL.md 算摘要会漏掉脚本和依赖的变化）；兼容性也不只看说明，例如脚本运行时从 Python 3.10 升到 3.12，现有 Agent 就可能用不了。废弃、停止分发、安全撤回是三种不同的处置强度。</p>
+    <p>外部 Skill 会把外部维护者、代码依赖和内容来源带进运行环境，而 Agent 会按自然语言说明调用文件、命令、工具，<strong>一段普通说明也可能间接引导高权限操作</strong>。所以要设独立的接收区域，走完六个阶段才形成内部版本：来源核实 → 完整性校验 → 静态检查 → 隔离验证 → 人工评审 → 内部发布。签名和摘要证明“来自谁、检查后没被替换”，<strong>不能证明内容本身没风险</strong>；静态检查只能识别已知模式。</p>
+    <p>通过准入的 Skill，运行时也<strong>不继承 Agent 的全部能力</strong>：按当前任务重新授予必要权限，且不超过 Manifest 声明的范围。只负责整理本地 Markdown 的 Skill，不能因为所在 Agent 有云端管理能力就同时拿到外网和生产系统权限；不需要联网就默认禁网，文件访问限定在任务目录，凭据由运行环境以短期最小权限注入。发布后还要定期重新检查（上游披露漏洞、依赖出问题、行为与声明不一致），确认风险就停止新安装和新解析，并通过反向引用找到受影响的 Agent 与历史任务。</p>
+    <p class="go">拿掉准入流程的一个阶段，看会漏掉什么。</p>
+  </div>
+  <div class="lab"><p class="lab-t">外部 Skill 的可信准入（原书 15.2.4 节）</p><div id="adm"></div></div>
+  <div class="notes" id="n-skill"></div>
+</section>
+
+<section class="part" id="mcp">
+  <div class="part-head"><h2>MCP Server 与 Agent Registry：定义与端点分开</h2><span class="meta">原书 15.3–15.4 节</span></div>
+  <div class="sec-lede">
+    <p>MCP 让 Agent 能连上外部工具，但“能够连接”不等于“能够管理”。核心做法是<strong>把相对稳定的能力定义、可以独立发布的版本、持续变化的运行端点分开</strong>：一个 MCP Server 版本可以在多个实例和区域运行，扩缩容不产生新版本；Tool 参数、返回结构或说明改变时才形成新版本。删除 Tool、改参数类型、改返回结构会让现有 Agent 失效；新增 Tool 虽不破坏已有调用，却会改变模型看到的候选、影响工具选择；连描述文字的调整也可能让无关任务开始匹配它。所以生产 MCP Server 要同时比较 Schema 差异和代表性任务下的工具选择结果。在线状态、端点健康、版本状态也要分开表达：资源在线不代表每个端点健康，有健康端点也不代表当前调用方有权访问。MCP 协议里的 Prompt 能力跟随 Server 版本，与企业 Prompt Registry 里独立发布的 Prompt 不是一回事。</p>
+    <p>Agent Registry 管理带版本的 Agent 调用描述（如 A2A 的 AgentCard），同样把逻辑版本与运行端点分开。它和 <strong>AgentSpec Registry</strong> 是两个层次：前者回答“现在有哪些 Agent 可以被发现和调用”，后者回答“一个 Agent 应如何被描述、组装和分发”（Manifest、Prompt、Skill、MCP 引用、运行配置）。平台可以先按 AgentSpec 构建 Agent，再把 AgentCard 和端点注册到 Agent Registry，但两者不应共用一个版本号。</p>
+    <p>Nacos 3.3 初步完成了协议无关的远程 Agent 发现 <strong>RAD</strong>，五个操作把“可能适合”和“当前可以调用”分开：<strong>Search</strong> 只返回轻量目录（名称、描述、标签、在线版本、支持协议，不含端点）；<strong>Discover</strong> 解析精确在线版本、协议原生描述和端点快照；<strong>Watch</strong> 感知快照变化；<strong>Register / Deregister</strong> 由发布者维护运行地址。“协议无关”不是取消协议，发现完成后，实际消息、任务、流式交互仍由 A2A 等原生客户端完成。</p>
+    <p class="go">这次变化要不要发新版本？</p>
+  </div>
+  <div class="lab"><div id="nv"></div></div>
+  <div class="notes" id="n-mcp"></div>
+</section>
+
+<section class="part" id="pipe">
+  <div class="part-head"><h2>统一发布 Pipeline 与资源中心</h2><span class="meta">原书 15.5–15.6 节</span></div>
+  <div class="sec-lede">
+    <p>五类资源（Prompt、Skill、MCP Server、Agent、AgentSpec）内容形式不同，但变更都会影响 Agent 行为，所以需要一条公共评审路径：<strong>草稿</strong>（可修改，运行时查不到）→ <strong>提交评审</strong>（固定候选内容和摘要，后续检查都针对同一份内容）→ 检查节点依次执行（格式与引用 → 安全扫描与依赖 → 任务评测，任一拒绝就停）→ <strong>评审通过</strong> → <strong>发布</strong>（形成不可变版本）→ <strong>在线与标签</strong>决定运行时能否发现。几个原则：检查过程<strong>不修改候选内容</strong>，需要调整就回到草稿形成新摘要；自动结果不能完全代替人工判断；评测记录绑定资源、版本、摘要、评测集、运行时、策略、检查工具版本，内容或关键条件变了，原评测结果不能沿用；紧急强制发布要记录原因、风险接受人、影响范围和恢复目标，不能成为日常路径。</p>
+    <p>资源中心的目标是统一标识、生命周期、权限、评审和运行入口，<strong>而不是把这些资源改造成同一种内容</strong>。Agent 用结构化引用（Namespace、类型、名称、版本选择方式）声明依赖，<strong>Resolver</strong> 把引用解析为唯一版本和摘要，运行记录保存解析结果而不是标签名。可见范围决定资源是否出现在列表和搜索里，鉴权决定能否读取、修改、发布，两者作用不同；还要维护双向引用关系，才能判断一次撤回影响哪些 Agent。为语义搜索生成的 Document、Chunk、向量是<strong>可重建的派生数据</strong>，权威在 Registry；旧索引检索到已下线资源，返回前要按 Registry 当前状态再判一次。管理链路（编辑、评审、扫描、建索引）与运行链路（查询、解析、下载、端点发现）在接口和容量上分开，运行侧缓存与精确版本和摘要绑定，查询失败不能被解释为“使用任意可用内容”。</p>
+    <p class="go">盖住右列，自测不同资源的评审重点。</p>
+  </div>
+  <div class="lab"><p class="lab-t">不同资源的评估重点（原书 15.5.3 节）</p><div id="rv"></div></div>
+  <div class="notes" id="n-pipe"></div>
+</section>
+
+<section class="part" id="disc">
+  <div class="part-head"><h2>稳态 Agent 与动态 Agent</h2><span class="meta">原书 15.7–15.10 节</span></div>
+  <div class="sec-lede">
+    <p><strong>稳态 Agent</strong>（客服分类、合规审核、固定流程的数据处理）的依赖可以预先声明，资源获取就是“声明引用 → 解析版本 → 校验内容 → 加载或连接 → 记录结果”，重点是确定性而不是搜索。版本确定时机有三种：<strong>构建期绑定</strong>（内容与 Agent Release 一起固定，离线可用，更新要重新构建）、<strong>部署期解析</strong>（CI/CD 按环境把 AgentSpec 解析为 Lock Manifest）、<strong>启动期拉取</strong>（资源可独立更新，依赖资源中心可用性，需要缓存策略）。收到更新不等于立即替换当前任务的内容：先在旁路下载校验，再在下一个清晰的任务边界启用；获取失败时，非关键说明可用已验证缓存并告警，涉及安全策略或法规的 Prompt 可能不允许用过期缓存，应暂停新任务。</p>
+    <p><strong>动态 Agent</strong>（通用运维 Agent 从容器异常转到数据库性能）事先列不全需要的能力，全部预绑定会让配置膨胀、Context 塞满无关说明。<strong>ARD（Agentic Resource Discovery）</strong>按任务发现：先从任务事实形成结构化的能力需求（不必把敏感原文发给发现服务），再用关键词 + 向量 + 资源关系混合检索。关键一点：<strong>相关性决定排序，治理规则决定资格</strong>，高度相关但已撤回或超出授权的资源不应出现在可用候选里，过滤要在最终分页前完成，避免总数泄露不可见资源；相关性分数也不是安全评分。生产通常混合：核心 Prompt 和高频基础 Skill 固定，长尾能力按任务发现，高风险的发现结果可以只返回说明、要求人工确认。</p>
+    <p>发现之后还要进 Context：发现阶段只用摘要比较候选，选定后才按精确版本取执行内容（Skill 先加载主要说明、到特定步骤再读参考；MCP 只呈现授权范围内的必要工具）。<strong>优先级不由文本位置决定</strong>：发现的 Skill 要求忽略系统策略、Tool 返回里出现类似系统指令的文字，都保持原有的数据或 Skill 层级。能力说明也要与实际授权一致，看得见却无权调用会产生无效规划。一项资源获取失败时，<strong>不能随意混合新旧版本</strong>（新 Prompt 依赖新输出 Schema，旧 Skill 还缓存着），应整体退回上一组已验证组合或停止任务。原书的端到端案例里，一个已发布的 Skill 后来被发现会把样例数据发到未申报的外部服务：下线版本、ARD 排除、停止新加载、清缓存，再用 Lock Manifest、Context Manifest 和历史 Trace 找到用过它的任务，核查是否真的外发了敏感数据。</p>
+    <p class="go">回答三个问题，看依赖该在什么时候绑定。</p>
+  </div>
+  <div class="lab"><div id="bind"></div></div>
+  <div class="lab"><p class="lab-t">相关性高，就能用吗？</p><div id="elig"></div></div>
+  <div class="vendor"><b>参考实现说明</b>原书第 15 章以 Nacos（阿里开源）的 Prompt / Skill / MCP / A2A / AgentSpecs Registry、MCP Router、AI 发布 Pipeline、ARD 与 RAD 贯穿全章，并说明 ARD 社区规范为 v0.9 开放提案、RAD 在 3.3 版本线属于“初步完成”、当前主要聚焦本地或私有 Registry，不能表述为已完成公共互联网的联邦发现。</div>
+  <div class="notes" id="n-disc"></div>
+</section>
+
+<section class="part" id="sim">
+  <div class="part-head"><h2>为什么要 Agent Simulation</h2><span class="meta">原书 16.1–16.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书第 16 章从一个类比开始：一个医生可能犯错，但医疗系统整体可预期，执业资质卡入口、操作规程约束过程、案例复盘沉淀教训、模拟器训练罕见场景，没有一样在保证“每个医生每次都对”，都在<strong>约束一个不可靠的内核</strong>。大模型就是那个内核，Harness 在做同样的事。但 Agent 比人少三样制度前提：<strong>角色没有外部标准</strong>（两个同名“退款 Agent”权限和话术可能完全不同）、<strong>失败没有自然代价</strong>（没被检测到就没有后果）、<strong>身份不连续</strong>（同一名字下跑着不同版本，错误随新版本发布被抹平）。这三样以年计，只有模拟不依赖它们，只需要一个可以安全失败的环境。原书的退款例子：人类客服身后有培训考核、SOP、录音抽检、投诉进绩效、年度模拟演练五样保障，换成 Agent 全部归零，第五样是当下就能拿回来的。</p>
+    <p><strong>Agent Simulation</strong> 用软件承载被测 Agent 所处的外部世界，让执行可反复启动、可配置、无真实后果，由<strong>用户模拟</strong>（会记错金额的顾客、会撤回指令的审批人）和<strong>环境模拟</strong>（工具与 API、数据与业务状态、文件、模型服务、外部事件和时间）组成。它和 Evaluation、Testing、Governance 是可组合的能力，不是固定流水线。原书纠正了一个流传很广的说法（“只要有一个请求真的发出去就不再是仿真”）：<strong>仿真的边界是授权和后果，不是实现方式</strong>：不触达未授权的生产账户、数据与网络，不产生不可控的真实副作用，连着隔离的真实数据库也仍是仿真；全是替身但把请求路由到生产账户，那是事故。</p>
+    <p>执行模式三种：<strong>全替身</strong>（可复现性最高，适合回归）、<strong>混合</strong>（部分组件用隔离的真实后端）、<strong>隔离真实依赖</strong>（真实数据库锁、真实网络栈，适合服务栈验证与故障实验），不同模式的结论不可混用。还有两条硬规矩：<strong>被测系统（SUT）不进入仿真</strong>，推理、工具选择、参数构造、异常处理一旦被替换，被测对象就移出了回路（把工具调用顺序固定成脚本是最隐蔽的例子，Run 看起来一切正常，测的却是那段脚本）；替换前问一句<strong>“这是这次要考察的内容，还是要设定的条件”</strong>，内容不能换，条件必须换并写清楚换成了什么。</p>
+    <p class="go">判断这些设置还算不算仿真；再判断该不该替换。</p>
+  </div>
+  <div class="lab"><p class="lab-t">还算仿真吗？</p><div id="bd"></div></div>
+  <div class="lab"><p class="lab-t">内容还是条件？</p><div id="cc"></div></div>
+  <div class="notes" id="n-sim"></div>
+</section>
+
+<section class="part" id="run">
+  <div class="part-head"><h2>数据契约与执行引擎</h2><span class="meta">原书 16.3–16.4 节</span></div>
+  <div class="sec-lede">
+    <p>可复现的前提是对象有明确定义和生命周期：<strong>Scenario Spec</strong>（场景规格）→ <strong>Manifest</strong>（启动时锁定的不可变运行配置）→ <strong>Run</strong>（一次受控执行，含 Task、Session、Event）→ <strong>Run Result</strong>（Records 原始记录、Artifacts 产物、Observations 事实观测、Evidence 面向评价项的证据引用、Completeness 完整性）。“评价项 → 证据引用 → 判定”由 Evaluation Result 建立，<strong>不属于 Run Result</strong>：原始材料与质量结论分层，质量团队重评分、合规团队查金额口径、回归系统比版本，才能各自引用同一份材料而不被上一轮结论污染。场景里写的“首次查询时注入超时”是 <code>triggers</code>（计划），命中之后“查询超时已发生”才是 Event，计划和事实不共享名字。Run 的状态沿四个维度独立表达：<strong>执行状态、仿真有效性、证据完整性、任务质量</strong>，一次完整、有效、材料齐备的 Run 完全可能退错金额，压成一个“成功 / 失败”就说不清是环境坏了还是 Agent 错了。</p>
+    <p>执行引擎（Simulation Harness）做五件事：解析场景生成 Manifest、编排 Run 生命周期、管理替身与隔离、汇集记录引用、清理环境；<strong>不做</strong>五件事：任务生命周期管理、鉴权、遥测采集、质量评分、发布决策，每一项都有专职系统，收进来就会膨胀成总控制器。引擎还要记两张账：<strong>事件联动账</strong>（撤回消息在用户侧产生、被 Agent 收到、对在途事务生效是三个时点）和<strong>时间分离账</strong>（业务日历时间判断退款期限、仿真逻辑时间调度虚拟事件、单调时钟测真实耗时、墙钟关联现实日期，四者不可混用）。</p>
+    <p>用户模拟器分三层：Persona（角色底色）、认知状态（她知道什么，<strong>允许与客观状态不同</strong>，记错金额时真实状态和用户认知两份都留着）、行为策略（被追问三次才给订单号、等两分钟开始威胁投诉）；工程上用状态机选意图、模型生成措辞，再做事实和披露规则校验。模拟器质量不等于 Agent 成功率：过度配合会高估 Agent，始终拒绝会产生无意义失败；生成与评分用不同模型以减少共同偏差。环境模拟器第一要求是<strong>事实一致</strong>（<code>create_refund</code> 说受理了，<code>get_refund</code> 就必须查得到），超时要按请求生命周期分三个位置注入；故障注入要分四步记录：计划注入、执行器生效、目标命中、恢复验证，“注入了”和“生效了”是两件事。</p>
+    <p class="go">点对象链上的节点；给 Run 设一组状态；再给超时位置配上检验的能力。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次仿真的对象链（原书 16.3 节，退款场景）</p>
+    <div class="ochain" id="oc"></div>
+    <div class="hb-info" id="ocI" style="margin-top:10px"><p>点一个对象。</p></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Run 的四种状态独立组合（示意）</p>
+    <div class="seg" id="rsSeg"><button data-v="0" aria-pressed="true">一切正常但退错金额</button><button data-v="1">超时根本没注入成功</button><button data-v="2">工具日志缺一段</button><button data-v="3">Agent 进程崩溃</button></div>
+    <div class="st4" id="st4"></div>
+    <p class="verdict3" id="rsV"></p>
+  </div>
+  <div class="lab"><p class="lab-t">超时注入在哪个位置？（原书 16.4.3 节）</p><div id="tmo"></div></div>
+  <div class="notes" id="n-run"></div>
+</section>
+
+<section class="part" id="scn">
+  <div class="part-head"><h2>场景、证据与结论的边界</h2><span class="meta">原书 16.5–16.6 节</span></div>
+  <div class="sec-lede">
+    <p><strong>场景</strong>是对一次受控执行的完整描述：初始条件、参与方、交互规则、允许的演化路径、何时终止。它不是脚本（不固定对话内容），也不是随机生成（有约束和边界），而是<strong>允许多条合理路径的声明式规格</strong>。<strong>资产</strong>是场景引用的、独立版本化的材料（用户行为策略、环境数据、工具契约、模拟器配置、评估规格）：改用户耐心参数是新场景版本，改模拟器的披露规则逻辑是新资产版本。用户与环境要<strong>联合建模</strong>：用户嘴里的订单、工具参数里的订单号、数据库里的记录必须是同一张单子。Scenario Spec 有十个字段组：identity、sut、user、environment、interaction、participants、events、execution、evaluation_ref、provenance。场景材料从四个方向收集（需求与政策、源码与配置、生产会话与 Trace、事故与人工接管记录），生成机制从模板填充、规则派生到 LLM 辅助，工程主流是混合：模板和规则锁结构，LLM 提出变化，校验器筛选。把生产事故的表象直接抄成场景，等于“把未确诊的病历直接开成处方”。</p>
+    <p>Run Result 交付的是<strong>证据材料，不是质量结论</strong>：运行完成、任务成功、允许发布是三个互不推导的结论。评估一侧有三道证据检查：记录完整性、运行有效性、证据充分性，证据不足的项目输出“不可判定”，这是诚实的结论。同一份证据包可以服务质量评估、缺陷定位、版本回归与门禁、复现回放、场景提取、模拟器质量治理、性能与成本分析。Testing Gate 汇总证据，但<strong>不是发布决定者</strong>。</p>
+    <p>还要读懂统计边界：n 次独立运行零违规，违规率的单侧 95% 置信上界是 <strong>1 − 0.05<sup>1/n</sup></strong>，大样本下约 3/n。300 次零违规的意思是“违规率大概率不超过 1%”，而不是零；前提是固定样本量、独立同分布、没有选择性排除。最后，仿真结论建立在<strong>会过期的假设</strong>上：仿真用户不是真实用户，场景来自已知失败模式，工具契约和用户分布会漂移；仿真成功率上升而生产人工接管持续增加，就是假设过期的信号。校准按事件驱动（接口变更、故障复盘、用户结构变化），而不是固定周期。</p>
+    <p class="go">先估一下：200 次零违规，违规率上界大约多少？</p>
+  </div>
+  <div class="lab">
+    <div id="ub"></div>
+    <label class="ctl"><span>独立运行次数 n（全部零违规） <output id="ubO">300</output></span><input type="range" id="ubS" min="10" max="3000" step="10" value="300"></label>
+    <div class="read"><div class="hl"><div class="v" id="ubA">0</div><div class="k">单侧 95% 置信上界 1 − 0.05^(1/n)</div></div><div><div class="v" id="ubB">0</div><div class="k">近似值 3/n</div></div></div>
+    <p class="note">正确读法：“在这些前提下，有 95% 的把握说违规率不超过上界”。把它读成“真实违规率有 95% 的概率低于该值”是最常见的误读。</p>
+  </div>
+  <div class="lab"><p class="lab-t">Simulation 还是 Evaluation 的职责？（原书 16.6 节）</p><div id="se"></div></div>
+  <div class="notes" id="n-scn"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 有效 Prompt？为什么存精确版本？外部 Skill 为何不能直接用？</summary><p class="ans">有效 Prompt = Prompt 版本 + 变量快照 + 模型与参数 + 工具定义版本 + 策略版本 + Context 来源，运行时生成指纹写入 Context Manifest。标签会移动，只记标签就无法知道当时用的是哪份内容，复现与归因都失效。外部 Skill 带来外部维护者、依赖和内容，自然语言说明也可能引导高权限操作；要经过来源核实、完整性校验、静态检查、隔离验证、人工评审、内部发布，运行时还要按任务重新授予不超过声明范围的权限。</p></details>
+    <details><summary>2. 稳态与动态 Agent？相关性为何不等于资格？</summary><p class="ans">稳态 Agent 用 AgentSpec 声明依赖，在构建 / 部署 / 启动期解析为精确版本和 Lock Manifest，重点是确定性；动态 Agent 用 ARD 从结构化的能力需求出发，混合检索候选，按需再用 RAD 解析远程 Agent 的协议与端点。相关性只决定排序；资源是否在线、调用方是否有权、环境是否兼容、风险成本是否允许由治理规则判断，过滤在分页前完成，撤回或越权的资源再相关也不能出现。</p></details>
+    <details><summary>3. 仿真边界？Run 的四种状态？300 次零违规？</summary><p class="ans">边界是授权和后果：不触达未授权的生产账户、数据与网络，不产生不可控的真实副作用，而不是“有没有请求真的发出去”。四种状态：执行状态、仿真有效性、证据完整性、任务质量，相互独立。300 次独立运行零违规，违规率的单侧 95% 置信上界约 1%（1 − 0.05^(1/300) ≈ 3/300），不是零，且依赖固定样本量、独立同分布、无选择性排除。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-handbook-11/"><small>上一篇</small><span>11 · Agent 安全</span></a><a class="nx" href="../2026-10-22-handbook-13/"><small>下一篇</small><span>13 · 模型调优与推理框架</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">aliyun/ai-agent-handbook</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- Prompt ---------- */
+HB.cards($('#pc'), {
+  opts: ['文字修订', '接口变化', '行为变化'],
+  items: [
+    { t: '修正了两个错别字，把一句话说得更通顺。', a: 0, why: '预期不改目标和结构，但仍要评测确认：自然语言的细微调整也可能改变输出。' },
+    { t: '新增一个必填变量 <code>{{region}}</code>。', a: 1, why: '调用方必须适配，直接影响兼容性。' },
+    { t: '输出 JSON 增加字段 <code>refund_reason_code</code>。', a: 1, why: '修改输出 Schema 属于接口变化；灰度时随机少量请求也可能让未适配的调用方整条链路失败。' },
+    { t: '把“金额超过 500 元需转人工”改成“超过 300 元需转人工”。', a: 2, why: '输入输出形式不变，但判断规则改变了 Agent 的实际行为。' },
+    { t: '要求模型调用的工具从 <code>query_order</code> 改为 <code>order.lookup</code>。', a: 1, why: '工具依赖属于运行条件，变化即接口变化。' }
+  ]
+});
+var lb;
+function lbInit() { lb = { v: ['3.0', '3.1'], stable: '3.1', canary: null, bad: false }; lbDraw('当前生产绑定 stable → v3.1。'); }
+function lbDraw(n) {
+  $('#vers').innerHTML = lb.v.map(function (v) {
+    var t = '';
+    if (lb.stable === v) t += '<span class="tg st">stable</span>';
+    if (lb.canary === v) t += '<span class="tg cn">canary</span>';
+    if (v === lb.v[lb.v.length - 1]) t += '<span class="tg lt">latest</span>';
+    return '<div class="' + (lb.bad && v === '3.2' ? 'bad' : '') + '"><b>v' + v + '</b>内容不可变' + (t ? '<br>' + t : '') + '</div>';
+  }).join('');
+  $('#lbN').textContent = n;
+}
+$('#lbNew').addEventListener('click', function () { if (lb.v.indexOf('3.2') < 0) lb.v.push('3.2'); lb.canary = '3.2'; lbDraw('v3.2 通过离线评测后发布，canary 指向它，只在限定 Agent、租户或流量范围内验证。'); });
+$('#lbProm').addEventListener('click', function () { if (lb.canary !== '3.2') { lbDraw('先发布 v3.2 并打 canary。'); return; } lb.stable = '3.2'; lb.canary = null; lbDraw('质量、延迟、成本符合预期，stable 移到 v3.2。已开始的长任务仍用开始时解析到的 v3.1，不中途切换。'); });
+$('#lbBad').addEventListener('click', function () { if (lb.stable !== '3.2') { lbDraw('stable 还没指向 v3.2，无需回滚。'); return; } lb.bad = true; lb.stable = '3.1'; lbDraw('stable 指回最近一个已验证版本 v3.1；v3.2 的内容仍在，用于审计和排查。回滚要记录原因、执行人、影响范围和相关运行记录。'); });
+$('#lbRe').addEventListener('click', lbInit);
+lbInit();
+S.notes($('#n-prompt'), {
+  c: [
+    ['结构化 Prompt', '指令层、模板与变量、输入输出要求、运行依赖、验证材料。'],
+    ['三类变更', '文字修订、接口变化、行为变化；版本号首先是唯一标识。'],
+    ['有效 Prompt', 'Prompt 版本 + 变量快照 + 模型与参数 + 工具定义版本 + 策略版本 + Context 来源。']
+  ],
+  p: [
+    ['受控渲染', '外部内容作为数据进入指定位置，不先拼接再让模型分辨。'],
+    ['评测要绑条件', 'Prompt、模型、推理参数、工具定义、评测集版本一起记录。'],
+    ['标签与版本', '内容不可变，标签移动；运行记录存解析后的精确版本。'],
+    ['长任务', '任务或会话开始时解析一次，在该边界内保持不变。']
+  ]
+});
+
+/* ---------- Skill ---------- */
+HB.pipe($('#adm'), {
+  intro: '六个阶段都在：外部内容先进入接收区域，对生产 Agent 不可见，完成检查后才以内部版本分发。',
+  steps: [
+    { t: '来源核实', d: '原始地址、发布者、维护状态、许可证、获取时间', miss: '不知道是谁维护的、能否商用，出了问题找不到责任方。' },
+    { t: '完整性校验', d: '计算摘要，来源提供签名时验证', miss: '检查后的内容可能被替换，检查结论对应不上实际分发的包。' },
+    { t: '静态检查', d: '异常命令、敏感路径、外部地址、运行时下载、依赖漏洞、不当指令', miss: '说明文字里“顺便读一下 ~/.ssh”这类指令、脚本里的运行时下载都没人看。' },
+    { t: '隔离验证', d: '在无生产数据、无长期凭据的环境里跑样例，限制文件、进程、网络', miss: '静态检查识别不了的行为（比如把样例数据发往外部）上线后才暴露。' },
+    { t: '人工评审', d: '业务必要性、输入输出、维护责任、必要权限', miss: '没人确认这个 Skill 是否真的需要它申请的权限。' },
+    { t: '内部发布', d: '复制到内部 Registry，固定版本与摘要', miss: 'Agent 继续直接依赖可能随时变化的外部地址。' }
+  ]
+});
+S.notes($('#n-skill'), {
+  c: [
+    ['Skill 能力包', 'SKILL.md、manifest、脚本、模板、参考资料、测试、许可。'],
+    ['可信准入六阶段', '来源核实 → 完整性校验 → 静态检查 → 隔离验证 → 人工评审 → 内部发布。'],
+    ['三种处置', '废弃（不推荐新用）、停止分发（不接受新解析）、安全撤回（阻止新加载并通知）。']
+  ],
+  p: [
+    ['摘要覆盖完整包', '只算 SKILL.md 会漏掉脚本和依赖。'],
+    ['签名的边界', '证明来源与未被替换，不证明内容没风险。'],
+    ['运行时不继承全部能力', '按任务重新授权，不超过 Manifest 声明；无需联网就默认禁网。'],
+    ['持续处置', '定期重查；确认风险先停新安装和新解析，再按反向引用找受影响任务。']
+  ]
+});
+
+/* ---------- MCP 与 Agent ---------- */
+HB.cards($('#nv'), {
+  opts: ['要发新版本', '不必发新版本（运行状态或开关变化）'],
+  items: [
+    { t: 'MCP Server 从 3 个实例扩到 10 个。', a: 1, why: '端点扩缩容属于运行状态，不产生新能力版本。' },
+    { t: '<code>query_order</code> 的参数 <code>order_id</code> 从字符串改为整数。', a: 0, why: '参数类型变化会让现有调用失效。' },
+    { t: '给 MCP Server 新增一个 Tool。', a: 0, why: '不破坏已有调用，但改变模型看到的候选，需要新版本并评测工具选择影响。' },
+    { t: '临时停用一个出现异常的 Tool。', a: 1, why: '运行时开关，进入审计和运行记录即可；长期移除时才发新版本并留迁移时间。' },
+    { t: '改写了某个 Tool 的描述文字。', a: 0, why: '模型依赖描述选择工具，文字调整也可能改变匹配结果。' },
+    { t: 'Agent 迁移到另一个区域，端点地址变了。', a: 1, why: '同一版本的运行端点变化；运行记录要保存实际端点。' },
+    { t: 'AgentCard 的能力描述和安全要求变了。', a: 0, why: '调用描述变化应形成新的 Agent 版本。' }
+  ]
+});
+S.notes($('#n-mcp'), {
+  c: [
+    ['定义 · 版本 · 端点', '能力定义相对稳定，版本独立发布，运行端点持续变化，三者分开管理。'],
+    ['Agent Registry vs AgentSpec Registry', '现在有哪些 Agent 可调用 vs 一个 Agent 如何描述、组装、分发。'],
+    ['RAD 五个操作', 'Search（目录）、Discover（精确版本 + 协议描述 + 端点）、Watch、Register、Deregister。']
+  ],
+  p: [
+    ['三种状态分开', '资源在线 ≠ 端点健康 ≠ 调用方有权访问。'],
+    ['MCP 进入资源中心', '启动时自动注册；存量 API 映射为 MCP；外部服务导入后补治理信息。'],
+    ['发现 ≠ 调用', 'Registry 提供身份、版本、端点；调用仍走 MCP 或 A2A 原生流程。'],
+    ['MCP Prompt ≠ 企业 Prompt', '前者随 Server 版本，后者独立发布，同名也不等于同一版本。']
+  ]
+});
+
+/* ---------- Pipeline ---------- */
+HB.vs($('#rv'), {
+  k: '资源类型', a: '主要变更风险', b: '自动检查与人工评审重点',
+  rows: [
+    ['Prompt', '指令行为、变量和输出格式变化', '模板渲染、Schema、固定评测集、模型兼容、安全输入；人工看业务规则、错误样例、输出边界'],
+    ['Skill', '步骤、脚本、依赖和权限范围变化', '包完整性、脚本与依赖扫描、隔离执行、代表性任务；人工看方法正确性、必要权限、来源、维护责任'],
+    ['MCP Server', 'Tool Schema、描述、协议和端点要求变化', 'Schema 差异、协议连接、认证、超时、工具选择与调用样例；人工看兼容性、数据范围、限流、迁移'],
+    ['Agent', 'AgentCard、能力和远程行为变化', 'AgentCard 校验、端点可达、协议兼容、任务成功率、延迟与成本；人工看协作边界、结果责任、权限、失败处理'],
+    ['AgentSpec', '组装配置和资源引用变化', 'Manifest、依赖解析、版本锁定、构建与启动验证；人工看资源组合、环境适用性、升级范围']
+  ]
+});
+S.notes($('#n-pipe'), {
+  c: [
+    ['发布路径', '草稿 → 提交评审（固定候选与摘要）→ 检查节点 → 评审通过 → 发布（不可变）→ 在线与标签。'],
+    ['资源中心组成', '权威 Registry、内容存储、发布 Pipeline、发现索引、Policy Engine、Resolver。'],
+    ['权威 vs 派生', 'Registry 是权威；Document / Chunk / 向量可重建。']
+  ],
+  p: [
+    ['检查不改内容', '要改就回到草稿形成新摘要再检查。'],
+    ['评测结果失效条件', '内容、依赖或关键运行条件变化后不能沿用。'],
+    ['可见 ≠ 授权', '可见范围决定能否被列出和搜到，鉴权决定能否读、改、发布。'],
+    ['运行侧缓存', '与精确版本和摘要绑定；查询失败不等于可以用任意内容。']
+  ]
+});
+
+/* ---------- 稳态与动态 ---------- */
+HB.decide($('#bind'), {
+  qs: [
+    { id: 'off', q: '1. Agent 需要离线运行，或对结果确定性要求极高吗？', opts: [['y', '是'], ['n', '否']], def: 'n' },
+    { id: 'env', q: '2. 同一个 Agent 要部署到多个环境（测试、预发、多个生产区域）吗？', opts: [['y', '是'], ['n', '否']], def: 'y' },
+    { id: 'fast', q: '3. 依赖资源更新频繁，希望不重新交付 Agent 就能生效吗？', opts: [['y', '是'], ['n', '否']], def: 'n' }
+  ],
+  decide: function (a) {
+    var r;
+    if (a.off === 'y') r = ['构建期绑定', '把精确版本和摘要写进镜像或安装包，与 Agent Release 一起固定；Registry 里的标签移动也不影响已构建版本。代价：更新依赖要重新构建发布。'];
+    else if (a.fast === 'y') r = ['启动期拉取', '实例启动或任务开始时解析 stable 等标签并下载，资源可独立更新。代价：依赖资源中心可用性，要设计缓存、旁路校验，在任务边界切换。'];
+    else if (a.env === 'y') r = ['部署期解析', 'CI/CD 按目标环境把 AgentSpec 解析成 Lock Manifest 后再部署，同一规格适配多环境。代价：CI/CD 要能访问资源中心并完成依赖校验。'];
+    else r = ['部署期解析或构建期绑定', '依赖少变、环境单一时，两者都可以；关键是运行记录保存解析出的精确版本。'];
+    return '<div class="hb-res"><h4>' + r[0] + '</h4><p>' + r[1] + '</p></div><p class="note">据原书 15.7.1 节表格整理。无论哪种，都不要在每轮模型调用前重新解析标签。</p>';
+  }
+});
+HB.cards($('#elig'), {
+  opts: ['可以作为可用候选', '不应出现在可用候选'],
+  items: [
+    { t: '相关性 0.93 的日志分析 Skill，但该版本昨天因安全问题已下线。', a: 1, why: '状态不在线：相关性只决定排序，治理规则决定资格。' },
+    { t: '相关性 0.71 的可观测性 MCP Server，在线，当前值班人员有权使用。', a: 0, why: '在线且有权，可以进入候选（之后仍要过任务授权与协议兼容判断）。' },
+    { t: '相关性 0.88 的财务数据 Agent，在线，但不在当前 Namespace 的可见范围。', a: 1, why: '可见范围不允许；过滤应在分页前完成，否则总数也会泄露它的存在。' },
+    { t: '相关性 0.80 的外部 Skill，刚从公共市场下载，还没走准入流程。', a: 1, why: '外部资源完成内部准入并形成确定版本前，不进入发现范围。' }
+  ]
+});
+S.notes($('#n-disc'), {
+  c: [
+    ['稳态 Agent', '依赖预先声明：声明 → 解析 → 校验 → 加载 / 连接 → 记录；重点是确定性。'],
+    ['三种绑定时机', '构建期、部署期（Lock Manifest）、启动期。'],
+    ['ARD', '按任务意图跨类型发现资源：能力需求 → 混合检索 → 治理过滤 → 候选。'],
+    ['ARD 与 RAD', 'ARD 广义发现并获取资源；需要远程调用信息时再用 RAD 解析协议与端点。']
+  ],
+  p: [
+    ['相关性 ≠ 资格', '在线、可见、授权、环境、风险成本由治理规则判断，分页前过滤。'],
+    ['发现与执行两阶段', '摘要比较候选，选定后按精确版本取执行内容。'],
+    ['优先级不看位置', 'Skill 或 Tool 返回中的强势措辞不能提升其层级。'],
+    ['不混合新旧版本', '部分失败时整体退回上一组已验证组合或停止任务。']
+  ]
+});
+
+/* ---------- 仿真边界 ---------- */
+HB.cards($('#bd'), {
+  opts: ['仍是仿真', '不是仿真（是事故）'],
+  items: [
+    { t: '被测 Agent 连接一个隔离的独立数据库实例和专用测试账户，请求真实发了出去。', a: 0, why: '授权在、后果可控：边界是授权和后果，不是实现方式。' },
+    { t: '所有组件都是软件替身，但场景配置错误，把退款请求路由到了生产支付账户。', a: 1, why: '触达了未授权的生产账户，产生真实副作用。' },
+    { t: '用 ChaosBlade 给隔离测试集群的 refund-service 注入 300ms 延迟。', a: 0, why: '隔离真实依赖模式，在授权实验范围内。' },
+    { t: '用户侧模拟，但 Agent 能访问公网，测试中把样例数据发到了一个外部服务。', a: 1, why: '触达未授权网络、产生不可控外部影响。' }
+  ]
+});
+HB.cards($('#cc'), {
+  opts: ['考察的内容：不能替换', '设定的条件：必须替换并写清楚'],
+  items: [
+    { t: '考察主 Agent 的工具选择能力时，把它的工具调用顺序固定成脚本。', a: 0, why: '工具选择属于 SUT，替换后被测对象已移出回路，而且没有任何告警会提示。' },
+    { t: '考察主 Agent 的容错时，协作 Agent 的故障表现。', a: 1, why: '这里协作 Agent 的故障是实验设定，必须可控可复现。' },
+    { t: '考察编排能力时，协作 Agent 的响应质量。', a: 0, why: '同一个协作 Agent，在考察编排时是内容，它的响应质量直接影响结论。' },
+    { t: '退款查询接口第一次超时、第二次恢复。', a: 1, why: '环境条件。' },
+    { t: '验证生成代码在真实运行时的行为。', a: 0, why: '必须保留真实执行环境，只测工具选择时才可以替掉对应工具。' }
+  ]
+});
+S.notes($('#n-sim'), {
+  c: [
+    ['三样缺失的制度前提', '角色没有外部标准、失败没有自然代价、身份不连续。'],
+    ['Agent Simulation', '用软件承载被测 Agent 所处的外部世界（用户模拟 + 环境模拟），可反复、可配置、无真实后果。'],
+    ['三种执行模式', '全替身（回归）、混合（端到端集成）、隔离真实依赖（服务栈与故障实验）。']
+  ],
+  p: [
+    ['仿真边界', '授权和后果：不触达未授权生产资源、不产生不可控副作用。'],
+    ['SUT 不进仿真', '推理、工具选择、参数构造、异常处理不能被替换。'],
+    ['替换前一问', '这是要考察的内容，还是要设定的条件？'],
+    ['替身机制', '脚本、录制回放、规则、状态机、模型生成、混合；按对象的确定性与开放度选。']
+  ]
+});
+
+/* ---------- 数据契约 ---------- */
+var OC = {
+  'Scenario Spec': '场景规格 refund-timeout-retry@1.3.0：缺乏耐心的新手用户要回 199 元，订单号只在被追问时提供；首次退款查询超时、第二次恢复。写的是计划（triggers），不是事实。',
+  Manifest: '启动时把规格和全部资产版本解析锁定：Agent 版本、用户模型版本、环境数据版本，此后不可更改。用它重建条件。',
+  Run: 'r-20260914-001：一次受控执行。运行中才知道的事实（实际采样的随机值、动态路由选择、未决操作的最终状态）都进 Run Result。',
+  Task: '“提交退款申请”这一业务任务。',
+  Session: '12 轮用户对话 + 一条并行的工具调用链。',
+  Event: '原子执行事实，已经发生：“用户拒绝提供订单号”“首次查询超时命中”“第二次查询成功”“create_refund 受理”。',
+  Records: '原始运行记录：12 条消息、7 次工具调用、状态变更。',
+  Artifacts: '生成产物：截图、文件、浏览器状态。',
+  Observations: '从 Records 提取的事实性观测：退款申请数 = 1、金额 = 19900 分、状态 = accepted。',
+  Evidence: '面向评价项的证据引用。“评价项 → 证据引用 → 判定”由 Evaluation Result 建立，不属于 Run Result。',
+  Completeness: '按采集契约核对材料是否齐备：complete，或 partial 并列出缺失项。'
+};
+var OCT = [['Scenario Spec', 0], ['Manifest', 1], ['Run', 2], ['Task', 3], ['Session', 4], ['Event', 5], ['Run Result', 3], ['Records', 4], ['Artifacts', 4], ['Observations', 4], ['Evidence', 4], ['Completeness', 4]];
+$('#oc').innerHTML = OCT.map(function (t) { return '  '.repeat(t[1]) + (t[1] ? '└ ' : '') + (OC[t[0]] ? '<button type="button" data-k="' + t[0] + '">' + t[0] + '</button>' : '<span>' + t[0] + '</span>'); }).join('\n');
+S.$$('#oc button').forEach(function (b) {
+  b.addEventListener('click', function () { S.$$('#oc button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); }); var k = b.getAttribute('data-k'); $('#ocI').innerHTML = '<b>' + k + '</b><p>' + OC[k] + '</p>'; });
+});
+var RS = [
+  { s: [['completed', 'ok'], ['valid', 'ok'], ['complete', 'ok'], ['退款金额错误', 'bad']], v: '执行完成、实验条件成立、材料齐备，但业务结果不对：这正是 Agent 的问题，而且证据充分，可以放心归因。' },
+  { s: [['completed', 'ok'], ['violated', 'bad'], ['complete', 'ok'], ['不可判定', 'mid']], v: '计划的超时没有命中，“首次超时后能否恢复”这个实验条件不成立，这次 Run 不能用来评价容错能力，应修复场景后重跑，而不是记 Agent 通过。' },
+  { s: [['completed', 'ok'], ['valid', 'ok'], ['partial：缺工具日志 #4–#6', 'mid'], ['部分评价项不可判定', 'mid']], v: '材料不全的评价项输出“不可判定”，其余按现有证据评价。不可判定是诚实的结论，好过用不充分的证据硬评。' },
+  { s: [['crashed', 'bad'], ['unchecked', 'mid'], ['partial', 'mid'], ['不可判定', 'mid']], v: '执行异常结束。先区分是被测 Agent 崩溃还是仿真平台故障：把四个维度压成一个“失败”，就说不清是环境坏了还是 Agent 错了。' }
+];
+var RSN = ['执行状态', '仿真有效性', '证据完整性', '任务质量（由 Evaluation 给出）'];
+function rs(i) {
+  $('#st4').innerHTML = RS[i].s.map(function (x, k) { return '<div><b>' + RSN[k] + '</b><span class="v ' + x[1] + '">' + x[0] + '</span></div>'; }).join('');
+  $('#rsV').textContent = RS[i].v;
+}
+S.seg($('#rsSeg'), function (v) { rs(+v); }); rs(0);
+HB.cards($('#tmo'), {
+  opts: ['请求未发送', '已发送、未提交', '已提交、响应丢失'],
+  items: [
+    { t: '想检验 Agent 的重试与退避策略。', a: 0, why: '调用尚未发生，重试是安全的，看策略是否合理。' },
+    { t: '想检验 Agent 会不会等待并查询确认。', a: 1, why: '下游收到但未处理，正确做法是等待与查询。' },
+    { t: '申请其实已经受理，Agent 没收到回执：它会先核实状态，还是直接再提交一次？', a: 2, why: '最关键的一种：检验重复提交防护与状态核实。' }
+  ]
+});
+S.notes($('#n-run'), {
+  c: [
+    ['对象链', 'Scenario Spec → Manifest → Run（Task / Session / Event）→ Run Result。'],
+    ['证据三层', 'Records → Observations → Evidence；判定属于 Evaluation Result。'],
+    ['Run 四种状态', '执行状态、仿真有效性、证据完整性、任务质量，相互独立。'],
+    ['Harness 五做五不做', '做：解析、编排、替身与隔离、汇集引用、清理；不做：任务生命周期、鉴权、遥测、评分、发布。']
+  ],
+  p: [
+    ['计划 ≠ 事实', 'triggers 是计划，命中后才是 Event。'],
+    ['四种时间', '业务日历、仿真逻辑、单调时钟、墙钟，不可混用。'],
+    ['用户认知可以与事实不同', '真实状态和用户认知两份都保存。'],
+    ['故障四步记录', '计划注入、执行器生效、目标命中、恢复验证。']
+  ]
+});
+
+/* ---------- 场景与证据 ---------- */
+S.guess($('#ub'), {
+  q: '独立运行 200 次，全部零违规。违规率的单侧 95% 置信上界大约是百分之几？',
+  unit: '%',
+  ans: function () { return (1 - Math.pow(0.05, 1 / 200)) * 100; },
+  fmt: function (x) { return S.f(x, 2); },
+  why: '1 − 0.05^(1/200) ≈ 1.49%，近似 3/200 = 1.5%。零违规不等于违规率为零。'
+});
+function ub() {
+  var n = +$('#ubS').value; $('#ubO').textContent = n;
+  $('#ubA').textContent = S.pct(1 - Math.pow(0.05, 1 / n), 2); $('#ubB').textContent = S.pct(3 / n, 2);
+}
+$('#ubS').addEventListener('input', ub); ub();
+HB.cards($('#se'), {
+  opts: ['Simulation', 'Evaluation'],
+  items: [
+    { t: '驱动模拟用户继续、澄清或停止。', a: 0, why: 'Simulation 负责驱动用户行为。' },
+    { t: '判断用户的业务目标是否实际完成。', a: 1, why: 'Evaluation（及获授权 Verifier）负责判定。' },
+    { t: '施加故障条件，记录是否生效与恢复。', a: 0, why: 'Simulation 施加条件并记录。' },
+    { t: '判断 Agent 对故障的应对和业务后果。', a: 1, why: 'Evaluation 判断应对与后果。' },
+    { t: '报告模拟用户的角色漂移和执行错误。', a: 0, why: 'Simulation 报告仿真契约问题。' },
+    { t: '据此限定可评分范围与结论可信度。', a: 1, why: 'Evaluation 用有效性检查结果限定结论。' }
+  ]
+});
+S.notes($('#n-scn'), {
+  c: [
+    ['场景', '允许多条合理路径的声明式规格；不是脚本，也不是随机生成。'],
+    ['资产', '场景引用的、独立版本化的材料：用户策略、环境数据、工具契约、模拟器配置、评估规格。'],
+    ['Scenario Spec 十字段组', 'identity、sut、user、environment、interaction、participants、events、execution、evaluation_ref、provenance。'],
+    ['零违规上界', '1 − 0.05^(1/n) ≈ 3/n；300 次零违规 ≈ 违规率大概率不超过 1%。']
+  ],
+  p: [
+    ['三个独立结论', '运行完成、任务成功、允许发布，互不推导。'],
+    ['三道证据检查', '记录完整性、运行有效性、证据充分性；不足就“不可判定”。'],
+    ['Testing Gate', '汇总证据，不是发布决定者。'],
+    ['假设会过期', '仿真成功率升而生产人工接管升，是信号；校准按事件驱动。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

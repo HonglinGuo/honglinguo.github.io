@@ -1,0 +1,466 @@
+---
+title: Agentic Application 参考架构：五个责任域、三个平面、一个闭环
+desc: AI Agent Handbook 学习笔记（二）：组件 / 平台 / 生命周期三视图、五个能力责任域、五条设计原则、Harness 编排层的七项能力、Context / State / Memory / Knowledge / Skill 之分、受控行动六环节、执行面 / 数据与资源面 / 控制面、四种部署形态、Agent Release 与五阶段闭环。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 02</span><span>对应原书第 2 章</span><span>约 30 分钟</span>
+h1: 难的不是列组件，<em>是划边界</em>
+lead: 第 1 篇说 Agent = Model + Harness。这一篇把 Harness 拆开落位：哪些能力属于哪个责任域、在哪个平面运行、由谁负责、怎样随版本演进。原书反复强调，架构的难点在于责任边界：边界不清的问题在演示阶段不会暴露，会在任务变长、工具变多、租户变多之后集中出现。
+nav: views|三视图;domains|五个责任域;harness|编排层;info|五类信息;action|受控行动;planes|三个平面;deploy|部署形态;life|生命周期;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.loop svg text { font-size: 15px; }
+.loop .stg rect { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.loop .stg.on rect { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2.5; }
+.loop .stg { cursor: pointer; }
+.loop .stg text { fill: var(--ink); font-weight: 600; }
+.loop .ar { fill: none; stroke: var(--ink-3); stroke-width: 1.6; }
+.loop .ar.dash { stroke-dasharray: 5 4; stroke: var(--s2); }
+.loop .ahd { fill: var(--ink-3); }
+.loop .ahd2 { fill: var(--s2); }
+.loop .lbl { fill: var(--ink-3); font-size: 15px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>原书的五条设计原则是什么？其中“编排层与 Runtime 解耦”具体指什么？</li>
+    <li>Context、State、Memory、Knowledge、Skill 各管什么？为什么不该放进同一个向量库？</li>
+    <li>为什么生命周期的最小发布单元是 Agent Release 而不是代码？调优产生的补丁为什么不能直接进生产？</li>
+  </ol>
+</div>
+
+<section class="part" id="views">
+  <div class="part-head"><h2>三个视图：同一套系统的三个侧面</h2><span class="meta">原书 2.1.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书要求设计时同时用三个正交视图看系统。<strong>组件视图</strong>回答“由什么组成”，避免能力遗漏，尤其是把上下文管理、状态持久化、结果验证当成实现细节；<strong>平台视图</strong>回答“在哪里运行、由谁负责”，避免责任混乱；<strong>生命周期视图</strong>回答“怎样从决策走到运行、再被治理和改进”，避免把一次演示当成可运营系统。</p>
+    <p>三个视图<strong>不能互相推导</strong>：组件齐全不代表责任清晰，责任清晰也不代表变更可控。同一个 State Store，在组件视图里是任务事实的持久化能力，在平台视图里属于数据与资源面，在生命周期视图里是运行阶段产生、调优阶段反复读取的证据来源。</p>
+    <p class="go">下面每个问题，该打开哪个视图来回答？</p>
+  </div>
+  <div class="lab"><div id="viewCards"></div></div>
+  <div class="notes" id="n-views"></div>
+</section>
+
+<section class="part" id="domains">
+  <div class="part-head"><h2>五个能力责任域</h2><span class="meta">原书 2.1.2–2.1.3 节，图 2-1</span></div>
+  <div class="sec-lede">
+    <p>组件视图把参考架构分成五个责任域。这里的“层”用来组织责任，不是严格的调用栈，也不是建设顺序。<strong>业务与应用层</strong>定义目标、交互和验收条件，不实现通用 Agent 能力；<strong>Agent 构建与编排层</strong>把 Model、编排逻辑、Context、Memory、Knowledge、Skill 和 Tool / Protocol 的能力定义组合成任务循环，但浏览器、Shell 等真实执行环境不在这一层；<strong>生产运行层</strong>承载跨时间跨请求的任务；<strong>治理与控制层</strong>回答哪些版本和动作被允许；<strong>调优层</strong>从运行证据中产出候选变更，它<strong>不直接改生产</strong>，变更要回到构建层形成新版本、过治理门禁再上线。</p>
+    <p>Security 不属于某一层，而是横跨五层：业务层定风险与验收边界，构建层实现约束，运行层提供隔离，治理层定义身份、策略、审计，调优层用红队和仿真验证这些措施是否有效。</p>
+    <p>原书由此归纳了五条相对稳定的设计原则：<strong>Model 与 Harness 解耦</strong>；<strong>编排层与 Runtime 解耦</strong>；<strong>状态外置、执行实例可替换</strong>；<strong>自主性与权限和可验证性匹配</strong>（工具、网络、数据、凭证越多，影响半径 Blast Radius 越大）；<strong>可观测、安全、评估是运行前提，不是上线补丁</strong>。五条原则不要求把系统做大，只要求被授予的自主性都有匹配的边界、证据和验证手段。</p>
+    <p class="go">点架构图里的组件，看它管什么、在本系列哪一篇展开。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Agentic Application 企业级参考架构（据原书图 2-1 重绘）</p>
+    <div id="arch"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这个设计违反了哪条原则？（场景为示意）</p>
+    <div id="prin"></div>
+  </div>
+  <div class="notes" id="n-domains"></div>
+</section>
+
+<section class="part" id="harness">
+  <div class="part-head"><h2>Harness 编排层：谁持有任务语义</h2><span class="meta">原书 2.2.1–2.2.2 节</span></div>
+  <div class="sec-lede">
+    <p>先说 <strong>Model</strong>。原书建议从五个维度持续评估：领域能力；长上下文中的指令遵循与抗干扰；工具参数生成、结果理解和多步调用的稳定性；延迟、价格、并发、区域；数据保留、隐私、合规。前三项决定能不能完成任务，后两项决定能不能规模化。复杂应用可以用 Model Router 按任务类型、预算和负载路由，但每条路由和降级都会改变 Agent 行为，必须和完整 Harness 一起回归。原书点名一种失败：降级模型在协议层能正常返回工具调用，却在多步任务中丢了中间约束，得到一次<strong>结构合法却结果错误</strong>的执行。</p>
+    <p>广义 Harness 包含 Runtime、Sandbox、Observability、Governance，太宽了，责任无法归属。原书把其中直接组织任务循环的子域称为 <strong>Harness 编排层</strong>：位于模型与运行环境之间，构造上下文、组织循环、提供能力、约束行为、验证中间结果的代码、配置与执行逻辑。它决定<strong>模型看到什么、能调用什么、什么时候停、交付前要过哪些验证</strong>。</p>
+    <p>编排层和 Runtime 的分工：编排层管语义（下一步做什么、要不要审批、上下文怎么重建、任务是否达成），Runtime 管物理保障（在哪个实例执行、排队限流、从哪个 Checkpoint 恢复、资源回收）。二者的接口应当是<strong>任务与状态</strong>，编排层一旦依赖某个 Runtime 的内存结构，原则二就被破坏了。编排层也不是一次定型的：Anthropic 发现模型变强后，旧脚手架可能反而限制新模型；LangChain 则在模型固定时，靠 Trace 分析、错误聚类、完成前验证和循环检测提升了完成质量。</p>
+    <p class="go">取消勾选编排层的某项能力，看生产中会怎样失效（原书表 2-2）。</p>
+  </div>
+  <div class="lab"><div id="hk"></div></div>
+  <div class="notes" id="n-harness"></div>
+</section>
+
+<section class="part" id="info">
+  <div class="part-head"><h2>不要用一个上下文包含一切</h2><span class="meta">原书 2.2.3 节，表 2-3</span></div>
+  <div class="sec-lede">
+    <p>上下文窗口是模型当下能看到的内容，而 Agent 要管理的信息远超一个窗口。原书要求至少区分五类对象：<strong>Context</strong>（这一次调用该看到什么，单次调用级、不断重建、不作为事实来源）、<strong>State</strong>（任务已经发生了什么、从哪里恢复，任务级、强一致）、<strong>Memory</strong>（过去哪些交互经验有用，跨会话、需要写入门槛与遗忘）、<strong>Knowledge</strong>（组织已有哪些可检索的知识，要随源系统同步权限与时效）、<strong>Skill</strong>（某类任务该怎么做，作为版本化资产发布、复用、回滚）。</p>
+    <p>Memory 和 Knowledge 分开，是因为风险不同：Memory 由 Agent 运行中生成，怕的是<strong>错误经验被反复沿用</strong>；Knowledge 来自组织内容，怕的是<strong>权限越界和信息过期</strong>。放进同一个向量库，两类治理能力往往一起丢掉。Context Engineering 的本质也不是把窗口塞满，而是在正确的时间选正确的信息；同时可恢复任务的真实状态必须放在上下文之外：<strong>如果压缩、截断或误读能改变任务事实，任务就失去了可恢复性</strong>。</p>
+    <p class="go">把这些内容放进它该去的对象。</p>
+  </div>
+  <div class="lab"><div id="infoSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Context vs State</h4>
+    <p><b>Context</b> 是给模型看的“这一帧画面”，每次调用都会重建，可以压缩、摘要、截断；<b>State</b> 是任务的“账本”，记录已经发生的事实，必须持久、强一致。把不完整的对话历史当成任务事实，是原书点名的第三类边界问题。</p>
+  </div>
+  <div class="notes" id="n-info"></div>
+</section>
+
+<section class="part" id="action">
+  <div class="part-head"><h2>从接口调用到受控行动</h2><span class="meta">原书 2.2.4 节</span></div>
+  <div class="sec-lede">
+    <p>Tool 是 Agent 可以请求的一项能力，Protocol 定义能力如何被描述、发现、调用、返回，Environment 是能力真正产生影响的空间。三者失效方式不同：Tool 常是描述不清或缺参数校验，Protocol 常是把<strong>能力发现</strong>和<strong>权限授予</strong>混为一谈，Environment 常是影响范围超出预期。Function Calling 提供结构化调用，MCP 把工具、资源和 Prompt 抽象成可跨应用复用的协议能力，A2A 用于 Agent 之间的发现、委派和状态交换；Browser Use、Computer Use、Shell、Code Interpreter 让 Agent 能处理没有 API 的系统，也明显扩大了影响半径。</p>
+    <p>原书的三句话值得记住：能力被发现，不等于被授权；参数符合 Schema，不等于意图符合用户目标；命令在 Sandbox 里成功运行，不等于结果可以安全影响生产。所以一次受控行动至少经过<strong>六个环节</strong>，分布在编排层、Gateway、Sandbox 和控制面，缺任何一环，模型<strong>建议</strong>的动作就直接变成了系统<strong>执行</strong>的事实。</p>
+    <p class="go">示意场景：Agent 想执行“清理过期的测试数据表”。拿掉一环看看。</p>
+  </div>
+  <div class="lab"><div id="pipe6"></div></div>
+  <div class="notes" id="n-action"></div>
+</section>
+
+<section class="part" id="planes">
+  <div class="part-head"><h2>三个平面：执行面、数据与资源面、控制面</h2><span class="meta">原书 2.3 节</span></div>
+  <div class="sec-lede">
+    <p>任务从秒级拉长到小时、天、周级，同一个 Agent 服务多个租户，又拿着文件、网络、数据库和企业凭证，问题就从“一个进程里的循环”变成分布式系统、安全隔离和企业治理问题。原书把平台划成三个平面（不叫“数据面”，以免和业务数据、记忆、任务状态混淆）：<strong>执行面</strong>真正跑 Loop 和工具，可弹性、可失败、需隔离，尽量不持有唯一真实状态；<strong>数据与资源面</strong>保存可恢复事实并提供 Agent 可访问的能力；<strong>控制面</strong>定义版本、身份、策略、部署、配额。</p>
+    <p>控制面不该成为每次调用的强同步依赖。更稳的做法是<strong>策略集中定义、判定点分布执行</strong>：Middleware、Gateway、Runtime、Sandbox 在请求路径上按已下发的策略判定，审计事件异步送回。代价是策略有传播延迟，所以凭证吊销、租户封禁这类高风险策略要靠强制刷新、短期凭证或集中校验兜底。</p>
+    <p><strong>Runtime</strong> 管任务生命周期：把请求变成 Task，绑定 Harness 版本、身份、租户、预算和环境，处理排队、暂停、取消、超时、重试、Checkpoint、Recovery，并假设任何一步都可能被打断。<strong>Sandbox</strong> 限制行动的影响范围：文件、进程、资源、包安装、网络、Secrets、数据出站。<strong>AI Gateway</strong> 按治理粒度分三层：LLM Gateway 管模型调用，MCP Gateway 管工具调用，Agent Gateway 管任务（这是原书为区分粒度做的归纳，不是某厂商的产品定义）。</p>
+    <p class="go">把这些对象放进它所在的平面。</p>
+  </div>
+  <div class="lab"><div id="planeSort"></div></div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>Gateway 层</th><th>治理粒度</th><th>处理什么</th></tr>
+      <tr><td>LLM Gateway</td><td>一次模型调用</td><td>协议适配、路由、限流、降级、容灾、Token 成本</td></tr>
+      <tr><td>MCP Gateway</td><td>一次工具调用</td><td>Server Registry、凭证托管、工具级 ACL、审计</td></tr>
+      <tr><td>Agent Gateway</td><td>一个任务</td><td>Agent 路由、会话连续性、租户配额、预算</td></tr>
+    </table>
+    <p class="note">三者可以是同一个 Gateway 的不同能力，但治理对象和粒度必须分开，否则模型成本、工具权限和任务预算会在同一处策略里互相覆盖。详见 <a href="../2026-10-22-handbook-8/">08 AI 网关</a>。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Sandbox 管什么、不管什么</h4>
+    <p><b>Sandbox 约束的是行动的技术可达范围</b>：进程级隔离便宜但边界弱，容器适合大多数通用任务，微虚拟机、独立虚拟机或独立账号适合不可信代码和高敏感数据。它<b>不回答</b>三个问题：这个动作是否获得授权（工具权限判定）、是否符合业务意图（业务审批）、结果是否正确（结果校验）。</p>
+  </div>
+  <div class="notes" id="n-planes"></div>
+</section>
+
+<section class="part" id="deploy">
+  <div class="part-head"><h2>部署形态：平台给默认路径，应用保留组合权</h2><span class="meta">原书 2.3.5 节，表 2-5</span></div>
+  <div class="sec-lede">
+    <p>参考架构不要求第一天就建一个大而全的平台。原书列了四种常见形态：<strong>应用内嵌 SDK 直连</strong>（简单快，但状态、密钥、观测、策略散落在各应用）、<strong>托管 Harness 与 Runtime</strong>（持久执行、隔离、扩缩容由平台提供，代价是厂商绑定）、<strong>托管控制面 + 私有执行面</strong>（管理与执行解耦，数据和工具留在域内，但跨域审计更复杂）、<strong>全自托管或混合云</strong>（完全可控，建设和运营成本最高）。</p>
+    <p>选型先问哪些是自己的<strong>差异化资产</strong>：业务特有的 Prompt、Skill、Tool、评估标准、人机协作流程；模型接入、任务托管、沙箱、状态存储、身份、可观测、评估基础设施、安全策略更适合平台化。原书的平衡点：平台封装所有差异，会退化成只能满足最低共同需求、业务绕开自建；平台只给计算不给策略、状态、观测、评估，每个应用又要重复解同一批治理问题。</p>
+    <p class="go">回答四个问题，看哪种部署形态更合适。</p>
+  </div>
+  <div class="lab"><div id="dep"></div></div>
+  <div class="notes" id="n-deploy"></div>
+</section>
+
+<section class="part" id="life">
+  <div class="part-head"><h2>生命周期：Agent Release 与五阶段闭环</h2><span class="meta">原书 2.4 节</span></div>
+  <div class="sec-lede">
+    <p>Agent 的行为不只取决于代码，还取决于模型、Prompt、Context、Memory、Knowledge、Skill、Tool、编排逻辑、预算和运行环境，任意一项变化都可能改变轨迹和结果。所以最小发布单元应当是可复现的 <strong>Agent Release</strong>，至少绑定六类要素。只有它们可追踪，才能回答“生产中这个任务用的是哪个版本”、复现失败、证明质量是<strong>提升了</strong>而不只是<strong>变了</strong>。反过来，如果 Prompt 能在生产里随手改、不留版本，任何评估结论只对那一刻成立。</p>
+    <p>生命周期是<strong>架构设计 → 构建 → 运行 → 治理 → 调优</strong>的闭环。架构设计被单列为第一阶段，因为形态、自主性、责任域和权限边界一旦确定，后续成本区间基本锁定；治理和调优指回架构设计的虚线，是给“风险来自形态或权限模型本身”留的显式通道，这时该重新设计，而不是继续叠补丁。调优产出的 Prompt、Memory、Skill、Harness 补丁都只是<strong>候选变更</strong>，要回到构建、经过评估、安全检查、版本化、灰度、可回滚发布才能上线；调优指向运行的虚线只是在线评估的观测通道。治理既是一个阶段，也是横切约束：如果某项治理要求只能上线后靠流程和人工补齐，规模化后很可能失效。</p>
+    <p class="go">先勾选你的团队会给哪些要素打版本，再点闭环里的阶段。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Agent Release 的六类要素：没版本化的，事后说不清</p>
+    <div id="rel"></div>
+  </div>
+  <div class="lab loop">
+    <p class="lab-t">五阶段闭环（据原书图 2-2、表 2-6 重绘）</p>
+    <div id="loopSvg" class="box"></div>
+    <div class="hb-info" id="loopInfo"><p>点一个阶段。实线是主流程，虚线分别是“回到架构设计”的通道和调优对运行的观测通道。</p></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：受控自进化 vs 自我修改</h4>
+    <p>原书说的调优<b>不等于让 Agent 在生产中自由修改自己</b>。由模型、反馈或轨迹生成的补丁都是候选变更，必须经过可复现评估、安全检查、版本化、灰度和回滚能力才能进入生产。“可控的改进比无审批的自我修改更符合企业级自进化的定义。”第 14 篇的受控自进化会展开。</p>
+  </div>
+  <div class="notes" id="n-life"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 五条设计原则是什么？“编排层与 Runtime 解耦”指什么？</summary><p class="ans">Model 与 Harness 解耦；编排层与 Runtime 解耦；状态外置、执行实例可替换；自主性与权限和可验证性匹配；可观测、安全、评估是运行前提。编排层管语义（下一步、审批、上下文重建、是否完成），Runtime 管物理保障（实例、排队、恢复、配额），二者以任务与状态为接口，这样能换 Runtime 而不重写任务逻辑，也能在换进程、节点、区域时恢复同一任务。</p></details>
+    <details><summary>2. 五类信息对象各管什么？为什么不放进同一个向量库？</summary><p class="ans">Context：这次调用看什么，不断重建，不是事实来源；State：任务发生了什么、从哪恢复，强一致；Memory：跨会话的经验，需要写入门槛与遗忘；Knowledge：组织的可检索知识，需要权限过滤与时效；Skill：某类任务怎么做，版本化发布回滚。它们的一致性、生命周期和治理风险不同：Memory 怕错误经验被沿用，Knowledge 怕越权和过期；混在一起会同时丢掉这些治理能力。</p></details>
+    <details><summary>3. 为什么最小发布单元是 Agent Release？补丁为什么不能直接进生产？</summary><p class="ans">Agent 的行为由模型、编排、Prompt / Context / Skill / Knowledge、工具与权限、运行环境、评估基线共同决定，任何一项变化都可能改变结果，只有把六类要素绑在一起版本化，才能复现失败、证明改进。调优产出的补丁只是候选变更，要回到构建并经过评估、安全检查、灰度和回滚门禁；否则就是无审批的自我修改。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 三视图 ---------- */
+HB.cards($('#viewCards'), {
+  opts: ['组件视图', '平台视图', '生命周期视图'],
+  items: [
+    { t: '我们的设计里有没有漏掉“结果验证”这项能力？', a: 0, why: '组件视图回答系统由什么组成，用来避免能力遗漏。' },
+    { t: 'Sandbox 由应用团队自己搭，还是由共享平台提供？', a: 1, why: '平台视图回答组件在哪里运行、由谁负责。' },
+    { t: '上周改了一版 Prompt，怎么证明它确实让任务成功率变高了？', a: 2, why: '生命周期视图把版本、Trace、Dataset、Evaluator、Patch 组织成闭环。' },
+    { t: 'State Store 是执行面还是数据与资源面的东西？', a: 1, why: '平台划分三个平面，State Store 属于数据与资源面。' },
+    { t: 'Memory 和 Knowledge 之间是调用关系还是读写关系？', a: 0, why: '组件视图描述组件间的调用与读写依赖。' },
+    { t: '调优发现的问题，修复后从哪里重新进入生产？', a: 2, why: '生命周期视图：变更回到构建，经门禁后进入运行。' }
+  ]
+});
+S.notes($('#n-views'), {
+  c: [
+    ['组件视图', '系统由什么组成；防能力遗漏。'],
+    ['平台视图', '在哪里运行、由谁负责；防责任混乱。'],
+    ['生命周期视图', '怎样从决策走向运行并被治理和改进；防把演示当成可运营系统。']
+  ],
+  p: [
+    ['三者正交', '不能互相推导：组件齐全 ≠ 责任清晰 ≠ 变更可控。'],
+    ['四类边界问题', 'Model 与 Harness、编排与 Runtime、Context 与 State、沙箱 / 权限 / 工具描述混在一起。']
+  ]
+});
+
+/* ---------- 五个责任域 ---------- */
+HB.layers($('#arch'), {
+  hint: '点任意组件。',
+  layers: [
+    { t: '业务与应用层', sub: '为什么存在、完成什么、什么结果可接受', cls: 'c5', items: [
+      { t: '触发方式', d: '对话、API、消息、定时器、业务事件都可以触发一个 Agentic Application。', tag: '本篇' },
+      { t: '任务组织形态', d: 'Single-Agent、Long-Horizon、Multi-Agent、Hybrid：分别描述执行主体、时间跨度和组合方式，不是同一分类维度。', tag: '01 新阶段' },
+      { t: '验收条件', d: '业务层确定什么结果能被接受，也确定风险与验收边界（Security 的第一层）。', tag: '本篇' }
+    ] },
+    { t: 'Agent 构建与编排层', sub: '把能力组合成任务循环', items: [
+      { t: 'Model', d: '可替换、可路由的认知核心；路由和降级必须与完整 Harness 一起回归。', tag: '本篇 · 13 模型调优' },
+      { t: 'Harness 编排', d: '构造上下文、组织循环、提供能力、约束行为、验证中间结果；决定模型看什么、能调什么、何时停。', tag: '03 Harness · 04 任务' },
+      { t: 'Context 策略', d: '每次调用该看到什么：摘要、卸载、按需检索、渐进式披露、子 Agent 隔离、文件式交接。', tag: '05 信息' },
+      { t: 'Memory / Knowledge', d: 'Memory 是运行中生成的跨会话经验；Knowledge 是组织既有内容。治理风险不同，分开管。', tag: '05 信息 · 07 状态' },
+      { t: 'Skill', d: '某类任务该怎么做：说明、脚本、模板、Workflow、检查清单，作为版本化资产。', tag: '05 信息 · 12 资产' },
+      { t: 'Tool / Protocol / Connector', d: '本层只描述和绑定能力（Function Calling、MCP、A2A）；实际执行由运行层承载。', tag: '06 行动' }
+    ] },
+    { t: '生产运行层', sub: '跨时间、跨请求地承载任务', cls: 'c2', items: [
+      { t: 'Runtime', d: '任务生命周期：排队、并发、暂停、取消、超时、重试、Checkpoint、Recovery；假设任何一步都可能被中断。', tag: '07 运行与状态' },
+      { t: 'Sandbox', d: '限制影响范围：文件、进程、资源、包安装、网络、Secrets、数据出站。', tag: '07 运行与状态' },
+      { t: 'State Store / Workspace', d: 'Event Log、Checkpoint 要强一致和顺序；Workspace 要可快照可回滚；Artifact 要可寻址可保留。', tag: '07 运行与状态' },
+      { t: 'AI Gateway', d: '跨执行面和控制面的策略执行点：LLM、MCP、Agent 三种治理粒度。', tag: '08 AI 网关' },
+      { t: '异步与多 Agent 通信', d: '长任务、定时任务、跨 Agent 消息的承载。', tag: '09 异步与多 Agent' }
+    ] },
+    { t: '治理与控制层', sub: '哪些版本和动作被允许发生', cls: 'c3', items: [
+      { t: 'Registry 与版本', d: 'Agent、Model、Tool、Skill 的注册、版本与发布流转。', tag: '12 资产与验证' },
+      { t: '身份与策略', d: '谁能发布、运行、修改 Agent，能访问哪些资源；策略集中定义、判定点分布。', tag: '11 安全' },
+      { t: 'Observability / Audit', d: 'Trace、Metric、Log 在运行路径上采集，口径和阈值由治理与调优共同定义。', tag: '10 可观测' }
+    ] },
+    { t: '调优层', sub: '从运行证据产出候选变更', cls: 'c4', items: [
+      { t: 'Evaluation', d: '离线与在线评估、基线、准入阈值。', tag: '12 · 14' },
+      { t: 'Security Analysis', d: '调优侧的安全分析：红队、仿真，验证各层的安全措施是否有效。', tag: '11 安全' },
+      { t: 'Dataset / Experiment', d: '从生产 Trace 和失败案例构建数据集，做对比实验。', tag: '14 Agent 调优' },
+      { t: 'Patch（候选变更）', d: '不直接改生产：回到构建层形成新版本，经治理门禁再进入运行层。', tag: '14 Agent 调优' }
+    ] }
+  ]
+});
+HB.cards($('#prin'), {
+  opts: ['① Model 与 Harness 解耦', '② 编排与 Runtime 解耦', '③ 状态外置', '④ 自主性与权限匹配', '⑤ 观测评估是前提'],
+  items: [
+    { t: '换了一个新模型，发现三个月前写的十几条“纠偏提示词”全得改，工具调用代码也要重写。', a: 0, why: '模型是可替换的认知核心。模型和 Harness 要放在一起评估，但实现上不应强绑定。' },
+    { t: 'Agent 的任务计划只存在 Worker 进程的内存里，节点一重启，任务只能从头跑。', a: 2, why: '会话、计划、待办、工具结果都应在持久事件、Checkpoint 和外部工作区里，执行实例才可替换。' },
+    { t: '编排代码直接读写某个托管 Runtime 的内部内存结构，迁到自托管 Runtime 要重写任务逻辑。', a: 1, why: '二者接口应是任务与状态，不是函数调用细节。' },
+    { t: '为了省事，给 Agent 一个长期有效的数据库管理员账号和不受限的出网权限。', a: 3, why: '权限越多影响半径越大，应最小权限、短期凭证、出站控制、隔离、校验与审批并用。' },
+    { t: '上线两周后用户投诉，团队才开始想办法记录 Agent 调了哪些工具。', a: 4, why: '不记录轨迹和环境结果，既无法定位问题，也无法复现评估、证明改进。' }
+  ]
+});
+S.notes($('#n-domains'), {
+  c: [
+    ['五个责任域', '业务与应用、Agent 构建与编排、生产运行、治理与控制、调优；是责任划分，不是调用栈。'],
+    ['调优层的边界', '不直接改生产：变更回到构建层，经治理门禁后进入运行层。'],
+    ['Security', '横跨五层的架构责任，不是某一层的一个组件。'],
+    ['影响半径', 'Blast Radius：Agent 拿到的工具、网络、数据、凭证越多，出错时波及越广。']
+  ],
+  p: [
+    ['五条原则', 'Model / Harness 解耦；编排 / Runtime 解耦；状态外置；自主性匹配权限与可验证性；观测、安全、评估是前提。'],
+    ['原则的本意', '不是把系统做大，而是被授予的自主性都有匹配的边界、证据、验证；暂不建设的能力要写明何时必须补齐。']
+  ]
+});
+
+/* ---------- 编排层 ---------- */
+HB.check($('#hk'), {
+  items: [
+    { t: 'Agent Loop 与终止条件', d: '调用、回送、重试、停止、恢复、预算', miss: '任务无法收敛，出现无终止循环或预算失控。' },
+    { t: 'Instruction 与 Context Engineering', d: '指令、历史、工具描述、记忆、检索、环境状态的选择与编排', miss: '关键信息被淹没，模型在长上下文中偏离目标。' },
+    { t: 'Planning 与 Delegation', d: '待办、阶段目标、子 Agent、并行、Handoff、聚合', miss: '复杂任务缺少阶段划分，失败后无法定位与续接。' },
+    { t: 'Tool 与 Skill 管理', d: '注册、渐进式披露、参数校验、结果截断与外置、失败分类', miss: '工具描述挤占上下文，工具错误被当成模型错误。' },
+    { t: 'Middleware 与 Policy Hook', d: '调用前后执行权限、审批、审计、过滤', miss: '策略只能依赖提示词，模型可以绕过约束。' },
+    { t: 'Compaction 与 Continuation', d: '压缩、上下文重置、文件式交接、跨窗口续行', miss: '长任务在上下文耗尽时中断，或压缩过程改变了任务事实。' },
+    { t: 'Steering、HITL 与 Verification', d: '运行中纠偏、关键动作审批、结束前验证', miss: '高风险动作缺少人类监督，任务“看起来完成”但结果不可信。' }
+  ],
+  verdict: function (on, n) {
+    return on === n ? '<p class="ok"><b>七项齐全</b>。表中第三列是原书对生产失效模式的归纳，不是公开案例的统计。试着去掉一项。</p>'
+      : '<p><span class="big">' + on + ' / ' + n + '</span>　原书归纳的典型失效：</p>';
+  }
+});
+S.notes($('#n-harness'), {
+  c: [
+    ['Harness 编排层', '模型与运行环境之间，构造上下文、组织循环、提供能力、约束行为、验证中间结果的代码、配置与逻辑。'],
+    ['广义 Harness vs 编排层', '同一概念的不同粒度：前者答“模型之外还需要什么”，后者答“哪部分持有任务语义”。'],
+    ['Model Router', '按任务类型、预算、数据边界、负载路由；每条路由都要与完整 Harness 一起回归。'],
+    ['结构合法却结果错误', '降级模型能正常返回工具调用，却在多步中丢了约束。']
+  ],
+  p: [
+    ['模型评估五维', '领域能力；长上下文指令遵循；工具调用稳定性；延迟价格并发区域；数据与合规边界。'],
+    ['编排层 vs Runtime', '语义决策（下一步、审批、重建上下文、是否完成）vs 物理保障（实例、排队、恢复、配额）；接口是任务与状态。'],
+    ['编排层要随模型演进', '新模型可能让旧脚手架变成束缚；模型固定时，优化编排同样能提升完成质量。']
+  ]
+});
+
+/* ---------- 五类信息 ---------- */
+S.sortGame($('#infoSort'), {
+  bins: [{ k: 'c', t: 'Context' }, { k: 's', t: 'State' }, { k: 'm', t: 'Memory' }, { k: 'k', t: 'Knowledge' }, { k: 'sk', t: 'Skill' }],
+  items: [
+    { t: '本轮调用里附上的工具描述', k: 'c', why: '单次调用级，每次都会重建。' },
+    { t: '当前任务的 Todo 与已完成步骤', k: 's', why: '任务级事实，要持久化、可恢复。' },
+    { t: '“该用户偏好表格形式的周报”', k: 'm', why: '跨会话的用户偏好，需要写入策略与遗忘机制。' },
+    { t: '公司差旅报销制度 PDF 的索引', k: 'k', why: '组织既有内容，要与源系统权限和更新周期对齐。' },
+    { t: '“发布前检查清单 + 校验脚本”', k: 'sk', why: '某类任务怎么做，作为版本化资产发布、复用、回滚。' },
+    { t: '上一次工具调用卡在哪个 Checkpoint', k: 's', why: '恢复点属于任务状态。' },
+    { t: '对前 30 轮对话做的摘要', k: 'c', why: '摘要是给模型看的视图，不作为事实来源。' },
+    { t: '“上次部署失败是因为没先跑迁移”这条经验', k: 'm', why: 'Agent 运行中生成的经验；风险是错误经验被反复沿用。' },
+    { t: '产品手册与 RAG 知识库', k: 'k', why: '需要权限过滤、时效管理、来源可追溯。' },
+    { t: '一段可复用的数据清洗 Workflow', k: 'sk', why: 'Skill 可以是说明、脚本、模板或 Workflow。' }
+  ]
+});
+S.notes($('#n-info'), {
+  c: [
+    ['Context', '这一次调用应该看到什么；不断重建，不作为事实来源。'],
+    ['State', '任务已经发生了什么、从哪里恢复；强一致、持久。'],
+    ['Memory', '对当前任务有用的过往交互经验；跨会话，要写入门槛与遗忘。'],
+    ['Knowledge', '组织可检索的外部知识；权限过滤、时效、来源可追溯。'],
+    ['Skill', '某类任务怎么做；版本化发布、复用、回滚。']
+  ],
+  p: [
+    ['Memory ≠ Knowledge', 'Memory 风险是错误经验被沿用；Knowledge 风险是越权与过期。'],
+    ['Context Engineering', '在正确的时间选择正确的信息，把稀缺的注意力留给当前决策。'],
+    ['可恢复性的底线', '压缩、截断、误读都不能改变任务事实。']
+  ]
+});
+
+/* ---------- 受控行动 ---------- */
+HB.pipe($('#pipe6'), {
+  intro: '六环节都在：模型只是“提议”删表，系统逐环把关后才真正执行，并留下记录。拿掉任一环试试。',
+  steps: [
+    { t: '能力选择', d: '编排层只向模型暴露当前任务需要的能力', miss: '模型看到了与任务无关的“删除数据库”工具，并顺手选了它。' },
+    { t: '身份与权限判定', d: 'Gateway / Middleware 判定这个身份能否对这些表执行删除', miss: '能力被发现就等于被授权：Agent 用一个高权限身份删到了生产库。' },
+    { t: '参数校验', d: '校验表名范围、过期条件等参数', miss: '表名通配写成了 <code>*</code>，Schema 合法、意图却不对。' },
+    { t: '隔离环境执行', d: '在 Sandbox / 受限连接里执行，限制可达范围', miss: '命令直接在有生产凭证的主机上执行，影响半径不受控。' },
+    { t: '结果校验', d: '检查删除行数、残留数据、业务指标', miss: '命令返回成功就算完成，误删的表直到报表出错才被发现。' },
+    { t: '状态与审计记录', d: '写入任务状态与审计事件', miss: '事后说不清谁在什么任务里、基于什么理由删了哪些表，也无法恢复任务。' }
+  ]
+});
+S.notes($('#n-action'), {
+  c: [
+    ['Tool', 'Agent 可以请求的一项能力；常见问题是描述不清、缺参数校验。'],
+    ['Protocol', '能力如何被描述、发现、调用、返回；常见问题是混淆能力发现与权限授予。'],
+    ['Environment', '能力真正产生影响的空间；常见问题是影响范围超出预期。']
+  ],
+  p: [
+    ['三个“不等于”', '被发现 ≠ 被授权；符合 Schema ≠ 符合意图；沙箱里成功 ≠ 可以安全影响生产。'],
+    ['受控行动六环节', '能力选择 → 身份与权限 → 参数校验 → 隔离执行 → 结果校验 → 状态与审计。'],
+    ['分布位置', '编排层、Gateway、Sandbox、平台控制面。']
+  ]
+});
+
+/* ---------- 三个平面 ---------- */
+S.sortGame($('#planeSort'), {
+  bins: [{ k: 'e', t: '执行面' }, { k: 'd', t: '数据与资源面' }, { k: 'c', t: '控制面' }],
+  items: [
+    { t: 'Runtime Worker', k: 'e', why: '真实运行 Agent Loop，可弹性、可失败。' },
+    { t: 'Sandbox 实例', k: 'e', why: '工具与环境操作在执行面发生，需要隔离。' },
+    { t: 'Event Log 与 Checkpoint', k: 'd', why: '可恢复事实，要定义一致性、所有权、保留期。' },
+    { t: 'MCP Server', k: 'd', why: 'Agent 可访问的能力属于数据与资源面。' },
+    { t: 'Policy 与 Budget', k: 'c', why: '集中定义、版本化、可审计、可回滚。' },
+    { t: 'Agent Registry', k: 'c', why: '定义版本与发布。' },
+    { t: 'Gateway 数据路径', k: 'e', why: '请求真实流经的路径在执行面；策略定义在控制面。' },
+    { t: 'Memory 与 Knowledge', k: 'd', why: '要定义隐私和租户边界。' },
+    { t: 'IAM 与 Tenant', k: 'c', why: '身份与租户由控制面管理。' },
+    { t: 'Task Queue', k: 'e', why: '排队与调度发生在执行面。' }
+  ]
+});
+S.notes($('#n-planes'), {
+  c: [
+    ['执行面', '真实运行 Loop、工具与环境操作；可弹性、可失败、需隔离，尽量不持有唯一真实状态。'],
+    ['数据与资源面', '保存可恢复事实、提供可访问能力；要定义一致性、所有权、保留期、隐私、租户边界。'],
+    ['控制面', '版本、身份、策略、部署、配额与改进动作；集中定义、可审计、可回滚。'],
+    ['Runtime', '任务生命周期管理，假设任何一步都可能被中断，从外部状态续跑而非从头重试。']
+  ],
+  p: [
+    ['策略集中、判定分布', '控制面下发策略，Middleware / Gateway / Runtime / Sandbox 就地判定，审计异步回传。'],
+    ['传播延迟的兜底', '凭证吊销、租户封禁等高风险策略：强制刷新、短期凭证、集中校验。'],
+    ['隔离粒度', '进程（便宜、弱）→ 容器（通用）→ 微 VM / 独立 VM / 独立账号（不可信代码、高敏数据）。'],
+    ['存储的一致性要求不同', 'Event Log / Checkpoint 强一致有序；Workspace 可快照回滚；Artifact 可寻址可保留；Memory / Knowledge 可检索可治理。']
+  ]
+});
+
+/* ---------- 部署形态 ---------- */
+HB.decide($('#dep'), {
+  qs: [
+    { id: 'stage', q: '1. 现在处在什么阶段？', opts: [['p', '原型 / 单个低风险应用'], ['g', '要进生产或已有多个应用']], def: 'g' },
+    { id: 'data', q: '2. 数据和工具能否交给外部托管执行？', opts: [['y', '可以，数据边界允许'], ['n', '不行，必须留在域内']], def: 'n' },
+    { id: 'scale', q: '3. 合规要求和规模如何？', opts: [['m', '一般'], ['h', '高合规、大规模或要多环境运行']], def: 'm' },
+    { id: 'team', q: '4. 有没有专门的平台团队长期运营？', opts: [['n', '没有'], ['y', '有']], def: 'n' }
+  ],
+  decide: function (a) {
+    var f, p, c;
+    if (a.stage === 'p') { f = '应用内嵌 SDK，直连模型与工具'; p = '简单、快速、调试链路短。'; c = '状态、密钥、观测与策略容易分散到各应用；规模变大前要规划收敛。'; }
+    else if (a.data === 'y' && a.scale === 'm') { f = '托管 Harness 与 Runtime'; p = '持久执行、隔离、扩缩容和可观测由平台提供，快速进入生产。'; c = '厂商绑定、扩展边界受限，数据与合规需逐项确认。'; }
+    else if (a.scale === 'h' && a.team === 'y') { f = '全自托管或混合云 Agent Platform'; p = '数据、策略、扩展和基础设施完全可控。'; c = '建设和长期运营成本最高，需要专门平台团队。'; }
+    else { f = '托管控制面 + 私有执行面'; p = '共享管理能力，同时把数据和工具留在域内，管理与执行解耦。'; c = '控制面连通、版本兼容和跨域审计更复杂。' + (a.scale === 'h' ? '高合规大规模但没有平台团队时，自托管全栈风险更大，这是折中。' : ''); }
+    return '<div class="hb-res"><h4>' + f + '</h4><p><b>优势：</b>' + p + '</p><p><b>代价：</b>' + c + '</p></div><p class="note">依据原书表 2-5 的“适用场景”整理的简化判断。</p>';
+  }
+});
+S.notes($('#n-deploy'), {
+  c: [
+    ['差异化资产', '业务特有的 Prompt、Skill、Tool、评估标准、人机协作流程。'],
+    ['适合平台化的能力', '模型接入、任务托管、沙箱、状态存储、身份、可观测、评估基础设施、安全策略。']
+  ],
+  p: [
+    ['四种部署形态', 'SDK 直连；托管 Harness + Runtime；托管控制面 + 私有执行面；全自托管 / 混合云。'],
+    ['平台的分寸', '提供安全可运营的默认路径，应用保留对模型、编排、业务能力的组合选择权。'],
+    ['两种失败', '封装一切 → 退化成最低共同需求、业务绕开自建；只给计算 → 每个应用重复解治理问题。']
+  ]
+});
+
+/* ---------- 生命周期 ---------- */
+HB.check($('#rel'), {
+  items: [
+    { t: '模型', d: '模型与版本、参数、推理预算、路由策略', miss: '答不出出问题的那次调用用的是哪个模型、哪条路由。', on: true },
+    { t: 'Harness 编排', d: '代码、配置、循环控制、Middleware、终止条件', miss: '同样的输入在新旧编排逻辑下轨迹不同，无法确定差异来源。', on: true },
+    { t: 'Prompt / Context / Memory / Skill / Knowledge', d: 'Prompt、Context Policy、Memory Policy、Skill 与知识版本', miss: 'Prompt 在生产里被随手改过，评估结论只对改之前那一刻成立。', on: false },
+    { t: '能力与权限', d: 'Tool、MCP、Agent 能力清单、权限策略、凭证范围', miss: '不知道当时 Agent 能调哪些工具、拿的是什么权限，事故边界说不清。', on: false },
+    { t: '运行环境', d: 'Runtime、Sandbox、资源、网络、数据保留', miss: '同一版本在不同沙箱配置下表现不同，复现不了线上失败。', on: false },
+    { t: '评估基线', d: '数据集、Evaluator、基线、准入阈值、已知风险', miss: '没有固定的数据集和评估器，无法证明新版本是“提升了”而不只是“变了”。', on: false }
+  ],
+  verdict: function (on, n) {
+    return on === n ? '<p class="ok"><b>六类都已版本化</b>：任何一次生产任务都能追溯到一个可复现的 Agent Release。</p>'
+      : '<p><span class="big">' + on + ' / ' + n + '</span>　只有代码和模型进了版本库的团队很常见（默认勾选为示意）。没版本化的要素会带来：</p>';
+  }
+});
+var STG = [
+  ['架构设计', '用什么形态、多大自主性、什么边界来解决这个业务问题？', '业务目标、任务结构、风险等级、数据敏感度、时间跨度、合规要求', '形态选择、责任域划分、Harness 与 Runtime 边界、权限与数据边界、观测与评估口径、架构决策记录', '架构评审、威胁建模、影响半径评估、最低充分架构判断'],
+  ['构建', '如何把架构决策实现为可复现的 Agent Release？', '架构决策、能力资产、模型、工具、知识', 'Agent 定义、编排、Prompt、Context Policy、Skill、Tool Policy、评估基线、候选版本', '离线评估、安全检查、人工评审与发布门禁，通过后成为 Approved Release'],
+  ['运行', '如何可靠、隔离且可恢复地执行任务？', 'Agent Release、任务、身份、租户、预算、环境', 'Task、Session、Event、Checkpoint、Artifact、Trace、Cost、Incident', 'Runtime 状态机、Sandbox、Gateway、实时策略、失败恢复'],
+  ['治理', '如何看见、约束、审批和追责？', 'Trace、身份、工具调用、数据访问、成本、反馈、异常', 'Policy、Approval、Audit、Alert、SLO、风险发现与治理动作', '最小权限、在线检查、行为监测、人类监督、应急处置'],
+  ['调优', '如何复现并证实问题、生成改进并安全发布？', '生产 Trace、失败案例、用户反馈、标注、安全发现', 'Dataset、Evaluator、Experiment，Prompt / Context / Skill / Harness 补丁，仿真结果', '回归、对比实验、红队、仿真、灰度、审批、回滚']
+];
+var drawLoop = S.fit($('#loopSvg'), 330, function (svg, w) {
+  var W = Math.max(w, 560), cx = W / 2, bw = 116, bh = 44;
+  var pos = [[cx, 40], [W - 90, 130], [W - 170, 280], [170, 280], [90, 130]];
+  var defs = S.svg('defs', null, svg);
+  [['ah', 'ahd'], ['ah2', 'ahd2']].forEach(function (m) {
+    var mk = S.svg('marker', { id: m[0], viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto' }, defs);
+    S.svg('path', { d: 'M0 0L10 5L0 10z', class: m[1] }, mk);
+  });
+  function edge(a, b, cls, mk, bend) {
+    var p = pos[a], q = pos[b];
+    var dx = q[0] - p[0], dy = q[1] - p[1], L = Math.sqrt(dx * dx + dy * dy);
+    var sx = p[0] + dx / L * 62, sy = p[1] + dy / L * 26, ex = q[0] - dx / L * 64, ey = q[1] - dy / L * 28;
+    var mx = (sx + ex) / 2 + (bend || 0) * -dy / L, my = (sy + ey) / 2 + (bend || 0) * dx / L;
+    S.svg('path', { d: 'M' + sx + ' ' + sy + 'Q' + mx + ' ' + my + ' ' + ex + ' ' + ey, class: 'ar ' + cls, 'marker-end': 'url(#' + mk + ')' }, svg);
+  }
+  edge(0, 1, '', 'ah'); edge(1, 2, '', 'ah'); edge(2, 3, '', 'ah'); edge(3, 4, '', 'ah'); edge(4, 1, '', 'ah', 20);
+  edge(3, 0, 'dash', 'ah2', 40); edge(4, 0, 'dash', 'ah2', -10); edge(4, 2, 'dash', 'ah2', -30);
+  S.svg('text', { x: cx, y: 172, 'text-anchor': 'middle', class: 'lbl', text: '调优 → 构建：补丁回到构建、过门禁' }, svg);
+  S.svg('text', { x: cx, y: 316, 'text-anchor': 'middle', class: 'lbl', text: '虚线：回到架构设计 / 在线评估观测通道' }, svg);
+  pos.forEach(function (p, i) {
+    var g = S.svg('g', { class: 'stg', tabindex: 0, role: 'button', 'data-i': i }, svg);
+    S.svg('rect', { x: p[0] - bw / 2, y: p[1] - bh / 2, width: bw, height: bh, rx: 10 }, g);
+    S.svg('text', { x: p[0], y: p[1] + 5, 'text-anchor': 'middle', text: STG[i][0] }, g);
+    function pick() {
+      S.$$('.stg', svg).forEach(function (x) { x.classList.toggle('on', x === g); });
+      var s = STG[i];
+      $('#loopInfo').innerHTML = '<b>' + s[0] + '</b><p><b>核心问题：</b>' + s[1] + '</p><p><b>输入：</b>' + s[2] + '</p><p><b>产物：</b>' + s[3] + '</p><p><b>准入 / 反馈：</b>' + s[4] + '</p>';
+    }
+    g.addEventListener('click', pick);
+    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  });
+}, 560);
+drawLoop();
+S.notes($('#n-life'), {
+  c: [
+    ['Agent Release', '生命周期的最小可复现发布单元，绑定模型、编排、Prompt / Context / Skill / Knowledge、能力与权限、运行环境、评估基线。'],
+    ['五阶段闭环', '架构设计 → 构建 → 运行 → 治理 → 调优；由生产事实驱动新版本。'],
+    ['候选变更', '调优产出的补丁，必须回到构建并过门禁，才能进入生产。']
+  ],
+  p: [
+    ['为什么架构设计单列', '形态、自主性、权限边界一旦确定，后续成本区间基本锁定；隐式决定等于让实现细节反向定义架构。'],
+    ['回到架构设计的条件', '风险来自形态或权限模型本身，而不是某个 Prompt 或某次工具调用。'],
+    ['治理自检', '治理要求如果只能上线后靠流程和人工补齐，规模化后很可能失效。'],
+    ['同一条链路', '观测、评估、发布缺一环，闭环就退化成一次性的人工调参。']
+  ]
+});

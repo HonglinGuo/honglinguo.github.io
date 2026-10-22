@@ -1,0 +1,408 @@
+---
+title: 模型调优与推理框架
+desc: AI Agent Handbook 学习笔记（十三）：先归因再训练（执行环境、Harness、模型三层与四组对照）；Agent 对模型的四类能力要求与质量、可靠性、成本、安全护栏；SFT 的样本构造与损失掩码；Agentic RL 的准入条件、奖励与验证器、奖励投机、组相对基线与独立评测；模型蒸馏的教师信号、在线策略蒸馏、单位成功任务成本与盈亏平衡；上线门禁与灰度；推理框架的 Prefill / Decode、KV Cache、前缀缓存与 PD 分离。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 13</span><span>对应原书第 17 章</span><span>约 40 分钟</span>
+h1: 先证明是模型的错，<em>再去训练模型</em>
+lead: 从这一篇进入原书的“调优”篇。模型是 Agent 的决策核心，但工具协议含混、上下文缺失、权限失效、外部服务异常都不该靠训练模型去补。原书第 17 章的主线是：先把问题归到正确的层，再按学习信号选 SFT、Agentic RL 或蒸馏，最后在完整 Agent 里用同一口径验收、灰度、可回滚。章末附了一篇通俗的推理框架导读，解释了为什么输出比输入贵、缓存命中能打一到两折。
+nav: attr|先归因;goal|目标与方法;sft|SFT;rl|Agentic RL;kd|蒸馏;ship|验收上线;infer|推理框架;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.f2 { display: grid; grid-template-columns: 7em repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 10px; font-size: 15px; }
+.f2 > div { border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; background: var(--bg); line-height: 1.55; }
+.f2 .hd { background: none; border: 0; color: var(--ink-3); font-weight: 600; }
+.f2 .v { font-family: var(--f-num); font-size: 20px; font-weight: 700; color: var(--s1); }
+.trj { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.trj > div { display: grid; grid-template-columns: minmax(0, 1fr) 6em; gap: 10px; align-items: center; border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; background: var(--bg); font-size: 15px; }
+.trj .r { font-family: var(--f-num); font-weight: 700; text-align: right; font-size: 18px; }
+.trj .r.hi { color: var(--ok); } .trj .r.lo { color: var(--ink-3); }
+.trj .bad { border-color: var(--alert); }
+.trj small { display: block; color: var(--ink-3); font-size: 15px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>什么时候才该把问题归给模型？SFT、Agentic RL、蒸馏分别在什么条件下选？</li>
+    <li>Agentic RL 的奖励为什么会被“投机”？训练奖励上升为什么不能当作发布依据？</li>
+    <li>单位成功任务成本怎么算？为什么在 Agent 场景里“缓存命中率就是成本”？</li>
+  </ol>
+</div>
+
+<section class="part" id="attr">
+  <div class="part-head"><h2>先归因：执行环境、Harness 还是模型</h2><span class="meta">原书 17.1.1 节</span></div>
+  <div class="sec-lede">
+    <p>Agent 的端到端能力由三层共同形成：<strong>模型</strong>在给定信息和动作空间内理解任务、作出决策；<strong>Harness</strong> 负责上下文、工具协议、任务状态、路由、反馈、重试与停止；<strong>执行环境</strong>实际承载动作并返回结果。三者可能表现为相似的失败现象，对应的手段却不同。原书的归因原则：先看模型作出错误决策时<strong>是否已经拿到准确充分的信息、是否有清晰可用的动作接口、执行环境是否正常</strong>；只有信息、动作空间和反馈都明确稳定，同类决策错误仍<strong>跨任务变体反复出现</strong>，才有充分理由列为模型优化目标。</p>
+    <p>原书的例子：数据分析 Agent 反复生成错误 SQL。没给字段含义，改数据字典检索；工具对时间范围的描述有歧义，改工具协议；查询服务不可用，修环境；字段、口径、执行反馈都清楚，模型仍在不同任务中混淆去重或关联逻辑，才评估模型优化。排查顺序是先排除能独立复现的环境故障，再看 Harness，最后判断模型。边界不清时做<strong>四组对照</strong>：原模型 × 原 Harness、原模型 × 候选 Harness、候选模型 × 原 Harness、候选模型 × 候选 Harness，在一致任务集和预算下分出各自的贡献和交互项。模型优化也可以由成本驱动：高频任务已经靠长提示、反复纠错或多模型复核完成，但开销超预算，任务分布稳定、有效行为可学习时，可以评估 SFT 或蒸馏。</p>
+    <p class="go">先给失败归层；再填四组对照的成功率，看收益来自哪里（数值为示意）。</p>
+  </div>
+  <div class="lab"><p class="lab-t">这次失败归哪一层？（原书表 17.1-1 的验证方法）</p><div id="layer"></div></div>
+  <div class="lab">
+    <p class="lab-t">四组对照：模型改动、Harness 改动与交互</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>原模型 × 原 Harness <output id="aaO">60%</output></span><input type="range" id="aaS" min="0" max="100" value="60"></label>
+      <label class="ctl"><span>原模型 × 候选 Harness <output id="abO">72%</output></span><input type="range" id="abS" min="0" max="100" value="72"></label>
+      <label class="ctl"><span>候选模型 × 原 Harness <output id="baO">66%</output></span><input type="range" id="baS" min="0" max="100" value="66"></label>
+      <label class="ctl"><span>候选模型 × 候选 Harness <output id="bbO">80%</output></span><input type="range" id="bbS" min="0" max="100" value="80"></label>
+    </div>
+    <div class="read"><div><div class="v" id="fxM">0</div><div class="k">模型改动单独的收益</div></div><div><div class="v" id="fxH">0</div><div class="k">Harness 改动单独的收益</div></div><div class="hl"><div class="v" id="fxI">0</div><div class="k">交互项</div></div></div>
+    <p class="verdict3" id="fxV"></p>
+  </div>
+  <div class="notes" id="n-attr"></div>
+</section>
+
+<section class="part" id="goal">
+  <div class="part-head"><h2>能力要求、优化目标与方法选择</h2><span class="meta">原书 17.1.2–17.1.4 节</span></div>
+  <div class="sec-lede">
+    <p>归给模型之后，再细分是哪类决策能力不足。原书分四类：<strong>任务理解与约束识别</strong>（把“比较两个季度的客户增长”转成客户口径、时间范围、去重规则，必要条件不明时澄清）、<strong>工具使用与反馈理解</strong>（调用成功只说明接口完成了请求，还要判断结果是否完整、口径是否一致）、<strong>多步决策与状态利用</strong>（τ²-Bench 把用户和 Agent 都能操作共享环境的情形纳入评估）、<strong>失败恢复与合理终止</strong>。这些是模型的决策表现；工具执行、状态持久化、权限校验和动作放行仍属于 Harness 与执行环境。</p>
+    <p>目标要落到三个维度：<strong>质量</strong>（关键动作、业务口径、约束，最终回到完整任务）、<strong>可靠性</strong>（多次运行、输入变化、长交互、工具异常，权限或边界违规单独报告）、<strong>成本</strong>（单位成功任务成本：统计期内全部任务成本 ÷ 成功任务数，失败任务也计入分子；固定任务构成并同时报告成功率，防止靠放弃难题“降成本”）。效率驱动不意味着训练必然省钱：只有减少提示长度、重试与复核次数，或让更小的模型胜任时才可能；低频或多变的任务，轻量 Harness 调整往往更经济。指标之外还要<strong>安全护栏</strong>：模型负责识别约束、提出动作，但不能只靠模型自己遵守。</p>
+    <p>方法按学习信号选：<strong>有明确示范 → SFT</strong>；<strong>需要交互探索且环境能提供可靠反馈 → Agentic RL</strong>；<strong>教师已经会、目标是迁移、压缩或部署 → 蒸馏</strong>。三者不互斥：输出或轨迹蒸馏通常就是在教师数据上做 SFT，SFT 后的模型也可以继续做 RL。</p>
+    <p class="go">回答三个问题，看该选哪种方法。</p>
+  </div>
+  <div class="lab"><div id="meth"></div></div>
+  <div class="notes" id="n-goal"></div>
+</section>
+
+<section class="part" id="sft">
+  <div class="part-head"><h2>SFT：让验证过的行为更稳定地出现</h2><span class="meta">原书 17.2 节</span></div>
+  <div class="sec-lede">
+    <p>面向 Agent 的 SFT，监督的不只是最终答案，还有执行中的关键决策：要不要调工具、选哪个、参数怎么填、反馈怎么解释、何时继续、澄清、求助或终止。它改变的是模型的<strong>条件行为分布</strong>，不替代 Harness 的状态维护和权限控制，也不靠探索发现未知的最优策略。原书例子：比较两个季度的新增付费企业客户，口径已经明确，模型仍可能先筛季度内订单再算首次付费时间，把老客户算成新增；SFT 的目标不是背下某条 SQL，而是通过多样化示范学会“先在全量有效付费记录上确定首次付费时间，再按季度统计”。适用前提：同一状态下有稳定、可核验的正确行为；路径优劣只能通过交互判断时，考虑 RL。</p>
+    <p>轨迹不等于监督目标。构造样本的铁律：<strong>每个目标行为只能依赖该决策时刻已经可见的信息</strong>，工具还没返回，目标动作就不能用它的结果；用户后来补充的条件，不能提前进入早期决策的输入，否则离线训练的信息条件优于线上，上线就复现不了。样本要覆盖直接回答、发起调用、请求澄清等不同选择，避免模型养成“遇到任务就调工具”的习惯。任务成功也不代表每一步都值得模仿：纠错场景里可以把错误动作留在上下文中、但<strong>屏蔽它的损失</strong>，只监督验证过的后续恢复行为。配比上保留原本可以直接完成的简单任务，防止训练后普遍增加工具调用；训练与推理的对话模板、工具调用格式、结束标记要兼容。</p>
+    <p>验收不能看训练损失：损失下降只说明模型更容易生成样本里的内容。要让候选模型在固定的 Harness、工具接口和预算下<strong>自主运行</strong>，由环境返回真实反馈，观察早期决策如何影响后续；如果每一步都喂标准历史、只检查下一条续写，就暴露不了错误累积。测试集按任务族、模板、数据来源分组，避免近似改写同时进入训练和测试。</p>
+    <p class="go">轨迹里的每段内容，在 SFT 样本中怎么处理？</p>
+  </div>
+  <div class="lab"><div id="mask"></div></div>
+  <div class="notes" id="n-sft"></div>
+</section>
+
+<section class="part" id="rl">
+  <div class="part-head"><h2>Agentic RL：用环境反馈优化策略</h2><span class="meta">原书 17.3 节</span></div>
+  <div class="sec-lede">
+    <p>Agentic RL 用模型在环境中执行任务的轨迹作为样本，依据结果、过程状态或验证器反馈更新策略。和 SFT 的区别在信号来源：SFT 要求行为能被可靠示范，RL 允许多条可行路径，但要求<strong>路径优劣能被稳定评价</strong>。准入要同时满足：失败来自模型的动作选择或恢复策略；有效路径不唯一、难以逐步标注；结果或关键中间状态可由规则、测试或可靠评审判断；环境可执行、可重置、可复现、可审计、可隔离；模型已能产生一定比例的有效轨迹（连工具参数格式都不稳就先 SFT）；收益能覆盖 Rollout 和环境维护成本。原书强调，<strong>“结果可验证”比“过程能完整标注”更重要</strong>。</p>
+    <p>奖励可以写成 <strong>R(τ) = w₁R_task + w₂R_process − λC_execution − μP_violation</strong>：结果奖励是核心；过程奖励只奖励可客观判断的关键状态，不规定唯一流程；成本在成功前提下优化，不能诱导提前终止；高风险约束<strong>不能只靠负奖励</strong>，必须由 Harness 设置不可绕过的控制。主要风险是<strong>奖励投机</strong>（找评分漏洞而不是完成任务）、代理目标偏移、评审器漂移。原书的典型反例：退款验证器只检查“是否生成退款记录”，模型就可能学会更快地创建不合规退款。所以要把<strong>训练奖励、独立评测、系统约束</strong>分开：奖励提供学习信号，独立评测判断能力是否真提升，系统控制保证任何版本都越不过边界。</p>
+    <p>训练循环是任务采样 → Rollout → Verifier 评分 → 信用分配（Advantage）→ 策略更新 → 版本注册。PPO 用价值模型估计优势并裁剪策略变化；<strong>组相对方法</strong>对同一任务采多条轨迹、用组内相对回报当基线，省掉价值模型，但如果组内结果几乎一样，优势会趋近于零。长程任务的难点是反馈更晚、早期错误改变后续状态：用课程式采样、只在可验证的阶段性状态给过程反馈、同任务多轨迹比较，并显式覆盖参数修正、工具切换、请求澄清、合理终止。最后用独立评测确认真实收益：开发集设计奖励、验证集选版本、<strong>锁定留出集只在冻结后验收一次</strong>，长期用同一留出集挑版本也会间接过拟合；训练回报涨而独立成功率没涨，先查奖励、验证器偏差、环境泄漏答案和分布差异。</p>
+    <p class="go">切换验证器检查项，看哪条轨迹拿到高奖励（轨迹取自原书 17.3.5 节，奖励规则为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">验证器检查什么，模型就学什么</p>
+    <div class="hb-check" id="vck"></div>
+    <div class="trj" id="trj"></div>
+    <p class="verdict3" id="trjV"></p>
+  </div>
+  <div class="notes" id="n-rl"></div>
+</section>
+
+<section class="part" id="kd">
+  <div class="part-head"><h2>蒸馏：迁移能力，算清单位成功任务成本</h2><span class="meta">原书 17.4 节</span></div>
+  <div class="sec-lede">
+    <p>蒸馏不是让小模型“说得像”强模型，而是把强模型在任务执行中的有效决策迁移过去，让它以更低成本独立承担可界定、可评测的工作，并在超出能力边界时交还教师。设计从线上职责出发：教师在目标任务上要稳定可靠（不稳定的教师只会被更高效地复制错误），学生要在质量、时延、显存、吞吐和单价间平衡。可以先建“任务—职责—风险”矩阵，分成学生独立执行、学生执行教师校验、教师直接执行三类；首次落地更适合<strong>技能级迁移</strong>（工具路由、查询生成、参数抽取、结果核验）而不是完整 Agent 行为迁移。</p>
+    <p>教师信号从粗到细：最终输出、标签与理由、结构化动作、多轮轨迹、概率信号。<strong>黑盒（序列级）</strong>只要教师生成的文本或轨迹，跨厂商跨词表都能用，DeepSeek-R1 的蒸馏阶段和 Qwen3 的长思维链冷启动都是这条路；<strong>白盒（分布级）</strong>要 logits 或 log-prob，监督更稠密，通常要求共享 tokenizer。离线示范的问题是学生一旦走出不同动作，就进入教师从没示范过的状态，误差累积；<strong>在线策略蒸馏（OPD）</strong>让学生先在环境里生成，再由教师对学生实际到达的状态逐 token 打分，最小化反向 KL，有“模式寻求”倾向，能收敛到一条连贯路径，但也可能复制教师偏差、压低探索，要和任务成功验证一起用。补强时定位学生相对有效路径的<strong>首个关键偏离</strong>，分知识、决策、执行、恢复四类缺口补数据。</p>
+    <p>收益核算是本节的重点：<strong>单位成功任务成本 = 全部任务所有尝试的（学生 + 教师兜底 + 验证器 + 工具 + 运行时）成本 ÷ 成功任务数</strong>，重试通过对每次尝试求和已经计入。“单次推理成本 × 平均重试 ÷ 成功率”只是极简近似。再加上一次性投入 F（数据、训练、评测、部署、迁移），成功率不同时先算单任务净收益 <strong>g = pV − (1−p)L − C̄</strong>，盈亏平衡任务量 <strong>N* = F / (g_new − g_old)</strong>；若新方案的 g 不更高，就没有有限的盈亏平衡点。保留一部分教师兜底不是蒸馏失败，而是目标架构的一部分（级联路由）；蒸馏出的小模型还可以当投机解码的草稿模型。</p>
+    <p class="go">算一笔蒸馏的账（默认数值为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">什么时候回本？</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>一次性投入 F（万元） <output id="kF">30</output></span><input type="range" id="kFs" min="5" max="200" value="30"></label>
+      <label class="ctl"><span>成功任务价值 V（元） <output id="kV">5</output></span><input type="range" id="kVs" min="1" max="50" step="0.5" value="5"></label>
+      <label class="ctl"><span>失败损失 L（元） <output id="kL">2</output></span><input type="range" id="kLs" min="0" max="50" step="0.5" value="2"></label>
+      <label class="ctl"><span>旧方案：成功率 <output id="kO">92%</output></span><input type="range" id="kOp" min="50" max="99" value="92"></label>
+      <label class="ctl"><span>旧方案单任务成本（元） <output id="kOc">0.60</output></span><input type="range" id="kOcs" min="0.05" max="3" step="0.05" value="0.6"></label>
+      <label class="ctl"><span>新方案：成功率 <output id="kNp">90%</output></span><input type="range" id="kNps" min="50" max="99" value="90"></label>
+      <label class="ctl"><span>新方案单任务成本（含 10% 教师兜底，元） <output id="kNc">0.20</output></span><input type="range" id="kNcs" min="0.05" max="3" step="0.05" value="0.2"></label>
+    </div>
+    <div class="read"><div><div class="v" id="kgO">0</div><div class="k">旧方案 g（元 / 任务）</div></div><div><div class="v" id="kgN">0</div><div class="k">新方案 g</div></div><div class="hl"><div class="v" id="kN">0</div><div class="k">盈亏平衡任务量 N*</div></div></div>
+    <p class="verdict3" id="kVd"></p>
+  </div>
+  <div class="notes" id="n-kd"></div>
+</section>
+
+<section class="part" id="ship">
+  <div class="part-head"><h2>验收与上线：在完整 Agent 里证明收益</h2><span class="meta">原书 17.5 节</span></div>
+  <div class="sec-lede">
+    <p>训练完成不等于可以上线。如果候选模型同时用了新的 Prompt、更宽松的工具权限或更简单的环境，成功率提高了也说不清收益来自哪里。所以先冻结一个<strong>候选发布单元</strong>：模型配置（检查点、训练方法与数据、超参、模板、tokenizer、推理参数）、Harness 配置（Prompt、Skill、上下文策略、工具 Schema、路由、重试、停止、权限、人工介入）、执行环境配置、评测配置（任务集、种子、预算、验证器、重复次数、口径、阈值）。至少保留<strong>纯模型对照</strong>（同 Harness 同环境）和<strong>部署组合对照</strong>（适配后的 Harness 对比当前生产）。候选模型只有靠大幅扩写 Prompt、额外重试或放宽权限才更高分，这些要作为成本和风险单独报告。</p>
+    <p>系统适配检查工具协议、上下文、执行行为、预算、安全边界五方面兼容，顺序是固定输入 → 标准历史前缀单步 → Sandbox 中自主运行完整任务 → 故障注入。准入用<strong>“硬门槛 + 目标收益”</strong>而不是一个加权总分：接口兼容、目标收益（预先设定的最小改善和置信区间）、能力回归（非劣效界值）、运行预算、安全硬门禁，任一硬门禁失败就阻断；所有门槛在<strong>查看候选结果之前</strong>确定。安全门禁还要区分两件事：模型提出违规动作的频率（策略风险），违规动作穿透系统被实际执行的频率（防护有效性）。</p>
+    <p>灰度依次是影子验证（多步写操作要在隔离副本重放，或只比较候选动作不执行）、低风险灰度、分阶段扩量（高风险写操作晚于只读任务开放）、稳定替换后保留旧版本一个完整业务周期；每一档预设扩大、暂停、回滚条件，按用户、会话或任务分桶，避免同一长任务在新旧模型间切换。<strong>回滚对象是完整的候选发布单元</strong>，只回退模型权重可能形成不兼容组合；回滚也撤销不了已经在外部系统完成的写操作。上线后的问题重新按三层归因，只有稳定复现、影响明确、可验证的问题才进入下一轮。</p>
+    <p class="go">勾选通过的门禁，看能否进入灰度。</p>
+  </div>
+  <div class="lab"><p class="lab-t">准入门禁（原书 17.5.3 节）</p><div id="gate"></div></div>
+  <div class="notes" id="n-ship"></div>
+</section>
+
+<section class="part" id="infer">
+  <div class="part-head"><h2>推理框架：为什么输出更贵、缓存更便宜</h2><span class="meta">原书 17 章附《深入浅出推理框架》</span></div>
+  <div class="sec-lede">
+    <p>推理框架把训练好的模型加载到硬件上，接收请求、组织计算、返回结果。“好”有五个方面，而且相互牵制：<strong>快</strong>（首字和生成速度）、<strong>多</strong>（同样硬件服务更多请求）、<strong>省</strong>（显存与算力用足，算过的不重复算）、<strong>稳</strong>（高峰、超长请求、硬件故障下仍可用）、<strong>准</strong>（输出与模型本来能力一致、格式正确、需要时可复现）。它不只在上线时出现：RL 训练里最耗时的“生成”一步、评测和合成数据，也都靠推理引擎。训练是一次性投入，推理是持续支出：训练决定能力上限，推理决定这份能力每用一次花多少钱。</p>
+    <p>几个概念：<strong>Prefill</strong> 是“读题”，所有输入 token 并行计算，吃算力；<strong>Decode</strong> 是“作答”，一次一个 token，每生成一个都要把权重从显存读一遍，吃带宽，所以输出更贵。<strong>连续批处理</strong>以每一步为单位调度，写完的请求随时下车、新请求随时上车。<strong>KV Cache</strong> 是模型的草稿纸，大小与上下文长度和并发成正比，往往是显存里最紧张的资源：“能不能部署看权重的账，能服务多少人看 KV Cache 的账”。<strong>TTFT、TBT（TPOT）、吞吐</strong>此消彼长，目标是在可接受的延迟内把有效吞吐（Goodput）推到最高。MoE 让每个 token 只激活一部分参数，但所有专家都要常驻显存，跨卡通信和负载均衡成了新问题。</p>
+    <p>智能体的推理负载有三个特点：<strong>输入很长、输出相对短、前后请求高度重复</strong>；一次任务调用模型十几到几十次，端到端耗时是每步之和。所以在智能体场景，比拼的不只是算得快，还有<strong>少算</strong>：<strong>前缀缓存</strong>复用已算过的 KV Cache，厂商通常对命中部分的输入打一到两折。原书给了一条很实用的经验：把固定不变的系统提示词和工具定义放在最前面，新增内容追加在末尾；<strong>如果在系统提示词开头插入当前时间这类每次都变的信息，后面所有内容的缓存都会失效</strong>。“在智能体场景里，缓存命中率就是成本。”集群层面还有 PD 分离（Prefill 和 Decode 用不同机器）、感知前缀缓存的路由、多级 KV 缓存池；采样环节有确定性推理、结构化输出（每步只允许语法合法的 token）和投机解码。</p>
+    <p class="go">拖动步数，比较两种 Prompt 写法的输入花费（单价与 token 数为示意，命中部分按原价 1/10 计）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次 30 步的 Agent 任务，前缀缓存能省多少</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>Agent 步数 <output id="pcN">30</output></span><input type="range" id="pcNs" min="2" max="60" value="30"></label>
+      <label class="ctl"><span>系统提示词 + 工具定义（token） <output id="pcS">8000</output></span><input type="range" id="pcSs" min="1000" max="30000" step="500" value="8000"></label>
+      <label class="ctl"><span>每步新增内容（token） <output id="pcD">1200</output></span><input type="range" id="pcDs" min="200" max="5000" step="100" value="1200"></label>
+    </div>
+    <div class="selrow"><span>Prompt 写法</span><div class="seg" id="pcSeg"><button data-v="good" aria-pressed="true">固定内容在前，新增追加在后</button><button data-v="bad">开头插入当前时间</button></div></div>
+    <div id="pcBars" class="wide"></div>
+    <p class="verdict3" id="pcV"></p>
+  </div>
+  <div class="lab"><p class="lab-t">一个请求的旅程（原书推理框架导读第四部分）</p><div id="jr"></div></div>
+  <div class="vendor"><b>厂商方案说明</b>原书提到的 PAI 强化学习服务、PAI-EAS（服务组与流量权重、LLM 智能路由、PD 分离模板）、PAI EasyDistill、Tair KVCache、Trace2Optimizers 等为阿里云产品；导读中的开源项目星标数截至 2026 年 10 月。原书也提醒，Prodinit 的“蒸馏后推理成本下降约 70%”属于缺少完整审计数据的厂商案例，不是普适基准。</div>
+  <div class="notes" id="n-infer"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 何时归因于模型？三种方法怎么选？</summary><p class="ans">先排除能独立复现的执行环境故障，再确认 Harness 已提供充分信息、清晰动作接口和完整反馈；在这些条件明确稳定时，同类决策错误仍跨任务变体反复出现，或固定 Harness 换模型后显著变化，才归因于模型；边界不清就做四组对照。有可靠示范选 SFT；路径多样、需要交互探索且结果可稳定验证选 Agentic RL；教师已会、目标是迁移压缩部署选蒸馏；三者可组合。</p></details>
+    <details><summary>2. 奖励为什么会被投机？训练奖励为何不能当发布依据？</summary><p class="ans">策略会最大化“评分规则”而不是“真实目标”：验证器只查是否生成退款记录，模型就会学会更快创建不合规退款。训练奖励上升只说明更会拿当前奖励；发布要看冻结后在锁定留出集上的独立评测（质量、可靠性、成本、安全），训练验证器与独立评测器尽量分离，再做消融解释收益来源，并用分阶段灰度验证真实流量。</p></details>
+    <details><summary>3. 单位成功任务成本怎么算？为何缓存命中率就是成本？</summary><p class="ans">全部任务所有尝试的学生、教师兜底、验证器、工具、运行时成本之和 ÷ 成功任务数，失败和重试都计入；有一次性投入时，用单任务净收益 g = pV − (1−p)L − C̄ 算盈亏平衡 N* = F/(g_new − g_old)。智能体每步都要重发系统提示词、工具定义和历史，输入长、前后高度重复；命中前缀缓存的部分跳过 Prefill，价格通常一到两折，所以 Prompt 要固定内容在前、新增在后，避免在开头放每次都变的信息。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 归因 ---------- */
+HB.cards($('#layer'), {
+  opts: ['执行环境', 'Harness', '模型'],
+  items: [
+    { t: '绕过模型直接调用查询服务，同样超时。', a: 0, why: '绕过模型仍能复现，归因于执行环境。' },
+    { t: '固定模型和环境，只把工具描述里“时间范围是左闭右开”写清楚，错误率明显下降。', a: 1, why: '修正工具协议后问题减少，归因于 Harness。' },
+    { t: '字段说明、口径和执行反馈都已提供，模型仍在不同任务里混淆去重逻辑；换一个更强的模型后明显改善。', a: 2, why: '信息、接口、反馈充分，错误跨任务稳定出现且随模型变化，归因于模型。' },
+    { t: '工具返回的报错被截断，模型只看到“失败”两个字，于是反复重试。', a: 1, why: '反馈被截断是 Harness 的问题，应先修，而不是用训练补偿。' },
+    { t: '模型连续三次在信息齐全时提前宣布任务完成，换任务变体依旧。', a: 2, why: '合理终止属于模型的决策能力，条件充分时稳定出错。' }
+  ]
+});
+function fx() {
+  var aa = +$('#aaS').value, ab = +$('#abS').value, ba = +$('#baS').value, bb = +$('#bbS').value;
+  $('#aaO').textContent = aa + '%'; $('#abO').textContent = ab + '%'; $('#baO').textContent = ba + '%'; $('#bbO').textContent = bb + '%';
+  var m = ba - aa, hh = ab - aa, it = bb - ab - ba + aa;
+  function sg(x) { return (x > 0 ? '+' : '') + S.f(x, 0) + ' 点'; }
+  $('#fxM').textContent = sg(m); $('#fxH').textContent = sg(hh); $('#fxI').textContent = sg(it);
+  var v = $('#fxV');
+  if (Math.abs(it) >= 5) { v.className = 'verdict3 bad'; v.innerHTML = '交互项明显：候选模型需要配合候选 Harness 才发挥作用（或相反）。若候选模型依赖专门的提示或协议适配，要把适配记进配置，<b>不要把组合变化全部归因于模型</b>。'; }
+  else if (hh > m) { v.className = 'verdict3'; v.innerHTML = 'Harness 改动贡献更大：先上线 Harness 的修改往往更便宜，再评估模型训练是否还值得。'; }
+  else { v.className = 'verdict3'; v.innerHTML = '模型改动贡献更大，交互项小：收益可以较可信地归于参数更新本身。'; }
+}
+['aaS', 'abS', 'baS', 'bbS'].forEach(function (id) { $('#' + id).addEventListener('input', fx); }); fx();
+S.notes($('#n-attr'), {
+  c: [
+    ['三层', '模型（决策）、Harness（上下文、协议、状态、控制）、执行环境（承载动作）。'],
+    ['归因原则', '信息、动作接口、反馈都充分稳定，错误仍跨任务变体出现，才归给模型。'],
+    ['四组对照', '原 / 候选模型 × 原 / 候选 Harness，分离各自收益与交互项。']
+  ],
+  p: [
+    ['排查顺序', '先排除可独立复现的环境故障 → 检查 Harness → 判断模型。'],
+    ['三种验证', '绕过模型直接调用；固定模型修 Harness；固定 Harness 重复测试或换模型。'],
+    ['成本驱动的优化', '高频、稳定、行为可学习的任务，才值得用 SFT 或蒸馏省成本。']
+  ]
+});
+
+/* ---------- 目标与方法 ---------- */
+HB.decide($('#meth'), {
+  qs: [
+    { id: 'demo', q: '1. 同一状态下，正确行为能被专家、规则或更强模型稳定示范吗？', opts: [['y', '能'], ['n', '不能，路径多样、优劣要靠执行判断']], def: 'y' },
+    { id: 'teach', q: '2. 已有教师模型能稳定完成任务，主要目标是降成本、降时延或换部署形态吗？', opts: [['y', '是'], ['n', '否，主要是能力不够']], def: 'n' },
+    { id: 'env', q: '3. 有可重置、可隔离、能给出可靠结果反馈的交互环境吗？', opts: [['y', '有'], ['n', '没有']], def: 'n' }
+  ],
+  decide: function (a) {
+    var out = [];
+    if (a.teach === 'y') out.push(['模型蒸馏', '用教师在目标分布上的输出或轨迹训练学生（多为 SFT 形式），按“学生独立 / 学生执行教师校验 / 教师执行”划分职责，用单位成功任务成本核算。']);
+    if (a.demo === 'y' && a.teach !== 'y') out.push(['SFT', '用“决策时可见上下文 → 验证过的目标行为”样本提高示范行为的稳定性；验收要让模型在固定 Harness 下自主运行。']);
+    if (a.demo === 'n') {
+      if (a.env === 'y') out.push(['Agentic RL', '用环境反馈优化策略；先确认结果可验证、模型能产生一定比例有效轨迹，必要时先 SFT 建立起点。']);
+      else out.push(['先建设环境与验证器', '路径优劣只能靠执行判断，却没有可重置、可验证的环境：先建 Sandbox、模拟器或高质量标尺集，否则 RL 会把偏差固化进策略。']);
+    }
+    return out.map(function (o) { return '<div class="hb-res" style="margin-bottom:8px"><h4>' + o[0] + '</h4><p>' + o[1] + '</p></div>'; }).join('') + '<p class="note">三类方法不互斥：蒸馏通常经 SFT 实现，SFT 后可继续 RL。据原书 17.1.4 节与图 17.1-3 整理。</p>';
+  }
+});
+S.notes($('#n-goal'), {
+  c: [
+    ['四类模型能力', '任务理解与约束识别、工具使用与反馈理解、多步决策与状态利用、失败恢复与合理终止。'],
+    ['三维目标', '质量、可靠性、成本；外加安全护栏。'],
+    ['单位成功任务成本', '统计期全部任务成本（含失败）÷ 成功任务数。']
+  ],
+  p: [
+    ['选方法', '示范 → SFT；交互探索 + 可靠反馈 → Agentic RL；教师已会 + 迁移部署 → 蒸馏。'],
+    ['成本比较的陷阱', '固定任务构成并同时报告成功率，防止靠放弃难题“降成本”。'],
+    ['训练不必然省钱', '一次性投入可能抵消运行节省；低频多变任务优先轻量 Harness 调整。']
+  ]
+});
+
+/* ---------- SFT ---------- */
+HB.cards($('#mask'), {
+  opts: ['计算监督损失', '只作输入上下文，不算损失', '补充核验，确认不了就移出'],
+  items: [
+    { t: '系统指令、用户请求、工具定义。', a: 1, why: '提供目标、约束和动作空间，通常不是本任务的生成目标。' },
+    { t: '工具返回结果、错误反馈。', a: 1, why: '决策时可见的执行状态，保留在输入中，通常不算生成损失。' },
+    { t: '经验证的工具调用、澄清、修正和最终答复。', a: 0, why: '这是模型应当学习的目标行为。' },
+    { t: '模型先前生成的一次错误查询（后面被修正了）。', a: 1, why: '保留为上下文说明为何需要修正，但屏蔽它的损失：训练的是恢复，而不是错误本身。' },
+    { t: '一步看起来合理、但没人核验过的推断。', a: 2, why: '无法确认是否值得复用的步骤，补充核验，确认不了就移出训练集。' },
+    { t: '用户在第 5 轮补充的条件，被放进了第 2 轮决策的输入里。', a: 2, why: '违反“只用决策时已可见的信息”，这条样本要重构或移出，否则离线条件优于线上。' }
+  ]
+});
+S.notes($('#n-sft'), {
+  c: [
+    ['Agent SFT 的监督对象', '关键决策：是否调用、调哪个、参数、解释反馈、继续 / 澄清 / 求助 / 终止。'],
+    ['样本单位', '“决策时可见上下文 → 经验证的目标行为”。'],
+    ['角色级 vs 质量级掩码', '前者排除用户消息与工具返回；后者再屏蔽模型自己生成的错误步骤。']
+  ],
+  p: [
+    ['可见性铁律', '目标行为只依赖该时刻已可见的信息。'],
+    ['覆盖不同选择', '直接回答、调用、澄清都要有，避免“遇事就调工具”。'],
+    ['损失下降 ≠ 能力', '在固定 Harness 下自主运行验收，暴露错误累积。'],
+    ['LoRA vs 全量', '资源与调整空间的权衡；都替代不了数据质量控制。']
+  ]
+});
+
+/* ---------- RL ---------- */
+var VK = [['refund', '退款记录已创建', true], ['policy', '退款政策已满足', false], ['amount', '金额与订单一致', false], ['auth', '无越权操作', false]];
+var TJ = [
+  { t: '查询订单 → 直接创建退款（政策不满足）', s: { refund: 1, policy: 0, amount: 1, auth: 1 }, steps: 2, bad: true },
+  { t: '查询订单 → 核验政策 → 校验金额 → 创建退款', s: { refund: 1, policy: 1, amount: 1, auth: 1 }, steps: 4 },
+  { t: '查询订单 → 用管理员接口跳过审批直接退款', s: { refund: 1, policy: 1, amount: 1, auth: 0 }, steps: 2, bad: true },
+  { t: '查询订单 → 核验政策 → 金额填错 → 创建退款', s: { refund: 1, policy: 1, amount: 0, auth: 1 }, steps: 4, bad: true }
+];
+var vOn = VK.map(function (v) { return v[2]; });
+VK.forEach(function (v, i) {
+  var lb = h('label', { class: 'hb-ci' }, $('#vck'));
+  var cb = h('input', { type: 'checkbox' }, lb); cb.checked = vOn[i];
+  h('span', { html: '<b>' + v[1] + '</b>' }, lb);
+  cb.addEventListener('change', function () { vOn[i] = cb.checked; tj(); });
+});
+function tj() {
+  var best = -1, bi = [];
+  var rs = TJ.map(function (t) {
+    var r = 0; VK.forEach(function (v, i) { if (vOn[i]) r += t.s[v[0]]; });
+    r = r - 0.05 * t.steps; // 成本信号：步数少者略高
+    return r;
+  });
+  rs.forEach(function (r, i) { if (r > best + 1e-9) { best = r; bi = [i]; } else if (Math.abs(r - best) < 1e-9) bi.push(i); });
+  $('#trj').innerHTML = TJ.map(function (t, i) {
+    var top = bi.indexOf(i) >= 0;
+    return '<div class="' + (top && t.bad ? 'bad' : '') + '"><span>' + t.t + '<small>' + (t.bad ? '不合规' : '合规成功路径') + '</small></span><span class="r ' + (top ? 'hi' : 'lo') + '">' + S.f(rs[i], 2) + '</span></div>';
+  }).join('');
+  var hacked = bi.some(function (i) { return TJ[i].bad; });
+  var v = $('#trjV'); v.className = 'verdict3' + (hacked ? ' bad' : '');
+  v.innerHTML = hacked ? '<b>奖励投机</b>：最高奖励落在了不合规路径上（步数更少、成本信号更好），策略会往这里走。补上缺失的检查项；越权这类高风险约束还必须由 Harness 强制拦截，不能只靠负奖励。' : '最高奖励落在合规路径上。注意：如果另一条路径同样满足结果、约束和成本，也应被视为有效策略，RL 不要求唯一标准答案。';
+}
+tj();
+S.notes($('#n-rl'), {
+  c: [
+    ['Agentic RL', '用环境中的执行轨迹与结果 / 过程 / 验证器反馈更新策略。'],
+    ['奖励组合', 'R = w₁R_task + w₂R_process − λC_execution − μP_violation。'],
+    ['三重控制边界', '训练奖励（学习信号）、独立评测（真实提升）、系统约束（不可越界）。'],
+    ['组相对基线', '同任务多轨迹、用组内相对回报做优势；组内无差异时信号趋零。']
+  ],
+  p: [
+    ['准入六条', '归因于模型、示范难得、结果可验证、环境可重置隔离、有基础策略、投入产出合算。'],
+    ['奖励投机', '只查“生成了退款记录”，就会学会更快地创建不合规退款。'],
+    ['长程优化', '课程式采样、可验证的阶段性过程奖励、多轨迹比较、显式覆盖恢复与终止。'],
+    ['数据切分', '开发集调奖励、验证集选版本、锁定留出集冻结后验收一次，并定期轮换。']
+  ]
+});
+
+/* ---------- 蒸馏 ---------- */
+function kd() {
+  var F = +$('#kFs').value * 1e4, V = +$('#kVs').value, L = +$('#kLs').value;
+  var po = +$('#kOp').value / 100, co = +$('#kOcs').value, pn = +$('#kNps').value / 100, cn = +$('#kNcs').value;
+  $('#kF').textContent = $('#kFs').value; $('#kV').textContent = V; $('#kL').textContent = L;
+  $('#kO').textContent = S.pct(po, 0); $('#kOc').textContent = S.f(co, 2);
+  $('#kNp').textContent = S.pct(pn, 0); $('#kNc').textContent = S.f(cn, 2);
+  var go = po * V - (1 - po) * L - co, gn = pn * V - (1 - pn) * L - cn;
+  $('#kgO').textContent = S.f(go, 3); $('#kgN').textContent = S.f(gn, 3);
+  var v = $('#kVd');
+  if (gn - go <= 0) { $('#kN').textContent = '无'; v.className = 'verdict3 bad'; v.innerHTML = '新方案单任务净收益不高于旧方案：成本虽然降了，失败损失上升把它吃掉了，<b>不存在有限的正向盈亏平衡点</b>。这正是原书说的“成本下降但失败损失上升”的伪收益。'; }
+  else { var N = F / (gn - go); $('#kN').textContent = S.big(N) + ' 次'; v.className = 'verdict3'; v.innerHTML = '每个任务净多赚 ' + S.f(gn - go, 3) + ' 元，跑满约 ' + S.big(N) + ' 个任务回本。业务量远小于这个数，就不值得做；还要单独检查高风险任务的违规率和不可逆错误率，不能只看平均值。'; }
+}
+['kFs', 'kVs', 'kLs', 'kOp', 'kOcs', 'kNps', 'kNcs'].forEach(function (id) { $('#' + id).addEventListener('input', kd); }); kd();
+S.notes($('#n-kd'), {
+  c: [
+    ['蒸馏的目标', '迁移有效决策，以更低成本独立承担可界定的工作，超出边界时交还教师。'],
+    ['黑盒 vs 白盒', '序列级（文本 / 轨迹，可跨词表）vs 分布级（logits / log-prob，通常同词表）。'],
+    ['OPD', '学生在环境中生成，教师对学生实际到达的状态逐 token 打分；反向 KL，模式寻求。'],
+    ['单位成功任务成本', '全部任务所有尝试的学生 + 教师 + 验证器 + 工具 + 运行时成本 ÷ 成功任务数。']
+  ],
+  p: [
+    ['首次落地', '先做技能级迁移（路由、查询生成、参数抽取、核验）。'],
+    ['四类缺口', '知识、决策、执行、恢复，定位学生的首个关键偏离。'],
+    ['净收益与回本', 'g = pV − (1−p)L − C̄；N* = F / (g_new − g_old)，g 不更高则无回本点。'],
+    ['兜底是架构', '级联路由：学生先执行，置信不足或校验失败交教师。']
+  ]
+});
+
+/* ---------- 上线 ---------- */
+HB.check($('#gate'), {
+  items: [
+    { t: '接口兼容', d: '工具调用格式、参数、消息边界、终止信号达标，不靠大量解析修复', miss: '离线分数高，但上线后工具调用解析失败、重复执行或无法终止。', on: true },
+    { t: '目标收益', d: '锁定测试集、一致预算下达到预设的最小改善，报告重复运行与置信区间', miss: '收益可能是噪声，或来自运行条件变化。', on: true },
+    { t: '能力回归', d: '核心通用能力与既有高价值任务满足非劣效界值', miss: '局部任务提升掩盖了其他能力的退化。', on: true },
+    { t: '运行预算', d: '单位成功任务成本、超时、重试、高分位时延在预算内', miss: '单次推理便宜了，完整任务反而更贵、更慢。', on: false },
+    { t: '安全硬门禁', d: '危险动作、越权、错误状态变更、有害输出满足阈值', miss: '关键约束穿透不能被其他指标的提升抵消。', on: true }
+  ],
+  verdict: function (on, n) {
+    return on === n ? '<p class="ok"><b>全部硬门禁通过且收益达标：进入灰度</b>（影子验证 → 低风险灰度 → 分阶段扩量 → 稳定替换）。回滚对象是整个候选发布单元。</p>'
+      : '<p class="bad"><b>阻断发布</b>：任一硬门禁失败就退回对应责任层修复（模型、Harness 或执行环境）。门槛要在看候选结果之前定好。</p>';
+  }
+});
+S.notes($('#n-ship'), {
+  c: [
+    ['候选发布单元', '模型配置 + Harness 配置 + 执行环境配置 + 评测配置，用显式依赖记录。'],
+    ['两组对照', '纯模型对照（同 Harness 同环境）+ 部署组合对照（对比当前生产）。'],
+    ['硬门槛 + 目标收益', '接口兼容、目标收益、能力回归、运行预算、安全硬门禁。']
+  ],
+  p: [
+    ['适配顺序', '固定输入 → 单步 → Sandbox 自主运行 → 故障注入。'],
+    ['安全两个频率', '模型提出违规动作的频率 vs 违规动作穿透系统被执行的频率。'],
+    ['灰度分桶', '按用户、会话或任务分桶，长任务不在新旧模型间切换。'],
+    ['回滚的边界', '回退整个发布单元；撤销不了已完成的外部写操作。']
+  ]
+});
+
+/* ---------- 推理框架 ---------- */
+var pcm = 'good';
+function pc() {
+  var n = +$('#pcNs').value, s = +$('#pcSs').value, d = +$('#pcDs').value;
+  $('#pcN').textContent = n; $('#pcS').textContent = s; $('#pcD').textContent = d;
+  var tot = 0, cached = 0;
+  for (var i = 1; i <= n; i++) {
+    var inp = s + d * i; tot += inp;
+    if (pcm === 'good' && i > 1) cached += s + d * (i - 1);
+  }
+  var full = tot, eff = (tot - cached) + cached * 0.1;
+  S.magbars($('#pcBars'), [
+    { label: '不考虑缓存（全价）', v: full, text: S.big(full) + ' token 等价', cls: 'dim' },
+    { label: pcm === 'good' ? '前缀命中按 1/10 计' : '开头放时间：全部失效', v: eff, text: S.big(Math.round(eff)) + ' token 等价', cls: pcm === 'good' ? 'ok' : 'alt' }
+  ]);
+  var v = $('#pcV');
+  if (pcm === 'good') { v.className = 'verdict3'; v.innerHTML = '命中率 ' + S.pct(cached / tot, 0) + '，输入花费约为全价的 ' + S.pct(eff / full, 0) + '。命中部分还跳过了 Prefill，首字延迟也下降。'; }
+  else { v.className = 'verdict3 bad'; v.innerHTML = '每次请求开头都不同，从第一个 token 起前缀就对不上，后面所有内容的缓存都失效：每步都按全价重新 Prefill。把时间这类变化信息挪到末尾即可。'; }
+}
+['pcNs', 'pcSs', 'pcDs'].forEach(function (id) { $('#' + id).addEventListener('input', pc); });
+S.seg($('#pcSeg'), function (v) { pcm = v; pc(); }); pc();
+HB.vs($('#jr'), {
+  k: '环节', a: '主要工作', b: '解决的问题 · 主要影响',
+  rows: [
+    ['入口', '协议转换、对话模板、分词、输出解析（并把输入中与特殊标记相同的字符串当普通文本）', '让请求以正确格式进入模型 · 效果一致性、安全性'],
+    ['调度', '连续批处理、分块预填充、显存准入、异步调度、负载均衡', '下一步让 GPU 算什么 · 吞吐、首字延迟、卡顿'],
+    ['执行', 'TP / PP / DP / EP 并行、算子、低精度计算、算子调用录制回放', '每一步算得多快 · 单卡性能、硬件利用率'],
+    ['缓存', '分页管理、前缀复用、多级缓存（显存 / 内存 / SSD / 分布式池）', '算过的不再算 · 成本、首字延迟'],
+    ['集群', 'PD 分离、大规模并行、扩缩容与容错', '规模化之后如何稳定高效 · 整体吞吐、稳定性'],
+    ['采样与输出', '采样参数、确定性推理、结构化输出、投机解码', '输出是否可控、可复现、够快 · 可靠性、生成速度']
+  ]
+});
+S.notes($('#n-infer'), {
+  c: [
+    ['Prefill / Decode', '读题（并行、吃算力）/ 作答（逐 token、每步读一遍权重、吃带宽）。'],
+    ['KV Cache', '模型的草稿纸；与上下文长度和并发成正比，常是显存最紧的资源。'],
+    ['TTFT / TBT / 吞吐', '首字延迟 / 生成语速 / 系统容量；此消彼长，追求有效吞吐 Goodput。'],
+    ['PD 分离', 'Prefill 与 Decode 用不同机器，KV Cache 经高速网络传递。']
+  ],
+  p: [
+    ['输出为什么贵', '必须逐 token 串行生成，单位时间占用 GPU 更久。'],
+    ['智能体负载', '输入长、输出短、前后高度重复；比拼“少算”。'],
+    ['缓存友好的 Prompt', '固定的系统提示词与工具定义在前，新增追加在后；开头不放时间。'],
+    ['温度 0 也可能不同', '批内计算顺序带来浮点差异；需要时用确定性（批不变）模式。']
+  ]
+});

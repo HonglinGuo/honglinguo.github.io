@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 网关与统一流量治理</title>
+<meta name="description" content="AI Agent Handbook 学习笔记（八）：AI 流量的新约束、LLM / MCP / Agent Gateway 三种可组合语义；模型选择与端点选择、跨层重试放大与尝试预算、五种超时、速率 / 配额 / 严格预算与原子预留；MCP 的发现与授权分离、逐请求元数据不是身份证明、网关不可绕过的前提；Agent Gateway 的任务关联与 Task—Session—Turn—Call—Attempt 账本；审批后重新准入；从观测到受控发布。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.6'/%3E%3Ccircle cx='15' cy='12' r='2.4' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; font-family: var(--f-num); font-size: 15px; }
+.chain span { border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; background: var(--bg); cursor: pointer; }
+.chain span.on { background: var(--s1); color: #fff; border-color: var(--s1); }
+.chain i { color: var(--ink-3); font-style: normal; }
+.bud { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 10px; }
+@media (max-width: 640px) { .bud { grid-template-columns: minmax(0, 1fr); } }
+.bud > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; line-height: 1.7; }
+.bud b { display: block; font-size: 16px; }
+.bar100 { position: relative; height: 22px; background: var(--dim-soft); border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.bar100 span { position: absolute; top: 0; bottom: 0; }
+.bar100 .u { background: var(--s1); } .bar100 .r { background: var(--s2); opacity: .7; } .bar100 .x { background: var(--alert); }
+.bar100 .lim { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
+</style>
+</head>
+<body data-series="handbook-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>AI Agent Handbook · 08</span><span>对应原书第 9 章</span><span>约 35 分钟</span></p>
+  <h1>网关管准入，<em>不管任务成败</em></h1>
+  <p class="lead">API 网关和服务网格的认证、路由、限流、观测并没有失效，但 AI 流量加了新语义：响应流式输出、按 token 计费、工具调用会产生业务副作用、一个任务跨越多轮会话和等待恢复。原书按治理对象把 AI Gateway 拆成 LLM、MCP、Agent 三种可组合的语义，并反复强调一条边界：网关保证准入、转发和记录的一致性，既不能凭请求成功断言任务完成，也不能替执行系统保证状态恢复。</p>
+  <p class="credit">本系列是开源白皮书《<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">AI Agent Handbook（企业级 Agent 白皮书）</a>》（阿里云团队编写的开源白皮书，Apache-2.0 协议；本笔记依据 2026 年 10 月 21 日的仓库版本）的学习笔记。原书按“架构 → 构建 → 运行 → 治理 → 调优 → 实践”组织三十章，这里重排成十五篇，用自己的话重讲，并把关键表格做成可以点、可以分类、可以走流程的互动。概念与结论取自原书，每节标出对应章节；为演示设的场景和数值标“示意”。原书由阿里云编写，涉及阿里云产品的方案与数字属于厂商自述，文中会单独标出。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-handbook/"><b>总览</b>架构地图</a>
+  <a href="../2026-10-22-handbook-1/" data-part="1"><b>01</b>新阶段</a>
+  <a href="../2026-10-22-handbook-2/" data-part="2"><b>02</b>参考架构</a>
+  <a href="../2026-10-22-handbook-3/" data-part="3"><b>03</b>Harness</a>
+  <a href="../2026-10-22-handbook-4/" data-part="4"><b>04</b>任务</a>
+  <a href="../2026-10-22-handbook-5/" data-part="5"><b>05</b>信息</a>
+  <a href="../2026-10-22-handbook-6/" data-part="6"><b>06</b>行动</a>
+  <a href="../2026-10-22-handbook-7/" data-part="7"><b>07</b>运行与状态</a>
+  <a href="../2026-10-22-handbook-8/" aria-current="page" data-part="8"><b>08</b>AI 网关</a>
+  <a href="../2026-10-22-handbook-9/" data-part="9"><b>09</b>异步与多 Agent</a>
+  <a href="../2026-10-22-handbook-10/" data-part="10"><b>10</b>可观测</a>
+  <a href="../2026-10-22-handbook-11/" data-part="11"><b>11</b>安全</a>
+  <a href="../2026-10-22-handbook-12/" data-part="12"><b>12</b>资产与验证</a>
+  <a href="../2026-10-22-handbook-13/" data-part="13"><b>13</b>模型调优</a>
+  <a href="../2026-10-22-handbook-14/" data-part="14"><b>14</b>Agent 调优</a>
+  <a href="../2026-10-22-handbook-15/" data-part="15"><b>15</b>实践与展望</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#edge">边界</a><a href="#llm">LLM Gateway</a><a href="#budget">预算</a><a href="#mcp">MCP Gateway</a><a href="#agent">Agent Gateway</a><a href="#gov">审批与审计</a><a href="#cp">控制面联动</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>LLM、MCP、Agent Gateway 各自治理什么、不承担什么？一个退款请求会依次经过哪些检查？</li>
+    <li>“请求前查余额、响应后扣减”为什么不能保证预算上限？SDK 和网关各重试 3 次，上游最多被打几次？</li>
+    <li>MCP 的逐请求元数据为什么不能当身份证明？审批通过后为什么还要重新准入？</li>
+  </ol>
+</div>
+
+<section class="part" id="edge">
+  <div class="part-head"><h2>AI Gateway 的边界</h2><span class="meta">原书 9.1 节</span></div>
+  <div class="sec-lede">
+    <p>单个应用接一个模型，SDK 直连就够了。模型、团队、工具一多，接入问题就变成共同的治理问题：调用者是谁、凭证谁保管、模型故障能切到哪里、哪些工具和参数能用、费用归哪个项目、拒绝和重试怎么追溯。这些适合在调用入口集中处理，但<strong>任务成功标准、业务状态、检查点和恢复流程</strong>由业务模型和执行系统定义，不属于网关。</p>
+    <p>AI 流量的新约束有四类：长连接与流式输出（HTTP 200 之后仍可能流内出错，首字节不一定是首个有效 token）、大请求体与上下文（全量缓冲的内存随并发放大）、按 token 计费（准入时的估算与结束时的实际不同，并发调用会同时消耗余额）、多轮与长程任务（路由亲和有助于缓存复用，但替代不了状态持久化）。原书点了两个容易混的地方：SSE 只是传输形式，字节切片可能含半个或多个事件，首个事件可能只是心跳，所以 <strong>TTFT 不等于 HTTP 首字节时延</strong>；KV cache 复用是推理性能优化，<strong>不是业务状态恢复</strong>，缓存未命中应表现为变慢而不是任务丢失。</p>
+    <p>三种治理语义是分析框架，不是成熟度阶梯，也不要求建三个产品：<strong>LLM Gateway</strong> 治理模型调用及每次实际尝试，<strong>MCP Gateway</strong> 治理工具协议与调用，<strong>Agent Gateway</strong> 治理 Agent 接入与跨调用关联。统一的关键是身份映射一致、策略边界清晰、记录可关联，以及<strong>同一次上游调用不会因穿过多个组件而被重复计费</strong>。网关本身也是关键基础设施：多副本解决实例故障，但共享存储、外部策略服务、内容检测服务的故障行为要逐项定义。</p>
+    <p class="go">盖住右列自测三种语义的边界，再走一遍原书的退款案例。</p>
+  </div>
+  <div class="lab"><p class="lab-t">三种可组合的治理语义（原书 9.1.3 节）</p><div id="g3"></div></div>
+  <div class="lab">
+    <p class="lab-t">客服 Agent 查询订单并申请退款</p>
+    <div id="rfStep"></div>
+    <ol class="flow2" id="rfFlow"></ol>
+  </div>
+  <div class="notes" id="n-edge"></div>
+</section>
+
+<section class="part" id="llm">
+  <div class="part-head"><h2>LLM Gateway：路由、重试、超时</h2><span class="meta">原书 9.2.1–9.2.5 节</span></div>
+  <div class="sec-lede">
+    <p>LLM Gateway 在一次调用里要同时协调三件事：选满足要求的模型或端点、控制失败与重试的影响、对所有实际消耗负责。便宜模型如果导致大量返工，总成本可能更高；自动容灾如果忽略协议兼容和计费语义，会把可用性故障变成质量或成本事故。统一接口（OpenAI 风格 <code>/v1/chat/completions</code>、Anthropic 风格 <code>/v1/messages</code>）要先<strong>声明支持的能力子集</strong>，不支持的参数明确报错，而不是静默忽略；客户端看到同一个模型名，不意味着平台可以不经验证地替换实际能力。</p>
+    <p>原书把<strong>模型选择</strong>和<strong>端点选择</strong>分开：静态映射与权重、成本感知路由（要有可验证的质量下限，还要算重试和返工）、语义路由（分类器要评估过、有回退）是在选模型；推理端点选择是在同一模型的实例间挑（队列、在途请求、前缀缓存信号）。网关记录的前缀关联只是“缓存可能还在”的信号，缓存驱逐、实例重启后都要允许失配。</p>
+    <p>可靠性的原则是<strong>先判断能否重试，再选择重试目标</strong>：限流看重置时间和配额，服务端错误只在调用语义允许时重试，认证错误应终止，上下文超限不应靠网关截断历史（那会改变任务输入）。流式响应一旦提交给客户端，网关通常不能透明重放；“没收到响应体”也不等于“上游没执行”。最容易失控的是<strong>多层重试叠加</strong>：每层都以为上限是 3，端到端却没有 3 这个约束。解法是尝试预算跨层传递：绝对截止时间，剩余尝试额度由调用方给出、网关按 call_id 原子扣减，耗尽就返回明确的预算耗尽错误；每次尝试有独立 attempt_id。超时也要分清：建连、首字节、TTFT、流式空闲、总截止各管一段，一个一直发心跳的流永远不会触发空闲超时，却可能始终没有有效内容。</p>
+    <p class="go">拖动各层重试次数，看上游最多被打多少次；再给五种超时对号。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多层重试的乘积放大</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>SDK 每次逻辑调用最多尝试 <output id="r1O">3</output></span><input type="range" id="r1S" min="1" max="5" value="3"></label>
+      <label class="ctl"><span>网关每次转发最多尝试 <output id="r2O">3</output></span><input type="range" id="r2S" min="1" max="5" value="3"></label>
+      <label class="ctl"><span>跨层传递的总尝试额度 <output id="r3O">不传递</output></span><input type="range" id="r3S" min="0" max="6" value="0"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="rA">9</div><div class="k">一次用户可见调用，上游最多被调用</div></div><div><div class="v" id="rB">—</div><div class="k">供应商侧是否再重投</div></div></div>
+    <p class="verdict3" id="rV"></p>
+  </div>
+  <div class="lab"><p class="lab-t">这是哪种超时？</p><div id="tmo"></div></div>
+  <div class="notes" id="n-llm"></div>
+</section>
+
+<section class="part" id="budget">
+  <div class="part-head"><h2>预算：速率、配额与严格上限不是一回事</h2><span class="meta">原书 9.2.6–9.2.8 节</span></div>
+  <div class="sec-lede">
+    <p>原书区分四种机制：<strong>请求速率限制</strong>（QPS / 令牌桶，控制准入速度，不直接控制 token 成本）、<strong>token 时间窗限制</strong>（请求前查、结束后累计，存在在途消耗与并发超限窗口）、<strong>余额型配额</strong>（准入查余额、结束后扣减，近实时但不是严格并发预算）、<strong>严格预算</strong>（可证明的最大消耗 + 原子预留 + 结算与退款）。“请求前检查、响应后扣减”无法单独保证硬上限：余额 100，两个最大消耗各 80 的请求同时通过检查，最后可能花到 160；响应后的原子扣减能避免丢账，但撤销不了已发生的消耗。</p>
+    <p>严格预算的不变量：<strong>可用额度 = 已授权额度 − 已结算消耗 − 在途预留</strong>，准入条件是 <strong>本次最大可计费消耗 ≤ 可用额度</strong>，检查和预留在同一原子操作里完成；结束后按实际消耗幂等结算，释放多余预留。预留要覆盖输入、受约束的最大输出和其他计费项，<strong>重试也要单独占额度</strong>；流式中断或结果未知的请求，不能因租约到期就无条件退款。如果实际消耗可能超过预留，说明“最大值”并不可靠，只能声明有界超额或软预算。多层预算（组织、团队、项目、任务）要一起验证，token 配额与金额预算也要分开，因为同样的 token 数在不同模型、缓存类型、价格版本下费用不同。</p>
+    <p>流式 usage 还有细节：要显式请求（如 <code>stream_options.include_usage</code>，只对支持它的适配器注入）；<strong>缺少 usage 不能记成零消耗</strong>，客户端取消也不能证明上游停止了生成，这些记录要保留“估算 / 未结算”状态等待对账。语义缓存可以减少重复生成，但缓存键必须区分租户、权限、模型版本、系统提示和知识版本，含副作用的工具调用不能重放缓存结果。</p>
+    <p class="go">两个请求并发到达，比较两种准入方式（数值取自原书例子，可调整）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">余额 100，两个并发请求</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每个请求的最大可计费消耗 <output id="bmO">80</output></span><input type="range" id="bmS" min="10" max="100" value="80"></label>
+      <label class="ctl"><span>每个请求的实际消耗 <output id="baO">80</output></span><input type="range" id="baS" min="5" max="100" value="80"></label>
+    </div>
+    <div class="bud" id="bud"></div>
+  </div>
+  <div class="lab"><p class="lab-t">选哪种机制？</p><div id="bm4"></div></div>
+  <div class="notes" id="n-budget"></div>
+</section>
+
+<section class="part" id="mcp">
+  <div class="part-head"><h2>MCP Gateway：发现、授权与执行分离</h2><span class="meta">原书 9.3 节</span></div>
+  <div class="sec-lede">
+    <p>MCP 降低了接入成本，却不会自动解决企业授权、凭证托管、工具健康或业务副作用。一个工具出现在清单里，只说明它被服务端<strong>通告</strong>了；调用者有没有权执行、依赖系统是否可用、这次调用是否成功，都要独立判断。协议本身也在演进：2025-03-26 引入 Streamable HTTP，2025-11-25 引入实验性 Tasks，2026-07-28 改为逐请求元数据与 <code>server/discover</code>，Tasks 成为可选扩展。网关要声明支持的版本集合、桥接方向和能力子集；支持核心工具调用不等于支持所有扩展，协议无状态也不等于后端业务无状态。</p>
+    <p>MCP 请求的准入按四步理解：<strong>认证</strong>（谁在调用，由独立于协议的凭据映射主体）→ <strong>协议校验</strong>（按版本检查头部镜像、方法与报文）→ <strong>授权</strong>（按主体、工具、参数决定是否放行）→ <strong>转发</strong>（按策略重新构造上游请求）。逐请求元数据（protocolVersion、clientCapabilities、clientInfo）只服务第二、四步，<strong>协议说明不是调用者身份证明</strong>。头部可以辅助分类和路由，但执行前要验证与正文一致，避免头部鉴权和正文执行面对不同对象。Registry 管目录（端点、版本、声明能力、所有者），不授予当前任务执行权限；健康检查也分层：连接可达、能通告兼容能力、受控业务探测，写入与支付类工具不能为了探活执行真实副作用。</p>
+    <p>授权方面：过滤 <code>tools/list</code> 能减少模型误选，但 <code>tools/call</code> <strong>必须再次鉴权</strong>；权限取调用者原有授权、工作负载授权、任务委托范围和资源侧限制的<strong>交集</strong>，不能被模型声明的身份、工具描述或 clientInfo 扩大。Schema 校验只保证结构合规，业务策略还要约束范围（数据查询的行级权限、支付的金额阈值与收款方范围、集群管理的环境与操作动词）。把 REST 包成 MCP 工具时，请求模板要限制可变主机和路径，防止变成 SSRF 入口；用字符串前缀判断“只读 SQL”不可靠。最后，网关只有在一组条件同时成立时，才可能成为<strong>不可绕过</strong>的策略执行点。</p>
+    <p class="go">勾选部署条件，看网关能不能声称“不可绕过”。</p>
+  </div>
+  <div class="lab"><p class="lab-t">网关不可绕过的前提（原书 9.3.5 节）</p><div id="byp"></div></div>
+  <div class="lab"><p class="lab-t">Schema 之外，业务策略还必须约束什么（原书 9.3.7 节）</p><div id="mcpVs"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：可发现 · 已授权 · 健康 · 执行成功</h4>
+    <p><b>可发现</b>：服务端通告了这个工具（initialize 或 server/discover）。<b>已授权</b>：当前主体、任务委托、资源侧限制的交集允许这次带这些参数的调用。<b>健康</b>：连接、协议、依赖系统可用。<b>执行成功</b>：这次调用实际产生了预期结果。四者分别检查、分别记录，任何一个都不能推出另一个。</p>
+  </div>
+  <div class="notes" id="n-mcp"></div>
+</section>
+
+<section class="part" id="agent">
+  <div class="part-head"><h2>Agent Gateway：入口路由、任务关联与账本</h2><span class="meta">原书 9.4 节</span></div>
+  <div class="sec-lede">
+    <p>一个 Agent Task 可能包含多个 Session、多轮模型和工具调用，还会因审批、补充信息或故障进入等待与恢复，成本分散在各阶段，失控循环还会挤占同租户的预算和并发。Agent Gateway 把可信身份和任务关联信息带入入口策略：可以拒绝新调用、报告预算压力、把请求路由到声明具备相应能力的 Runtime，但<strong>Task 怎样暂停、保存状态和恢复，由业务任务模型与执行系统决定</strong>。网关可以保存亲和键、任务标识映射、在途计数、配额预留和观测关联，不应解释业务 State、定义 Checkpoint 或决定从哪一步恢复。比如 Coding Agent 的会话需要回到能访问工作区的运行时，目标不可用时可以返回暂不可路由，<strong>不能转到一个空运行时后声称“已经续跑”</strong>。</p>
+    <p>原书的归因链路是 <strong>task_id → session_id → turn_id → model/tool call → attempt_id</strong>。task_id 来自业务应用，session_id、turn_id 来自权威执行上下文，网关可以生成请求或尝试标识；客户端传来的关联头要绑定已认证主体并校验租户，防止伪造 Task 或项目标识转移费用；缺可靠关联时记为待归因，不自行编造业务 Task。账本分四层：Attempt（哪次重试花了钱、是否结果未知）、Call / Turn（本轮慢在哪）、Session（是否重复调用或上下文膨胀）、Task（长程任务总成本、恢复成本、Outcome 引用）。网关记录只是任务账本的数据来源之一，Runtime 资源费用、审批等待、业务恢复事件要由各责任系统补充；Trace 有采样和缺失，不能自动成为财务或 Task 的权威账本。</p>
+    <p>租户隔离里，<strong>身份</strong>（人、工作负载、Agent 实例、Task）和<strong>财务归属</strong>（组织、团队、项目）是正交维度：一个 Agent 可以服务多个项目，一个项目也可以用多个 Agent。入口在途请求与 Runtime 中的活动任务也不同，HTTP 结束后异步任务可能还在跑。协议上，ACP 服务编辑器、IDE 与编码 Agent 的交互（v2 截至核验仍为 Draft），A2A 面向 Agent 间协作（v1.0.0 已正式发布），协议中的完成通知<strong>不等于</strong>业务 Task 的 Outcome。原书还介绍了开源项目 HiRoute：把“想”和“做”分开，由主 Agent 按用途把有界任务委派给 Codex、DeepSeek Harness 等工作 Agent，计划有稳定调用名、受理时的计划版本固定，路由不依赖模型自动分类。</p>
+    <p class="go">点链路上的每一层，看它回答什么问题。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Task 分层账本（原书 9.4.5 节）</p>
+    <div class="chain" id="chain"></div>
+    <div class="hb-info" id="chainI"><p>点一层。</p></div>
+  </div>
+  <div class="lab"><p class="lab-t">网关能做，还是不该做？</p><div id="agDo"></div></div>
+  <div class="notes" id="n-agent"></div>
+</section>
+
+<section class="part" id="gov">
+  <div class="part-head"><h2>统一治理：审批后重新准入，审计不等于证据</h2><span class="meta">原书 9.5 节</span></div>
+  <div class="sec-lede">
+    <p>模型、工具、Agent 入口如果各自定义身份和成本维度，同一调用者在不同路径上会受到不一致的约束。转发侧的硬要求是：<strong>主体映射</strong>（把 OAuth、mTLS、API Key 映射成稳定的策略主体与财务归属，清除客户端伪造的内部身份头，例如不能直接信任外部传入的 <code>x-mse-consumer</code>）、<strong>委托核验</strong>（任务委托可验证、可撤销、范围清晰，并与委托者原有权限取交集）、<strong>凭证处理</strong>（上游凭证按显式策略生成或委托，默认不透传下游凭证）、<strong>记录</strong>（每次判定的规则、版本、拒绝原因）。审计既记准入依据，也记实际执行结果，“放行日志”代替不了“执行成功日志”。</p>
+    <p>审批落到转发路径上只有一条约束：<strong>审批未决的请求不得转为实际执行</strong>。挂起期间网关不长时间持有 HTTP 连接，等待与通知由业务侧承接。批准也不意味着必定放行：等待期间身份可能过期、参数可能改变、预算可能被其他调用占用，所以执行前要<strong>重新准入</strong>；审批记录绑定工具、版本、参数摘要和任务上下文，回调要认证防重放。超时不应自动解释为“改成只读执行”，那会改变请求含义；结果未知的外部操作不能盲目重试，交给业务查询、对账或补偿。</p>
+    <p>结构化审计能说明谁在何时申请了什么、命中哪条策略、审批怎么决定、执行结果是什么，但它<strong>不天然构成业务判定所需的 Evidence</strong>。原书给的审计事件示例里，<code>execution_status: succeeded</code> 只描述工具调用，不是 Task 的 Outcome；<code>usage_status: pending_reconciliation</code> 也不能因执行成功而省略。DLP 与内容检测放在入口便于覆盖多个调用方，但会让入口接触明文；检测失效时放行、拒绝还是转人工，要按风险预先定义。</p>
+    <p class="go">审批进入不同状态时，转发侧该怎么做？</p>
+  </div>
+  <div class="lab"><div id="appr"></div></div>
+  <div class="notes" id="n-gov"></div>
+</section>
+
+<section class="part" id="cp">
+  <div class="part-head"><h2>控制面联动：从观测到受控发布</h2><span class="meta">原书 9.6 节</span></div>
+  <div class="sec-lede">
+    <p>数据面执行已发布策略，可观测系统记录运行事实，评估系统生成评分与诊断。原书强调：<strong>Evaluation 不天然拥有发布授权</strong>，不应直接改生产路由或预算。完整路径是观测形成候选建议 → 构建与验证 → 治理授权与发布门禁 → 灰度与控制面发布 → 运行反馈。模型映射、语义路由、工具 Schema、预算策略这些会改变调用行为的配置都走这条链；低风险调参可以在预先批准的范围、幅度和资源集合内自动进行，超出范围要重新授权。长程任务跨会话执行时，避免一次任务里混用不兼容的策略。</p>
+    <p>可观测性要补充生成式负载的事实：用量与成本（输入、输出、缓存 token，估算还是实际，价格版本，结算状态）、时延（建连、首字节、TTFT、流式空闲、总耗时）、可靠性（流内错误、取消、重试、结果未知）、治理（命中策略、拒绝、审批、预留与结算）、关联（Task、Session、Turn、Call、Attempt、Trace 引用）。指标要控制基数：模型、路由适合当指标维度，Task、Session、调用 ID 更适合日志、事件或 Trace。OpenTelemetry 的 <code>gen_ai.*</code> 语义约定整体仍处于 Development 状态，要固定版本并保留迁移映射。</p>
+    <p>还有一组容易混的概念：网关内部的<strong>运行时自适应</strong>（如 Higress <code>ai-load-balancer</code> 用 EWMA 时延、在途请求、失败信号在候选端点间选）只能在已授权的候选集合和约束内工作，不能自行扩大模型范围、数据地域、工具权限或预算，它和<strong>治理策略变更</strong>是两回事。回滚也不只是恢复配置文本，还要考虑已执行的副作用、未结算额度和仍在运行的任务。</p>
+    <p class="go">盖住“常见误区”一列自测。</p>
+  </div>
+  <div class="lab"><p class="lab-t">AI 流量的观测内容与误区（原书 9.6.3 节）</p><div id="obsVs"></div></div>
+  <div class="vendor"><b>参考实现说明</b>原书本章以开源网关 Higress（Envoy 数据面 + Wasm 插件 + 基于 Istio 的控制面）为主要参考，核验基线是特定提交；并对照了 LiteLLM、Portkey、OpenRouter、Kong、APISIX、Agent Router（原 Envoy AI Gateway）等路线。原书反复说明：插件能力、故障分支和字段以所选版本为准，例如 <code>ai-token-ratelimit</code> 与 <code>ai-quota</code> 都不能凭现有“检查 + 后结算”宣称严格并发预算，Redis 故障时两者的分支行为也不一致。</div>
+  <div class="notes" id="n-cp"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 三种 Gateway 各管什么？退款请求经过哪些检查？</summary><p class="ans">LLM Gateway 管模型调用与尝试（选模型 / 端点、限流、容灾、计量），不判断输出是否满足业务；MCP Gateway 管协议代理与工具调用授权，不把可发现等同于已授权、健康或可执行；Agent Gateway 管 Agent 接入、路由、亲和、并发与跨调用关联，不定义 Task、State、Checkpoint、恢复。退款：Agent 入口校验委托身份并按能力路由 → 模型调用经 LLM Gateway 路由与降级 → 查订单是只读工具，鉴权后放行 → 申请退款是资金操作，挂起进入审批 → 批准后重新校验委托范围、参数摘要、预算预留再执行 → 结果与用量回写任务账本，由业务系统判定结果。</p></details>
+    <details><summary>2. 为什么先查后扣不能保证上限？重试会放大到几次？</summary><p class="ans">并发请求可能同时通过余额检查，最终合计超过余额；后扣减撤销不了已发生的消耗。严格预算要在准入时原子预留最大可计费消耗（可用 = 授权 − 已结算 − 在途预留），结束后幂等结算。SDK 3 次 × 网关 3 次 = 上游最多 9 次，供应商侧是否重投还不受控；要跨层传递绝对截止时间和剩余尝试额度，由网关按 call_id 原子扣减。</p></details>
+    <details><summary>3. 为什么元数据不是身份证明？审批通过后为什么还要重新准入？</summary><p class="ans">逐请求元数据只说明协议版本和能力，由客户端自述；身份要由独立凭据认证，授权要按主体、工具、参数判断，权限取各方授权的交集，不能被 clientInfo 或工具描述扩大。审批等待期间身份可能过期、参数可能变化、预算可能被占用，所以执行前要重新校验身份、委托、参数摘要和预算；超时也不能偷偷降级成只读执行。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-handbook-7/"><small>上一篇</small><span>07 · 运行时、沙箱与状态存储</span></a><a class="nx" href="../2026-10-22-handbook-9/"><small>下一篇</small><span>09 · 异步任务、多 Agent 与分布式通信</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">aliyun/ai-agent-handbook</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 边界 ---------- */
+HB.vs($('#g3'), {
+  k: '治理语义', a: '直接治理对象 · 主要问题', b: '不承担的责任',
+  rows: [
+    ['LLM Gateway', '模型调用及其实际尝试 · 选哪个模型或端点，如何限流、容灾、计量', '判断模型输出是否满足业务成功标准'],
+    ['MCP Gateway', 'MCP 请求及工具调用 · 如何代理协议，当前身份能否调用指定工具及参数', '把工具可发现等同于已授权、健康或可执行'],
+    ['Agent Gateway', 'Agent 接入及与任务关联的流量 · 身份、路由、亲和、并发控制、跨调用关联', '定义 Task、业务 State、Checkpoint 或恢复语义']
+  ]
+});
+var RF = [
+  ['Agent 入口', 'Agent Gateway 校验任务委托身份，按能力标签路由到具备订单与退款工具的 Runtime。'],
+  ['模型调用', '任务产生的模型调用经 LLM Gateway 完成模型路由，失败时按已验证的路径降级。'],
+  ['查询订单', '只读工具：MCP Gateway 做工具鉴权（主体、工具、参数）后直接放行。'],
+  ['申请退款：挂起', '资金操作：网关挂起它并进入审批，不长时间持有连接，等待由业务侧承接。'],
+  ['批准后重新准入', '重新校验委托范围、参数摘要和预算预留，通过后才执行退款调用。'],
+  ['结果回传', '工具结果与用量回写任务账本；这项任务是否完成，由业务系统判定。']
+];
+RF.forEach(function (r) { h('li', { html: '<b>' + r[0] + '</b><small>' + r[1] + '</small>' }, $('#rfFlow')); });
+S.stepper($('#rfStep'), RF.length, function (i) { S.$$('#rfFlow li').forEach(function (x, k) { x.classList.toggle('on', k === i); x.classList.toggle('done', k < i); }); });
+S.notes($('#n-edge'), {
+  c: [
+    ['AI Gateway', '在模型、工具、Agent 访问路径上建立一致的策略执行点，与任务执行系统协同。'],
+    ['三种语义', 'LLM / MCP / Agent Gateway；可组合，非成熟度阶梯，可同一数据面。'],
+    ['TTFT ≠ 首字节', 'SSE 首个事件可能是心跳或元数据。'],
+    ['KV cache ≠ 状态恢复', '缓存未命中只应变慢，不应丢任务。']
+  ],
+  p: [
+    ['网关保证什么', '准入、转发、记录的一致性。'],
+    ['网关不保证什么', '任务完成、状态恢复、业务 Outcome。'],
+    ['统一的关键', '身份映射一致、策略边界清晰、记录可关联、不重复计费。'],
+    ['建设顺序示例', '凭证托管与模型入口 → 用量归因与工具授权 → 路由实验与评估回归，每步有独立验收目标。']
+  ]
+});
+
+/* ---------- LLM ---------- */
+function rt() {
+  var a = +$('#r1S').value, b = +$('#r2S').value, c = +$('#r3S').value;
+  $('#r1O').textContent = a; $('#r2O').textContent = b; $('#r3O').textContent = c ? c + ' 次' : '不传递';
+  var mx = a * b, cap = c ? Math.min(c, mx) : mx;
+  $('#rA').textContent = cap; $('#rB').textContent = '不可控';
+  var v = $('#rV');
+  if (c) { v.className = 'verdict3'; v.innerHTML = '调用方把剩余额度 ' + c + ' 随请求传下去，网关按 <code>call_id</code> 原子扣减，耗尽就返回预算耗尽错误：端到端最多 ' + cap + ' 次，每次尝试都有独立 <code>attempt_id</code>，可以还原成一次逻辑调用。'; }
+  else { v.className = 'verdict3 bad'; v.innerHTML = '每层各自解释上限：' + a + ' × ' + b + ' = ' + mx + ' 次，重试次数、并发压力和费用都按乘积放大，而且无法归因到一次逻辑调用。'; }
+}
+['r1S', 'r2S', 'r3S'].forEach(function (id) { $('#' + id).addEventListener('input', rt); }); rt();
+HB.cards($('#tmo'), {
+  opts: ['连接超时', '首字节超时', 'TTFT', '流式空闲超时', '总截止时间'],
+  items: [
+    { t: 'TCP / TLS 握手迟迟建不起来。', a: 0, why: '约束建连。' },
+    { t: '连上了，但上游一直没返回任何字节。', a: 1, why: '识别上游长时间无响应。' },
+    { t: '心跳一直在发，但第一个有效 token 过了 40 秒才出来。', a: 2, why: 'TTFT 描述有效生成开始前的等待，心跳不算。' },
+    { t: '生成到一半，两个事件之间停了 60 秒。', a: 3, why: '约束连续事件之间的间隔；但一直发心跳的流不会触发它。' },
+    { t: '无论怎样，这次调用最多占用资源 5 分钟。', a: 4, why: '控制整个调用的资源占用；跨层传递时应是绝对时间。' }
+  ]
+});
+S.notes($('#n-llm'), {
+  c: [
+    ['统一接口', '先声明能力子集，不支持的参数明确报错；记录适配器版本、实际 provider 与模型、用量来源。'],
+    ['模型选择 vs 端点选择', '静态映射 / 成本感知 / 语义路由 vs 同一模型实例间按队列、在途、缓存信号选。'],
+    ['尝试预算', '绝对截止时间 + 剩余尝试额度，网关按 call_id 原子扣减；attempt_id 关联每次尝试。']
+  ],
+  p: [
+    ['先判能否重试', '429 看重置与配额；5xx 看调用语义；认证错误终止；上下文超限不由网关截断。'],
+    ['流式提交后', '网关通常不能透明重放；没收到响应体 ≠ 上游没执行（可能已计费）。'],
+    ['切换 provider 前', '查工具、结构化输出、数据地域、模型能力是否兼容；没验证过的兜底就明确失败。'],
+    ['重试放大', 'SDK 3 × 网关 3 = 9 次，供应商侧还可能重投。']
+  ]
+});
+
+/* ---------- 预算 ---------- */
+function bd() {
+  var m = +$('#bmS').value, a = Math.min(+$('#baS').value, 100); $('#bmO').textContent = m; $('#baO').textContent = +$('#baS').value;
+  var act = +$('#baS').value;
+  // 先查后扣：两者都看到余额 100 ≥ m，都放行
+  var pass1 = m <= 100 ? 2 : 0, used1 = pass1 * act;
+  // 原子预留：第一个预留 m，第二个看到 100-m
+  var pass2 = m <= 100 ? (2 * m <= 100 ? 2 : 1) : 0;
+  var over = act > m;
+  var used2 = pass2 * act;
+  function bar(used, res) {
+    var s = '<div class="bar100">';
+    var u = Math.min(used, 100), x = Math.max(0, used - 100);
+    s += '<span class="u" style="left:0;width:' + (u / 2) + '%"></span>';
+    if (x) s += '<span class="x" style="left:50%;width:' + Math.min(x, 100) / 2 + '%"></span>';
+    s += '<span class="lim" style="left:50%"></span></div>';
+    return s;
+  }
+  $('#bud').innerHTML =
+    '<div><b>请求前检查、响应后扣减</b>两个请求同时看到余额 100 ≥ ' + m + '，都被放行。' + bar(used1) +
+    '最终消耗 <b style="display:inline;color:' + (used1 > 100 ? 'var(--alert)' : 'var(--ok)') + '">' + used1 + '</b>（竖线为额度 100）。' + (used1 > 100 ? '后扣减能避免丢账，但撤销不了已经发生的消耗。' : '这次没超，只是运气：并发再多一点就会超。') + '</div>' +
+    '<div><b>原子预留最大消耗</b>第一个预留 ' + m + '，可用额度变为 ' + (100 - m) + (pass2 === 2 ? '，第二个也够预留。' : '，第二个预留不下，被拒绝或排队。') + bar(used2) +
+    '最终消耗 <b style="display:inline;color:' + (used2 > 100 ? 'var(--alert)' : 'var(--ok)') + '">' + used2 + '</b>。' + (over ? '<br><span style="color:var(--alert)">实际消耗超过了预留的“最大值”：说明这个最大值并不可靠，只能声明有界超额或软预算。</span>' : '结束后按实际消耗幂等结算，释放多余预留。') + '</div>';
+}
+['bmS', 'baS'].forEach(function (id) { $('#' + id).addEventListener('input', bd); }); bd();
+HB.cards($('#bm4'), {
+  opts: ['请求速率限制', 'token 时间窗', '余额型配额', '严格预算'],
+  items: [
+    { t: '防止某个客户端每秒狂发请求打满入口。', a: 0, why: '控制准入速度，不直接控制 token 成本。' },
+    { t: '控制某团队每小时的累计 token 增长。', a: 1, why: '请求前查窗口、结束后累计；有在途消耗窗口。' },
+    { t: '给每个项目一个可用额度，用完提醒充值，允许少量误差。', a: 2, why: '近实时额度控制，不是严格并发预算。' },
+    { t: '合同约定这个客户本月绝对不能超过 1 万元。', a: 3, why: '需要可证明的最大消耗、原子预留、幂等结算；重试也要单独占额度。' }
+  ]
+});
+S.notes($('#n-budget'), {
+  c: [
+    ['四种机制', '速率限制、token 时间窗、余额配额、严格预算。'],
+    ['严格预算不变量', '可用 = 已授权 − 已结算 − 在途预留；准入：最大可计费消耗 ≤ 可用。'],
+    ['语义缓存', '命中也不是零成本；缓存键区分租户、权限、模型版本、系统提示、知识版本。']
+  ],
+  p: [
+    ['先查后扣的漏洞', '余额 100、两个 80 并发 → 可能花 160。'],
+    ['预留要覆盖', '输入 + 受约束最大输出 + 其他计费项；每次重试单独预留。'],
+    ['结果未知', '不因租约到期无条件退款，先确认终止或等待对账。'],
+    ['缺 usage', '不能记为零；客户端取消不证明上游已停；保留估算 / 未结算状态。']
+  ]
+});
+
+/* ---------- MCP ---------- */
+HB.check($('#byp'), {
+  items: [
+    { t: '凭证不下发', d: 'Agent 不持有后端直连凭证', miss: 'Agent 拿着直连凭证，可以不经网关直接访问后端。', on: true },
+    { t: '出口网络受控', d: '只能经网关出站', miss: 'Agent 可以直接连外部或内部服务。', on: true },
+    { t: '服务发现与域名解析收敛', d: '解析不到后端真实地址', miss: '通过 DNS 或注册中心找到后端地址后直连。', on: false },
+    { t: '直连路径被禁止', d: '后端只接受来自网关的请求', miss: '后端仍对 Agent 网段开放。', on: false },
+    { t: '旁路受到审计', d: '绕行尝试可被发现', miss: '即使发生绕行，也没人知道。', on: false }
+  ],
+  verdict: function (on, n) {
+    return on === n ? '<p class="ok"><b>五个条件都成立</b>：网关才有条件成为不可绕过的策略执行点。它仍只是纵深防御的一层，框架、网关、资源服务器各自保留必要检查。</p>'
+      : '<p><span class="big">' + on + ' / ' + n + '</span>　网关只是“集中入口”，不能声称“天然不可绕过”：</p>';
+  }
+});
+HB.vs($('#mcpVs'), {
+  k: '工具场景', a: 'Schema 校验', b: '业务策略还必须约束',
+  rows: [
+    ['数据查询', '字段类型、分页参数', '数据库或数据集范围、行级权限、可执行操作'],
+    ['支付', '金额格式、收款方结构', '金额阈值、收款方范围、审批和幂等键'],
+    ['集群管理', '集群、命名空间、资源参数', '允许的环境、资源种类、操作动词和临时授权'],
+    ['文件读取', '路径或文件标识格式', '允许目录、租户归属、符号链接与数据分级']
+  ]
+});
+S.notes($('#n-mcp'), {
+  c: [
+    ['准入四步', '认证 → 协议校验 → 授权 → 转发。'],
+    ['逐请求元数据', 'protocolVersion、clientCapabilities 必需，clientInfo 推荐；不是身份证明。'],
+    ['Registry', '资源目录（端点、版本、声明能力、所有者）；不授予执行权限。'],
+    ['权限取交集', '调用者原有授权 ∩ 工作负载授权 ∩ 任务委托范围 ∩ 资源侧限制。']
+  ],
+  p: [
+    ['list 过滤后 call 仍要鉴权', '过滤只减少误选。'],
+    ['头部与正文一致', '执行前校验，避免头部鉴权和正文执行面对不同对象。'],
+    ['桥接要显式声明', '方向与能力子集；参考实现只支持 Modern 下游 → Legacy 上游。'],
+    ['治理意图', '自然语言策略先转成结构化策略，经冲突检查、预览、回归、授权发布再执行。']
+  ]
+});
+
+/* ---------- Agent ---------- */
+var CH = [
+  ['Task', '要完成什么、成功标准、当前业务阶段。权威来源：业务应用的任务模型。账本层能回答：长程任务总成本、完成效率、恢复成本，并引用 Outcome。'],
+  ['Session', '哪一段交互或执行上下文属于同一会话。来源：会话所属应用或执行系统；Task 可跨多个 Session。账本层能回答：这段会话是否重复调用、上下文是否膨胀。'],
+  ['Turn', '会话中的哪一轮交互或控制循环。来源：Harness。账本层能回答：本轮为什么慢、成本集中在哪些调用。'],
+  ['Call', '哪次逻辑调用（模型或工具）。模型返回的 tool_calls 只是意图，工具实际费用以执行记录结算。'],
+  ['Attempt', '哪次实际执行产生了用量：实际端点、计费模型、用量来源、状态、错误、耗时。账本层能回答：哪次重试花了钱、是否存在结果未知。']
+];
+CH.forEach(function (c, i) {
+  if (i) h('i', { text: '→' }, $('#chain'));
+  var s = h('span', { text: c[0].toLowerCase() + '_id', tabindex: 0 }, $('#chain'));
+  s.addEventListener('click', function () { S.$$('#chain span').forEach(function (x) { x.classList.toggle('on', x === s); }); $('#chainI').innerHTML = '<b>' + c[0] + '</b><p>' + c[1] + '</p>'; });
+});
+HB.cards($('#agDo'), {
+  opts: ['网关可以做', '不该由网关做'],
+  items: [
+    { t: '按租户和能力标签，把请求路由到具备退款工具的 Runtime。', a: 0, why: '入口路由属于 Agent Gateway。' },
+    { t: '目标运行时不可用，把会话转到一个空运行时，并告诉用户“已续跑”。', a: 1, why: '连续性取决于工作区持久化、检查点和重试边界；网关只能返回暂不可路由或转到受支持的恢复入口。' },
+    { t: '保存路由亲和键、在途计数和配额预留。', a: 0, why: '这些是网关可以保存的关联与控制信息。' },
+    { t: '决定任务从哪个业务步骤恢复。', a: 1, why: 'Checkpoint 内容与恢复契约由业务模型定义，Runtime 负责持久化与恢复。' },
+    { t: '缺少可靠的 task_id，就自己生成一个业务 Task 归集费用。', a: 1, why: '应记为待归因，不能编造业务 Task。' },
+    { t: '把 HTTP 200 的比例当作业务任务完成率上报。', a: 1, why: '请求成功率与任务完成率要分别统计；Outcome 由业务应用或获授权 Verifier 判定。' }
+  ]
+});
+S.notes($('#n-agent'), {
+  c: [
+    ['Agent Gateway', '把可信身份与任务关联带入入口策略：路由、配额、观测；不定义 State、Checkpoint、恢复。'],
+    ['归因链路', 'task_id → session_id → turn_id → call → attempt_id。'],
+    ['身份 ⟂ 财务归属', '人、工作负载、Agent、Task 与组织、团队、项目是正交维度。']
+  ],
+  p: [
+    ['关联头要校验', '绑定已认证主体并校验租户，防止伪造标识转移费用。'],
+    ['网关记录 ≠ 任务账本', 'Runtime 资源、审批等待、恢复事件由各系统补充；Trace 有采样，不是财务账本。'],
+    ['ACP vs A2A', '编辑器与编码 Agent（v2 Draft）vs Agent 间协作（v1.0.0 已发布）；协议完成通知 ≠ Outcome。'],
+    ['入口并发 ≠ 任务并发', 'HTTP 结束后异步任务可能还在跑，需与执行系统账本协同。']
+  ]
+});
+
+/* ---------- 审批 ---------- */
+HB.cards($('#appr'), {
+  opts: ['不执行，连接可结束，记录申请', '重新校验后才转发', '终止，不替换工具或参数', '终止，不自动降级为只读', '不盲目重试，交给查询 / 对账 / 补偿'],
+  items: [
+    { t: '审批状态：待审批。', a: 0, why: '记录申请对象、参数摘要、风险与过期时间；等待由业务侧承接。' },
+    { t: '审批状态：批准。', a: 1, why: '重新校验身份、委托、参数摘要与预算；记录批准者、范围与时效。' },
+    { t: '审批状态：拒绝。', a: 2, why: '记录拒绝依据；不隐式换一个工具或参数绕过去。' },
+    { t: '审批超时或被撤销。', a: 3, why: '保持未执行；如需只读替代方案，形成新的可见请求并重新授权。' },
+    { t: '已提交执行，但结果未知。', a: 4, why: '记录已提交事实与幂等键，由业务查询、对账或补偿处理。' }
+  ]
+});
+S.notes($('#n-gov'), {
+  c: [
+    ['转发前四件事', '主体映射、委托核验、凭证处理、记录判定。'],
+    ['审批的转发约束', '审批未决不得执行；网关不长时间持有连接。'],
+    ['审计 vs Evidence', '审计是复盘材料；能否用于判定任务成功由成功标准与 Verifier 决定。']
+  ],
+  p: [
+    ['批准 ≠ 放行', '执行前重新准入：身份、委托、参数摘要、预算。'],
+    ['审批记录绑定', '工具、版本、参数摘要、任务上下文；回调认证、防重放、幂等。'],
+    ['内部身份头', '入口必须清除或覆盖客户端伪造的内部主体头。'],
+    ['检测失效策略', '放行、拒绝还是转人工，按风险预先定义。']
+  ]
+});
+
+/* ---------- 控制面 ---------- */
+HB.vs($('#obsVs'), {
+  k: '数据类型', a: '推荐内容', b: '常见误区',
+  rows: [
+    ['用量与成本', '输入、输出、缓存 token，估算或实际来源，价格版本，结算状态', '把缺失 usage 当作零，或把 credits 当作统一货币'],
+    ['时延', '建连、首字节、TTFT、流式空闲、总耗时', '以 HTTP 首包代替首个有效 token'],
+    ['可靠性', 'HTTP 状态、流内错误、取消、重试、结果未知', '只用 HTTP 200 判断成功'],
+    ['治理', '命中策略、拒绝、审批、预算预留和结算', '只记录放行，不记录最终结果'],
+    ['关联', 'Task、Session、Turn、Call、Attempt 与 Trace 引用', '把一条 Trace 或 Session 当作完整 Task']
+  ]
+});
+S.notes($('#n-cp'), {
+  c: [
+    ['受控发布链', '观测诊断 → 候选建议 → 构建验证 → 治理授权与门禁 → 灰度发布 → 运行反馈。'],
+    ['Evaluation 的边界', '产出评分、诊断、建议；不天然拥有发布授权。'],
+    ['运行时自适应 vs 策略变更', '前者只在已授权候选与约束内选端点；后者要走发布链。']
+  ],
+  p: [
+    ['指标基数', '模型、路由做维度；Task、Session、调用 ID 放日志、事件、Trace。'],
+    ['gen_ai.* 约定', '整体仍是 Development 状态，固定版本、保留映射。'],
+    ['配置版本', '策略版本、插件制品摘要、目标资源版本、发布批次一起记录。'],
+    ['回滚', '还要处理已执行副作用、未结算额度、仍在运行的任务。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

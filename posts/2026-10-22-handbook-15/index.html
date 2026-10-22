@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>企业实践与 Agentic OS</title>
+<meta name="description" content="AI Agent Handbook 学习笔记（十五）：2026 Agent 开发者调研的关键数字；研发效能、设计工程、智能运维、零售与内容等企业案例里反复出现的做法；GOAI 赛道作品的四条工程模式；Agentic OS：五项共识、六类约束、三条下沉判据、九类管理对象与三层结构、四个解耦面、六类待标准化接口、自治阶梯、强制边界与观测边界、七个开放问题。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.6'/%3E%3Ccircle cx='15' cy='12' r='2.4' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.ladder { display: flex; flex-direction: column-reverse; gap: 4px; margin-top: 10px; }
+.ladder > div { display: grid; grid-template-columns: 4em minmax(0, 1fr); gap: 10px; align-items: center; border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; background: var(--bg); font-size: 15px; line-height: 1.55; }
+.ladder b { font-family: var(--f-num); font-size: 18px; color: var(--ink-3); }
+.ladder > div.ok { border-color: var(--ok); background: var(--ok-soft); }
+.ladder > div.ok b { color: var(--ok); }
+.ladder > div.no { opacity: .5; }
+.oq details { border-top: 1px solid var(--hair); padding: 2px 0; }
+.oq details:last-child { border-bottom: 1px solid var(--hair); }
+.oq summary { cursor: pointer; padding: 9px 0; font-size: 16px; color: var(--ink); }
+.oq p { margin: 0 0 10px; font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+</style>
+</head>
+<body data-series="handbook-series" data-part="15">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>AI Agent Handbook · 15</span><span>对应原书调研报告、第 25–30 章</span><span>约 40 分钟</span></p>
+  <h1>从一个 Agent，<em>到一层系统</em></h1>
+  <p class="lead">最后一篇收两头。一头是落地：原书开篇的开发者调研给出了现状（近一半在做，不到五分之一上线），实践篇收录了二十多个企业与开源案例。另一头是展望：当一家企业同时运行多个 Agent、多种框架、多个租户，前面每一篇的工程要求都会在每个应用里被重复实现一遍，而且互不一致；原书第 30 章讨论哪些能力应该下沉成所有 Agent 共享的系统层，并把它称为 Agentic OS，同时声明它现在还不是一个已经存在的产品类别。</p>
+  <p class="credit">本系列是开源白皮书《<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">AI Agent Handbook（企业级 Agent 白皮书）</a>》（阿里云团队编写的开源白皮书，Apache-2.0 协议；本笔记依据 2026 年 10 月 21 日的仓库版本）的学习笔记。原书按“架构 → 构建 → 运行 → 治理 → 调优 → 实践”组织三十章，这里重排成十五篇，用自己的话重讲，并把关键表格做成可以点、可以分类、可以走流程的互动。概念与结论取自原书，每节标出对应章节；为演示设的场景和数值标“示意”。原书由阿里云编写，涉及阿里云产品的方案与数字属于厂商自述，文中会单独标出。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-handbook/"><b>总览</b>架构地图</a>
+  <a href="../2026-10-22-handbook-1/" data-part="1"><b>01</b>新阶段</a>
+  <a href="../2026-10-22-handbook-2/" data-part="2"><b>02</b>参考架构</a>
+  <a href="../2026-10-22-handbook-3/" data-part="3"><b>03</b>Harness</a>
+  <a href="../2026-10-22-handbook-4/" data-part="4"><b>04</b>任务</a>
+  <a href="../2026-10-22-handbook-5/" data-part="5"><b>05</b>信息</a>
+  <a href="../2026-10-22-handbook-6/" data-part="6"><b>06</b>行动</a>
+  <a href="../2026-10-22-handbook-7/" data-part="7"><b>07</b>运行与状态</a>
+  <a href="../2026-10-22-handbook-8/" data-part="8"><b>08</b>AI 网关</a>
+  <a href="../2026-10-22-handbook-9/" data-part="9"><b>09</b>异步与多 Agent</a>
+  <a href="../2026-10-22-handbook-10/" data-part="10"><b>10</b>可观测</a>
+  <a href="../2026-10-22-handbook-11/" data-part="11"><b>11</b>安全</a>
+  <a href="../2026-10-22-handbook-12/" data-part="12"><b>12</b>资产与验证</a>
+  <a href="../2026-10-22-handbook-13/" data-part="13"><b>13</b>模型调优</a>
+  <a href="../2026-10-22-handbook-14/" data-part="14"><b>14</b>Agent 调优</a>
+  <a href="../2026-10-22-handbook-15/" aria-current="page" data-part="15"><b>15</b>实践与展望</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#survey">调研</a><a href="#cases">案例</a><a href="#goai">开源赛道</a><a href="#why">为何下沉</a><a href="#obj">管理对象</a><a href="#dec">解耦与标准</a><a href="#auto">可控自治</a><a href="#open">开放问题</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>调研里“在做”和“上线”之间差多少？卡点在哪？为什么编码提效 10 倍，交付周期只缩短一点？</li>
+    <li>一项能力要满足什么条件才应该下沉到系统层？Agentic OS 的三条“不是”是什么？</li>
+    <li>自治程度的上限由什么决定？“强制边界”和“观测边界”怎么区分？</li>
+  </ol>
+</div>
+
+<section class="part" id="survey">
+  <div class="part-head"><h2>2026 Agent 开发者调研</h2><span class="meta">原书《2026 Agent 开发者调研报告》</span></div>
+  <div class="sec-lede">
+    <p>原书开头附了一份调研：在北京、深圳、广州、上海、杭州等地的线下开发者沙龙回收有效问卷 1906 份，受访者以技术决策者、架构师、一线工程师和产品经理为主。<strong>做不做 Agent 已不是议题</strong>：暂无开发计划的从去年的 22% 降到 15%，已开发完成或开发中的合计 46%（去年 36%），但<strong>真正部署到生产的只有 18%</strong>，持续迭代的不到 10%。上线率差距普遍大于开发率差距（上海大型企业已上线 45%，小微企业 16%），原书据此判断卡点不在意愿，而在持续演进 Agent 的工程能力。</p>
+    <p>几个与前面各篇直接对应的数字：架构上单 Agent 为主 40%、多 Agent 为主 42%、15% 把人在回路当作主要架构原则，<strong>是共存不是替代</strong>（第 1 篇）；采购 Coding 工具的 57%、用通用 Agent 框架的 78%，近四成两者都用，供应商碎片化，“<strong>可迁移的工程抽象比押注某个厂商更有价值</strong>”（第 3 篇）；记忆与上下文的痛点里检索不准 54%、更新与遗忘机制缺失 48%，窗口限制只排第三（第 5 篇）；关注或落地 MCP 的 37%，但完成企业内私有部署的只有 9%（第 12 篇）；多模型路由与自动降级是 63% 企业最需要的网关能力，成本归因（50%）比审计合规更早成为观测重点（第 8、10 篇）。</p>
+    <p>评估是短板：<strong>55% 靠人工抽查，基于运行轨迹自动评估的只有 6%</strong>，28% 没有系统性评估；任务成功率 90% 以上的约一成，70% 以上的约 55%，16% 根本没量化过成功率。用了评估手段的企业，成功率 70% 以上的比例约为没有评估体系的两倍（第 14 篇）。这些是阿里云开发者沙龙问卷的结果，样本以参会开发者为主。</p>
+    <p class="go">先猜一个数，再看全貌。</p>
+  </div>
+  <div class="lab">
+    <div id="sg"></div>
+    <div id="svBars" class="wide"></div>
+    <p class="note">数据：原书调研报告（1906 份有效问卷）。各项来自不同题目，不能相加。</p>
+  </div>
+  <div class="notes" id="n-survey"></div>
+</section>
+
+<section class="part" id="cases">
+  <div class="part-head"><h2>企业案例里反复出现的做法</h2><span class="meta">原书第 25–28 章及专题</span></div>
+  <div class="sec-lede">
+    <p>研发效能的几个案例不约而同地讲了同一件事：<strong>编码提效不等于交付提效</strong>。一个复杂 Feature 从需求到上线约 20 个工作日，编码约 2 天，即使编码快 10 倍，端到端也只从 20 天降到 18.2 天；堵点在需求澄清、评审跟不上上万行的产出、测试排期这些仍由人衔接的节点（云通信团队的说法是“只要交付链路里存在由人衔接的节点，该节点就决定了吞吐上限”）。于是方向从“让 Agent 写代码”变成“让一支 AgentTeam 交付结果”，人只在目标、架构和风险判断上介入。原书也很克制地标注了效果：内部 19 道未参与调优的盲测题 10 道等价、5 道接近、4 道部分完成，交付节奏约一周的观察“样本量仍小”。</p>
+    <p>其他领域的做法可以归纳成几类：<strong>领域化</strong>（Kitta 把通用 Code Review 领域化，沉淀项目级专家资产与审查流程，原书引用的数据是龙蜥社区累计审查超 7 万个补丁、门禁准确率 97%；ABACI 把每次内核变更当作测试目标做定向测试）；<strong>工作流承载过程</strong>（PatchPilot 把补丁移植拆成冲突分类、依赖分析、AI 解冲突、语义审查、交付回检等可观测可恢复的阶段）；<strong>让研发系统可被调用、过程可被验证、任务可持续运行</strong>（PolarDB-X 的 Loop 工程，7×24 处理报警到自动修复）；<strong>先治数据再上工具</strong>（畅捷通的“指标陷阱”：底层指标全绿，用户体验已经劣化；吉利的“先治数据、再上工具、以场景建信任”；塔斯汀不到十人的 SRE 支撑万店）；<strong>规模化运营</strong>（滔搏 4360 家门店：“让今天解决过的问题，成为明天可以复用的能力”）；以及 GenUI（由 Agent 依据本次结果动态组织结论、证据和可执行操作，渲染只用受信组件）、Jev“系统 1 模型”做快速结构化决策与 HiRoute 路由、Personal Agent 的产品与商业观察。</p>
+    <p>这些案例大多由阿里云团队或其客户撰写，效果数字来自内部评测或生产统计，原书在多处注明“文中数据来源于内部评测与生产环境统计”。读它们更适合取方法，而不是取数字。</p>
+    <p class="go">拖动编码提速倍数，算一算交付周期（默认数值取自原书案例）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">编码提速 N 倍，交付快多少？</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>端到端周期（工作日） <output id="adT">20</output></span><input type="range" id="adTs" min="5" max="60" value="20"></label>
+      <label class="ctl"><span>其中编码（工作日） <output id="adC">2</output></span><input type="range" id="adCs" min="0.5" max="20" step="0.5" value="2"></label>
+      <label class="ctl"><span>编码提速倍数 <output id="adN">10</output></span><input type="range" id="adNs" min="1" max="100" value="10"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="adR">0</div><div class="k">新的端到端周期</div></div><div><div class="v" id="adS">0</div><div class="k">整体加速倍数</div></div><div class="hl"><div class="v" id="adM">0</div><div class="k">编码无限快时的上限</div></div></div>
+  </div>
+  <div class="lab"><p class="lab-t">这句话出自哪类经验？</p><div id="cs"></div></div>
+  <div class="notes" id="n-cases"></div>
+</section>
+
+<section class="part" id="goai">
+  <div class="part-head"><h2>开源赛道：把 Agent 放进高风险流程</h2><span class="meta">原书第 29 章</span></div>
+  <div class="sec-lede">
+    <p>第 29 章记录了 2026 GOAI 世界人工智能开源大赛 Agent Infra 赛道的 15 项决赛作品（847 个提交、覆盖 38 个国家和地区）。赛道要求至少三个职能不同的 Agent、以 Skill 封装能力，覆盖从任务输入、拆解、上下文传递、工具调用、结果验证、证据沉淀、审批与回滚到经验沉淀的完整链路，场景横跨能源电力、金融、建筑设计、零售、财务结算、IT 运维、安全运营、数据工程等。</p>
+    <p>原书最值得记的是它的总结：15 项作品<strong>全部选择了企业内部的高风险流程</strong>，这在一年前还普遍被回避；它们给出的共同答案<strong>不是提升模型能力，而是重新组织权限</strong>：<strong>执行与验证分离、授权绑定到具体动作、关键计算交给确定性引擎、拒绝作为合法终态</strong>。“这四条都不需要更强的模型，需要的是更清楚的工程设计。”还有一批可迁移的模式，例如“原件只读 + 白名单修复”适用于任何不能损坏原始数据的受控修改，同一套控制面只替换平台工具、阈值与场景能力就能覆盖不同平台。</p>
+    <p class="go">把设计做法归到四条模式里。</p>
+  </div>
+  <div class="lab"><div id="gp"></div></div>
+  <div class="notes" id="n-goai"></div>
+</section>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么需要一层 Agentic OS</h2><span class="meta">原书 30.1–30.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书先回顾全书的五项共识：架构对象是系统而不是一次调用；任务是需要长期管理的对象，状态必须外置、可暂停可恢复；能力动态接入，<strong>发现与授权必须分开</strong>；自主性必须与权限、可撤销范围和可验证性匹配；<strong>证据是变更能否发布的前提</strong>。这些在单个应用里能落地，困难出在组织层面，六类约束会在每个应用里被重复且不一致地实现：任务缺统一标识与状态归属；执行环境成为一等资源，按峰值预留浪费、按均值部署拥塞；能力元数据缺“是否有副作用、是否幂等、失败能否安全重试”三类声明；上下文与状态的边界被压缩、摘要、续行侵蚀；授权难以随任务派生、在终止时级联收回；证据采集点分散、口径不一。</p>
+    <p>但不是所有共性能力都该下沉，把任务语义、业务规则或评估口径塞进系统层，只会得到一个更难替换的框架。原书的三条判据：<strong>复用性</strong>（多个应用重复实现、差异不产生业务价值，例如工作区快照、沙箱创建、Trace 采集；任务终止条件和验收标准不属于此类）、<strong>强制性</strong>（必须由被约束方之外的组件执行才生效，例如权限校验、出站控制、预算上限、审计；只写在提示词里、或由被约束的 Agent 自己调用的约束不是强制的）、<strong>可验证性</strong>（需要独立于执行方的证据来源，Agent 自己上报的结果不构成独立证据）。<strong>必须满足复用性，且至少满足另外一条</strong>。</p>
+    <p>由此给出窄定义：<strong>Agentic OS 是为 Agent 任务提供公共运行对象、公共能力接入、可强制边界与统一证据的系统层，以任务、环境、能力、授权与证据为核心管理对象，不持有任务语义</strong>。三条否定同样重要：它<strong>不替代 Harness</strong>（模型看什么、调什么、何时停、怎样验收仍留在应用侧）；它<strong>不是又一个框架</strong>（框架的约束在不用该框架时失效，系统层的约束应在被约束方不配合时仍然成立）；它<strong>不必然意味着修改内核</strong>（目标是让能力位于被约束方之外，而不是位于尽可能低的层次）。原书还指出两条正在会合的演进线：平台能力向下沉（openEuler Intelligence、RHEL MCP Server、Windows 的 Agent 账户与 workspace），系统承载向上增强（轻量创建、模板预热、写时复制、PSI 与 cgroup v2），会合点正是环境、授权与证据。</p>
+    <p class="go">用三条判据判断：这项能力该不该下沉？</p>
+  </div>
+  <div class="lab"><div id="sink"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="obj">
+  <div class="part-head"><h2>九类管理对象与三层结构</h2><span class="meta">原书 30.3 节</span></div>
+  <div class="sec-lede">
+    <p>操作系统的形态由核心管理对象决定。原书归纳了九类：Agent 身份、<strong>Run</strong>、Session、Workspace、Skill、Tool 与 MCP 端点、<strong>Budget Lease（预算租约）</strong>、Policy、<strong>Evidence</strong>。其中三个与传统对象差异最大：<strong>Run 与进程不是一个层次</strong>，它可能跨进程、副本、区域，或中途挂起等审批，正确性依据是“任务事实是否完整一致”而不是“进程是否存活”；<strong>Budget Lease</strong> 把配额和最小权限合并成一件事：一次授权同时限定可用资源、可执行操作、有效期限与撤销方式，并可随子任务派生，缺少它，“终止任务”和“收回该任务的全部权限”只能靠多处配置协同；<strong>Evidence</strong> 必须区分计划中、已发出、已确认结果三种操作状态，它直接决定恢复策略（恢复本地工作区不会把已经重启的远程服务恢复原状，已发出未返回的调用直接重试可能重复产生影响）。</p>
+    <p>九类对象的管理职责分三层，各对应一条判断标准：<strong>Agent 运行服务层</strong>解决复用性（Run、Session、Workspace 的生命周期，上下文、记忆、技能的读写接口，并在这些操作上绑定预算租约）；<strong>系统承载层</strong>解决成本与密度（沙箱与工作区的轻量创建、模板共享、及时回收，按活跃状态分配容量；单纯增加沙箱数量可能让整体服务质量下降）；<strong>治理与证据层</strong>解决强制性与可验证性（身份、策略、授权集中定义，判定点分布在请求路径上，采集模型调用与系统行为的关联证据，提供恢复与补偿所需的操作记录）。最重要的一条边界是运行服务层与应用侧 Harness 编排层之间：<strong>任务语义不下沉</strong>。“一旦系统层开始规定任务该如何完成，它就从操作系统退化为框架。”</p>
+    <p>原书反复引用阿里开源的 ANOLISA 作为组织方式的样本（并说明多数组件仍是 0.x 版本）：Token-less 在 Agent 与模型之间压缩工具 schema 和响应，不改框架代码，被丢弃的项保留可检索标记，是一次“合格下沉”；AgentSight 用 eBPF 观测，提供独立于执行方的证据；Agent Sec Core 的 Skill Ledger 给技能补上签名、漂移检测和阻断状态，说明“Skill 可校验”需要这三样同时存在。</p>
+    <p class="go">盖住右列，自测每类对象缺失时会怎样。</p>
+  </div>
+  <div class="lab"><p class="lab-t">九类核心管理对象（原书表 30-2）</p><div id="ob"></div></div>
+  <div class="notes" id="n-obj"></div>
+</section>
+
+<section class="part" id="dec">
+  <div class="part-head"><h2>解耦、标准化与互操作</h2><span class="meta">原书 30.4–30.5 节</span></div>
+  <div class="sec-lede">
+    <p>Agentic OS 能否成立取决于四个解耦面上是否有稳定接口，所谓稳定，是能在不重写任务语义的前提下替换实现，<strong>并用同一套评估证明替换前后能力等价</strong>。<strong>模型与 Harness</strong>：接口形态相对成熟，但协议兼容不等于能力等价，模型替换只能用完整 Harness 回归验证；<strong>Harness 与运行时</strong>：状态外置已成共识，“一次运行”的定义还不一致；<strong>能力与协议</strong>：MCP 解决了发现与调用，但副作用、幂等性、风险等级缺少可机读声明，不能把“能发现”当成“可执行”；<strong>运行时与承载环境</strong>：多后端可配置已有实践，缺的是快照语义的边界声明（内部快照能恢复什么、不能恢复什么）。解耦也有代价：版本组合矩阵、不改接口却改变行为的隐式变更（系统更新带来模型变化后要重新验证提示词行为）、评估成本，评估因此从“质量保障手段”变成“解耦的前提条件”。</p>
+    <p>原书认为具备标准化条件的有六类接口：任务与运行对象模型、身份与授权（委派链、租约的授予与撤销）、<strong>能力描述与发现</strong>（补充副作用、幂等性、风险等级、前置条件，原书认为这是当前最欠缺、收益最直接的一类）、可观测事件语义、评估与指标口径、执行环境契约。形成机制有上游贡献、多方共建、可复现测评三种。生态化分三层：<strong>协议兼容</strong>（能互相调用，MCP 在工具接入上已达到）→ <strong>语义一致</strong>（相同调用产生相同的可观察后果，包括错误分类、重试语义、状态变更范围，目前普遍未达到）→ <strong>证据可比</strong>（运行记录与评估结果能放在同一口径比较）。原书提醒标准化不应先于共性问题收敛，并推荐一种披露口径：<strong>数字 + 适用范围 + 测量来源</strong>，缺少后两者的单一百分比，数值再高也没有跨实现比较的价值。</p>
+    <p class="go">这条效能声明披露得够不够？</p>
+  </div>
+  <div class="lab"><div id="disc"></div></div>
+  <div class="notes" id="n-dec"></div>
+</section>
+
+<section class="part" id="auto">
+  <div class="part-head"><h2>从可靠执行到可控自治</h2><span class="meta">原书 30.6 节</span></div>
+  <div class="sec-lede">
+    <p>原书把第 4 篇的完成验证和第 6 篇的权限审批合在一起，得到一条<strong>自治阶梯</strong>：L1 建议（由人执行）、L2 单步获准执行、L3 有界自主（限定资源、预算、操作集，需要预算租约和完整轨迹）、L4 长任务自主（需要可级联撤销的授权、可回退的工作区，并区分计划 / 已发出 / 已确认）、L5 组织级自治（需要可验证的委派链、跨域强制点和跨组织可审计的责任证据）。隐含的判断是：<strong>自治程度的上限不由模型能力决定，而由可撤销范围与可证明范围决定</strong>。一项操作既不能撤销、也不能证明结果，无论模型多可靠，交给自主执行都缺少工程依据。</p>
+    <p>纳管多来源 Agent 时最常见的表述问题，是把“能观测到”说成“能控制住”。一项边界只有同时满足三个条件才能称为<strong>强制边界</strong>：覆盖全部可用路径（任务入口、凭证获取、网络与 DNS、文件与进程间通信、子进程、原生工具、后台任务与子 Agent、交互控制台）；判定组件不可用时<strong>失败即拒绝</strong>（fail-closed）；通过<strong>负向测试</strong>证明绕过尝试确实被拒绝。任一不满足，就只是<strong>观测边界</strong>。同理，“只读接入”是需要证明的结论：没有“写路径不可达”的负向测试，准确的说法是“未观察到写操作”。接入能力可以分为外部边界强制、包装器中介（强制性取决于被接入方是否绕过）、仅观测、不支持四类，原书用 ANOLISA 说明同一产品的两项能力可能落在不同类别，“是否受控”只能按能力、路径、证据分别回答。</p>
+    <p>失败处理的最后一块：工作区快照只解决文件状态回退，数据库写入、消息发送、工单创建、远程重启不会随内部回滚撤销。长任务恢复需要三样配合：区分三种状态的操作记录、识别重复提交的幂等键、针对不可逆操作的显式补偿。已发出但结果未返回时，先查实际状态再决定重试或补偿。长期记忆里也可能保留已经失效的结论，恢复时要重新查询当前状态，而不是直接采信历史记忆。</p>
+    <p class="go">先回答两个问题看自治上限；再判断一个边界能否称为“强制”。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">这项操作最多交给哪一级自治？</p>
+    <div class="selrow"><span>操作能撤销或补偿吗</span><div class="seg" id="lvR"><button data-v="y" aria-pressed="true">能（有回退或补偿）</button><button data-v="n">不能（不可逆）</button></div></div>
+    <div class="selrow"><span>结果能被独立证明吗</span><div class="seg" id="lvP"><button data-v="y" aria-pressed="true">能（独立证据、可查询状态）</button><button data-v="n">不能</button></div></div>
+    <div class="selrow"><span>已具备的边界</span><div class="seg" id="lvB"><button data-v="1">只有逐次审批</button><button data-v="2" aria-pressed="true">预算租约 + 工作区限定</button><button data-v="3">+ 可级联撤销授权、三态操作记录</button><button data-v="4">+ 可验证委派链、跨域强制点</button></div></div>
+    <div class="ladder" id="lad"></div>
+    <p class="verdict3" id="ladV"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">能称为“强制边界”吗？（原书 30.6.2 节）</p>
+    <div id="enf"></div>
+  </div>
+  <div class="notes" id="n-auto"></div>
+</section>
+
+<section class="part" id="open">
+  <div class="part-head"><h2>七个开放问题</h2><span class="meta">原书 30.7–30.8 节</span></div>
+  <div class="sec-lede">
+    <p>原书为每个尚无公认答案的问题都给了一个<strong>判断进展的标志</strong>，方便读者在之后一两年里自己校准。这种写法本身值得学：不预测结论，只说清看到什么信号就说明问题有了进展。之外还有一个更基础的问题：面向 AI 负载的基础机制重构能否成立（如 LithOS 重新设计 GPU 资源管理，Agent libOS 在运行时管理授权上限、预算与操作记录），原书判断这类重构更可能先在专用执行域（代码修改与测试、数据分析、工具执行这类依赖和权限范围明确的任务）里被验证。</p>
+    <p>全书的收尾回到起点：模型是认知核心，但可靠性不能寄托于模型本身。一项能力是否真正成立，原书给的判断依据始终是三个问题：<strong>它能否在被约束方不配合时仍然生效；它的效果能否用独立证据证明；它能否在版本演进中被持续维护</strong>。Agentic OS 会不会成为稳定的产品品类，取决于这三个问题在多少条路径上得到了肯定回答。</p>
+    <p class="go">点开每个问题，看原书给的进展标志。</p>
+  </div>
+  <div class="lab oq" id="oq"></div>
+  <p class="xref">回到系列起点：<a href="../2026-10-22-handbook-1/">01 AI 原生应用的新阶段</a> 里第一次提到 Agentic OS 的地方；或打开<a href="../2026-10-22-handbook/">系列总览</a>复习全部速记。</p>
+  <div class="notes" id="n-open"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 在做和上线差多少？为何编码快 10 倍交付只快一点？</summary><p class="ans">调研中已开发完成或开发中的合计 46%，部署到生产的只有 18%，持续迭代的不到 10%；卡点不在意愿和模型，而在持续演进 Agent 的工程能力（评估 55% 靠人工抽查、轨迹自动评估仅 6%）。交付周期由整条链路决定：20 天里编码只占 2 天，编码快 10 倍也只从 20 天降到 18.2 天，上限是 18 天；需求澄清、评审、测试这些由人衔接的节点决定吞吐上限。</p></details>
+    <details><summary>2. 下沉的条件？三条“不是”？</summary><p class="ans">必须满足复用性（多应用重复实现、差异不产生业务价值），且至少满足强制性（必须由被约束方之外执行）或可验证性（需要独立证据来源）之一。Agentic OS 不替代 Harness（任务语义不下沉）、不是又一个框架（约束应在被约束方不配合时仍成立）、不必然修改内核（目标是位于被约束方之外，而非层次更低）。</p></details>
+    <details><summary>3. 自治上限由什么决定？强制与观测边界如何区分？</summary><p class="ans">由可撤销范围与可证明范围决定，而不是模型能力：既不能撤销也不能证明的操作，不应交给自主执行。强制边界要同时满足：覆盖全部可用路径、判定组件不可用时 fail-closed、通过负向测试证明绕过被拒绝；任一不满足只能称观测边界。“只读接入”也需要“写路径不可达”的负向测试，否则只能说“未观察到写操作”。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-handbook-14/"><small>上一篇</small><span>14 · Agent 调优：轨迹、数据集、Badcase 与自进化</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">aliyun/ai-agent-handbook</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 调研 ---------- */
+S.guess($('#sg'), {
+  q: '1906 份问卷里，Agent 已经<b>部署到生产</b>的受访者占百分之多少？',
+  unit: '%',
+  ans: 18,
+  fmt: function (x) { return S.f(x, 0); },
+  why: '已开发完成或开发中的合计 46%，但部署到生产的只有 18%，持续迭代的不到 10%。'
+});
+S.bars($('#svBars'), [
+  { label: '已开发完成或开发中', value: .46, text: '46%' },
+  { label: '已部署到生产', value: .18, text: '18%', cls: 'alt' },
+  { label: '有上下文与记忆管理需求', value: .90, text: '90%' },
+  { label: '最需要多模型路由与降级', value: .63, text: '63%' },
+  { label: '采购 Coding 工具', value: .57, text: '57%' },
+  { label: '评估靠人工抽查', value: .55, text: '55%', cls: 'alt' },
+  { label: '基于轨迹自动评估', value: .06, text: '6%', cls: 'alt' },
+  { label: '任务成功率 ≥ 90%', value: .10, text: '约 10%', cls: 'dim' },
+  { label: '没量化过成功率', value: .16, text: '16%', cls: 'dim' },
+  { label: '完成 MCP 企业内私有部署', value: .09, text: '9%', cls: 'dim' }
+]);
+$('#svBars').classList.add('wide');
+S.notes($('#n-survey'), {
+  c: [
+    ['在做 vs 上线', '46% 在开发或已完成，18% 上线，持续迭代不到 10%。'],
+    ['形态共存', '单 Agent 40%、多 Agent 42%、15% 以人在回路为主要架构。'],
+    ['评估短板', '55% 人工抽查，轨迹自动评估 6%，16% 未量化成功率。']
+  ],
+  p: [
+    ['卡点', '不是意愿或模型能力，而是持续演进 Agent 的工程能力。'],
+    ['选型建议', '供应商碎片化，可迁移的工程抽象比押注厂商更有价值。'],
+    ['记忆痛点', '检索不准 54%、更新遗忘缺失 48%，窗口限制只排第三。'],
+    ['数据来源', '阿里云开发者沙龙问卷，样本以参会开发者为主。']
+  ]
+});
+
+/* ---------- 案例 ---------- */
+function ad() {
+  var T = +$('#adTs').value, C = Math.min(+$('#adCs').value, T), N = +$('#adNs').value;
+  $('#adT').textContent = T; $('#adC').textContent = C; $('#adN').textContent = N;
+  var R = T - C + C / N;
+  $('#adR').textContent = S.f(R, 1) + ' 天'; $('#adS').textContent = S.f(T / R, 2) + ' 倍'; $('#adM').textContent = S.f(T - C, 1) + ' 天';
+}
+['adTs', 'adCs', 'adNs'].forEach(function (id) { $('#' + id).addEventListener('input', ad); }); ad();
+HB.cards($('#cs'), {
+  opts: ['交付链路', '领域化', '先治数据', '规模化复用'],
+  items: [
+    { t: '“只要交付链路里存在由人衔接的节点，该节点就决定了吞吐上限。”', a: 0, why: '云通信团队的结论：编码提效不等于交付提效。' },
+    { t: '“通用 AI Review 工具缺乏领域知识与业务理解，难以满足专家级审查需求。”', a: 1, why: 'Kitta：沉淀项目级专家资产、定制审查流程与领域知识库。' },
+    { t: '“底层监控指标全部显示正常，终端用户体验却已明显劣化。”', a: 2, why: '畅捷通的“指标陷阱”，转向以用户体验为中心的可观测。' },
+    { t: '“先治数据、再上工具、以场景建信任。”', a: 2, why: '吉利智能运维的总结。' },
+    { t: '“我们追求的不是让企业里多出更多 Agent，而是让今天解决过的问题，成为明天可以复用的能力。”', a: 3, why: '滔搏的规模化运营实践。' },
+    { t: '“把可执行、可验证、可回放的工作交给 Agent，把目标、架构、风险和最终放行留给人。”', a: 0, why: 'AgentTeam 案例：重新分配人的注意力。' }
+  ]
+});
+S.notes($('#n-cases'), {
+  c: [
+    ['编码 ≠ 交付', '20 天里编码 2 天，编码快 10 倍也只到 18.2 天；瓶颈在人衔接的节点。'],
+    ['领域化', '把通用 Agent 加上领域专家资产、审查流程和知识库。'],
+    ['先治数据', '指标陷阱：资源指标全绿，用户体验已劣化。']
+  ],
+  p: [
+    ['研发团队的三件事', '让研发系统可被调用、让过程可验证、让任务可持续运行（PolarDB-X）。'],
+    ['人的位置', '目标、架构、风险和最终放行留给人。'],
+    ['读案例的方式', '取方法，不取数字；数据多来自内部评测与生产统计。']
+  ]
+});
+
+/* ---------- GOAI ---------- */
+S.sortGame($('#gp'), {
+  bins: [{ k: 'sep', t: '执行与验证分离' }, { k: 'bind', t: '授权绑定到具体动作' }, { k: 'det', t: '关键计算交给确定性引擎' }, { k: 'rej', t: '拒绝作为合法终态' }],
+  items: [
+    { t: '一个 Agent 负责改配置，另一个独立 Agent 只负责检查结果', k: 'sep', why: '执行者不能自己宣布成功。' },
+    { t: '审批批准的是“把 A 服务的副本数从 3 改到 5”，而不是“允许操作 A 服务”', k: 'bind', why: '授权与具体动作和参数绑定。' },
+    { t: '佣金结算金额由规则引擎计算，模型只负责解释与核对', k: 'det', why: '关键数值不交给模型生成。' },
+    { t: '证据不足时任务以“拒绝执行并说明原因”结束，并被计为正常结果', k: 'rej', why: '拒绝不是失败，是合法终态。' },
+    { t: '原始图纸只读，修复只能在白名单字段上进行', k: 'bind', why: '权限被收窄到明确的可修改范围（原书称为可迁移模式）。' },
+    { t: '修复补丁由独立的验证 Agent 跑测试后才进入审批', k: 'sep', why: '验证与执行分离。' }
+  ]
+});
+S.notes($('#n-goai'), {
+  c: [
+    ['赛道要求', '至少三个职能不同的 Agent、Skill 封装能力、覆盖输入到经验沉淀的完整链路。'],
+    ['四条工程模式', '执行与验证分离、授权绑定到具体动作、关键计算交给确定性引擎、拒绝作为合法终态。']
+  ],
+  p: [
+    ['核心判断', '高风险流程可以交给 Agent，前提是权限设计到位；不需要更强的模型。'],
+    ['可迁移模式', '原件只读 + 白名单修复；同一控制面替换工具、阈值与场景能力。']
+  ]
+});
+
+/* ---------- 下沉 ---------- */
+HB.cards($('#sink'), {
+  opts: ['应下沉到系统层', '留在应用侧', '需要跨厂商约定接口'],
+  items: [
+    { t: '沙箱的创建、模板预热与回收。', a: 0, why: '复用性 + 承载成本；多个应用重复实现，差异不产生业务价值。' },
+    { t: '网络出站控制与预算上限的强制执行。', a: 0, why: '复用性 + 强制性：必须由被约束方之外执行才生效。' },
+    { t: '模型调用与系统行为的关联观测（不依赖 Agent 自报）。', a: 0, why: '复用性 + 可验证性：独立证据来源。' },
+    { t: '这个任务何时算完成、验收标准是什么。', a: 1, why: '任务语义，不满足复用性，下沉会让系统层退化成框架。' },
+    { t: '上下文怎样策展、给模型看哪些材料。', a: 1, why: '边界规范可以作为接口约定下沉，但具体策展策略留在应用侧。' },
+    { t: '各框架对“一次运行”的统一定义，以及工具的副作用 / 幂等声明。', a: 2, why: '原书把约束一、三归为接口与元数据标准化问题，需要跨厂商约定，而不是某一层独占实现。' }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['五项共识', '对象是系统；任务要长期管理；发现与授权分开；自主性匹配权限与可验证性；证据是发布前提。'],
+    ['三条下沉判据', '复用性（必须）+ 强制性或可验证性（至少一条）。'],
+    ['Agentic OS（窄定义）', '为 Agent 任务提供公共运行对象、公共能力接入、可强制边界与统一证据的系统层，不持有任务语义。']
+  ],
+  p: [
+    ['六类约束', '任务标识、环境成本、能力元数据、上下文与状态边界、授权派生与收回、证据口径。'],
+    ['三条否定', '不替代 Harness；不是又一个框架；不必然修改内核。'],
+    ['两条会合的线', '平台能力向下沉 + 系统承载向上增强，会合于环境、授权、证据。'],
+    ['产品形态', '当前工业实现是“内核与服务增强 + 功能层融合”的组合，不是底层架构颠覆。']
+  ]
+});
+
+/* ---------- 对象 ---------- */
+HB.vs($('#ob'), {
+  k: '管理对象', a: '语义 · 既有系统中的近似物', b: '缺失时的后果',
+  rows: [
+    ['Agent 身份', '可被授权、审计的执行主体 · 服务账号、独立标准账户', '无法区分 Agent 与用户的操作责任'],
+    ['Run（任务运行）', '有目标、可暂停、可恢复的执行 · 进程组、作业、工作流实例', '跨框架无法统一计量、限流与排障'],
+    ['Session', '交互与上下文的连续性载体 · 会话、连接', '上下文历史被误当作任务事实'],
+    ['Workspace', '任务可读写的文件与制品空间 · 目录、卷、容器层', '并发任务互相污染，失败后无法回退'],
+    ['Skill', '可复用、可发布、可校验的行动方法 · 脚本、软件包', '能力沉淀不可审计，也无法回滚'],
+    ['Tool 与 MCP 端点', '可发现、可调用的外部能力 · 系统调用、API、服务', '能力发现与执行授权混同'],
+    ['Budget Lease', '有上限、有期限、可收回、可随子任务派生的额度 · 配额、cgroup 限额', '预算失控，且子任务无法被约束'],
+    ['Policy', '可强制执行的边界声明 · 访问控制、seccomp、网络策略', '约束只存在于提示词中'],
+    ['Evidence', '计划、已发出、已确认结果的记录 · 日志、审计记录', '无法证明变更改进，也无法安全重试']
+  ]
+});
+S.notes($('#n-obj'), {
+  c: [
+    ['Run ≠ 进程', '可跨进程、副本、区域，可挂起等审批；正确性看任务事实，不看进程存活。'],
+    ['Budget Lease', '一次授权同时限定资源、操作、期限与撤销方式，可随子任务派生、级联收回。'],
+    ['Evidence 三态', '计划中 / 已发出 / 已确认，直接决定恢复与补偿策略。']
+  ],
+  p: [
+    ['三层结构', '运行服务层（复用）、系统承载层（成本与密度）、治理与证据层（强制与可验证）。'],
+    ['最重要的边界', '任务语义不下沉；系统层规定任务怎么做就退化成框架。'],
+    ['合格下沉的样本', 'Token-less：放在调用路径上，不改框架、可逆压缩。'],
+    ['密度的代价', '模板共享、暂停恢复本身有开销，过度回收拖慢恢复。']
+  ]
+});
+
+/* ---------- 解耦与标准 ---------- */
+HB.cards($('#disc'), {
+  opts: ['披露完整', '缺适用范围', '缺测量来源', '缺两者'],
+  items: [
+    { t: '“我们的方案节省了 40% 的 Token。”', a: 3, why: '单一百分比，既没说作用于什么、在什么负载下，也没说怎么测的，没有跨实现比较的价值。' },
+    { t: '“某编码任务中，进入上下文的工具响应节省约 31.7 万 Token（约 40.5%），由 AgentSight 测得；只作用于工具响应，不等于整场会话账单，结果随负载变化。”', a: 0, why: '原书引用的 ANOLISA 披露方式：数字 + 适用范围 + 测量来源。' },
+    { t: '“经 eBPF 观测测得，工具响应压缩率 38%。”', a: 1, why: '有来源，但没说适用的任务、负载，以及是否等于整体成本。' },
+    { t: '“在代码修改类任务、工具响应部分，Token 节省约四成。”', a: 2, why: '有范围，但没说是怎么测的、是单次观测还是基准。' }
+  ]
+});
+S.notes($('#n-dec'), {
+  c: [
+    ['稳定接口', '不重写任务语义即可替换实现，并用同一套评估证明能力等价。'],
+    ['四个解耦面', '模型 ↔ Harness、Harness ↔ 运行时、能力 ↔ 协议、运行时 ↔ 承载环境。'],
+    ['互操作三层', '协议兼容 → 语义一致 → 证据可比。']
+  ],
+  p: [
+    ['协议兼容 ≠ 能力等价', '模型替换只能用完整 Harness 回归验证。'],
+    ['最欠缺的元数据', '副作用、幂等性、风险等级、前置条件。'],
+    ['解耦的三项代价', '版本组合矩阵、隐式行为变更、评估成本。'],
+    ['披露三段式', '数字 + 适用范围 + 测量来源。']
+  ]
+});
+
+/* ---------- 自治 ---------- */
+var LAD = [['L1', '建议：生成命令或方案，由人执行'], ['L2', '单步获准执行：每次变更前请求批准'], ['L3', '有界自主：在限定资源、预算与操作集内连续执行'], ['L4', '长任务自主：跨会话长期执行，可暂停与恢复'], ['L5', '组织级自治：跨系统、跨团队委派与协作']];
+var lv = { r: 'y', p: 'y', b: 2 };
+function lad() {
+  var max;
+  if (lv.r === 'n' && lv.p === 'n') max = 1;
+  else if (lv.r === 'n' || lv.p === 'n') max = 2;
+  else max = Math.min(5, lv.b + 1);
+  $('#lad').innerHTML = LAD.map(function (l, i) { return '<div class="' + (i < max ? 'ok' : 'no') + '"><b>' + l[0] + '</b><span>' + l[1] + '</span></div>'; }).join('');
+  var v = $('#ladV');
+  if (max === 1) { v.className = 'verdict3 bad'; v.innerHTML = '既不能撤销、也不能证明结果：无论模型多可靠，交给自主执行都缺少工程依据，停在 L1（只给建议）。'; }
+  else if (max === 2) { v.className = 'verdict3 bad'; v.innerHTML = '可撤销与可证明缺了一项：最多 L2，每次执行前由人批准，并记录输入、输出与批准。'; }
+  else {
+    var nextNeed = ['', '', '', '可级联撤销的授权、可回退的工作区、三态操作记录', '可验证的委派链与跨域强制点'][max] || '';
+    v.className = 'verdict3';
+    v.innerHTML = '上限是 ' + LAD[max - 1][0] + '：由已具备的边界与证据决定。' + (nextNeed ? '要再往上，需要补齐下一级的边界：' + nextNeed + '。' : '已到阶梯顶端，仍需跨组织可审计的责任证据。');
+  }
+}
+S.seg($('#lvR'), function (v) { lv.r = v; lad(); });
+S.seg($('#lvP'), function (v) { lv.p = v; lad(); });
+S.seg($('#lvB'), function (v) { lv.b = +v; lad(); });
+lad();
+HB.check($('#enf'), {
+  items: [
+    { t: '覆盖全部可用路径', d: '入口、凭证、网络与 DNS、文件与 IPC、子进程、原生工具、后台任务与子 Agent、交互控制台', miss: '还有路径没被覆盖（例如子进程或后台任务），只能说“已覆盖路径”的子集。', on: true },
+    { t: '失败即拒绝（fail-closed）', d: '判定组件不可用时拒绝，而不是放行', miss: '策略服务一挂就全部放行，边界在最需要的时候失效。', on: true },
+    { t: '负向测试证明绕过被拒绝', d: '实际构造绕过尝试并验证', miss: '没有负向测试，就不知道 hook 会不会被绕过。', on: false }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>可以称为强制边界</b>。描述接入能力时，再写清：强制还是观测、覆盖的操作语义、覆盖的执行路径、证据质量。</p>' : '<p class="bad"><b>只能称为观测边界</b>：能发现越界，但不能保证阻止。</p>'; }
+});
+S.notes($('#n-auto'), {
+  c: [
+    ['自治阶梯', 'L1 建议、L2 单步获准、L3 有界自主、L4 长任务自主、L5 组织级自治。'],
+    ['自治上限', '由可撤销范围与可证明范围决定，而不是模型能力。'],
+    ['强制边界三条件', '覆盖全部路径、fail-closed、负向测试证明绕过被拒绝。']
+  ],
+  p: [
+    ['只读接入', '需要“写路径不可达”的负向测试；否则说“未观察到写操作”。'],
+    ['四类接入能力', '外部边界强制、包装器中介、仅观测、不支持；按能力与路径分别回答。'],
+    ['恢复三件套', '三态操作记录、幂等键、显式补偿；已发出未返回先查状态。'],
+    ['失效的记忆', '恢复时重新查询当前状态，不直接采信历史结论。']
+  ]
+});
+
+/* ---------- 开放问题 ---------- */
+var OQ = [
+  ['Run 对象应该落在哪一层？', '是否出现被多个框架共同采用的任务状态语义，且该语义在框架不配合时仍能被宿主观测与约束。'],
+  ['Agent 身份与委派链如何跨组织传递？', '是否出现可被独立第三方验证的委派凭证格式，以及配套的撤销机制。'],
+  ['副作用与幂等性能否成为可机读的能力元数据？', '主流工具协议是否引入副作用与幂等性字段，且运行时确实依据这些字段改变重试行为。'],
+  ['沙箱与工作区的成本—隔离最优点在哪？', '是否出现在 Agent 典型负载下同时公开创建吞吐、空载占用、恢复时延与隔离强度的可复现测评（对照 gVisor、Occlum、Asterinas 等路线）。'],
+  ['共享状态如何既复用又不越界？', 'KV Cache、长期记忆、技能库的分域机制是否成为默认配置而非可选项，以及是否有对应的越权检测手段。'],
+  ['评估如何从离线数据集走向系统级基准？', '是否形成在相同负载、权限与服务目标下同时评价质量、成本与安全的公开方法。'],
+  ['自进化的变更边界在哪？', '是否出现被广泛接受的变更分级与准入规则，使部分自动变更可在无人审批时发布，同时保留回滚能力。']
+];
+$('#oq').innerHTML = OQ.map(function (q, i) { return '<details><summary>问题' + '一二三四五六七'[i] + '：' + q[0] + '</summary><p><b>进展标志：</b>' + q[1] + '</p></details>'; }).join('');
+S.notes($('#n-open'), {
+  c: [
+    ['七个开放问题', 'Run 的层次、跨组织委派、副作用元数据、隔离成本曲线、共享状态分域、系统级基准、自进化边界。'],
+    ['写法', '不预测结论，只给“看到什么信号就说明有进展”。']
+  ],
+  p: [
+    ['判断一项能力的三问', '被约束方不配合时能否生效？效果能否用独立证据证明？能否在版本演进中持续维护？'],
+    ['基础机制重构', '更可能先在依赖与权限范围明确的专用执行域里被验证。'],
+    ['全书起点', '模型是认知核心，但可靠性不能寄托于模型本身。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

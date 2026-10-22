@@ -1,0 +1,404 @@
+---
+title: 任务：编排、长程推进与协作流转
+desc: AI Agent Handbook 学习笔记（四）：Agent Loop 五阶段与权威任务状态机、多维预算、Todo / Plan Mode / Planner–Executor 与阶段门禁、Subagent 委派契约与失败传播、Delegation 与 Handoff、异步任务与 Continuation、Middleware 与执行内核测试、按失败类型恢复、由证据决定完成。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 04</span><span>对应原书第 4 章</span><span>约 30 分钟</span>
+h1: 模型只能<em>申请</em>完成
+lead: 模型的一次输出只是离散判断，企业任务却是一个持续过程：先理解环境、再定计划、连续调工具、关键动作前等审批、把一部分委派出去、失败了要恢复，最后用环境事实证明目标达成。这一篇讲 Harness 的执行内核怎样把一次次判断组织成有状态、可控制、可恢复的任务。全篇用原书的同一个案例：修复支付服务的高危依赖漏洞并形成可审批变更。
+nav: loop|Loop 与状态;plan|计划与门禁;sub|Subagent;async|异步续行;mw|Middleware 与测试;verify|恢复与完成;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.sm { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 760px) { .sm { grid-template-columns: minmax(0, 1fr); } }
+.sm-cur { font-family: var(--f-num); font-size: 26px; font-weight: 700; color: var(--s1); margin: 4px 0; }
+.sm-cur.end { color: var(--ok); } .sm-cur.bad { color: var(--alert); }
+.sm-sem { font-size: 15px; color: var(--ink-2); margin: 0 0 10px; }
+.sm-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.sm-log { font-family: var(--f-num); font-size: 15px; line-height: 1.8; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 12px; max-height: 260px; overflow-y: auto; color: var(--ink-2); }
+.sm-log .w { color: var(--alert); }
+.yaml { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; white-space: pre; overflow-x: auto; color: var(--ink-2); margin: 10px 0 0; }
+.yaml .k { color: var(--s1); }
+.yaml .miss { color: var(--alert); }
+.phase { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.phase span { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 12px; font-size: 15px; color: var(--ink-3); background: var(--bg); }
+.phase span.on { background: var(--s1); color: #fff; border-color: var(--s1); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>为什么任务状态不能只靠消息历史？WAITING、PAUSED、VERIFYING 分别说明什么？</li>
+    <li>什么时候值得用 Subagent？Delegation 和 Handoff 有什么不同？</li>
+    <li>有副作用的操作超时了，该不该直接重试？“完成”由谁说了算？</li>
+  </ol>
+</div>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>Agent Loop 与权威任务状态</h2><span class="meta">原书 4.1 节</span></div>
+  <div class="sec-lede">
+    <p>Agent Loop 是 Harness 最稳定的内核：不要求模型一次给出答案，而是重复“判断—行动—观察—再判断”，直到任务被<strong>验证</strong>完成、进入等待、失败或取消。原书把它抽象为五个阶段：<strong>Prepare</strong>（读取权威状态、确定本轮目标、请 Context Builder 装配输入）→ <strong>Model</strong>（判断下一步是行动、委派、询问、等待还是申请完成）→ <strong>Act</strong>（交给 Action Plane 做参数、身份、策略、审批、执行）→ <strong>Observe</strong>（把结果标准化并更新任务事实）→ <strong>Verify</strong>（不接受“我已经完成”作为唯一依据）。浏览文件、跑代码、调远程 Agent 都只是 Act 的不同实现，核心 Loop 保持不变。</p>
+    <p>消息历史记录的是交流过程，不该是任务状态的唯一来源。Harness 至少要维护一份<strong>可机读的权威状态</strong>：目标、阶段、Plan 与 Todo、已确认事实、阻塞项、子任务、Artifact、剩余预算、等待原因、完成依据。模型看到的是由这份状态生成的任务视图，而不是从几百条消息里猜进度。状态显式化以后，Runtime 才能在等待期间释放资源并准确恢复，界面才能说明 Agent 在等什么，观测才能区分执行慢、审批慢和工具慢。</p>
+    <p>Loop 还必须有<strong>外部终止边界</strong>：步骤数、总时长、Token 与费用、工具调用次数、子任务并发、高风险动作次数都进预算。接近阈值时让模型收敛范围、停止新委派、优先完成可交付部分；耗尽时给出明确终态和未完成清单，而不是悄悄截断。</p>
+    <p class="go">驱动一次修复任务的状态机。试试在安全扫描没过时让模型声称完成。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">任务状态机（状态与语义取自原书表 4-1，转移据“允许的下一步”整理）</p>
+    <div class="phase" id="phase"></div>
+    <div class="sm">
+      <div>
+        <div class="sm-cur" id="smCur"></div>
+        <p class="sm-sem" id="smSem"></p>
+        <div class="sm-btns" id="smBtns"></div>
+        <p class="note">扫描结果：<label><input type="checkbox" id="scanOk"> 安全扫描已通过</label></p>
+      </div>
+      <div class="sm-log" id="smLog" aria-live="polite"></div>
+    </div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">预算接近阈值时 Harness 怎么做</p>
+    <label class="ctl"><span>剩余步骤预算（共 60 步） <output id="bgO">36</output></span><input type="range" id="bgS" min="0" max="60" value="36"></label>
+    <p class="verdict3" id="bgV"></p>
+  </div>
+  <div class="notes" id="n-loop"></div>
+</section>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>Planning、Todo 与阶段门禁</h2><span class="meta">原书 4.2 节</span></div>
+  <div class="sec-lede">
+    <p>Planning 的价值不是展示模型隐藏的思考，而是把任务结构<strong>外部化为可读、可改、可验证的控制对象</strong>：阶段目标、依赖、正在执行哪一步、用什么证据判完成。原书按复杂度给了三种方式：<strong>轻量 Todo</strong>（目标明确、步骤少、反馈快）、<strong>Plan Mode</strong>（只读探索 → 写计划 → 确认后执行，适合影响面大、需审阅、环境不清楚）、<strong>Planner–Executor</strong>（Planner 管阶段与依赖、Executor 逐项执行，适合长任务、多依赖、可并行）。计划必须允许修订，但每次重规划要说明触发事实、保留已完成项，<strong>不能靠改写目标掩盖失败</strong>；Todo 只记录会改变可交付状态的事项。</p>
+    <p>长任务不应到最后才验证。原书把修复案例分成五个阶段，每个阶段都有门禁。门禁既减少在错误方向上继续投入，也为上下文压缩、人工接管、跨窗口续行提供稳定边界。好的阶段描述要回答<strong>输出是什么、证据在哪、谁来确认</strong>，而不是“分析问题”“处理代码”“确保质量”。</p>
+    <p>Plan Mode 是“Prompt 约定”与“Harness 控制”的典型对比：Prompt 可以要求“先规划再修改”，但只有<strong>权限模式、工具白名单、持久状态、HITL</strong> 同时生效，“计划获批前不可写”才是真约束。AgentScope 的实现里，探索阶段只开放只读工具和 <code>plan_enter / plan_write / plan_exit / todo_write</code>，<code>plan_exit</code> 触发人工确认，计划写进 <code>plans/PLAN.md</code>，都能跨调用恢复。</p>
+    <p class="go">先给任务选控制方式，再逐个点开五个阶段的门禁。</p>
+  </div>
+  <div class="lab"><p class="lab-t">选哪种计划方式？（任务为示意）</p><div id="pm"></div></div>
+  <div class="lab">
+    <p class="lab-t">漏洞修复的五个阶段与门禁（原书表 4-3）</p>
+    <ol class="flow2" id="gates"></ol>
+  </div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="sub">
+  <div class="part-head"><h2>Subagent：委派的是任务，不是责任</h2><span class="meta">原书 4.3 节</span></div>
+  <div class="sec-lede">
+    <p>Subagent 的价值不是把一个 Agent 包装成多个角色，而是解决三个具体问题：<strong>上下文隔离</strong>（子任务只加载相关内容，主窗口不被探索过程占满）、<strong>能力隔离</strong>（不同模型、指令、Skill、工具与权限）、<strong>并行执行</strong>（互不依赖的检索、实现、验证同时推进）。任务很短、步骤高度依赖、共享对象频繁变化时，委派只会增加通信和合并成本。</p>
+    <p>主 Agent 负责全局目标、计划、预算、依赖和最终结果，<strong>不把“任务完成”的责任交出去</strong>。每个子任务都要带一份可机读契约：目标与边界、已知上下文（哪些决定不可自行改变）、能力与权限、预算、输出与证据、失败语义、验收条件。子代理默认不继承父任务的全部上下文和权限：父任务有权委派，不等于子 Agent 自动获得同等授权。案例里，依赖分析可以只读并行；修复要基于已确认的目标版本、在隔离分支上写；评审必须读取<strong>固定的</strong>差异和测试结果，不与执行者共享未提交的中间判断。多个执行者改同一工作区，要用隔离分支、对象级锁或补丁合并，不能靠“大家小心别冲突”。</p>
+    <p>子任务的产物不是主 Agent 可以直接复述的“答案”，而是<strong>新的 Observation</strong>：经过 Schema 校验、版本检查（防止基于旧代码得出的结论）和父任务验收，才能进入权威状态。失败策略也要事先定义：关键分析失败 <code>FAIL_FAST</code>，非关键探索 <code>BEST_EFFORT</code>，瞬时故障 <code>RETRY_OR_REASSIGN</code>，需要业务决定 <code>ESCALATE</code>。</p>
+    <p class="go">判断这些场景值不值得委派，再给子任务失败选策略。</p>
+  </div>
+  <div class="lab"><p class="lab-t">值得开 Subagent 吗？</p><div id="dlg"></div></div>
+  <div class="lab"><p class="lab-t">子任务失败了，用哪种策略？</p><div id="fs"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Delegation vs Handoff</h4>
+    <p><b>Delegation（委派）</b>：父任务保留责任，把有边界的子任务派出去，结果返回后由父 Agent 整合和验收。<b>Handoff（移交）</b>：任务控制权转移，接收者成为当前责任人，拿到继续推进所需的目标、状态和恢复位置。两者都不能只靠一条自然语言消息实现，至少要有任务关系、状态与责任变更记录。</p>
+  </div>
+  <div class="notes" id="n-sub"></div>
+</section>
+
+<section class="part" id="async">
+  <div class="part-head"><h2>异步任务与长程续行</h2><span class="meta">原书 4.4 节</span></div>
+  <div class="sec-lede">
+    <p>企业任务常常比一次 HTTP 请求、一个终端进程、一个上下文窗口活得更久。所以 Harness 要把<strong>任务身份与当前连接分离</strong>：调用方提交后拿到稳定的 <code>task_id</code>，可以持续消费事件，也可以断开；任务进入等待或后台运行时，Runtime 释放计算资源；条件满足后<strong>从权威状态恢复</strong>，不依赖原进程还活着。后台任务、事件和恢复共用一套契约：任务 ID、父任务 ID、状态、创建者与执行者、输入与 Artifact 引用、事件序号、超时、取消与幂等语义、结果位置、错误分类、Continuation。</p>
+    <p>暂停前，停止创建新行动、处理可中断操作、保存最新状态；恢复时<strong>重新检查</strong>目标、外部条件、工具是否实际执行过、权限是否仍有效、工作区是否变化、剩余预算。取消要沿父子任务传播，但已发生的外部副作用不能假装消失，要保留事实、必要时补偿。Context Reset 只负责控制语义：旧窗口结束前形成一致的继续点，新窗口从权威状态重建任务视图；<strong>Continuation</strong> 应包含目标、当前 Plan、已确认事实、失败尝试、Artifact、等待项、剩余预算和权限模式。</p>
+    <p>用 SDK 嵌入时，多实例下 Session 放共享存储，凭 <code>session_id</code> 在任意实例 <code>resume</code>；但 Session Store 只解决会话接续，任务队列、并发控制和业务幂等仍要企业服务层负责。托管服务（原书以 Qoder Cloud Agents 为例）降低了执行内核的建设成本，目标、工具与数据边界、审批人、成功标准仍归企业。</p>
+    <p class="go">走一遍原书的异步时序：提交、等待扫描、释放资源、恢复。</p>
+  </div>
+  <div class="lab">
+    <div id="asStep"></div>
+    <ol class="flow2" id="asFlow"></ol>
+  </div>
+  <div class="lab">
+    <p class="lab-t">恢复前要重新检查什么（取消勾选看风险）</p>
+    <div id="rsCk"></div>
+  </div>
+  <div class="notes" id="n-async"></div>
+</section>
+
+<section class="part" id="mw">
+  <div class="part-head"><h2>Middleware 与执行内核测试</h2><span class="meta">原书 4.5 节</span></div>
+  <div class="sec-lede">
+    <p>一个常见的演进问题：每加一种能力（压缩、计划、权限、路由、观测），就往 Loop 里塞一组条件分支，短期直接，长期让状态迁移不可预测。原书推荐<strong>稳定内核 + 可插拔能力</strong>：核心 Loop 只定义阶段与状态迁移，Middleware、Hook 或 Ability 在明确的生命周期点读取 Runtime Context，返回放行、修改、短路或追加。扩展本身也要有顺序、读写范围、冲突规则、失败语义和可观测性，最好返回结构化的 Decision 或 Patch，由核心 Loop 统一提交，而不是各自改共享对象。</p>
+    <p>Harness 测试不能只看最终回答。执行内核至少要四类<strong>确定性测试</strong>：状态迁移（只接受合法事件，暂停、取消、失败正确传播）、扩展顺序（时机确定，冲突与短路稳定）、恢复（任意安全点中断后能重建且不重复副作用）、预算与边界（到阈值按设计收敛）。模型输出可以用固定样本、录制回放或模拟器替代，专门测 Harness 的确定性控制；真实模型的端到端效果属于 Evaluation。原书举例：在“补丁已写入但测试结果未返回”时强制中断，恢复后应<strong>先查原测试任务</strong>，而不是再改一次文件或重复启动发布。</p>
+    <p class="go">这些扩展做法，哪些合理、哪些是原书点名“不应做”的？</p>
+  </div>
+  <div class="lab"><div id="mwSort"></div></div>
+  <div class="notes" id="n-mw"></div>
+</section>
+
+<section class="part" id="verify">
+  <div class="part-head"><h2>按失败类型恢复，由证据决定完成</h2><span class="meta">原书 4.6 节</span></div>
+  <div class="sec-lede">
+    <p>“Agent 失败了”不是可执行的诊断。瞬时模型或网络错误适合有界退避；参数错误要修正；环境缺失要重建；权限拒绝应等待或终止；重复探索要重新规划；业务条件不满足要明确缺口。盲目重试只会增加成本和风险。有副作用的行动（发布、通知、写库）重试前必须先回答<strong>“上一次究竟有没有发生”</strong>：超时可能只是响应丢了。Harness 要生成幂等键、记录请求与结果、优先查状态；<strong>无法证明未执行时，不应直接重复</strong>。</p>
+    <p><strong>无进展检测</strong>比最大步数更早发现问题：连续调用相同工具且参数相似、反复得到同一错误、Plan 长时间不变、工作区没有新事实、在少数动作间打转。检测到后先让模型依据结构化证据重新规划，再逐步缩小任务、切换能力、开独立评审或转人工。</p>
+    <p>最关键的一条：<strong>模型只能提出完成申请，Harness 才能提交完成状态</strong>。验证强度与风险匹配，原书分五级：结构验证、环境验证、确定性验证、独立模型验证、人工验收。Verifier 返回结构化缺口和失败证据，验证失败是新的 Observation，不是简单结束。Verifier 是<strong>单次任务</strong>的完成门禁；跨版本判断 Harness 是否更好，属于 Evaluation。</p>
+    <p class="go">先给失败选恢复策略，再给结果选验证层级，最后核对“修复完成”的六条事实。</p>
+  </div>
+  <div class="lab"><p class="lab-t">这次失败怎么处理？</p><div id="rec"></div></div>
+  <div class="lab"><p class="lab-t">这个产物至少要哪一级验证？（原书表 4-5）</p><div id="vl"></div></div>
+  <div class="lab">
+    <p class="lab-t">什么才算“漏洞修复完成”（原书 4.6.3 节）</p>
+    <div id="done6"></div>
+    <pre class="yaml" id="doneY"></pre>
+  </div>
+  <p class="xref">同一结构可以迁移到其他场景：合同审查以条款覆盖、来源和签署为证据；数据修复以影响行数、抽样校验和回滚点为证据；客户工单以系统状态、沟通记录和用户确认为证据。变的是 Verifier，不变的是“模型申请、Harness 依据事实提交”。</p>
+  <div class="notes" id="n-verify"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 为什么任务状态不能只靠消息历史？WAITING、PAUSED、VERIFYING 说明什么？</summary><p class="ans">消息历史会被压缩、截断、误读，模型要从中猜进度；权威状态是可机读的目标、阶段、Plan / Todo、事实、阻塞、子任务、Artifact、预算、等待原因和完成依据，能驱动 Runtime 释放和恢复资源、界面说明在等什么、观测区分慢在哪里。WAITING 不是失败（缺输入、等审批、等事件），PAUSED 不是结束（主动暂停，可恢复），VERIFYING 表示模型申请了完成、正在用证据核验。</p></details>
+    <details><summary>2. 什么时候值得用 Subagent？Delegation 和 Handoff 有什么不同？</summary><p class="ans">当上下文隔离、能力隔离或并行执行的收益超过通信与合并成本时；任务很短、步骤强依赖、共享对象频繁变化时不值得。Delegation 父任务保留责任、负责整合与验收；Handoff 是控制权转移，接收者成为责任人。两者都需要任务关系、状态与责任变更记录。</p></details>
+    <details><summary>3. 有副作用的操作超时了，该直接重试吗？“完成”由谁说了算？</summary><p class="ans">不该。超时可能只是响应丢失，要用幂等键、请求与结果记录先查状态；无法证明未执行时不应重复。完成由 Harness 依据证据提交：模型只能申请，Verifier 按风险选结构 / 环境 / 确定性 / 独立模型 / 人工验收，并返回结构化缺口。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 状态机 ---------- */
+var SEM = {
+  CREATED: '任务已经建立但尚未开始', RUNNING: '正在准备、推理或行动', WAITING_INPUT: '缺少用户或业务信息',
+  WAITING_APPROVAL: '行动明确但需要批准', WAITING_EVENT: '等待工具、子任务或外部系统', PAUSED: '用户或系统主动暂停',
+  VERIFYING: '正在核验阶段或最终结果', COMPLETED: '验收条件已经满足：交付结果与证据', FAILED: '当前策略下不能继续：重开尝试、转人工或结束', CANCELLED: '任务被显式终止：清理资源并保留审计事实'
+};
+var TR = {
+  CREATED: [['开始执行', 'RUNNING'], ['取消', 'CANCELLED']],
+  RUNNING: [['模型：需要用户补充信息', 'WAITING_INPUT'], ['模型：准备修改代码，需批准', 'WAITING_APPROVAL'], ['启动安全扫描，等结果', 'WAITING_EVENT'], ['用户暂停', 'PAUSED'], ['模型：申请完成', 'VERIFYING'], ['预算耗尽 / 不可恢复错误', 'FAILED'], ['取消', 'CANCELLED']],
+  WAITING_INPUT: [['收到输入，恢复', 'RUNNING'], ['超时结束', 'FAILED']],
+  WAITING_APPROVAL: [['批准', 'RUNNING'], ['拒绝或修改后重来', 'RUNNING'], ['取消', 'CANCELLED']],
+  WAITING_EVENT: [['收到扫描完成事件', 'RUNNING'], ['按策略超时', 'FAILED']],
+  PAUSED: [['恢复', 'RUNNING'], ['取消', 'CANCELLED']],
+  VERIFYING: [['运行验收器', '?']],
+  COMPLETED: [], FAILED: [['重开尝试', 'RUNNING']], CANCELLED: []
+};
+var sm = 'CREATED', smN = 0;
+function smLog(t, w) { var d = $('#smLog'); d.innerHTML += '<div' + (w ? ' class="w"' : '') + '>' + (++smN) + '. ' + t + '</div>'; d.scrollTop = 1e5; }
+function smGo(to, lbl) {
+  if (to === '?') {
+    if ($('#scanOk').checked) { smLog(lbl + '：证据齐全 → COMPLETED'); to = 'COMPLETED'; }
+    else { smLog('验收器：安全扫描未通过，产生缺口 → 回到 RUNNING 继续修复', true); to = 'RUNNING'; }
+  } else smLog(sm + ' —' + lbl + '→ ' + to);
+  sm = to; smDraw();
+}
+function smDraw() {
+  var c = $('#smCur'); c.textContent = sm; c.className = 'sm-cur' + (sm === 'COMPLETED' ? ' end' : (sm === 'FAILED' || sm === 'CANCELLED') ? ' bad' : '');
+  $('#smSem').textContent = SEM[sm];
+  var b = $('#smBtns'); b.innerHTML = '';
+  TR[sm].forEach(function (t) { var x = h('button', { class: 'btn', type: 'button', text: t[0] }, b); x.addEventListener('click', function () { smGo(t[1], t[0]); }); });
+  var r = h('button', { class: 'btn', type: 'button', text: '重置' }, b);
+  r.addEventListener('click', function () { sm = 'CREATED'; smN = 0; $('#smLog').innerHTML = ''; smDraw(); });
+  var ph = { CREATED: -1, RUNNING: 0, WAITING_INPUT: 1, WAITING_APPROVAL: 2, WAITING_EVENT: 2, PAUSED: -1, VERIFYING: 4, COMPLETED: 4, FAILED: -1, CANCELLED: -1 }[sm];
+  $('#phase').innerHTML = ['Prepare', 'Model', 'Act', 'Observe', 'Verify'].map(function (p, i) { return '<span class="' + (i === ph ? 'on' : '') + '">' + p + '</span>'; }).join('');
+}
+smDraw();
+function bg() {
+  var r = +$('#bgS').value; $('#bgO').textContent = r;
+  var v = $('#bgV');
+  if (r === 0) { v.className = 'verdict3 bad'; v.innerHTML = '<b>预算耗尽</b>：进入明确终态，并输出未完成清单（比如“t3 独立评审未开始”），而不是悄然截断。'; }
+  else if (r <= 10) { v.className = 'verdict3 bad'; v.innerHTML = '<b>接近阈值</b>：要求模型收敛范围、停止新委派、优先完成可交付部分，或请用户选择取舍。'; }
+  else { v.className = 'verdict3'; v.innerHTML = '正常推进。预算不只是步数：总时长、Token 与费用、工具调用次数、子任务并发、高风险动作次数都应计入。'; }
+}
+$('#bgS').addEventListener('input', bg); bg();
+S.notes($('#n-loop'), {
+  c: [
+    ['Agent Loop 五阶段', 'Prepare → Model → Act → Observe → Verify；能力通过扩展点加入，内核保持稳定。'],
+    ['权威状态', '可机读的目标、阶段、Plan / Todo、事实、阻塞、子任务、Artifact、预算、等待原因、完成依据。'],
+    ['任务视图', '由权威状态生成给模型看，而不是让模型从历史消息里猜进度。']
+  ],
+  p: [
+    ['十个状态', 'CREATED / RUNNING / WAITING_INPUT / WAITING_APPROVAL / WAITING_EVENT / PAUSED / VERIFYING / COMPLETED / FAILED / CANCELLED。'],
+    ['WAITING ≠ 失败，PAUSED ≠ 结束', '显式化后才能释放资源、准确恢复、说清在等什么。'],
+    ['申请完成', '只能进 VERIFYING；验收器补齐证据后才 COMPLETED。'],
+    ['预算维度', '步骤、时长、Token 与费用、工具调用、子任务并发、高风险动作。']
+  ]
+});
+
+/* ---------- 计划 ---------- */
+HB.cards($('#pm'), {
+  opts: ['轻量 Todo', 'Plan Mode', 'Planner–Executor'],
+  items: [
+    { t: '给一个已知函数补三条单元测试。', a: 0, why: '目标明确、步骤少、反馈快，简短有序的待办列表就够。' },
+    { t: '第一次接手一个陌生仓库，要改动公共鉴权模块。', a: 1, why: '影响面大、需要审阅、环境不清楚：先只读探索，计划获批再写。' },
+    { t: '把二十个服务的日志库统一升级，部分可以并行，还要分别做兼容性验证。', a: 2, why: '长任务、多依赖、可并行，需要 Planner 维护阶段和依赖。' },
+    { t: '修复支付服务的高危依赖漏洞，计划要安全负责人确认后才能动代码。', a: 1, why: '“计划获批前不可写”正是 Plan Mode 的约束（需要权限模式与 HITL 配合）。' }
+  ]
+});
+var GATES = [
+  ['影响分析', '受影响模块、依赖链、运行实例清单', '影响范围可追溯，版本事实已核验'],
+  ['修复规划', '升级方案、兼容风险、回滚方案', '计划获批准，写操作权限被放开'],
+  ['变更实施', '代码差异、依赖锁文件、测试补充', '修改仅发生在授权工作区'],
+  ['独立验证', '单测、集成测试、安全扫描、评审意见', '所有强制检查通过，或缺口被显式接受'],
+  ['发布准备', '变更单、发布窗口、回滚入口', '责任人审批；不自动执行生产发布']
+];
+GATES.forEach(function (g, i) {
+  var li = h('li', { html: '<b>' + g[0] + '</b><small><b>产物：</b>' + g[1] + '<br><b>门禁：</b>' + g[2] + '</small>', tabindex: 0, style: 'cursor:pointer' }, $('#gates'));
+  li.addEventListener('click', function () { S.$$('#gates li').forEach(function (x, k) { x.classList.toggle('on', k === i); x.classList.toggle('done', k < i); }); });
+});
+S.$$('#gates li')[0].click();
+S.notes($('#n-plan'), {
+  c: [
+    ['Planning 的价值', '把任务结构外部化为可读、可改、可验证的控制对象。'],
+    ['三种计划方式', '轻量 Todo；Plan Mode（只读探索 → 写计划 → 确认 → 执行）；Planner–Executor。'],
+    ['阶段门禁', '每阶段写清输出、证据位置、确认人；也是压缩、接管、续行的稳定边界。']
+  ],
+  p: [
+    ['重规划规则', '说明触发事实，保留已完成项，不改写目标掩盖失败。'],
+    ['Todo 粒度', '只记录会改变可交付状态的事项；唯一当前项或明确的并行分组。'],
+    ['Prompt vs Harness', '“先规划再修改”要靠权限模式 + 工具白名单 + 持久状态 + HITL 才成立。']
+  ]
+});
+
+/* ---------- Subagent ---------- */
+HB.cards($('#dlg'), {
+  opts: ['值得委派', '不值得'],
+  items: [
+    { t: '在大仓库里并行查三个模块的依赖使用情况，各自产出影响报告。', a: 0, why: '互不依赖的只读探索，并行缩短墙钟时间，也不占满主窗口。' },
+    { t: '改一行配置，然后马上跑一次测试。', a: 1, why: '任务很短、步骤强依赖，委派只增加通信与合并成本。' },
+    { t: '修复补丁完成后，用一份独立上下文、只读权限做评审。', a: 0, why: '上下文与能力隔离：评审不应共享执行者未提交的中间判断。' },
+    { t: '两个 Agent 同时改同一个频繁变化的配置文件。', a: 1, why: '共享对象频繁变化，冲突与合并成本高；真要并行，需要隔离分支、对象级锁或补丁合并。' }
+  ]
+});
+HB.cards($('#fs'), {
+  opts: ['FAIL_FAST', 'BEST_EFFORT', 'RETRY_OR_REASSIGN', 'ESCALATE'],
+  items: [
+    { t: '确定受影响版本的依赖分析子任务失败。', a: 0, why: '关键分析失败，后续都建立在它之上，应立即失败。' },
+    { t: '“顺便看看其他服务有没有类似用法”的探索子任务失败。', a: 1, why: '非关键探索，有多少用多少。' },
+    { t: '评审子代理所在节点网络抖动，调用超时。', a: 2, why: '瞬时故障，重试或换执行者。' },
+    { t: '修复需要升级到不兼容的大版本，是否接受由业务决定。', a: 3, why: '需要业务决定，升级给责任人。' }
+  ]
+});
+S.notes($('#n-sub'), {
+  c: [
+    ['Subagent 的三个价值', '上下文隔离、能力隔离、并行执行。'],
+    ['委派契约', '目标与边界、已知上下文、能力与权限、预算、输出与证据、失败语义、验收条件。'],
+    ['Delegation / Handoff', '保留责任的委派 / 转移控制权的移交。'],
+    ['子任务产物', '是新的 Observation，经 Schema、版本检查和验收后才进入权威状态。']
+  ],
+  p: [
+    ['主 Agent 保留', '全局目标、计划、预算、依赖、最终结果。'],
+    ['权限不继承', '父任务有权委派 ≠ 子 Agent 获得同等授权。'],
+    ['失败策略', 'FAIL_FAST / BEST_EFFORT / RETRY_OR_REASSIGN / ESCALATE。'],
+    ['合并前校验', '输入版本与证据时间，避免采用基于旧代码的结论。']
+  ]
+});
+
+/* ---------- 异步 ---------- */
+var AS = [
+  ['Client 创建修复任务', 'Harness 返回 task_id + event cursor；调用方可以持续消费事件，也可以断开。'],
+  ['Harness 启动安全扫描 / 后台评审', '交给工具或 Subagent，后台执行。'],
+  ['进入 WAITING_EVENT + continuation', 'Harness 把继续点交给 Runtime：此时当前执行资源可以释放。'],
+  ['扫描完成事件到达 Runtime', '事件带序号，便于去重和续接。'],
+  ['Runtime 恢复 continuation', '不依赖原进程或原容器还在。'],
+  ['Harness 从权威状态重建 Context', '重新检查目标、外部条件、工具是否已执行、权限、工作区、预算。'],
+  ['推送进度、Artifact 与完成证据', 'Client 用 cursor 续接，拿到结果。']
+];
+AS.forEach(function (a) { h('li', { html: '<b>' + a[0] + '</b><small>' + a[1] + '</small>' }, $('#asFlow')); });
+S.stepper($('#asStep'), AS.length, function (i) { S.$$('#asFlow li').forEach(function (x, k) { x.classList.toggle('on', k === i); x.classList.toggle('done', k < i); }); });
+HB.check($('#rsCk'), {
+  items: [
+    { t: '目标是否仍然有效', miss: '用户在暂停期间改了需求，Agent 按旧目标继续做。' },
+    { t: '外部条件', miss: '发布窗口已经关闭，或依赖的上游版本又变了。' },
+    { t: '工具是否实际执行过', miss: '重复执行了已经发生的写操作或通知。' },
+    { t: '权限是否仍有效', miss: '凭证已被吊销，或审批已过期，却继续执行高风险动作。' },
+    { t: '工作区是否变化', miss: '别人往分支推了新提交，补丁基于旧代码。' },
+    { t: '剩余预算', miss: '恢复后在已耗尽的预算上继续消耗。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>恢复前六项都检查</b>：从权威状态重建，而不是假设一切如旧。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　少查一项的风险：</p>'; }
+});
+S.notes($('#n-async'), {
+  c: [
+    ['任务身份与连接分离', '稳定 task_id，可断开可续接；等待时释放计算资源。'],
+    ['Continuation', '目标、当前 Plan、已确认事实、失败尝试、Artifact、等待项、剩余预算、权限模式。'],
+    ['Context Reset', '只负责控制语义：旧窗口形成继续点，新窗口从权威状态重建。']
+  ],
+  p: [
+    ['暂停前', '停止新行动、处理可中断操作、保存最新状态。'],
+    ['恢复时复查', '目标、外部条件、工具是否已执行、权限、工作区、预算。'],
+    ['取消', '沿父子任务传播；已发生的副作用保留事实，必要时补偿。'],
+    ['Session Store 的边界', '只解决会话接续；队列、并发、业务幂等归企业服务层。']
+  ]
+});
+
+/* ---------- Middleware ---------- */
+S.sortGame($('#mwSort'), {
+  bins: [{ k: 'ok', t: '合理的扩展' }, { k: 'no', t: '不应做' }],
+  items: [
+    { t: 'Task 创建时做任务分类、设初始预算、绑定版本', k: 'ok', why: '原书表 4-6 中“Task 创建前后”的合理扩展。' },
+    { t: 'Task 创建时悄悄改写用户目标', k: 'no', why: '不应隐式改变用户目标。' },
+    { t: 'Prepare 前插入计划提醒、模型路由', k: 'ok', why: 'Prepare 前后可以做 Context 请求与路由。' },
+    { t: '把任务状态只写进 Prompt', k: 'no', why: '持久状态必须在 Prompt 之外。' },
+    { t: 'Model 调用后做输出解析与无进展检测', k: 'ok', why: '模型调用前后的合理扩展。' },
+    { t: '把模型的敏感推理内容全量落日志', k: 'no', why: '不应记录不应保留的敏感推理内容。' },
+    { t: 'Action 前做预算检查，Action 后标准化结果', k: 'ok', why: 'Action 前后的合理扩展。' },
+    { t: '某个插件直接调用工具，绕开统一的 Action Plane', k: 'no', why: '会绕过权限、审批与审计。' },
+    { t: '状态变化时写 Checkpoint、发通知', k: 'ok', why: 'State 变化前后的合理扩展。' },
+    { t: '几个插件各自维护一份“任务进度”', k: 'no', why: '多处各自维护权威状态，会互相矛盾。' },
+    { t: '只凭模型自述就把任务标记为完成', k: 'no', why: 'Verify 前后应选择验收器、生成缺口，而非凭自述。' }
+  ]
+});
+S.notes($('#n-mw'), {
+  c: [
+    ['稳定内核 + 可插拔能力', '核心 Loop 只定义阶段与状态迁移，扩展在生命周期点返回放行 / 修改 / 短路 / 追加。'],
+    ['扩展的规矩', '有顺序、读写范围、冲突规则、失败语义、可观测；返回 Decision / Patch 由内核统一提交。']
+  ],
+  p: [
+    ['四类确定性测试', '状态迁移、扩展顺序、恢复、预算与边界。'],
+    ['模型替身', '固定样本、录制回放、模拟器，用来测 Harness 本身。'],
+    ['恢复测试的典型断点', '补丁已写、测试未回：恢复后先查原测试任务，不重复写、不重复发布。']
+  ]
+});
+
+/* ---------- 恢复与完成 ---------- */
+HB.cards($('#rec'), {
+  opts: ['有界退避重试', '修正参数', '重建环境', '等待或终止', '重新规划', '先查状态再决定'],
+  items: [
+    { t: '模型服务返回 503。', a: 0, why: '瞬时模型或网络错误，有界退避。' },
+    { t: '工具报错：参数 <code>version</code> 格式不合法。', a: 1, why: '参数错误要修正，重试同样的参数没有用。' },
+    { t: '测试容器里缺少 JDK。', a: 2, why: '环境缺失，需要重建环境。' },
+    { t: '创建合并请求被拒绝：权限不足。', a: 3, why: '权限拒绝应等待授权或终止，不应换个方式绕过。' },
+    { t: '连续 6 次用几乎相同的参数 grep 同一个目录。', a: 4, why: '无进展信号：依据结构化证据重新规划。' },
+    { t: '发送变更通知的请求超时，不确定对方是否收到。', a: 5, why: '有副作用的动作：用幂等键和请求记录先查状态，无法证明未执行就不重复。' }
+  ]
+});
+HB.cards($('#vl'), {
+  opts: ['结构验证', '环境验证', '确定性验证', '独立模型验证', '人工验收'],
+  items: [
+    { t: '一份 JSON 格式的工单分类结果。', a: 0, why: '低风险结构化产物：Schema、必填字段、格式。' },
+    { t: 'Agent 声称已在工作区生成了迁移脚本并执行过。', a: 1, why: '工具和工作区任务：检查文件差异与真实执行结果。' },
+    { t: '依赖升级后，项目能编译、测试全过、扫描无高危。', a: 2, why: '可编码的成功条件：测试、规则、静态检查。' },
+    { t: '一份竞品分析报告，看论证是否有遗漏。', a: 3, why: '开放式内容：用独立 Context 检查质量与遗漏。' },
+    { t: '向监管机构提交的合规材料。', a: 4, why: '高影响、合规任务：责任人审阅签署。' }
+  ]
+});
+var DONE = [
+  ['依赖已替换', '依赖清单证明受影响版本已替换，且没有通过传递依赖重新引入', 'dependency_check: artifacts/dependency-tree.json'],
+  ['差异在授权范围内', '代码差异仅落在授权目录，变更与已批准计划一致', 'code_diff: artifacts/remediation.patch'],
+  ['测试与扫描通过', '单元测试、集成测试、安全扫描都有可寻址报告，强制项全部通过', 'unit_tests / integration_tests / security_scan'],
+  ['评审无阻断', '独立评审没有未关闭的阻断问题', 'review: artifacts/review.json'],
+  ['变更单完整', '变更单包含影响范围、回滚方案和证据引用', 'change_request: CR-18427'],
+  ['完成定义与目标一致', '目标只到“可审批变更”时，不把“尚未发布”判为未完成；若目标含发布，还要核验审批和真实部署状态', 'outcome: change_ready_for_approval']
+];
+var dk = HB.check($('#done6'), {
+  items: DONE.map(function (d) { return { t: d[0], d: d[1], miss: '缺少证据：<code>' + d[2] + '</code>' }; }),
+  verdict: function (on, n, off) {
+    var ys = 'state: <span class="k">' + (on === n ? 'COMPLETED' : 'VERIFYING') + '</span>\noutcome: ' + (on === n ? 'change_ready_for_approval' : '<span class="miss">（未达成）</span>') + '\nevidence:';
+    DONE.forEach(function (d) { var miss = off.some(function (x) { return x.t === d[0]; }); ys += '\n  ' + (miss ? '<span class="miss"># 缺：' + d[2] + '</span>' : d[2]); });
+    ys += '\nremaining_actions:\n  - 由服务负责人审批并安排发布窗口';
+    setTimeout(function () { $('#doneY').innerHTML = ys; }, 0);
+    return on === n ? '<p class="ok"><b>六条事实同时成立</b>，Harness 提交 COMPLETED。最终结果不是一句“已完成”，而是一组目标相关的事实。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　模型说“修好了”也只能停在 VERIFYING：</p>';
+  }
+});
+void dk;
+S.notes($('#n-verify'), {
+  c: [
+    ['按失败类型恢复', '瞬时 → 退避；参数 → 修正；环境 → 重建；权限 → 等待 / 终止；重复探索 → 重规划；业务条件 → 明确缺口。'],
+    ['无进展检测', '同工具相似参数、同一错误、Plan 不变、无新事实、少数动作间循环。'],
+    ['完成的提交权', '模型申请完成，Harness 依据证据提交完成。'],
+    ['Verifier vs Evaluation', '前者是单次任务的完成门禁；后者跨版本判断 Harness 是否更好。']
+  ],
+  p: [
+    ['有副作用的重试', '幂等键 + 请求与结果记录 + 先查状态；不能证明未执行就不重复。'],
+    ['降级要留痕', '切换模型、工具或环境后，能力、权限、质量都可能变了。'],
+    ['五级验证', '结构 → 环境 → 确定性 → 独立模型 → 人工验收，强度与风险匹配。'],
+    ['验证失败', '是新的 Observation：继续修复、重规划、转交或失败。']
+  ]
+});

@@ -1,0 +1,96 @@
+/* AI Agent Handbook 学习系列专用样式（只在本系列页面加载） */
+
+/* 分层架构图 */
+.hb-layers { display: flex; flex-direction: column; gap: 8px; }
+.hb-layer { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 12px; align-items: start; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 10px 12px; background: var(--bg); }
+.hb-layer.c2 { border-left-color: var(--s2); }
+.hb-layer.c3 { border-left-color: var(--s3); }
+.hb-layer.c4 { border-left-color: var(--ok); }
+.hb-layer.c5 { border-left-color: var(--ink-3); }
+.hb-lh b { display: block; font-size: 16px; color: var(--ink); line-height: 1.4; }
+.hb-lh small { display: block; font-size: 15px; color: var(--ink-3); line-height: 1.5; margin-top: 2px; }
+.hb-li { display: flex; flex-wrap: wrap; gap: 6px; }
+.hb-chip { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); border-radius: 6px; padding: 4px 10px; cursor: pointer; line-height: 1.45; }
+.hb-chip:hover { border-color: var(--s1); color: var(--ink); }
+.hb-chip[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.hb-info { border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); min-height: 4.5em; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.hb-info > b { font-size: 17px; color: var(--ink); margin-right: 8px; }
+.hb-info p { margin: 6px 0 0; }
+.hb-tag { display: inline-block; font-size: 15px; color: var(--s1); border: 1px solid var(--s1); border-radius: 999px; padding: 0 9px; margin-right: 6px; line-height: 1.6; }
+.hb-tag.alt { color: var(--s2); border-color: var(--s2); }
+@media (max-width: 620px) { .hb-layer { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+
+/* 对照翻牌 */
+.hb-vs td.hb-hide { cursor: pointer; position: relative; }
+.hb-vs td.hb-hide span { filter: blur(6px); opacity: .5; user-select: none; }
+.hb-vs td.hb-hide::after { content: "点开"; position: absolute; left: 0; top: 9px; font-size: 15px; color: var(--s1); }
+.hb-vs td.hb-hide:hover { background: var(--dim-soft); }
+.hb-vs td { min-width: 9em; }
+
+/* 缺失检查表 */
+.hb-check { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.hb-ci { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--hair); border-radius: 8px; padding: 9px 12px; background: var(--bg); cursor: pointer; font-size: 15px; line-height: 1.55; }
+.hb-ci input { margin-top: 4px; accent-color: var(--s1); flex: none; width: 16px; height: 16px; }
+.hb-ci b { display: block; color: var(--ink); font-size: 16px; }
+.hb-ci small { display: block; color: var(--ink-3); font-size: 15px; }
+.hb-ci.off { border-style: dashed; opacity: .75; }
+.hb-ci.off b { text-decoration: line-through; color: var(--ink-3); }
+.hb-out { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 3em; }
+.hb-out p { margin: 0 0 8px; }
+.hb-out b { color: var(--ink); }
+.hb-out .big { font-size: 20px; font-weight: 700; color: var(--s1); }
+.hb-out .bad { color: var(--alert); }
+.hb-out .ok { color: var(--ok); }
+.hb-miss { margin: 6px 0 0; padding-left: 20px; }
+.hb-miss li { margin: 4px 0; }
+.hb-miss li b { color: var(--alert); }
+
+/* 问答式选型 */
+.hb-qs { display: flex; flex-direction: column; gap: 10px; }
+.hb-q p { margin: 0 0 6px; font-size: 16px; color: var(--ink); }
+.hb-res { border-left: 4px solid var(--s1); background: var(--s1-soft); border-radius: 0 8px 8px 0; padding: 10px 14px; }
+.hb-res.warn { border-left-color: var(--alert); background: var(--alert-soft); }
+.hb-res.okc { border-left-color: var(--ok); background: var(--ok-soft); }
+.hb-res h4 { margin: 0 0 4px; font-size: 18px; color: var(--ink); }
+.hb-res p { margin: 4px 0; }
+
+/* 流程走查 */
+.hb-pipe { list-style: none; margin: 0; padding: 0; counter-reset: hp; }
+.hb-pipe li { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px 8px 44px; margin-bottom: 6px; background: var(--bg); position: relative; }
+.hb-pipe li::before { counter-increment: hp; content: counter(hp); position: absolute; left: 12px; top: 50%; margin-top: -12px; width: 24px; height: 24px; border-radius: 50%; background: var(--s1); color: #fff; font-size: 13px; text-align: center; line-height: 24px; font-family: var(--f-num); }
+.hb-pipe li.off { border-style: dashed; }
+.hb-pipe li.off::before { background: var(--alert); }
+.hb-pipe li.off .hb-pt b { text-decoration: line-through; color: var(--ink-3); }
+.hb-pt b { display: block; font-size: 16px; color: var(--ink); }
+.hb-pt small { display: block; font-size: 15px; color: var(--ink-3); line-height: 1.55; }
+.hb-pipe .btn { flex: none; }
+
+/* 场景判定卡 */
+.hb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.hb-card { border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; background: var(--bg); }
+.hb-ct { margin: 0 0 8px; font-size: 16px; color: var(--ink); line-height: 1.6; }
+.hb-fb { margin: 8px 0 0; font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.hb-fb b.ok { color: var(--ok); }
+.hb-fb b.bad { color: var(--alert); }
+
+/* 生命周期环 / 通用 SVG 节点 */
+.hb-svg svg { display: block; margin: 0 auto; }
+.hb-svg .nd { cursor: pointer; }
+.hb-svg .nd rect, .hb-svg .nd circle { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.hb-svg .nd.on rect, .hb-svg .nd.on circle { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2.5; }
+.hb-svg .nd:focus-visible rect, .hb-svg .nd:focus-visible circle { stroke: var(--s1); stroke-width: 3; }
+.hb-svg .nd text { fill: var(--ink); font-size: 15px; }
+.hb-svg .eg { fill: none; stroke: var(--rule); stroke-width: 1.6; }
+.hb-svg .eg.dash { stroke-dasharray: 5 4; }
+.hb-svg .ah { fill: var(--rule); }
+
+/* 小表格：两列定义 */
+.hb-def { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
+.hb-def > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 14px; background: var(--panel); }
+.hb-def b { display: block; color: var(--ink); font-size: 17px; }
+.hb-def em { display: block; font-style: normal; font-size: 15px; color: var(--s1); margin: 2px 0 4px; }
+.hb-def p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+
+/* 厂商方案标注 */
+.vendor { margin-top: 18px; border: 1px solid var(--hair); border-left: 4px solid var(--s2); border-radius: 0 8px 8px 0; padding: 10px 14px; background: var(--panel); font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+.vendor > b:first-child { color: var(--s2); margin-right: 6px; }

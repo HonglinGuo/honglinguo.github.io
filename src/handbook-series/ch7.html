@@ -1,0 +1,524 @@
+---
+title: 运行时、沙箱与状态存储
+desc: AI Agent Handbook 学习笔记（七）：Sandbox 的三类负载（use / in / RL·Eval）、会话亲和与工作区挂载、浅休眠与深休眠、执行代次与围栏、Template / Snapshot / Fork / Reset、隔离后端与首次可用时延；状态存储的四类对象与一致性、Event Log + Checkpoint 的跨副本恢复、执行租约与状态指针、分层工作区与 Copy-on-Write、Artifact Store、长期记忆的两个维度、RAG / GraphRAG / 本体、多租户隔离与权威事实 vs 派生视图。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 07</span><span>对应原书第 7、8 章</span><span>约 40 分钟</span>
+h1: 实例可以换，<em>任务不能断</em>
+lead: 从这一篇进入原书的“运行”篇。第 7 章讲执行环境：Sandbox 给 Agent 一个可编程、受控的工作空间，Runtime 把环境的创建、连接、等待、恢复与回收纳入任务生命周期。第 8 章讲状态由什么承载：任务事实、工作区、记忆、知识、本体，各自的一致性、版本和治理要求不同，可以共享基础设施，但不能省略各自的正确性。两章合起来回答一个问题：执行实例随时可能被替换时，任务怎样接着做下去。
+nav: sbx|Sandbox 负载;long|长时任务;rl|训练评测;arch|架构与接入;map|状态分层;durable|恢复与租约;ws|工作区与产物;sem|记忆知识本体;plat|多租户与一致性;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.ev2 { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+.ev2 span { font-family: var(--f-num); font-size: 13px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 5px; background: var(--dim-soft); color: var(--ink-3); }
+.ev2 span.cp { background: var(--ok); color: #fff; font-weight: 700; }
+.ev2 span.rp { background: var(--s1); color: #fff; }
+.ev2 span.cur { outline: 2px solid var(--alert); outline-offset: 1px; }
+.fence { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+.fence > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; line-height: 1.6; }
+.fence b { display: block; font-size: 16px; }
+.fence .gen { font-family: var(--f-num); color: var(--s1); }
+.fence .dead { opacity: .55; }
+.layers3 { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.layers3 div { border-radius: 6px; padding: 8px 12px; font-size: 15px; color: var(--ink); }
+.layers3 .w { background: var(--s1-soft); border: 1px dashed var(--s1); }
+.layers3 .s { background: var(--s2-soft); }
+.layers3 .b { background: var(--dim-soft); }
+.mgrid3 { display: grid; grid-template-columns: 7em repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 10px; font-size: 15px; }
+.mgrid3 > div { padding: 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--hair); line-height: 1.5; color: var(--ink-2); }
+.mgrid3 > div.hd { background: none; border: 0; color: var(--ink-3); font-weight: 600; }
+.mgrid3 button { font: inherit; font-size: 15px; text-align: left; width: 100%; height: 100%; background: none; border: 0; cursor: pointer; color: var(--ink-2); padding: 0; }
+.mgrid3 > div.on { border-color: var(--s1); background: var(--s1-soft); }
+@media (max-width: 620px) { .mgrid3 { grid-template-columns: 5em repeat(3, minmax(0, 1fr)); font-size: 15px; } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Agent use sandbox 和 Agent in sandbox 有什么区别？等待期间该持续运行、休眠还是只留文件？</li>
+    <li>旧实例失联后又“活过来”，怎样防止它覆盖新实例的结果？Durable Execution 能保证外部动作恰好一次吗？</li>
+    <li>为什么权威事实和派生视图的一致性要求不同？语义检索为什么要在召回前就做租户过滤？</li>
+  </ol>
+</div>
+
+<section class="part" id="sbx">
+  <div class="part-head"><h2>Sandbox：可编程、受控的工作空间</h2><span class="meta">原书 7.1–7.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书对 Sandbox 的定义是：按任务需要配置、具有隔离边界和明确生命周期的执行环境，包含操作系统用户空间、计算资源、文件系统、语言与依赖，以及终端、浏览器或桌面等入口，还可以配网络、数据挂载、身份凭证、观测和状态保留方式。它适合<strong>操作路径要在执行中逐步确定</strong>的任务（检查样本、写转换脚本、装解析库、按运行结果修正）；参数明确、行为固定的业务动作直接调 API，不必为每次查询开沙箱。沙箱给判断提供可检查的运行依据，但业务结果是否正确，仍由测试、规则、评测器或用户验收确认。</p>
+    <p>Agent 与沙箱有两种部署关系：<strong>Agent use sandbox</strong>（编排逻辑在外，通过接口调用里面的代码、浏览器等工具，便于给已有应用加执行能力）和 <strong>Agent in sandbox</strong>（Agent 进程和工具链一起跑在沙箱里，模型推理仍可在远端，适合需要完整项目环境和持续进程的任务）。训练评测（Agent RL / Eval）是另一个维度，可以采用任一部署关系。三类典型负载的关注点各不相同：工具执行看首次可用时延和隔离，长时任务看会话连续性和等待成本，训练评测看环境吞吐、重置分叉和可复现。</p>
+    <p>环境类型上，Code（脚本、构建测试）、Browser（真实页面状态）、Computer（没有 API 的桌面软件）、AIO（浏览器、代码、终端共享一个工作区，省掉步骤间的上传下载和路径转换）、MCP / Skill 环境（把只在某台开发机上能跑的、带本地依赖的工具变成可按需分配的环境）。共享范围要与任务匹配：同一任务的工具可以共享文件，不同租户和项目仍要分开。</p>
+    <p class="go">给下面的场景配负载类型和环境类型。</p>
+  </div>
+  <div class="lab"><p class="lab-t">哪类负载？</p><div id="wl"></div></div>
+  <div class="lab"><p class="lab-t">哪种环境？</p><div id="et"></div></div>
+  <div class="notes" id="n-sbx"></div>
+</section>
+
+<section class="part" id="long">
+  <div class="part-head"><h2>长时任务：亲和、挂载、休眠、围栏</h2><span class="meta">原书 7.3、7.5.2 节</span></div>
+  <div class="sec-lede">
+    <p>长时任务围绕一个项目展开：下一次用户提修改意见时，前一次的代码、依赖和项目结构应当还在。连续性依赖两类映射：<strong>会话亲和</strong>把带稳定会话标识的请求路由到已有环境（或触发恢复），<strong>动态挂载</strong>按已验证的租户、用户、项目关系把工作区挂到环境上。两者不必一一对应，原实例释放后可以新建实例、重新挂载项目文件。仅把用户编号拼进目录名，代替不了服务端对归属和权限的检查；调用方也不应把某个容器的临时地址当成长期入口。恢复时要核对状态可读性、归属和必要文件的完整性，<strong>检查不通过就保持失败或等待，不能把空工作区当恢复结果交付</strong>。工作区和任务状态的保留期也要独立于计算实例设置。</p>
+    <p>长会话的计算需求并不连续：等模型、等用户、等网页、等事件。一直占着完整资源，成本随会话时长增长；每次等待都销毁，又要反复装依赖、恢复上下文。原书列了四档状态策略：<strong>持续运行</strong>、<strong>浅层暂停</strong>（保留内存与文件，减少活跃计算）、<strong>深度休眠</strong>（状态持久化后释放执行资源，外部连接需重建）、<strong>保留文件后重建</strong>。唤醒入口在休眠沙箱之外（定时器、消息入口、路由），休眠中的 Agent 不再跑循环；判断能否休眠不能只看“没有新请求”，还要看在跑的工作和未完成操作。恢复后要重新检查文件、进程、端口、外部连接和临时凭证：<strong>接口返回成功只是一个环节，以任务能否继续为准</strong>。</p>
+    <p>实例故障时还有一个陷阱：失去心跳只表示平台暂时观察不到它，旧进程<strong>可能还在运行</strong>。需要串行修改同一任务或工作区时，先确认旧实例已停或使其写权限失效，再让新实例写入。做法是给每次接管一个<strong>执行代次</strong>，由受保护的存储或写入入口拒绝旧代次，这叫<strong>围栏（Fencing）</strong>。只更新控制面上的编号挡不住旧进程。已提交给外部系统的操作（比如构建），新实例要凭原标识查状态，再决定等待、读结果或重试。</p>
+    <p class="go">先用等待时长和恢复频率挑状态策略（判断为示意）；再模拟一次旧实例“复活”。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">等待期间，环境怎么处理？</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>典型一次等待 <output id="hwO">10 分钟</output></span><input type="range" id="hwS" min="0" max="6" value="3"></label>
+      <label class="ctl"><span>进程与内存状态是否难以重建 <output id="hmO">难重建</output></span><input type="range" id="hmS" min="0" max="1" value="1"></label>
+    </div>
+    <p class="verdict3" id="hbV"></p>
+    <div class="tblw"><table class="cmpt"><tr><th>状态策略（原书表 7-3）</th><th>保留与释放</th><th>主要代价</th></tr>
+      <tr><td>持续运行</td><td>保持进程和执行资源</td><td>等待时仍占用资源</td></tr>
+      <tr><td>浅层暂停</td><td>保留内存与文件，减少活跃计算</td><td>仍保留内存等资源（以平台实现为准）</td></tr>
+      <tr><td>深度休眠</td><td>支持的状态持久化，释放执行资源</td><td>存储与恢复开销，外部连接需重建</td></tr>
+      <tr><td>保留文件后重建</td><td>只留工作区与必要任务记录</td><td>重启服务，补回未持久化的上下文</td></tr></table></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">执行代次与围栏</p>
+    <div class="selrow"><span>写入入口</span><div class="seg" id="fcSeg"><button data-v="y" aria-pressed="true">存储校验执行代次</button><button data-v="n">只在控制面更新编号</button></div></div>
+    <div id="fcStep"></div>
+    <div class="fence" id="fcBox"></div>
+    <p class="verdict3" id="fcV"></p>
+  </div>
+  <div class="notes" id="n-long"></div>
+</section>
+
+<section class="part" id="rl">
+  <div class="part-head"><h2>训练与评测：Template、Snapshot、Fork、Reset</h2><span class="meta">原书 7.4 节</span></div>
+  <div class="sec-lede">
+    <p>Agent 的强化学习和评测需要真实执行：每次尝试都要取仓库、装依赖、跑 Agent、执行测试、收结果，一次从初始状态经过多步动作得到结果的过程是一条 <strong>rollout 轨迹</strong>。并行时，即使模型推理还有余量，任务也可能卡在环境没就绪或操作没返回。训练追求足够多的有效探索，评测强调不同版本面对可比较的条件；二者都要记录模板、数据和依赖版本，并清楚区分“Agent 没完成任务”和“环境本身没提供好服务”，否则环境故障会被误记成模型能力变化。</p>
+    <p>四个能力各解决一个问题：<strong>Template</strong> 定义初始配置，让重复任务有一致起点；<strong>Snapshot</strong> 保存某时刻的运行状态（文件系统或内存），把已做完的准备工作存下来；<strong>Fork</strong> 从同一快照创建独立分支，让多次尝试从同一阶段并行展开；<strong>Reset</strong> 把环境恢复到约定初始条件，防止上一轮的改动污染下一轮。注意：沙箱快照<strong>回退不了外部数据库、已发出的消息、已完成的业务操作</strong>，评测要用独立数据副本或测试租户；沙箱快照也不同于模型训练检查点（权重、优化器状态）。环境返回观察和证据，成功和奖励怎么算属于评测逻辑；会改代码的 Agent 要与评分规则隔离，避免它通过修改评分环境拿到失真结果。</p>
+    <p class="go">估一下 Fork 能省多少准备时间（数值为示意，实际收益取决于准备成本、快照大小、分叉次数和恢复开销）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">从零准备 vs 快照分叉</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>环境准备（检出 + 装依赖 + 基础测试）<output id="fpO">6 分钟</output></span><input type="range" id="fpS" min="1" max="30" value="6"></label>
+      <label class="ctl"><span>并行尝试次数 <output id="fnO">32</output></span><input type="range" id="fnS" min="2" max="256" value="32"></label>
+      <label class="ctl"><span>每次从快照恢复 / 分叉 <output id="foO">20 秒</output></span><input type="range" id="foS" min="2" max="120" value="20"></label>
+    </div>
+    <div class="read"><div class="warn"><div class="v" id="fA">0</div><div class="k">每次都从零准备（累计机时）</div></div><div class="good"><div class="v" id="fB">0</div><div class="k">准备一次 + 快照分叉</div></div><div class="hl"><div class="v" id="fC">0</div><div class="k">节省</div></div></div>
+  </div>
+  <div class="lab"><p class="lab-t">该用哪个能力？</p><div id="tsfr"></div></div>
+  <div class="notes" id="n-rl"></div>
+</section>
+
+<section class="part" id="arch">
+  <div class="part-head"><h2>架构与接入：隔离后端、首次可用、上线验证</h2><span class="meta">原书 7.5.3–7.7 节</span></div>
+  <div class="sec-lede">
+    <p>职责边界再说一遍：Harness 编排层持有任务目标、上下文和下一步决策；Runtime 把任务组织成可启动、可等待、可取消、可恢复的过程；Sandbox 提供具体环境并执行分配给它的操作。三者不要求是三个独立服务，但<strong>平台不应根据一个进程是否存活来猜任务是否完成</strong>。</p>
+    <p>隔离后端有三类：<strong>容器</strong>（生态成熟，常见实现共享宿主机内核）、<strong>用户态内核</strong>（如 gVisor，减少工作负载直接接触宿主内核，要验证系统调用兼容性）、<strong>MicroVM</strong>（如 Firecracker，硬件虚拟化提供独立内核边界）。选择取决于代码可信度、租户边界、系统能力、设备需求和运维成本；<strong>对外提供 SDK 或 K8s 接口，说明不了底层隔离强度</strong>。预热环境在分配前不能携带用户数据或凭证，实例重新分配前要清理进程、文件、挂载和网络规则。接入方式上，SDK / API 面向应用开发者（创建、连接、命令、文件、生命周期），Kubernetes 自定义资源面向平台团队（模板、实例、预热池、控制器），二者可以指向同一底座；接口兼容不代表模板、超时、暂停恢复、网络、持久化语义一致，要用代表性任务验证完整生命周期。</p>
+    <p><strong>首次可用时延</strong>要从申请环境算到命令通道、依赖、工作区、所需服务全部就绪；冷启动、镜像缓存与预热、实例预热池是不同策略，分别记录。用户身份、工作区挂载和恢复检查不能靠预热提前做，也要计入。容量耗尽时有界排队或明确拒绝；缩容先停止接新活、等在途任务到可恢复点，<strong>CPU 低不能单独作为回收依据</strong>。成本口径用<strong>单位成功任务成本</strong>：窗口内归属该负载的计算、状态存储、网络、预热费用（含失败和重试）÷ 成功任务数。</p>
+    <p class="go">上线前，原书要求验证五个场景。取消勾选看风险。</p>
+  </div>
+  <div class="lab"><p class="lab-t">长时任务的恢复与生命周期验证（原书表 7-6）</p><div id="v5"></div></div>
+  <div class="vendor"><b>厂商案例说明</b>原书 7.7 节引用了阿里云 Agent Sandbox 的客户案例（MCP 工具市场、Z.ai 全栈开发、MiniMax 长会话、Qwen 与百炼训练评测），并说明具体性能与成本结果与其测试条件和产品实现相关，企业应以自身负载验证。</div>
+  <div class="notes" id="n-arch"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>状态外置之后，状态由什么承载</h2><span class="meta">原书 8.1 节</span></div>
+  <div class="sec-lede">
+    <p>传统应用的数据分工比较清楚：订单账户进事务库，附件日志进对象存储，分析走数仓。Agent 则持续地生成和消费状态：以“分析客户流失原因并生成挽留方案”为例，每一步都产生新状态，也依赖已有状态继续。状态没被可靠承载，实例故障或人工介入后无法准确恢复，多个 Agent 无法共享一致上下文，结果出偏差时也说不清 Agent 基于什么做了判断。</p>
+    <p>原书把 Agent 状态分四类：<strong>运行时状态</strong>（事件日志、检查点、任务进度、执行租约、状态指针）要明确的写入顺序、原子更新、幂等和可恢复历史；<strong>工作区与产物</strong>（文件、代码、图表、快照、分支）要版本、快照、引用关系和可回滚；<strong>记忆与知识</strong>（会话摘要、偏好、经验、文档、向量索引、知识图谱）要可检索、时效、来源可信度和权限过滤；<strong>业务语义与治理状态</strong>（本体对象、关系、规则、租户、权限、审计）要对象身份、关系完整、规则边界和审计证据。</p>
+    <p>一个向量库或一张会话表能存一部分，却无法天然满足所有语义：把任务事实当可检索文本，会丢失顺序与原子性；把成果当无版本附件，难以回滚复用；把记忆、知识、权限混成一份上下文，过期或越权内容会持续影响决策。正确的起点是<strong>先定义各类对象的正确性边界，再匹配存储能力，最后用统一契约组织</strong>，而不是先挑一个引擎。</p>
+    <p class="go">把这些对象归到四类状态里。</p>
+  </div>
+  <div class="lab"><div id="stSort"></div></div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="durable">
+  <div class="part-head"><h2>Event Log、Checkpoint 与跨副本恢复</h2><span class="meta">原书 8.2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>Event Log</strong> 记录任务事实的变化：生成计划、申请租约、发起工具调用、收到返回、等待确认、提交结果，每次追加一条不可改写的事件。顺序在边界上至关重要：“发送审批请求”已成功但结果事件没记下来，重启后就可能再发一次。强一致的范围应当是<strong>任务、会话或业务对象</strong>，而不是让所有 Agent 争用一条全局日志。事件与当前状态同时维护时，要在一个事务里提交，或用 Outbox 等机制保证最终同步并按事件 ID 去重；诊断日志和模型输出不能代替这份记录。</p>
+    <p><strong>Checkpoint</strong> 记录某个可信时刻的状态：阶段、已完成和未完成步骤、工具结果引用、工作区版本、子任务、等待条件、状态版本，而不是上下文的简单拷贝。频率与任务成本匹配：秒级、可廉价重试的查询型任务不必频繁快照；要在<strong>外部调用前后、长计算完成后、人工确认前后、工作区重要变更后、交接给其他 Agent 时</strong>主动形成。增量快照只存变化集，恢复时组合最近完整快照与后续增量。</p>
+    <p>恢复 = 读最新 Checkpoint + 回放其后的事件，这就是 <strong>Durable Execution</strong>：执行不依赖特定进程，而依赖外部持久状态。还要解决“谁有权继续”：<strong>执行租约</strong>像接力棒，只有持最新接力棒的实例能提交下一次状态变化；<strong>状态指针</strong>把任务、事件序列、Checkpoint、工作区快照、产物引用关联起来，恢复实例不必四处找上下文。原书特别提醒：Durable Execution <strong>不等于所有外部动作天然恰好执行一次</strong>，平台能保证的是状态变化有明确事实边界，外部副作用还要靠幂等标识、结果确认和补偿，所以运行时状态必须同时保存调用意图、调用标识和调用结果，而不能只记一句“正在执行”。</p>
+    <p class="go">调整 Checkpoint 间隔和故障位置，看恢复要回放多少事件（事件流为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">快照 + 回放</p>
+    <div class="ctl-grid">
+      <label class="ctl"><span>每隔多少个事件做一次 Checkpoint <output id="ciO">8</output></span><input type="range" id="ciS" min="1" max="40" value="8"></label>
+      <label class="ctl"><span>在第几个事件后故障 <output id="cfO">37</output></span><input type="range" id="cfS" min="1" max="40" value="37"></label>
+    </div>
+    <div class="ev2" id="ev2"></div>
+    <div class="read"><div class="good"><div class="v" id="cR">0</div><div class="k">从最近 Checkpoint 回放的事件数</div></div><div class="warn"><div class="v" id="cS">0</div><div class="k">Checkpoint 数（存储与写入开销）</div></div></div>
+    <p class="note">绿色：Checkpoint；蓝色：恢复时要回放的事件；红框：故障点。间隔越小回放越少，但快照开销越大；关键边界（外部调用前后、人工确认前后）应主动打点，而不是只按固定间隔。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Durable Execution vs 恰好一次</h4>
+    <p><b>Durable Execution</b> 保证任务<b>状态</b>不依赖进程存活，能从最近可信点续上；它<b>不保证</b>模型调用、消息发送、审批提交、数据写入这些跨系统的<b>外部动作</b>恰好执行一次。恢复时对外部动作要先用调用标识查结果，再决定继续、重试、补偿或转人工。</p>
+  </div>
+  <div class="notes" id="n-durable"></div>
+</section>
+
+<section class="part" id="ws">
+  <div class="part-head"><h2>工作区、快照与 Artifact Store</h2><span class="meta">原书 8.3 节</span></div>
+  <div class="sec-lede">
+    <p>运行时状态让 Agent 知道“做到哪了”，工作区与产物保证“已经做出了什么”。工作区不应是执行实例上的临时目录：实例只是工作区的一个<strong>临时挂载点</strong>，工作区本身有独立身份、权限、版本历史和生命周期。底层可以是共享文件（目录结构、频繁小文件）、对象存储（大文件、不可变成果、归档）和近端加速层（热点数据），但对 Agent 呈现为统一的任务空间。</p>
+    <p><strong>分层工作区</strong>的思想是“共享不变部分，隔离变化部分”：底部是只读的基础层（运行环境、依赖、模板、公共数据，由平台维护），中间是任务或租户可共享的数据层，顶部是当前任务独占的可写层。<strong>Copy-on-Write</strong> 让快照不必复制整份工作区，只有新写入或修改的部分形成新数据块，于是可以像代码分支一样低成本地试验和回退。快照要和运行时 Checkpoint 关联，避免“任务状态恢复了、文件状态却变了”。注意环境回滚<strong>不撤销已提交到外部系统的操作</strong>，快照是否具备容灾能力也取决于它存在哪个故障域。</p>
+    <p>可写层的并发也要围栏：仅更新任务表里的租约，挡不住仍持有文件句柄的旧实例。可以用校验执行代次的写接口、独占挂载、撤销旧端访问，或让实例写私有分支、只允许当前持有者发布新版本。多 Agent 协作不要让大家同时改一个目录，而是各写各的分支、通过快照或 Artifact 引用读取对方结果、按版本合并。<strong>Artifact</strong> 进入 Artifact Store 后不可原地修改，后续变更生成新版本；它带来源任务、版本、生成 Agent、输入依据、审批状态、权限和保留策略，后续任务可以引用“经审批的第三版客户流失报告”，而不是某个易变的临时路径。</p>
+    <p class="go">点“写入”看三层各发生什么；判断这些文件的去向。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">分层工作区与 Copy-on-Write</p>
+    <div class="btnrow"><button class="btn" type="button" id="cowW">任务修改 pom.xml</button><button class="btn" type="button" id="cowS">打快照</button><button class="btn" type="button" id="cowF">从快照分出第二个分支</button><button class="btn" type="button" id="cowR">重来</button></div>
+    <div class="layers3" id="cow"></div>
+    <p class="note" id="cowN"></p>
+  </div>
+  <div class="lab"><p class="lab-t">放在哪一层？</p><div id="wsCards"></div></div>
+  <div class="notes" id="n-ws"></div>
+</section>
+
+<section class="part" id="sem">
+  <div class="part-head"><h2>语义层：记忆、知识与本体</h2><span class="meta">原书 8.4–8.6 节</span></div>
+  <div class="sec-lede">
+    <p>三者差别首先在来源、用途和维护责任：<strong>记忆</strong>来自筛选过的交互与执行经验，<strong>知识</strong>来自可追溯的外部资料，<strong>本体</strong>维护业务概念、关系与规则。并非所有应用都需要三者齐备。原书的长期记忆参考架构用两个<strong>正交维度</strong>：按来源分用户显式表达、Agent 行为归纳、外部业务事实；按稳定性分人设与身份层、画像层（周、月更新）、事件偏好层（最细最易变）。Persona 不算经验性记忆，由构建方显式维护、受版本与权限控制。写入要抽取、合并、去重，冲突时结合时效、来源可靠度保留待确认；检索用向量 + BM25 + 实体关系多路召回再 Rerank，叠加时间衰减，但<strong>长期有效的约束不应因少被调用而淡出，引用频率也不等于正确性</strong>。归档、降权和删除是三种不同操作。</p>
+    <p>知识库这一侧：深度文档解析保留标题层级、表格、实体、时间、数值等锚点（避免把“海外业务”的退货政策用到国内）；切片过大引入噪声、过小丢上下文；增量更新要记录源版本、解析版本、索引水位，新索引验证后再切换。检索有三条受控路径：<strong>RAG</strong> 做语义相似、<strong>GraphRAG</strong> 面向跨实体关系推理（股权穿透、供应链关联）、<strong>DataProbe</strong> 用只读账号在授权 Schema 内查结构化业务事实，多路候选统一 Rerank、保留溯源。</p>
+    <p><strong>本体</strong>解决“找到一段文本不等于理解它”：检索到“该客户订单已逾期”，还要知道订单、客户、产品的关系、逾期对应的规则、可能触发的动作。原书的本体四要素是对象、关系、动作、规则，并强调三种责任分离：本体负责语义建模，动作的执行由 Runtime 完成，授权决策由治理方作出。引入时机：只需检索少量文档就从常规检索开始；<strong>实体身份、关系约束和多跳查询成为持续需求时</strong>，再承担本体的建模和维护成本。记忆、知识、本体之间的反馈要走受控更新，不得把模型推测直接写成组织规则。</p>
+    <p class="go">点记忆矩阵里的格子看例子（例子为示意）；再给问题选检索路径。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">长期记忆的两个正交维度（原书 8.4.2 节）</p>
+    <div class="mgrid3" id="mm"></div>
+    <div class="hb-info" id="mmI" style="margin-top:10px"><p>点一个格子。</p></div>
+  </div>
+  <div class="lab"><p class="lab-t">走哪条检索路径？</p><div id="rp"></div></div>
+  <div class="lab"><p class="lab-t">本体四要素</p><div id="onSort"></div></div>
+  <div class="notes" id="n-sem"></div>
+</section>
+
+<section class="part" id="plat">
+  <div class="part-head"><h2>多租户隔离、一致性与选型</h2><span class="meta">原书 8.7 节</span></div>
+  <div class="sec-lede">
+    <p>多租户的边界不只在业务数据库里，还要贯穿记忆召回、知识检索、文件访问、向量搜索、工具执行和运维观测，否则 Agent 会通过共享索引、缓存命中、产物链接或日志检索接触不该看的信息。身份层次从组织、工作空间、Agent、用户到 Task 和 execution。隔离策略分三层并可组合：<strong>物理隔离</strong>（强监管、高敏感、重要客户专属）、<strong>逻辑隔离</strong>（独立库、Schema、索引命名空间、对象目录）、<strong>行级隔离</strong>（共享服务里按租户、角色、标签控制）。向量和图谱要特别注意<strong>检索前过滤</strong>：先跨租户召回再过滤，候选生成阶段就已经暴露了数据。</p>
+    <p>一次执行会同时改动日志、检查点、工作区、记忆、索引、本体，不能用“所有组件同时成功”定义一致性。原书的思路是<strong>区分权威事实与派生视图</strong>：执行租约、工具调用结果、关键检查点要强一致或可验证提交；向量索引、全文检索、统计聚合、读副本可以短暂最终一致，但要标明新鲜度和对应的源版本。写入先可靠提交权威事实，再异步推动索引与副本；读取按任务重要性选择最新权威状态或略有延迟的派生视图。知识文档更新先生成新版本，再解析、切分、向量化、建索引，<strong>达到可用水位后才切换查询流量</strong>，失败可重放或回退。回答还要能标出引用的对象版本、索引时间和来源，这样答案过期时能分清是推理问题、源数据问题还是索引未同步，而不是一律归咎于“幻觉”。</p>
+    <p>元数据层给每个对象记录类型与 ID、租户、创建者、来源、摘要、敏感级别、版本、位置、访问策略、生命周期、关联关系，血缘让源文档更新时能找到受影响的索引、图谱、记忆摘要和下游任务（法律保留和不可变审计记录要留显式例外）。容灾按对象定恢复目标：关键事件与检查点要更低的恢复点目标，派生索引保留源数据和构建记录以便重建；恢复后先定位最后确认事件、加载检查点、校验租约与幂等标识、确认外部调用状态，再决定继续、重试、补偿或转人工。选型上，组件组合可复用既有设施，但要自己维护跨组件的身份、版本、更新、恢复契约；一体化 Agent 数据库收敛这些契约，代价是依赖产品能力与迁移路径。无论哪种，<strong>验收要落到实际任务和故障场景</strong>。</p>
+    <p class="go">给数据选一致性要求。</p>
+  </div>
+  <div class="lab"><div id="cons"></div></div>
+  <div class="vendor"><b>厂商方案说明</b>原书第 8 章以阿里云 Lakebase 为参考架构（统一对象模型、服务接口与治理控制面，底层按对象选择承载）。原书同时说明，一体化适合以任务续行、成果留存、语义资产治理为核心负载的团队；以短会话交互为主的场景，组件组合仍是合理选择。</div>
+  <div class="notes" id="n-plat"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. use 与 in 的区别？等待期间怎么处理环境？</summary><p class="ans">use：编排在沙箱外，通过接口调用里面的工具，便于给已有应用加执行能力；in：Agent 进程与工具链一起在沙箱内，适合完整项目环境和持续进程。等待处理按完整任务周期权衡：连续计算或即时服务保持运行；短等待且恢复敏感用浅层暂停；长等待用深度休眠（外部连接需重建）；进程易重启、文件是主要状态时只留文件后重建。判断能否休眠要看在途工作，恢复后以任务能否继续为准。</p></details>
+    <details><summary>2. 怎样防旧实例覆盖？Durable Execution 能保证恰好一次吗？</summary><p class="ans">给每次接管分配执行代次，由受保护的存储或写入入口拒绝旧代次（围栏）；工作区可用独占挂载、撤销旧端访问或私有分支 + 只允许当前持有者发布。只在控制面改编号不够。Durable Execution 只保证状态续行，外部动作要靠幂等标识、结果确认和补偿，恢复前先按调用标识查结果。</p></details>
+    <details><summary>3. 为什么一致性要分层？为什么召回前就要过滤租户？</summary><p class="ans">影响任务正确性的权威事实（租约、调用结果、关键检查点）要强一致或可验证提交；索引、统计、副本等派生视图可以短暂滞后，但要标明新鲜度与源版本，这样避免把分布式事务扩展到所有操作。语义检索若先跨租户召回再过滤，候选生成阶段已经暴露了数据，所以要在索引空间、检索条件和重排序中前置租户与权限约束。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- Sandbox ---------- */
+HB.cards($('#wl'), {
+  opts: ['工具执行（use）', '长时任务（in）', '训练与评测（RL / Eval）'],
+  items: [
+    { t: '客服 Agent 需要时临时跑一段 Python 算退款金额，算完就走。', a: 0, why: '编排在外，按步骤调用代码沙箱；关注首次可用时延与任务间隔离。' },
+    { t: '云端开发助手为用户维护一个项目，用户隔天回来继续改。', a: 1, why: 'Agent 与工具链围绕持续工作区运行；关注会话连续性、恢复效果、等待成本。' },
+    { t: '在 2000 个代码修复任务上比较两个模型版本的成功率。', a: 2, why: '批量独立交互、收集轨迹；关注吞吐、重置分叉与可复现。' },
+    { t: '一个 Agent in sandbox 只处理一次短的格式转换就结束。', a: 1, why: '部署关系是 in，但负载很短。原书提醒三类负载是典型组合，不是互斥架构，选型要从任务特征出发。' }
+  ]
+});
+HB.cards($('#et'), {
+  opts: ['Code', 'Browser', 'Computer', 'AIO', 'MCP / Skill 环境'],
+  items: [
+    { t: '清洗五个格式不一致的 Excel，合并后出图。', a: 0, why: '解释器、依赖、文件读写，按任务组织程序。' },
+    { t: '检查生成的网页在真实浏览器里的交互是否正常。', a: 1, why: '需要真实页面状态。' },
+    { t: '在一个只有桌面客户端、没有 API 的财务软件里导出报表。', a: 2, why: '覆盖缺少合适 API 的路径。' },
+    { t: '下载业务数据 → 处理 → 生成网页报告 → 打开检查 → 导出。', a: 3, why: '多种工具共享同一工作区，减少衔接成本。' },
+    { t: '一个只在某台开发机上能跑、依赖本地命令行的 stdio MCP Server，要给全公司用。', a: 4, why: '把工具依赖变成可分配、可回收的运行环境，协议转换由适配层或网关完成。' }
+  ]
+});
+S.notes($('#n-sbx'), {
+  c: [
+    ['Sandbox', '按任务配置、有隔离边界和明确生命周期的执行环境。'],
+    ['use / in', '编排在外调用工具 / Agent 进程与工具链在沙箱内。'],
+    ['三类负载', '工具执行、长时任务、训练评测；是典型组合而非互斥架构。']
+  ],
+  p: [
+    ['何时用沙箱', '路径需在执行中逐步确定；固定动作直接调 API。'],
+    ['命令成功 ≠ 结果正确', '还要核对数据范围、输出文件、关键统计、可读性。'],
+    ['环境类型', 'Code / Browser / Computer / AIO / MCP · Skill 环境，可组合、共用底座。']
+  ]
+});
+
+/* ---------- 长时任务 ---------- */
+var HW = ['不等待', '30 秒', '2 分钟', '10 分钟', '1 小时', '1 天', '1 周'];
+function hb() {
+  var w = +$('#hwS').value, m = +$('#hmS').value;
+  $('#hwO').textContent = HW[w]; $('#hmO').textContent = m ? '难重建' : '易重建';
+  var t, c = '';
+  if (w === 0) t = '<b>持续运行</b>：连续计算、即时交互或正在运行的服务，保持资源活跃。';
+  else if (w <= 2) t = '<b>浅层暂停</b>（或持续运行）：等待短、恢复敏感，反复深度保存加载反而增加时延和成本。';
+  else if (m) t = '<b>深度休眠</b>：等待较长且需要延续运行上下文；恢复后要重建外部连接、检查文件、进程、端口与临时凭证。';
+  else { t = '<b>保留文件后重建</b>：进程易重启、文件是主要状态，保存范围最小；重启服务并补回未持久化的上下文。'; c = ''; }
+  if (w >= 5) t += ' 等待以天计时，还要设置保留期限，并清理已无业务用途的快照和工作区。';
+  $('#hbV').className = 'verdict3' + c; $('#hbV').innerHTML = t + '（示意判断，实际要结合活跃时间、等待时长、恢复频率、状态大小，并以平台对状态语义的实际定义为准。）';
+}
+['hwS', 'hmS'].forEach(function (id) { $('#' + id).addEventListener('input', hb); }); hb();
+var fcMode = 'y';
+var FC = [
+  ['正常执行', '实例 A 持有代次 <span class="gen">7</span>，写入 Checkpoint 与工作区。', ['写入成功（代次 7）', '—'], ''],
+  ['A 失去心跳', '网络分区：平台看不到 A，但 A 的进程其实还在跑。', ['仍在运行，平台不可见', '—'], ''],
+  ['B 接管', '平台把代次提升为 <span class="gen">8</span>，B 从最近 Checkpoint 恢复，并先凭构建 ID 查询 A 已提交的构建状态。', ['仍在运行', '代次 8，恢复中'], ''],
+  ['A 恢复网络，尝试写入', '', ['', '继续推进'], 'x']
+];
+var fcI = 0;
+var fcGo = S.stepper($('#fcStep'), FC.length, function (i) {
+  fcI = i; var f = FC[i], a = f[2][0], v = '';
+  if (f[3] === 'x') {
+    if (fcMode === 'y') { a = '写入被拒绝：代次 7 &lt; 当前 8'; v = '<b>围栏生效</b>：受保护的写入入口校验代次，旧实例即使还活着也无法覆盖 B 的结果。'; }
+    else { a = '写入成功（覆盖了 B 的部分文件）'; v = '<b>出事了</b>：控制面虽然把编号改成 8，但存储不校验，A 仍持有文件句柄，把旧结果写进了工作区。'; }
+  }
+  $('#fcBox').innerHTML = '<div class="' + (i >= 2 ? 'dead' : '') + '"><b>实例 A</b>' + a + '</div><div><b>实例 B</b>' + f[2][1] + '</div>';
+  $('#fcV').className = 'verdict3' + (f[3] === 'x' && fcMode === 'n' ? ' bad' : '');
+  $('#fcV').innerHTML = (f[1] ? f[1] + ' ' : '') + v;
+}, FC.map(function (f) { return f[0]; }));
+S.seg($('#fcSeg'), function (v) { fcMode = v; fcGo(fcI); });
+S.notes($('#n-long'), {
+  c: [
+    ['会话亲和 / 动态挂载', '请求 ↔ 环境 / 环境 ↔ 工作区数据；两者不必一一对应。'],
+    ['四档状态策略', '持续运行、浅层暂停、深度休眠、保留文件后重建。'],
+    ['围栏（Fencing）', '每次接管一个执行代次，受保护的存储拒绝旧代次写入。']
+  ],
+  p: [
+    ['恢复检查失败', '保持失败或等待，不把空工作区当恢复结果。'],
+    ['休眠判断', '不能只看“没有新请求”，要看在跑的工作和未完成操作；继续点要提前保存。'],
+    ['恢复成功的标准', '任务能否继续执行，而不是接口返回成功。'],
+    ['失联 ≠ 已停', '旧进程可能仍在运行；只改控制面编号挡不住它。']
+  ]
+});
+
+/* ---------- 训练评测 ---------- */
+function fk() {
+  var p = +$('#fpS').value, n = +$('#fnS').value, o = +$('#foS').value;
+  $('#fpO').textContent = p + ' 分钟'; $('#fnO').textContent = n; $('#foO').textContent = o + ' 秒';
+  var A = p * n, B = p + n * o / 60;
+  $('#fA').textContent = S.f(A / 60, 1) + ' 小时'; $('#fB').textContent = S.f(B / 60, 1) + ' 小时'; $('#fC').textContent = S.pct(1 - B / A, 0);
+}
+['fpS', 'fnS', 'foS'].forEach(function (id) { $('#' + id).addEventListener('input', fk); }); fk();
+HB.cards($('#tsfr'), {
+  opts: ['Template', 'Snapshot', 'Fork', 'Reset'],
+  items: [
+    { t: '让每个评测任务都从同样的系统、工具版本、依赖起步。', a: 0, why: 'Template 定义初始配置，给重复任务一致起点。' },
+    { t: '仓库检出、依赖安装、基础测试花了 6 分钟，想把这个状态存下来。', a: 1, why: 'Snapshot 保存已完成的准备工作。' },
+    { t: '从同一个准备好的状态，同时试 16 种修复策略。', a: 2, why: 'Fork 从同一快照创建独立分支，并行展开。' },
+    { t: '上一轮尝试改了文件，下一轮要回到干净的起点。', a: 3, why: 'Reset 防止上一轮的改动污染下一轮；外部数据库等要另有重置机制。' }
+  ]
+});
+S.notes($('#n-rl'), {
+  c: [
+    ['rollout 轨迹', '从初始状态出发、经过多步动作得到结果的一次交互过程。'],
+    ['四个能力', 'Template 一致起点；Snapshot 保存准备；Fork 并行分支；Reset 回到初始条件。']
+  ],
+  p: [
+    ['区分失败来源', '“Agent 没完成”与“环境没提供好服务”要分开记录。'],
+    ['快照的边界', '回退不了外部数据库、已发消息、已完成业务操作；也不是模型训练检查点。'],
+    ['评分要隔离', '会改代码的 Agent 不能接触评分规则和关键验证材料。'],
+    ['收益要分开测', '环境并发、模型缓存、推理调度、训练算法的改善分别评估。']
+  ]
+});
+
+/* ---------- 架构 ---------- */
+HB.check($('#v5'), {
+  items: [
+    { t: '执行中实例退出', d: '新实例接回任务记录、必要文件和依赖，从已保存位置继续', miss: '实例重启后任务从头开始，或丢失已装的依赖。' },
+    { t: '工作区挂载失败或归属不符', d: '阻断后续执行', miss: '空目录或别人的数据被当成“恢复成功”。' },
+    { t: '旧实例失联后又出现', d: '旧执行者不能改受保护状态，外部操作结果得到核对', miss: '两个实例同时推进同一任务，结果互相覆盖。' },
+    { t: '等待期间取消或触发资源上限', d: '停止新执行、保存结果与记录、回收资源', miss: '取消后后台仍在跑，资源和费用继续消耗。' },
+    { t: '新版本上线后恢复旧任务', d: '状态与环境版本兼容，文件和权限仍正确', miss: '旧快照里的旧依赖和凭证状态与新版本不兼容，恢复后行为异常。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>五个场景都验证过</b>。环境升级要同时验证新建与恢复两条路径。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　没验证的场景上线后可能出现：</p>'; }
+});
+S.notes($('#n-arch'), {
+  c: [
+    ['隔离后端', '容器（共享内核）、用户态内核（gVisor 类）、MicroVM（Firecracker 类，独立内核）。'],
+    ['首次可用时延', '从申请环境到命令通道、依赖、工作区、服务全部就绪。'],
+    ['单位成功任务成本', '归属该负载的计算、存储、网络、预热费用（含失败重试）÷ 成功任务数。']
+  ],
+  p: [
+    ['接口 ≠ 隔离强度', 'SDK / K8s 接口说明不了底层隔离。'],
+    ['预热池的边界', '分配前不带用户数据和凭证；身份、挂载、恢复检查仍计入首次可用时延。'],
+    ['回收与缩容', '先停接新活、等到可恢复点；CPU 低不能单独作为回收依据。'],
+    ['SDK vs K8s', '应用开发者 vs 平台团队；可同一底座，迁移要验证完整生命周期。']
+  ]
+});
+
+/* ---------- 状态分层 ---------- */
+S.sortGame($('#stSort'), {
+  bins: [{ k: 'r', t: '运行时状态' }, { k: 'w', t: '工作区与产物' }, { k: 'm', t: '记忆与知识' }, { k: 'g', t: '业务语义与治理' }],
+  items: [
+    { t: '执行租约', k: 'r', why: '决定谁有权推进任务，需要强一致。' },
+    { t: '“工具调用 #42 已提交”事件', k: 'r', why: '任务事实，需要顺序与幂等。' },
+    { t: '生成的分析图表 v3', k: 'w', why: '成果对象，需要版本与稳定引用。' },
+    { t: '实验分支的工作区快照', k: 'w', why: '需要快照与可回滚。' },
+    { t: '“该用户偏好表格形式”', k: 'm', why: '记忆：可检索、可更新、可遗忘。' },
+    { t: '产品手册的向量索引', k: 'm', why: '知识：来源、时效、权限过滤。' },
+    { t: '“重点客户”的定义与判定规则', k: 'g', why: '本体：对象身份、关系、规则边界。' },
+    { t: '谁在何时访问了哪条记忆的审计记录', k: 'g', why: '治理状态：审计证据。' }
+  ]
+});
+S.notes($('#n-map'), {
+  c: [
+    ['四类状态', '运行时状态；工作区与产物；记忆与知识；业务语义与治理状态。'],
+    ['各自的正确性', '顺序原子幂等 / 版本快照回滚 / 可检索时效来源权限 / 身份关系规则审计。']
+  ],
+  p: [
+    ['选型起点', '先定义正确性边界，再匹配存储能力，最后用统一契约组织。'],
+    ['常见误用', '任务事实当文本检索（丢顺序）；成果当无版本附件（难回滚）；记忆知识权限混在一起（过期越权）。']
+  ]
+});
+
+/* ---------- 恢复 ---------- */
+function ck() {
+  var iv = +$('#ciS').value, f = +$('#cfS').value;
+  $('#ciO').textContent = iv; $('#cfO').textContent = f;
+  var last = Math.floor(f / iv) * iv, html = '', ncp = 0;
+  for (var i = 1; i <= 40; i++) {
+    var cls = '';
+    if (i % iv === 0 && i <= f) { cls = 'cp'; ncp++; }
+    else if (i > last && i <= f) cls = 'rp';
+    if (i === f) cls += ' cur';
+    html += '<span class="' + cls + '">' + i + '</span>';
+  }
+  $('#ev2').innerHTML = html;
+  $('#cR').textContent = f - last; $('#cS').textContent = ncp;
+}
+['ciS', 'cfS'].forEach(function (id) { $('#' + id).addEventListener('input', ck); }); ck();
+S.notes($('#n-durable'), {
+  c: [
+    ['Event Log', '只追加、不可改写的任务事实变化；强一致范围是任务 / 会话 / 业务对象。'],
+    ['Checkpoint', '可信时刻的恢复所需状态：阶段、步骤、结果引用、工作区版本、子任务、等待条件、版本。'],
+    ['Durable Execution', '执行不依赖特定进程，靠外部持久状态续行：快照 + 回放。'],
+    ['执行租约 / 状态指针', '谁有权提交下一次变化 / 当前可信状态在哪里。']
+  ],
+  p: [
+    ['事件与状态同步', '同一事务提交，或 Outbox + 事件 ID 去重；诊断日志与模型输出不能代替。'],
+    ['打点边界', '外部调用前后、长计算后、人工确认前后、工作区重要变更后、交接时。'],
+    ['外部副作用', '保存调用意图、标识和结果；靠幂等、确认、补偿，不是天然恰好一次。'],
+    ['脉冲负载', '计算与状态分别弹性；冷热分层、快照压缩、保留策略避免历史挤占实时。']
+  ]
+});
+
+/* ---------- 工作区 ---------- */
+var cw;
+function cowInit() { cw = { w: [], snap: false, fork: false }; cowDraw('基础层与共享层只读、被多个任务复用；可写层目前为空。'); }
+function cowDraw(n) {
+  var w = cw.w.length ? cw.w.join('、') : '（空）';
+  $('#cow').innerHTML = '<div class="w"><b>可写层（任务私有）</b>：' + w + (cw.snap ? '　· 已打快照 S1' : '') + '</div>' +
+    (cw.fork ? '<div class="w"><b>分支 2 的可写层</b>：（空，从 S1 派生，与分支 1 共享未修改的块）</div>' : '') +
+    '<div class="s"><b>共享数据层</b>：租户公共数据、测试样本（只读复用）</div><div class="b"><b>基础层</b>：ubuntu 24.04、JDK 17、Maven 依赖缓存（平台维护，只读）</div>';
+  $('#cowN').textContent = n;
+}
+$('#cowW').addEventListener('click', function () { if (cw.w.indexOf('pom.xml（新块）') < 0) cw.w.push('pom.xml（新块）'); cowDraw('Copy-on-Write：只有被修改的 pom.xml 在可写层生成新数据块，基础层原文件不动，也不复制整份工作区。'); });
+$('#cowS').addEventListener('click', function () { cw.snap = true; cowDraw('快照只记录可写层的变化与元数据，几乎不复制数据。它应关联到当时的 Checkpoint，避免状态与文件不一致。'); });
+$('#cowF').addEventListener('click', function () { if (!cw.snap) { cowDraw('先打快照，才能从快照分叉。'); return; } cw.fork = true; cowDraw('分支 2 从 S1 派生出自己的可写层，两边各写各的，互不覆盖；要合并时走版本合并与审批。'); });
+$('#cowR').addEventListener('click', cowInit);
+cowInit();
+HB.cards($('#wsCards'), {
+  opts: ['基础层（只读）', '可写层（任务私有）', 'Artifact Store（不可变版本）'],
+  items: [
+    { t: '团队统一的 Python 运行时和常用依赖。', a: 0, why: '可复用、只读，由平台或受控团队维护，Agent 不应随意修改。' },
+    { t: 'Agent 正在尝试的第三种数据清洗脚本。', a: 1, why: '试错在私有可写层进行。' },
+    { t: '经审批的第三版客户流失报告，下游任务要引用。', a: 2, why: '正式成果显式进入产物库，获得稳定身份与版本，不再原地修改。' },
+    { t: '跑测试生成的临时缓存文件。', a: 1, why: '中间文件，任务结束后按策略清理，不应混进正式成果。' }
+  ]
+});
+S.notes($('#n-ws'), {
+  c: [
+    ['实例 = 临时挂载点', '工作区有独立身份、权限、版本历史、生命周期。'],
+    ['分层工作区', '只读基础层 + 可共享数据层 + 任务私有可写层。'],
+    ['Copy-on-Write', '快照后只有新写或修改的部分形成新块，分支成本低。'],
+    ['Artifact', '可稳定定位、长期保留、可授权、可作为后续可信输入的成果；不可变，变更出新版本。']
+  ],
+  p: [
+    ['快照 ↔ Checkpoint', '关联起来，避免“状态恢复了、文件却变了”。'],
+    ['回滚的边界', '不撤销已提交的外部操作；容灾能力取决于存储故障域。'],
+    ['可写层围栏', '代次校验写接口、独占挂载、撤销旧端、私有分支 + 当前持有者发布。'],
+    ['多 Agent 协作', '各写各的分支，读对方的快照或 Artifact，按版本合并。']
+  ]
+});
+
+/* ---------- 语义层 ---------- */
+var MM = {
+  rows: ['用户显式表达', 'Agent 行为归纳', '外部业务事实'],
+  cols: ['人设与身份层', '画像层', '事件偏好层'],
+  ex: [
+    ['用户要求“永远用正式语气回复我”，被纳入长期行为规范。', '“我是财务经理，主要看季度数据”。', '“这次报告先给结论再给数据”。'],
+    ['多次验证后，固化为规则：“删除操作前必须先列出影响清单”。', '该用户的任务通常需要导出 Excel。', '“上次处理这个系统时，先刷新令牌再调用更稳”。'],
+    ['（较少见）由业务系统写入的长期角色事实，例如“该账户为企业主账户”。', '该客户为 VIP，近一年三次延迟交付。', '订单 #8812 昨天审批被驳回。']
+  ]
+};
+var mmh = '<div class="hd"></div>' + MM.cols.map(function (c) { return '<div class="hd">' + c + '</div>'; }).join('');
+MM.rows.forEach(function (r, i) { mmh += '<div class="hd">' + r + '</div>' + MM.cols.map(function (c, j) { return '<div data-i="' + i + '" data-j="' + j + '"><button type="button">' + r.slice(0, 2) + ' × ' + c.slice(0, 2) + '</button></div>'; }).join(''); });
+$('#mm').innerHTML = mmh;
+S.$$('#mm div[data-i] button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var d = b.parentNode, i = +d.getAttribute('data-i'), j = +d.getAttribute('data-j');
+    S.$$('#mm div[data-i]').forEach(function (x) { x.classList.toggle('on', x === d); });
+    $('#mmI').innerHTML = '<b>' + MM.rows[i] + ' × ' + MM.cols[j] + '</b><p>' + MM.ex[i][j] + '</p>';
+  });
+});
+HB.cards($('#rp'), {
+  opts: ['RAG', 'GraphRAG', 'DataProbe（结构化探查）'],
+  items: [
+    { t: '“我们的差旅住宿标准是多少？”', a: 0, why: '语义相似检索，命中制度文档的相关段落即可。' },
+    { t: '“这家供应商的实际控制人，与我们哪些竞争对手有任职关联？”', a: 1, why: '答案分散在多条事实间，需要跨实体关系遍历（按经验证的路由规则启用）。' },
+    { t: '“上个月华东区退货率是多少？”', a: 2, why: '结构化业务事实：用只读账号在授权 Schema 内查询，而不是检索文档。' },
+    { t: '“退货政策里对定制商品有什么例外？”', a: 0, why: '文档检索；注意解析要保留标题层级，避免把海外条款用于国内。' }
+  ]
+});
+S.sortGame($('#onSort'), {
+  bins: [{ k: 'o', t: '对象' }, { k: 'r', t: '关系' }, { k: 'a', t: '动作' }, { k: 'u', t: '规则' }],
+  items: [
+    { t: '客户（属性：等级、行业、负责人）', k: 'o', why: '业务实体及其属性与约束。' },
+    { t: '订单 —属于→ 客户（多对一）', k: 'r', why: '关联方向、基数与业务语义。' },
+    { t: '“发起催收”：触发条件、执行逻辑、权限约束', k: 'a', why: '把“知道”变成“能做”；执行由 Runtime 完成，授权由治理方决定。' },
+    { t: '“逾期超过 30 天且金额 &gt; 10 万，需主管审批”', k: 'u', why: '把专家经验显式化，约束自主决策的边界。' },
+    { t: '零部件 —供货于→ 产线', k: 'r', why: '制造业本体的关联拓扑。' },
+    { t: '设备（型号、产线、投产日期）', k: 'o', why: '业务实体。' }
+  ]
+});
+S.notes($('#n-sem'), {
+  c: [
+    ['记忆两维度', '来源（用户显式 / Agent 归纳 / 业务事实）× 稳定性（人设身份 / 画像 / 事件偏好）。'],
+    ['三条检索路径', 'RAG 语义相似；GraphRAG 跨实体关系；DataProbe 只读结构化探查；统一 Rerank 与溯源。'],
+    ['本体四要素', '对象、关系、动作、规则；语义建模、执行、授权三种责任分离。']
+  ],
+  p: [
+    ['Persona', '不是经验性记忆，由构建方显式维护、受版本与权限控制。'],
+    ['时间衰减的边界', '长期有效约束不应因少调用而淡出；引用频率 ≠ 正确性。'],
+    ['归档 / 降权 / 删除', '三种不同操作；删除要处理原文、摘要、索引、缓存并防止重建时复活。'],
+    ['何时引入本体', '实体身份、关系约束、多跳查询成为持续需求时。']
+  ]
+});
+
+/* ---------- 平台 ---------- */
+HB.cards($('#cons'), {
+  opts: ['强一致 / 可验证提交', '可短暂最终一致（需标新鲜度）'],
+  items: [
+    { t: '执行租约', a: 0, why: '决定谁有权推进任务，错了会双写。' },
+    { t: '支付系统返回的确认结果', a: 0, why: '影响任务正确性的外部调用结果。' },
+    { t: '知识库的向量索引', a: 1, why: '派生视图，可异步更新，但要标注对应的源文档版本和索引时间。' },
+    { t: '关键 Checkpoint', a: 0, why: '恢复的依据。' },
+    { t: '按租户统计的任务数看板', a: 1, why: '统计聚合，允许滞后。' },
+    { t: '状态库的只读副本', a: 1, why: '读副本可能轻微延迟；关键决策应读最新权威状态。' }
+  ]
+});
+S.notes($('#n-plat'), {
+  c: [
+    ['隔离三层', '物理（独立存储 / 资源池）、逻辑（独立库 / Schema / 命名空间）、行级（按租户角色标签）；可组合。'],
+    ['权威事实 vs 派生视图', '日志、元数据、关键状态 vs 向量索引、图谱投影、缓存、读副本。'],
+    ['统一元数据', '类型、ID、租户、创建者、来源、敏感级别、版本、位置、策略、生命周期、关联；加上血缘。']
+  ],
+  p: [
+    ['检索前过滤', '在索引空间、检索条件、重排序中前置租户与权限。'],
+    ['写读顺序', '先可靠提交权威事实，再异步更新派生；新索引达可用水位才切流量。'],
+    ['可解释的回答', '标出对象版本、索引时间、来源，分清推理、源数据还是索引问题。'],
+    ['恢复目标按对象定', '关键事件与检查点更低恢复点；派生数据可重建；恢复后校验租约与幂等再决定继续。']
+  ]
+});

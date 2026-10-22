@@ -1,0 +1,402 @@
+---
+title: Harness 的构建方式与责任边界：四个入口，一张契约
+desc: AI Agent Handbook 学习笔记（三）：Harness 不是什么、五层责任、八个构建对象与 Agent Contract；高代码框架、产品化 Harness、托管 Agent、云产品四类构建入口；按成功标准反推 Harness 能力、SDK 的工具授权、托管 Session 的事件流、Agent Platform 统一多源 Agent；Task / Session、Event / Trace、Artifact / Outcome 之分。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 03</span><span>对应原书第 3 章</span><span>约 30 分钟</span>
+h1: 先写契约，<em>再挑框架</em>
+lead: 构建 Agent 的主要工作，是为模型建立与任务结构、风险等级相匹配的 Harness。企业不必从零写模型之外的全部系统：可以用高代码框架自己搭，可以复用 Coding Agent 那样的产品化 Harness，可以把 Harness 连同运行一起交给托管服务，也可以在云产品里组合预置能力。四条路的差别不在模型，而在于 Harness 的通用行为由谁实现、Runtime 与 Sandbox 由谁提供、企业还要补哪些责任。
+nav: what|Harness 是什么;contract|构建对象;entry|四个入口;fw|高代码框架;prod|产品化 Harness;managed|托管 Agent;platform|Agent Platform;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.code { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 12px 14px; white-space: pre; overflow-x: auto; color: var(--ink-2); margin: 10px 0 0; }
+.code .add { color: var(--s1); font-weight: 600; }
+.code .cm { color: var(--ink-3); }
+.ctr { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; }
+.ctr div { border: 1px solid var(--hair); border-radius: 8px; padding: 9px 12px; background: var(--bg); font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+.ctr div b { display: block; color: var(--ink); font-size: 16px; }
+.tlog { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.tlog div { display: grid; grid-template-columns: 9em minmax(0, 1fr) 6em; gap: 10px; align-items: center; border: 1px solid var(--hair); border-radius: 6px; padding: 7px 10px; background: var(--bg); font-size: 15px; }
+.tlog code { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+.tlog .r { font-weight: 700; text-align: right; }
+.tlog .r.al { color: var(--ok); } .tlog .r.as { color: var(--s2); } .tlog .r.de { color: var(--alert); }
+@media (max-width: 560px) { .tlog div { grid-template-columns: minmax(0, 1fr); gap: 2px; } .tlog .r { text-align: left; } }
+.ev { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ev div { border-left: 4px solid var(--rule); padding: 6px 10px; background: var(--bg); border-radius: 0 6px 6px 0; font-size: 15px; color: var(--ink-2); }
+.ev div code { font-family: var(--f-num); color: var(--ink); font-size: 15px; }
+.ev div.on { border-left-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.ev div.warn { border-left-color: var(--alert); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Harness 不是什么？它和 Runtime、Sandbox、Agent Platform 分别怎么分工？</li>
+    <li>四类构建入口的根本差别是什么？为什么说它们不是成熟度阶梯？</li>
+    <li>为什么 Session 能续上不等于任务能恢复？Task / Session、Event / Trace、Artifact / Outcome 各是什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>Harness 是什么，不是什么</h2><span class="meta">原书 3.1.1 节</span></div>
+  <div class="sec-lede">
+    <p>这一章给了 Harness 一个更工程化的定义：<strong>模型之外、围绕 Agent Loop 组织上下文、能力、状态、环境与控制机制，把模型判断转化为可执行、可恢复、可验证任务过程的代码、配置和执行逻辑</strong>。原书用三个“不是”来划界：它不是更长的 System Prompt（Prompt 只是它每轮生成的输入之一，状态机、工具注册、权限检查、错误恢复、完成验证都是确定性逻辑）；它不是某个 Framework 的同义词（框架可以帮你实现，CLI / SDK 可以提供现成的，托管服务可以连运行一起托管）；它也不是 Runtime 或 Sandbox。</p>
+    <p>为什么需要它？一次模型调用没有可靠的跨轮状态，不知道任务是否已在别处推进；窗口有限；工具调用只表达<strong>意图</strong>，不等于用户已授权；模型可以声称完成，却证明不了文件已生成、测试已通过、订单已提交。Harness 的工作就是<strong>把概率性的判断嵌入确定性的边界</strong>。</p>
+    <p>原书把责任分五层：Model（能理解推理到什么程度）、Harness 编排（Agent 如何工作）、Runtime（如何持续运行）、Sandbox / Environment（在哪里行动、影响多大）、Agent Platform（如何规模化交付和治理）。一个 SDK 可以同时包含 Harness 和本地 Runtime，托管服务可以同时提供三者，但设计时仍要保留边界，否则说不清故障归属、数据位置、迁移成本和最终责任。</p>
+    <p class="go">下面每件事归哪一层负责？</p>
+  </div>
+  <div class="lab"><div id="lay5"></div></div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="contract">
+  <div class="part-head"><h2>八个构建对象，从任务契约开始</h2><span class="meta">原书 3.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>从开发者视角，构建 Harness 不是罗列功能，而是让八个工程对象在同一个任务生命周期里协同：<strong>Agent Contract</strong>（为谁工作、目标、允许与禁止）、<strong>Execution</strong>（循环、规划、等待、委派、结束）、<strong>Context &amp; State</strong>（每轮看什么、事实存哪）、<strong>Capability</strong>（Tool、MCP、Skill、Subagent）、<strong>Environment</strong>（在哪里运行）、<strong>Control</strong>（以谁的身份、哪些要拒绝或审批）、<strong>Interaction</strong>（进度、干预、恢复）、<strong>Quality</strong>（怎么证明完成、新版本是否更好）。最小 Agent 可以只实现一部分，进生产后每一项都要有明确责任人。选构建路径，本质上就是决定哪些对象自己开发、哪些复用产品、哪些交给托管平台。</p>
+    <p>原书强调，构建<strong>不能从选框架或打开工具开始，而应先固定任务契约</strong>：为谁工作、接受什么输入、交付什么结果、允许影响哪些系统、哪些动作必须拒绝或审批、什么证据证明完成。同一个“修复高危依赖漏洞”的目标，可以只出分析报告，可以在隔离环境里改代码跑测试，也可以创建合并请求；除非契约明确授予发布权限并规定审批条件，这些 Agent 都不应把“修复完成”解释成“已经发布生产”。</p>
+    <p class="go">切换三份契约，看同一目标下允许的动作和完成证据怎样变化（契约内容为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同一个目标，三份 Agent Contract</p>
+    <div class="seg" id="ctrSeg"><button data-v="0" aria-pressed="true">只出分析报告</button><button data-v="1">隔离环境中修复并测试</button><button data-v="2">修复并创建合并请求</button></div>
+    <div class="ctr" id="ctr"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">八个构建对象：缺了谁负责？</p>
+    <div id="obj8"></div>
+  </div>
+  <div class="notes" id="n-contract"></div>
+</section>
+
+<section class="part" id="entry">
+  <div class="part-head"><h2>四个构建入口：谁实现 Harness，谁提供运行</h2><span class="meta">原书 3.1.3 节，表 3-2</span></div>
+  <div class="sec-lede">
+    <p>选入口之前先判断<strong>路径由谁控制</strong>：步骤、分支、异常在设计时已明确的用 Workflow；路径要按中间结果动态决定的让 Agent 持有部分决策权；主流程稳定但局部判断复杂的用 Hybrid，由 Workflow 固定审批、交易、发布边界，Agent 负责检索、分析、方案。注意，这三者描述的是路径控制方式，和 Single / Long-Horizon / Multi-Agent 不是并列的形态。</p>
+    <p>然后是四类入口：<strong>高代码 Framework 自主构建</strong>（AgentScope、LangChain 等，企业直接控制 Loop、Context、规划、状态语义和验证逻辑）、<strong>产品化 Harness</strong>（Coding Agent CLI / SDK、工作区助手，复用规划、工具执行、Session、事件和过程干预）、<strong>基于模型构建 / Managed Agents</strong>（Qoder Cloud Agents、Claude Managed Agent，约定范围内的 Harness 连同隔离执行和云端资源一起托管）、<strong>基于云产品构建</strong>（阿里云 AgentCore，用产品预置的模型、知识、工具、运行环境组合）。任何一种形态都可以从任一入口构建，入口也可以混用：框架写的 Agent 可以跑在托管 Runtime 上，产品化 Harness 也可以被平台调度。</p>
+    <p class="go">回答四个问题，看哪个入口更合适。</p>
+  </div>
+  <div class="lab"><div id="ent"></div></div>
+  <div class="vendor"><b>厂商案例说明</b>原书以 AgentScope、QwenPaw、Qoder Cloud Agents、阿里云 AgentCore 分别代表四种入口，它们都来自阿里系产品。本笔记保留原书总结的责任边界，产品具体能力以官方文档为准。</div>
+  <div class="notes" id="n-entry"></div>
+</section>
+
+<section class="part" id="fw">
+  <div class="part-head"><h2>高代码框架：从成功标准反推能力</h2><span class="meta">原书 3.2 节</span></div>
+  <div class="sec-lede">
+    <p>Framework 路径的核心价值是<strong>任务语义控制</strong>：每轮 Context 怎样组成、哪些错误可以重试、计划何时生成和更新、何时请求审批、怎样创建子任务、什么证据算完成。相应地，框架只提供构建材料，<strong>不会自动补齐</strong>多租户隔离、状态恢复、Sandbox、安全策略、评估基线和业务验收。“自主构建”指团队用框架设计 Harness，不是 Agent 自己生成 Harness。</p>
+    <p>原书的建议是<strong>不要一次性打开所有能力</strong>，而是从任务成功标准反推。漏洞修复 Agent 至少要读代码、生成补丁、跑测试、做安全扫描；计划未经确认不能改代码，就需要 Plan Mode 与 Permission；分析和评审能并行，就需要 Subagent；任务跨多次调用，就需要外置状态和可恢复 Workspace。一条分工原则贯穿始终：<strong>稳定、确定的步骤沉淀为 Tool、脚本或策略；需要理解目标、权衡方案的部分留在 Agent Loop；可能影响外部世界的动作统一经过权限和 Sandbox</strong>。这样的 Harness 才有可测试的边界，而不是一组由 Prompt 驱动的隐式行为。</p>
+    <p>走向在线服务时，实例不能靠进程内消息历史恢复任务：要把 Session、Task、Plan、子任务、Artifact 映射到共享状态，给同一任务设并发写入或执行租约，Worker 失效后从安全点恢复，按租户创建或复用 Sandbox，用短时身份访问企业工具。</p>
+    <p class="go">勾选这个任务的需求，看 Builder 要加哪些能力（代码改写自原书 3.2.1 节的 AgentScope 示例）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">按需求组合 HarnessAgent</p>
+    <div class="hb-check" id="fwNeed"></div>
+    <pre class="code" id="fwCode"></pre>
+    <p class="note">每加一项能力，都要回答原书表 3-4 的问题：指令层级与冲突规则、Session / Task 边界与写入规则、何时规划谁批准、能力的版本与权限、文件网络 Secret 的隔离范围、ALLOW / DENY / ASK 与事件映射、完成证据与回归标准。</p>
+  </div>
+  <div class="notes" id="n-fw"></div>
+</section>
+
+<section class="part" id="prod">
+  <div class="part-head"><h2>产品化 Harness：复用工作方式，补齐企业责任</h2><span class="meta">原书 3.3 节</span></div>
+  <div class="sec-lede">
+    <p>Coding Agent 和工作区助手已经形成一套可复用的工作模式：检查工作区、制定计划、调文件和命令工具、维护 Session、请求权限、生成 Artifact、长任务中接受用户干预。CLI 适合开发者直接在工作区操作，SDK 适合把同一套 Harness 嵌入既有应用，工作区助手强调跨入口的连续使用和个人化状态。三者区别不是模型能力，而是 Harness 由谁发起、状态由谁保存、事件由谁消费。</p>
+    <p>原书的 SDK 示例值得细看：<code>tools</code> 限定可用工具集合，<code>allowedTools</code> 只预授权读取和检索，需要确认的修改或命令交给 <code>canUseTool</code> 回调由宿主应用审批，拒绝、取消、超时都应终止操作。提示词里写了“不要发布”，<strong>真正落实它的是</strong>：cwd 指向受控 Workspace、不注入生产发布凭据、用身份与网络策略阻断发布通路。<code>result</code> 只是运行结果，业务 Outcome 要依据变更文件、测试、安全扫描和业务状态另行确认。</p>
+    <p>封装成多租户服务时，外部 Session Store 能让另一台主机凭 <code>session_id</code> 继续执行，但它<strong>只保存对话记录</strong>，不保存认证状态、文件 Checkpoint 或保留策略。Worker 失效后要先确认原行动和工作区状态，再决定 Resume、Retry 还是转人工，<strong>不能因为 Session 能读到就重放最后一次工具调用</strong>。工作区助手同理：原书举 QwenPaw 为例，官方文档注明后台 Subagent 不可恢复、Sandbox 在未启用约束时不提供隔离、多实例 Hub 不构成面向陌生用户的强多租户边界，所以“功能可用”不等于“生产责任已满足”。</p>
+    <p class="go">配置预授权和审批，看 Agent 的六次工具请求各会怎样处理。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">tools / allowedTools / canUseTool 三道关（工具请求序列为示意）</p>
+    <div class="selrow"><span>预授权 allowedTools</span><div class="seg" id="alSeg"><button data-v="ro" aria-pressed="true">只读：Read Glob Grep</button><button data-v="rw">再加 Edit Write</button><button data-v="all">全部（含 Bash）</button></div></div>
+    <div class="selrow"><span>宿主审批人对 Bash 的态度</span><div class="seg" id="apSeg"><button data-v="y" aria-pressed="true">逐条看后批准测试类命令</button><button data-v="t">审批超时无人处理</button></div></div>
+    <div class="selrow"><span>环境里有生产发布凭据吗</span><div class="seg" id="crSeg"><button data-v="n" aria-pressed="true">没有，网络也阻断</button><button data-v="y">有（偷懒复用了 CI 凭据）</button></div></div>
+    <div class="tlog" id="tlog"></div>
+    <p class="verdict3" id="tlogV"></p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Session Store vs 企业任务存储</h4>
+    <p><b>Session Store</b> 镜像的是 Session Transcript（对话历史），让别的主机能接着对话。<b>企业任务存储</b>还要分别管理 Task State、Artifact、Sandbox Snapshot、凭证和业务 Outcome，并保证租户隔离、追加顺序、幂等写入和并发控制。前者能续聊，后者才能续任务。</p>
+  </div>
+  <div class="notes" id="n-prod"></div>
+</section>
+
+<section class="part" id="managed">
+  <div class="part-head"><h2>托管 Agent：用四个对象委派任务</h2><span class="meta">原书 3.4 节</span></div>
+  <div class="sec-lede">
+    <p>托管路径把通用 Harness 和运行基础服务化：平台承担基础 Agent Loop、Session 推进、工具运行和 Serverless 隔离环境，企业的工作从“组织一次次执行”转向<strong>定义目标、处理干预、验收成果</strong>。原书以 Qoder Cloud Agents 为例，核心对象只有四个：<strong>Agent</strong>（可复用定义：模型、System Prompt、工具、Skill）、<strong>Environment</strong>（容器环境：依赖、资源、环境变量、凭证）、<strong>Session</strong>（一次具体任务）、<strong>Event</strong>（输入与实时执行事件）。一个 Agent 定义可以被多个 Session 复用，每个 Session 有独立的隔离环境。</p>
+    <p>事件流有几个工程细节：新的 SSE 连接（不带 Last-Event-ID）只收建连之后的事件，所以要<strong>先确认订阅建立，再提交任务</strong>；处理成功后保存事件 ID，断线时用 Last-Event-ID 续接并按 ID 去重；提交超时要先核对服务端状态再决定是否重试，避免重复执行。<code>session.status_idle</code> 只表示当前回合结束，<strong>不表示任务成功</strong>。</p>
+    <p>托管越多，越要把责任写成机器可执行的契约：Agent 能看见什么工具、Environment 能访问什么资源、凭证以谁的身份发放、哪些事件需要人工参与、什么 Outcome 才能让企业 Task 完成。原书的话很直接：否则“只是把不明确的 Agent 行为转移到了云端”。</p>
+    <p class="go">一步步走完一次托管任务，留意第 4 步和第 7 步。</p>
+  </div>
+  <div class="lab">
+    <div id="mgStep"></div>
+    <div class="ev" id="mgEv"></div>
+    <div class="hb-info" id="mgInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="notes" id="n-managed"></div>
+</section>
+
+<section class="part" id="platform">
+  <div class="part-head"><h2>Agent Platform：统一对象，不抹平实现</h2><span class="meta">原书 3.5–3.7 节</span></div>
+  <div class="sec-lede">
+    <p>云产品入口（原书以阿里云 AgentCore 为例）与托管 Agent 的区别主要在<strong>控制面</strong>：托管服务侧重把已定义的 Agent 持续执行，云产品还负责创建、资源装配、版本管理和发布配置。原书提醒，在产品界面里完成了配置，不代表所有能力属于同一个架构层；平台侧的“已发布”只说明定义可以被调用，不说明业务任务已完成。建 Agent 也应从任务契约反推资源，而不是把所有模型、知识、工具都挂上去。</p>
+    <p>当多个团队、多种 Agent 并存，每个项目各建模型接入、工具目录、凭证、Session、Sandbox、观测和评估，就会重复投入并形成 Agent、数据、权限的孤岛。<strong>Agent Platform</strong> 要接入框架写的 Workload、SDK 封装的 Worker、托管或 SaaS Agent，统一的是身份、资源、版本、任务和质量事实，<strong>不要求它们改用同一种 Harness</strong>。纳管多源 Agent 至少满足三个条件：版本与归属可追溯（不只是一个名字）；Event、Artifact、Trace 关联 Task、Identity、Tenant；远程 Agent 不能只回一段自然语言结论，要提供可验收的 Artifact、事件或环境事实。</p>
+    <p>原书小结里最值得记的一句：无论选哪个入口，都要<strong>区分 Task 与 Session、Event 与 Trace、Artifact 与 Outcome</strong>，把权限与验证落实为确定性机制，并让模型、Harness 配置、能力、环境、策略、评估基线共同受版本控制。</p>
+    <p class="go">三对概念，判断每条描述说的是哪一个（描述据原书整理）。</p>
+  </div>
+  <div class="lab"><div id="pairs"></div></div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>平台能力（原书表 3-7）</th><th>主要管理对象</th></tr>
+      <tr><td>Agent 创建与目录</td><td>Definition、Template、Version、Owner、Tenant</td></tr>
+      <tr><td>异构接入与交付</td><td>Workload、Worker、Endpoint、Deployment、Channel</td></tr>
+      <tr><td>能力与数据资源</td><td>Model、Tool、MCP、Skill、Memory、Knowledge、Credential</td></tr>
+      <tr><td>协作与任务组织</td><td>Agent Team、Task、Dependency、Delegation、Handoff、Event、Approval</td></tr>
+      <tr><td>运行与资源调度</td><td>Runtime、Worker、Queue、Sandbox、Workspace、Browser、CPU / GPU、Budget</td></tr>
+      <tr><td>身份与策略治理</td><td>User、Service Identity、Role、Policy、Secret、Audit</td></tr>
+      <tr><td>观测、评估与优化</td><td>Event、Trace、Artifact、Outcome、Evaluator、Feedback、Cost</td></tr>
+    </table>
+    <p class="note">“统一”不等于单体：Registry、Runtime、Sandbox、Gateway、Memory、Observability、Evaluation 可以是不同服务，关键是共享一致的身份、租户、版本、Task 和质量语义。等待中的长任务也不应一直占着完整计算资源，状态要与执行实例解耦，按优先级、配额、数据位置和预算调度。</p>
+  </div>
+  <div class="notes" id="n-platform"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Harness 不是什么？它和 Runtime、Sandbox、Platform 怎么分工？</summary><p class="ans">不是更长的 System Prompt，不是某个框架的同义词，也不是 Runtime 或 Sandbox。Harness 决定下一步给模型什么、允许模型提出什么行动、怎样推进任务；Runtime 负责持续承载（进程、调度、并发、等待、恢复）；Sandbox 把行动限制在可控环境（文件、网络、Secret、资源）；Platform 负责多租户、发布、网关、配额、观测、评估、安全和运营。</p></details>
+    <details><summary>2. 四类入口的根本差别？为什么不是成熟度阶梯？</summary><p class="ans">差别在 Harness 的通用行为由谁实现、Runtime 与 Sandbox 由谁提供、企业还要补齐哪些控制和验收责任，而不是模型能力或应用形态。它们可以混用（框架 Agent 跑在托管 Runtime 上、产品化 Harness 被平台调度），企业应按任务结构、定制深度、数据边界、环境影响、团队能力和交付方式选最低充分方案。</p></details>
+    <details><summary>3. 为什么 Session 能续上不等于任务能恢复？三对概念各是什么？</summary><p class="ans">Session Store 只存对话记录，不存认证状态、文件 Checkpoint、业务状态；恢复前要先核对原行动、工作区、幂等键和外部系统状态，再决定 Resume、Retry 或转人工，不能直接重放最后一次工具调用。Task 是企业业务任务、Session 是某个 Agent 实现里的一次执行会话；Event 是执行过程中的实时消息、Trace 是可观测与审计用的结构化执行轨迹；Artifact 是交付的产物、Outcome 是经验证后的业务结果判定。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- Harness 是什么 ---------- */
+HB.cards($('#lay5'), {
+  opts: ['Model', 'Harness 编排', 'Runtime', 'Sandbox', 'Platform'],
+  items: [
+    { t: '决定这一轮该把哪些文件摘要放进上下文。', a: 1, why: 'Context 组成是 Harness 编排的职责。' },
+    { t: '读懂报错信息，判断是依赖版本冲突。', a: 0, why: '语义理解与推理判断属于 Model。' },
+    { t: 'Worker 节点宕机后，把任务调度到另一台机器从检查点继续。', a: 2, why: '进程承载、调度与故障恢复属于 Runtime。' },
+    { t: '禁止 Agent 执行的命令访问公网。', a: 3, why: '网络、文件、Secret、资源隔离属于 Sandbox / Environment。' },
+    { t: '给二十个团队的 Agent 统一发布流程、配额和评估。', a: 4, why: '多租户、发布、配额、评估是 Agent Platform 的职责。' },
+    { t: '在交付前运行测试，确认任务真的完成。', a: 1, why: 'Verification 属于 Harness 编排：模型声称完成不等于完成。' },
+    { t: '任务等待人工审批时挂起，审批通过后继续执行。', a: 2, why: '等待与恢复的承载由 Runtime 提供；“需要审批”这个判断来自 Harness。' }
+  ]
+});
+S.notes($('#n-what'), {
+  c: [
+    ['Harness（本章定义）', '模型之外，围绕 Agent Loop 组织上下文、能力、状态、环境与控制，把判断转为可执行、可恢复、可验证过程的代码、配置与逻辑。'],
+    ['三个“不是”', '不是长 Prompt、不是框架同义词、不是 Runtime 或 Sandbox。'],
+    ['五层责任', 'Model / Harness 编排 / Runtime / Sandbox · Environment / Agent Platform。']
+  ],
+  p: [
+    ['工具调用的本质', '只表达行动意图，不等于当前用户已授权执行。'],
+    ['模型声称完成', '不能证明文件已生成、测试已通过、订单已提交、审批已生效。'],
+    ['边界要保留', '即使一个产品包含多层，也要能说清故障归属、数据位置、迁移成本、最终责任。']
+  ]
+});
+
+/* ---------- 契约 ---------- */
+var CTR = [
+  { g: '为安全团队出一份 payment-service 高危依赖漏洞的分析报告', al: '读取代码与依赖清单；运行只读扫描', no: '修改任何文件；访问代码托管写接口', ok: '无', ev: '报告列出受影响依赖、调用路径与修复建议，并附扫描输出' },
+  { g: '在隔离环境中修复漏洞并补测试', al: '在副本工作区读写代码；运行测试与扫描', no: '推送到远端；访问生产凭据与网络', ok: '修改计划需人确认后才能动代码', ev: '变更文件 + 测试全部通过 + 安全扫描不再报告该漏洞' },
+  { g: '修复漏洞并创建合并请求，交给人评审', al: '以上全部；以受限服务身份创建分支和 MR', no: '合并到主干；发布生产（契约未授予）', ok: '创建 MR 前请求批准', ev: 'MR 链接 + CI 结果 + 扫描报告；“已发布”不属于本任务的完成定义' }
+];
+function ctr(i) {
+  var c = CTR[i];
+  $('#ctr').innerHTML = [['目标', c.g], ['允许', c.al], ['禁止', c.no], ['审批点', c.ok], ['完成证据', c.ev]].map(function (x) { return '<div><b>' + x[0] + '</b>' + x[1] + '</div>'; }).join('');
+}
+S.seg($('#ctrSeg'), function (v) { ctr(+v); }); ctr(0);
+HB.check($('#obj8'), {
+  items: [
+    { t: 'Agent Contract', d: '角色指令、输入输出、成功标准', miss: 'Agent 自己决定“完成”是什么意思，修复可能被解释成发布。' },
+    { t: 'Execution', d: 'Loop、状态机、预算、Verifier', miss: '没有终止条件与预算，任务不收敛或花费失控。' },
+    { t: 'Context & State', d: 'Context Policy、Session / Task Schema、Workspace、Memory', miss: '任务事实只在对话里，压缩或重启后丢失。' },
+    { t: 'Capability', d: 'Tool Schema、MCP、Skill、Subagent、能力目录', miss: '能力随手接入，版本、权限、输出契约都不清楚。' },
+    { t: 'Environment', d: 'Environment Contract、Sandbox、Artifact 边界', miss: '命令在哪跑、能碰什么没人说得清。' },
+    { t: 'Control', d: 'Permission Policy、HITL、短时凭证', miss: '以谁的身份行动、哪些要审批全靠提示词约定。' },
+    { t: 'Interaction', d: 'Event Schema、Streaming、Channel、恢复游标', miss: '用户看不到进度，断线后无法续接或干预。' },
+    { t: 'Quality', d: 'Trace、Outcome、测试用例、评估基线', miss: '无法证明这次完成了，也无法判断新版本是否更好。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>八个对象都有责任人</b>。最小 Agent 可以只做一部分，进生产后每一项都要有人负责。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　没人负责的对象会变成：</p>'; }
+});
+S.notes($('#n-contract'), {
+  c: [
+    ['Agent Contract', '为谁工作、输入、交付、允许影响的系统、必须拒绝或审批的动作、完成证据。'],
+    ['八个构建对象', 'Contract、Execution、Context & State、Capability、Environment、Control、Interaction、Quality。'],
+    ['三个能力域', '执行与编排、上下文与状态、行动与反馈（第 4–6 章）。']
+  ],
+  p: [
+    ['构建的起点', '先固定任务契约，再选框架和工具。'],
+    ['选路径的本质', '哪些对象自己开发、哪些复用产品、哪些交给托管平台。'],
+    ['修复 ≠ 发布', '契约没有授予发布权限，Agent 就不能把“修复完成”解释成“已发布”。']
+  ]
+});
+
+/* ---------- 四个入口 ---------- */
+HB.decide($('#ent'), {
+  qs: [
+    { id: 'loop', q: '1. 任务效果是否依赖修改 Loop、Context 编译顺序或特殊状态迁移？', opts: [['y', '是，逻辑独特'], ['n', '否，通用工作方式就够']], def: 'n' },
+    { id: 'host', q: '2. 数据和执行环境能交给外部托管吗？', opts: [['y', '可以'], ['n', '必须企业自己控制']], def: 'y' },
+    { id: 'ops', q: '3. 团队愿意自己维护状态恢复与 Sandbox 吗？', opts: [['y', '愿意，也有能力'], ['n', '不愿意']], def: 'n' },
+    { id: 'out', q: '4. 最终交付给谁？', opts: [['ws', '个人或团队工作区 / 嵌入现有应用'], ['bg', '后台异步、批量、计划任务'], ['pf', '平台内的业务 Agent，用共享资源快速组合']], def: 'bg' }
+  ],
+  decide: function (a) {
+    var r;
+    if (a.loop === 'y' || (a.host === 'n' && a.ops === 'y')) r = ['高代码 Framework 自主构建 Harness', 'Loop、Context、规划、状态语义、工具策略和验证逻辑都在自己手里。', '组合后的行为、执行基础、安全、恢复、评估和业务验收都要自己负责。'];
+    else if (a.out === 'ws') r = ['产品化 Harness（CLI / SDK / 工作区助手）', '复用工作区理解、规划、工具执行、Session、事件和过程干预。', '多租户接入、业务 Task、隔离环境、凭证、Artifact 和 Outcome。'];
+    else if (a.out === 'pf') r = ['基于云产品构建', '模型、知识、工具、运行环境及管理能力由产品预置（范围以版本为准）。', '业务 Task、数据与权限边界、扩展集成、效果评估和最终验收。'];
+    else r = ['基于模型构建 / Managed Agents', '约定范围内的 Harness、Session 推进、事件流、隔离执行和云端资源。', '身份映射、业务状态、审批、数据边界、结果验收和退出机制。'];
+    var warn = (a.host === 'n' && a.ops === 'n') ? '<p class="bad"><b>注意：</b>数据不能托管、又不愿维护恢复与 Sandbox，这两个约束互相冲突，需要先决定由谁承担运行责任。</p>' : '';
+    return '<div class="hb-res"><h4>' + r[0] + '</h4><p><b>可复用 / 托管：</b>' + r[1] + '</p><p><b>企业仍需承担：</b>' + r[2] + '</p></div>' + warn + '<p class="note">据原书 3.1.3 节给出的四个判断维度整理；入口可以混用，不是成熟度阶梯。</p>';
+  }
+});
+S.notes($('#n-entry'), {
+  c: [
+    ['路径控制方式', 'Workflow / Agent 主导 / Hybrid；与 Single / Long-Horizon / Multi 不是同一维度。'],
+    ['四类入口', '高代码框架；产品化 Harness；基于模型 / Managed Agents；基于云产品。'],
+    ['入口的差别', 'Harness 由谁实现、Runtime 与 Sandbox 由谁提供、企业还要补哪些责任。']
+  ],
+  p: [
+    ['选入口的四问', '是否要改 Loop / Context；数据环境能否托管；是否愿意维护恢复与 Sandbox；交付给谁。'],
+    ['不是阶梯', '可以混用：框架 Agent 跑托管 Runtime，产品化 Harness 被平台调度。']
+  ]
+});
+
+/* ---------- 高代码框架 ---------- */
+var NEED = [
+  { t: '计划确认后才能改代码', d: 'Plan Mode + Permission', code: ['    .enablePlanMode()'] },
+  { t: '任务跨多步，要跟踪进度', d: 'Todo / Task State', code: ['    .enableTaskList()'] },
+  { t: '对话会很长', d: 'Context 压缩', code: ['    .compaction(CompactionConfig.builder()', '        .triggerMessages(30)', '        .keepMessages(10)', '        .build())'] },
+  { t: '工具会返回很大的日志', d: '大结果卸载到工作区', code: ['    .toolResultEviction(ToolResultEvictionConfig.defaults())'] },
+  { t: '要执行命令、跑测试', d: '隔离的文件系统 / Sandbox', code: ['    .filesystem(new DockerFilesystemSpec()', '        .image("ubuntu:24.04"))'] }
+];
+var needOn = [true, false, false, false, true];
+var nb = $('#fwNeed');
+NEED.forEach(function (n, i) {
+  var lb = S.h('label', { class: 'hb-ci' }, nb);
+  var cb = S.h('input', { type: 'checkbox' }, lb); cb.checked = needOn[i];
+  S.h('span', { html: '<b>' + n.t + '</b><small>→ ' + n.d + '</small>' }, lb);
+  cb.addEventListener('change', function () { needOn[i] = cb.checked; fwc(); });
+});
+function fwc() {
+  var L = ['HarnessAgent agent = HarnessAgent.builder()', '    .name("remediation-agent")', '    .model(model)', '    .workspace(Paths.get(".agentscope/workspace"))'];
+  var html = L.join('\n');
+  NEED.forEach(function (n, i) { if (needOn[i]) html += '\n<span class="add">' + n.code.join('\n') + '</span>'; });
+  html += '\n    .build();\n\n<span class="cm">// 调用时带上身份与会话，任务边界才清楚</span>\nagent.call(message, RuntimeContext.builder()\n    .userId("u-1842")\n    .sessionId("remediation-2026-0917")\n    .build()).block();';
+  $('#fwCode').innerHTML = html;
+}
+fwc();
+S.notes($('#n-fw'), {
+  c: [
+    ['Framework 路径的价值', '任务语义控制：Context 组成、重试规则、计划时机、审批、子任务、完成证据。'],
+    ['框架不会自动补齐', '多租户隔离、状态恢复、Sandbox、安全策略、评估基线、业务验收。'],
+    ['最小 Harness 边界', 'name（行为主体）、model、workspace（外部空间）、RuntimeContext（用户与 Session）。']
+  ],
+  p: [
+    ['加能力的方法', '从成功标准反推，不要一次全开。'],
+    ['分工原则', '确定步骤 → Tool / 脚本 / 策略；目标理解与权衡 → Loop；外部影响 → 权限 + Sandbox。'],
+    ['上线前交付物', 'Harness 代码、Contract、状态 Schema、Context Policy、Tool / Skill 清单、Environment Contract、Permission Policy、Verifier、事件模型、回归用例。'],
+    ['在线化要点', '状态外置、执行租约、从安全点恢复、按租户 Sandbox、短时身份。']
+  ]
+});
+
+/* ---------- 产品化 Harness ---------- */
+var REQ = [['Read', 'src/pom.xml', 'r'], ['Grep', '"jackson-databind"', 'r'], ['Edit', 'pom.xml 升级依赖版本', 'w'], ['Bash', 'mvn test', 'b'], ['Write', 'src/test/...RegressionTest.java', 'w'], ['Bash', 'mvn deploy -P prod', 'p']];
+var tcfg = { al: 'ro', ap: 'y', cr: 'n' };
+function tlog() {
+  var out = '', bad = false, asks = 0;
+  REQ.forEach(function (q) {
+    var pre = q[2] === 'r' || (q[2] === 'w' && tcfg.al !== 'ro') || tcfg.al === 'all';
+    var res, cls;
+    if (pre) {
+      if (q[2] === 'p') { if (tcfg.cr === 'y') { res = '已执行'; cls = 'de'; bad = true; } else { res = '执行失败'; cls = 'as'; } }
+      else { res = '自动允许'; cls = 'al'; }
+    } else {
+      asks++;
+      if (tcfg.ap === 't') { res = '超时拒绝'; cls = 'de'; }
+      else if (q[2] === 'p') { res = '人工拒绝'; cls = 'de'; }
+      else { res = '人工批准'; cls = 'al'; }
+    }
+    out += '<div><code>' + q[0] + '</code><span>' + q[1] + '</span><span class="r ' + cls + '">' + res + '</span></div>';
+  });
+  $('#tlog').innerHTML = out;
+  var v = $('#tlogV');
+  if (bad) { v.className = 'verdict3 bad'; v.innerHTML = '<b>发布到了生产。</b>Bash 被整体预授权，环境里又有发布凭据：提示词里的“不要发布”拦不住。原书要求不注入发布凭据，并用身份与网络策略阻断发布通路。'; }
+  else if (tcfg.ap === 't' && asks) { v.className = 'verdict3'; v.innerHTML = '审批超时一律拒绝，任务停在原地但没有越权：这正是原书要求的“取消或超时应拒绝执行”。'; }
+  else if (tcfg.al === 'all') { v.className = 'verdict3'; v.innerHTML = '全部预授权，好在环境里没有发布凭据、网络也阻断，发布命令失败。真正的边界在环境，不在提示词。'; }
+  else { v.className = 'verdict3'; v.innerHTML = '读取类自动放行，修改和命令逐条由宿主审批；即使误批，环境里也没有发布凭据。运行结果 <code>result</code> 还要经过测试、扫描和业务验收才算 Outcome。'; }
+}
+S.seg($('#alSeg'), function (v) { tcfg.al = v; tlog(); });
+S.seg($('#apSeg'), function (v) { tcfg.ap = v; tlog(); });
+S.seg($('#crSeg'), function (v) { tcfg.cr = v; tlog(); });
+tlog();
+S.notes($('#n-prod'), {
+  c: [
+    ['CLI / SDK / 工作区助手', '区别在 Harness 由谁发起、状态由谁保存、事件由谁消费，不在模型能力。'],
+    ['tools / allowedTools', '前者限定可用集合，后者是免审批的预授权子集。'],
+    ['canUseTool', '宿主应用的审批回调；拒绝、取消、超时都应终止操作。'],
+    ['result ≠ Outcome', '运行结果要经变更文件、测试、扫描、业务状态验证后才确认 Outcome。']
+  ],
+  p: [
+    ['“不要发布”怎么落实', '受控 Workspace + 不注入发布凭据 + 身份与网络策略阻断发布通路。'],
+    ['优先用扩展点', 'MCP、Skill、Plugin、Subagent、Hooks、Memory、Session Store，而不是在外围 Prompt 里模拟。'],
+    ['恢复前先核对', '原行动、工作区、幂等键、外部系统、已生成 Artifact，再决定 Resume / Retry / 转人工。'],
+    ['功能可用 ≠ 责任满足', '后台子任务是否可恢复、Sandbox 是否真隔离、多实例是否强多租户，都要逐项确认。']
+  ]
+});
+
+/* ---------- 托管 Agent ---------- */
+var MG = [
+  ['定义 Agent', '<code>POST /cloud/agents</code>：模型、System（“不得直接发布生产”）、启用的工具集', '可复用的定义，多个 Session 共用。版本化它，才能追溯线上行为。'],
+  ['配置 Environment', '容器依赖、资源、环境变量、凭证', '凭证以谁的身份发放、能访问哪些资源，是企业要写清的契约。'],
+  ['创建 Session', '<code>POST /cloud/sessions</code>：绑定 Agent 与 Environment', '一次具体任务，有独立的隔离执行环境。企业要保存业务 task_id 与 session_id 的映射。'],
+  ['先订阅事件流', '<code>GET …/events/stream</code>，确认 HTTP 200 与 text/event-stream', '不带 Last-Event-ID 的新连接只收建连之后的事件：先提交再订阅，就会漏掉开头。'],
+  ['发送任务', '<code>POST …/events</code>：<code>user.message</code> “修复 payment-service 的高危依赖漏洞并运行测试”', '提交超时，先查服务端状态再决定是否重试，避免同一任务执行两遍。'],
+  ['消费事件', '<code>session.status_running</code> → <code>agent.message</code> → <code>agent.tool_use</code> / <code>agent.tool_result</code> …', '处理成功后保存事件 ID；断线用 Last-Event-ID 续接并按 ID 去重，遗漏的用 List Events 补。'],
+  ['回合结束', '<code>session.status_idle</code>', '只表示当前回合结束，不表示任务成功。要结合变更文件、测试、安全扫描和真实业务状态验收，发布仍由企业策略决定。']
+];
+S.stepper($('#mgStep'), MG.length, function (i) {
+  $('#mgEv').innerHTML = MG.map(function (m, k) { return '<div class="' + (k === i ? 'on' : '') + (k <= i ? '' : '" style="opacity:.45') + '"><b>' + (k + 1) + '. ' + m[0] + '</b>　' + m[1] + '</div>'; }).join('');
+  $('#mgInfo').innerHTML = '<b>' + MG[i][0] + '</b><p>' + MG[i][2] + '</p>';
+}, MG.map(function (m) { return m[0]; }));
+S.notes($('#n-managed'), {
+  c: [
+    ['Agent', '可复用定义：模型、System Prompt、工具、Skill、行为配置。'],
+    ['Environment', 'Session 使用的容器环境：依赖、资源、环境变量、凭证。'],
+    ['Session', '一次具体任务或持续交互实例，独立隔离环境。'],
+    ['Event', 'Session 的输入与实时执行事件。']
+  ],
+  p: [
+    ['先订阅后提交', '新 SSE 连接只收建连后的事件。'],
+    ['断线续接', '保存已处理事件 ID，Last-Event-ID 续接、按 ID 去重、List Events 补漏。'],
+    ['idle ≠ 成功', '回合结束不代表任务达标，要按交付成果验收。'],
+    ['托管越多', '越要把工具、数据、权限、成功标准写成机器可执行契约。']
+  ]
+});
+
+/* ---------- Platform ---------- */
+HB.cards($('#pairs'), {
+  opts: ['Task', 'Session', 'Event', 'Trace', 'Artifact', 'Outcome'],
+  items: [
+    { t: '企业业务里的“修复 payment-service 漏洞”这件事，带业务 ID、负责人和成功标准。', a: 0, why: 'Task 是企业的业务任务；它可能对应多个 Session。' },
+    { t: '某个托管服务里的一次执行实例，可以凭它的 ID 续接对话。', a: 1, why: 'Session 属于具体 Agent 实现，Session 能续上不等于 Task 能恢复。' },
+    { t: '实时推给前端的“开始调用 Bash”“工具返回”消息流。', a: 2, why: 'Event 是执行过程中的实时输入与事件。' },
+    { t: '把模型调用、工具执行、状态转换关联到同一 Task 与版本的结构化执行记录，用来定位和审计。', a: 3, why: 'Trace 是可观测与审计用的执行轨迹，要关联 Task、Identity、Tenant。' },
+    { t: 'Agent 生成的补丁文件、测试报告、合并请求链接。', a: 4, why: 'Artifact 是可交付的产物。' },
+    { t: '依据测试、安全扫描和真实系统状态，判定“漏洞已修复、任务完成”。', a: 5, why: 'Outcome 是经验证的业务结果，由业务应用或其授权 Verifier 判定，平台只汇聚证据。' }
+  ]
+});
+S.notes($('#n-platform'), {
+  c: [
+    ['Agent Platform', '面向多团队、多 Agent、多执行形态，统一创建、接入、交付、运行、治理、协作、观测、优化。'],
+    ['云产品 vs 托管', '差别在控制面：云产品还负责创建、资源装配、版本和发布配置。'],
+    ['统一什么', '身份、资源、版本、任务和质量事实；不统一内部 Harness 实现。']
+  ],
+  p: [
+    ['纳管三条件', '版本与归属可追溯；Event / Artifact / Trace 关联 Task、Identity、Tenant；远程 Agent 交付可验收证据。'],
+    ['三对概念', 'Task / Session、Event / Trace、Artifact / Outcome 必须区分。'],
+    ['“已发布” ≠ 完成', '平台发布状态只说明定义可被调用。'],
+    ['资源调度', '等待中的长任务不长期占计算资源，状态与实例解耦后按优先级、配额、数据位置、预算调度。']
+  ]
+});

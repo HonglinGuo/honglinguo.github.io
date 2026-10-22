@@ -1,0 +1,464 @@
+---
+title: 异步任务、多 Agent 协作与分布式通信
+desc: AI Agent Handbook 学习笔记（九）：执行状态、候选证据、Evidence 与 Outcome 的分层；异步任务的队列、调度、背压、状态机与状态同步；定时任务的错过策略；DAG 工作流的 AND / OR Join；多 Agent 团队的接入、组织拓扑、任务分解与结果接受、最小充分共享、入站与出站权限；四个通信面 × 四档交互语义、通信契约六要素、MCP 与 A2A 的相反演进、通道键与手脑分离。
+kicker: <span>技术学习</span><span>AI Agent Handbook · 09</span><span>对应原书第 10、11、12 章</span><span>约 45 分钟</span>
+h1: 跑完了，<em>不等于做完了</em>
+lead: 原书“运行”篇的后三章讲的是“跨时间、跨主体、跨连接”。第 10 章把执行与请求解耦：异步、定时、工作流；第 11 章让多个 Agent 与人围绕同一个目标协作；第 12 章重新审视通信：同一任务可能跨越多次连接、多个实例和漫长等待。三章共享一条主线：业务任务、执行状态、消息和连接是不同的东西，各有权威来源，谁也不能替代谁。
+nav: done|完成语义;async|异步任务;cron|定时触发;dag|工作流;team|团队协作;share|共享与权限;comm|通信语义;inner|内构面;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.tl { position: relative; margin: 14px 0 6px; }
+.tl .row { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+.tl .row span { height: 30px; border-radius: 4px; background: var(--dim-soft); font-size: 13px; font-family: var(--f-num); display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.tl .row span.down { background: repeating-linear-gradient(45deg, var(--alert-soft), var(--alert-soft) 4px, transparent 4px, transparent 8px); }
+.tl .row span.run { background: var(--ok); color: #fff; font-weight: 700; }
+.tl .row span.miss { background: var(--rule); color: var(--ink); }
+.tl .row span.ask { background: var(--s2); color: #fff; }
+.join { display: grid; grid-template-columns: 7em minmax(0, 1fr) 6.5em; gap: 6px 10px; align-items: center; margin-top: 10px; font-size: 15px; }
+.join .lane { position: relative; height: 24px; background: var(--dim-soft); border-radius: 4px; }
+.join .lane span { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; background: var(--s1); }
+.join .lane span.ok { background: var(--ok); } .join .lane span.bad { background: var(--alert); } .join .lane span.cx { background: var(--rule); }
+.join .lane i { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+.join b.st { font-size: 15px; }
+.grid44 { display: grid; grid-template-columns: 5.5em repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 10px; font-size: 15px; }
+.grid44 > div { padding: 6px 8px; border-radius: 6px; line-height: 1.45; }
+.grid44 .hd { color: var(--ink-3); font-weight: 600; }
+.grid44 button { font: inherit; font-size: 15px; text-align: left; width: 100%; min-height: 3.4em; border: 1px solid var(--hair); border-radius: 6px; background: var(--bg); color: var(--ink-2); cursor: pointer; padding: 6px 8px; line-height: 1.45; }
+.grid44 button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+@media (max-width: 700px) { .grid44 { grid-template-columns: 4em repeat(4, minmax(0, 1fr)); } .grid44 button { font-size: 15px; padding: 4px; } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>执行状态 succeeded、运维“强制标记成功”和业务 Outcome 有什么区别？Checkpoint 能保证外部副作用不重复吗？</li>
+    <li>OR Join 为什么必须显式取消未选分支？多 Agent 里“提交结果”“接受子任务”“根任务完成”“验收归档”有什么不同？</li>
+    <li>流式输出和任务异步是一回事吗？MCP 为什么走向无状态，而 A2A 强化任务生命周期？</li>
+  </ol>
+</div>
+
+<section class="part" id="done">
+  <div class="part-head"><h2>完成语义：五层信息，各有权威</h2><span class="meta">原书 10.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书第 10 章开头先把对象理清：<strong>Task</strong> 是异步执行的最小业务单元，有独立持久的标识和自己的业务 State，可以跨等待、恢复、审批和多个 Session；<strong>Session</strong> 只是其中一段执行视图，跨 Session 续跑要由 Runtime 显式装载经授权的 Task State，而不是默认两个 Session 天然共享上下文。业务 State 归业务应用，Session Context 归 Harness / Runtime，Checkpoint 归工作流引擎 / Runtime，Runtime State（心跳、租约、Worker）只活一个执行租约，外部副作用归业务系统。</p>
+    <p>“任务做完了吗”要分五层回答：<strong>执行状态</strong>（Runtime 给的 succeeded / failed，回答“这次有没有跑完”）、<strong>节点运维状态</strong>（Worker 在不在线、租约是否有效）、<strong>候选证据</strong>（日志、Trace、快照、Artifact、LLM 原始响应）、<strong>Evidence</strong>（被成功标准明确引用的候选证据）、<strong>业务 Outcome</strong>（业务应用或获授权 Verifier 依据 Evidence 与标准做的最终判定）。LLM-as-a-Judge 是 Evaluation 的一种实现，不是 Outcome 的天然权威；人工审核也只有被授权才能形成 Outcome。运维侧的“强制标记成功”只能在授权范围内改变<strong>执行状态</strong>并留下审计，不能跨层直接判定 Outcome。</p>
+    <p>恢复与幂等也要分清：外置调度能统一触发和故障转移，但仍可能重复投递；<strong>Checkpoint 复用的是计算结果，不等于外部副作用幂等</strong>：外部写入已提交而 Checkpoint 还没落盘，重跑照样重复。幂等手段（任务唯一键、幂等键、去重账本、outbox / inbox、租约与 fencing token、对账与补偿）按交付语义和外部系统能力选择，没有通用必选项。Watch、回调、轮询只是变化信号，信号缺失时要重新读权威状态对账。</p>
+    <p class="go">把这些信息放到正确的层级。</p>
+  </div>
+  <div class="lab"><div id="doneSort"></div></div>
+  <div class="notes" id="n-done"></div>
+</section>
+
+<section class="part" id="async">
+  <div class="part-head"><h2>异步任务：队列、调度、状态机与同步</h2><span class="meta">原书 10.2 节</span></div>
+  <div class="sec-lede">
+    <p>同步请求—响应在简单问答里高效，但长时间、跨请求、要操作外部环境的任务会撞上请求超时、上下文溢出、用户必须在线、等待期间持续占资源。请求超时只表示调用方没在期限内拿到结果，<strong>不能证明执行已经停止</strong>。异步的核心是把执行生命周期与请求生命周期解耦：提交并得到可靠接收确认后拿到 Task ID，后台排队、执行、重试，完成后经 Webhook、消息推送或轮询通知。异步也不会扩大上下文窗口，那仍是 Harness 的事。</p>
+    <p>生产级异步系统由三类组件协同：<strong>任务队列</strong>（按优先级、同优先级 FIFO；积压时拒绝新任务并返回结构化错误、对低优先级限速、告警扩容，队列深度本身是核心指标）、<strong>调度器</strong>（选 Worker、维护租约、重试与故障转移；所有 Worker 都忙时不应继续取任务，这就是<strong>背压</strong>，常见做法是并发配额、队列水位线、消费速率自适应、租约超时、动态容量的组合）、<strong>任务执行状态机</strong>（维护合法转换，以数据库为权威存储、内存缓存加速）。原书的状态集合是 waiting、queued、running、hold、succeeded、failed、killed、skipped、mark_succeeded。</p>
+    <p>状态同步有三种方案：调度器<strong>轮询</strong>（控制集中，但单次轮询失败不能推断任务异常，网络分区、GC 暂停都可能让查询失败而 Worker 仍在跑，判异常要靠租约 / 心跳）、Worker <strong>回调</strong>（实时，但崩溃时可能发不出，要超时兜底；回调带 Task ID、事件序号、Worker 标识、租约 token，以便幂等消费和丢弃迟到事件）、<strong>共享存储 + 变更通知</strong>（Redis Keyspace Notification 默认关闭且断连期间事件会丢；etcd Watch 落后超过 compaction 会返回 ErrCompacted，要重读全量）。生产通常组合：回调为主、轮询 / 租约兜底、共享存储做权威持久化。HITL 让 Task 进入 hold，等待可能从分钟到数天：内置调度若只有内存状态就得保留进程，外置调度在具备恢复条件时可以释放执行资源；审批结果回传要带 Task ID、审批版本、授权主体、决策结论，接收方据此校验未过期、未重复、与当前状态兼容。</p>
+    <p class="go">给状态同步的三种情况选处理方式。</p>
+  </div>
+  <div class="lab"><p class="lab-t">信号来了（或没来），怎么办？</p><div id="sync"></div></div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>任务执行状态（原书表）</th><th>含义</th><th>允许的后续状态</th></tr>
+      <tr><td>waiting</td><td>初始化，等待依赖（调度时间、工作流依赖）满足后入队</td><td>queued、hold、skipped、mark_succeeded</td></tr>
+      <tr><td>queued</td><td>等待分配执行资源</td><td>running、killed、skipped、mark_succeeded</td></tr>
+      <tr><td>running</td><td>已分发给执行器</td><td>succeeded、failed、killed</td></tr>
+      <tr><td>hold</td><td>等待审批、输入或外部条件</td><td>waiting、skipped、mark_succeeded</td></tr>
+      <tr><td>succeeded / failed / killed</td><td>成功 / 失败 / 用户手动终止</td><td>queued（手动重跑）；后两者还可 mark_succeeded</td></tr>
+      <tr><td>skipped</td><td>用户执行跳过</td><td>waiting（取消跳过）、mark_succeeded</td></tr>
+      <tr><td>mark_succeeded</td><td>用户手动标记成功（只改执行状态，留审计）</td><td>终态</td></tr>
+    </table>
+  </div>
+  <div class="notes" id="n-async"></div>
+</section>
+
+<section class="part" id="cron">
+  <div class="part-head"><h2>定时触发：从被动响应到主动执行</h2><span class="meta">原书 10.3 节</span></div>
+  <div class="sec-lede">
+    <p>定时任务让 Agent 从“被动工具”变成“主动数字员工”：每天 9 点生成日报、每周一检查服务器健康。它按用户或业务的<strong>预授权</strong>、按时间规则创建 Task。时间触发有 Cron、ScheduledAt（未来某时刻一次）、FixedRate（固定频率）；事件触发有 Webhook（业务方 → Agent 系统）、消息队列、内部事件。两类触发在执行层走同一条路径：都是向任务队列投递一个 Task，共用调度、并发控制、重试和对账。</p>
+    <p>定时任务的属性里有几项容易忽略：<strong>任务并发数</strong>（1 表示串行）与<strong>阻塞处理策略</strong>（并发满时新触发排队、跳过或合并为最新）；<strong>错过策略</strong>（调度器宕机导致触发点错过后怎么补）；<strong>时区与发生标识</strong>（明确时区、夏令时，用调度 ID + 计划发生时间识别同一次触发）。大规模下调度通常外置到专用系统（XXL-JOB、SchedulerX、Airflow 等），原书强调三点：两类触发在执行层统一；外置调度系统<strong>不接管业务 State 的权威</strong>，它持有的是 Runtime State 与触发计划；幂等是业务设计责任，failover 期间子任务可能执行多次。</p>
+    <p class="go">调度器在 3 点到 7 点宕机，每小时一次的巡检错过了几次。选一种错过策略看看。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">错过策略（原书 10.3.3 节）</p>
+    <div class="seg" id="msSeg"><button data-v="latest" aria-pressed="true">run_latest</button><button data-v="all">run_all</button><button data-v="skip">skip</button><button data-v="prompt">prompt</button></div>
+    <div class="tl"><div class="row" id="msRow"></div></div>
+    <p class="note">斜线：调度器宕机；灰色：错过的触发点；绿色：实际执行；橙色：挂起等人选。</p>
+    <p class="verdict3" id="msV"></p>
+  </div>
+  <div class="notes" id="n-cron"></div>
+</section>
+
+<section class="part" id="dag">
+  <div class="part-head"><h2>工作流：DAG、节点与 Join</h2><span class="meta">原书 10.4 节</span></div>
+  <div class="sec-lede">
+    <p>编排结构没有收敛到两种：单个 Task 内由 Agent 自主决策（ReAct）、预定义工作流（把计划固化为图）、Multi-Agent 协调（Planner 动态分解），以及它们的组合，比如工作流的某个节点内部是一个完整的 Agent 循环。预定义工作流能减少重复规划、让控制路径易测，但<strong>不会消除节点内的模型错误、工具开销和失败重试</strong>。原书把工作流限定为 DAG：需要循环时用运行时有界展开（ForEach）、子流程迭代（Loop 设最大次数），图本身保持无环；业务确实需要带环的流转（审批驳回回到起草），应改用状态机或流程图模型，而不是把环硬塞进 DAG。节点分业务节点（Agent 调用、工具调用、代码执行、知识检索、人工审批、通知推送）和逻辑节点（条件分支、并行、汇聚、循环、等待、错误处理、子工作流）。</p>
+    <p>就绪条件要明确：<strong>普通依赖边</strong>要求上游 succeeded 或 skipped；<strong>AND Join</strong> 要求所有入边到达终态且满足策略（全部成功或至少 N 个成功）；<strong>OR Join</strong> 任一入边满足即就绪，未选分支由引擎<strong>显式取消</strong>，迟到结果进审计日志、不改变下游已就绪的状态。不显式取消，未选分支会继续消耗资源、产生副作用，和下游基于“先到结果”做出的决策冲突。</p>
+    <p>工程上还有三件事：<strong>步骤级 Checkpoint</strong>（节点完成后持久化输入、输出、状态，进程崩溃后从最后一个成功 Checkpoint 继续）；<strong>幂等与局部重跑</strong>（外部调用先存意图、执行后存结果，故障窗口按后端能力用事务、Outbox、幂等键或对账；邮件、扣款这类已发生操作只能确认或补偿，恢复检查点撤销不了）；<strong>可视化运维</strong>（节点实时状态、耗时、重试，支持重跑、跳过、强制标记成功、暂停、终止；“查看任意节点输入输出和 LLM 原始响应”应按需授权，而不是默认开放）。</p>
+    <p class="go">三个并行分支查询同一个问题，比较 AND Join 与 OR Join（耗时为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">三个检索分支汇聚到“生成报告”节点</p>
+    <div class="seg" id="jSeg"><button data-v="and" aria-pressed="true">AND Join（全部成功）</button><button data-v="and2">AND Join（至少 2 个成功）</button><button data-v="or">OR Join（任一成功）</button></div>
+    <label class="ctl"><span>分支 C 的结果 <output id="jcO">成功</output></span><input type="range" id="jcS" min="0" max="1" value="1"></label>
+    <div class="join" id="join"></div>
+    <p class="verdict3" id="jV"></p>
+  </div>
+  <div class="notes" id="n-dag"></div>
+</section>
+
+<section class="part" id="team">
+  <div class="part-head"><h2>多 Agent 团队：接入、组织、分解与接受</h2><span class="meta">原书 11.1–11.4 节</span></div>
+  <div class="sec-lede">
+    <p>把多个 Agent 放在一起不会自然形成团队。缺少清晰的分工、协作方式和状态管理，参与者越多越容易重复执行、信息不一致、任务遗漏、责任不清。团队需要共同目标，也要知道每项工作谁推进、依赖什么、完成后交给谁、怎样才算结束；编排层把宽泛目标逐步变成可执行、可验收的任务，但<strong>不需要介入每个成员的所有执行细节</strong>，否则主管 Agent 会变成新的上下文和执行瓶颈。只有专业分工、并行、故障隔离和过程治理的收益覆盖沟通与协调成本时，团队才有价值。</p>
+    <p><strong>接入</strong>异构成员时保留其原有 Harness：能改代码就加协作 SDK 或任务接口；能装插件、控制启动就用插件与适配程序；只能调远程 API 就在外部加适配程序，记录远端任务编号。能逐步返回文本，不代表支持任务查询或中断恢复，要按实际能力安排工作。Coding Agent 内部的子代理不因接入而自动成为团队成员。个人工作区接入要注意：设一个工作目录参数挡不住程序访问其他文件；用户允许某 Agent 处理项目代码，不意味着团队其他成员能借用该用户的账号权限；本地 Agent 只回一个绝对路径，别的机器读不到。</p>
+    <p><strong>组织拓扑</strong>有三种，不是演进阶段：主管—执行（集中协调、分散执行，警惕所有局部决定都等主管）、对等协作（直接协商，但要预先约定分歧怎么解决、谁整合、谁对最终交付负责）、分层编排（按专业小组交付，只有小组能承担相对完整的交付时才值得加层）。专业能力说明擅长什么，组织角色说明负责什么，二者不同；成员关系、参与关系、执行责任、审核责任要分别记录。<strong>任务</strong>方面，Task 是持续的工作约定，<strong>Task Run</strong> 是一次实际执行，一个 Task 可以因重试、恢复、改派有多个 Run；消息发送成功不代表任务被承接。团队级停止条件要在根任务开始前约定：总预算、最大委派深度、派生任务数、重试次数、返工轮次、连续无进展时的处理。</p>
+    <p class="go">选组织拓扑；再走一遍原书依赖修复案例里结果被逐层接受的过程。</p>
+  </div>
+  <div class="lab"><p class="lab-t">哪种组织方式？（场景为示意）</p><div id="topo"></div></div>
+  <div class="lab">
+    <p class="lab-t">从“提交结果”到“任务完结”（原书 11.4 节案例）</p>
+    <div id="accStep"></div>
+    <ol class="flow2" id="accFlow"></ol>
+  </div>
+  <div class="notes" id="n-team"></div>
+</section>
+
+<section class="part" id="share">
+  <div class="part-head"><h2>最小充分共享，入站出站分开授权</h2><span class="meta">原书 11.5–11.7 节</span></div>
+  <div class="sec-lede">
+    <p>团队需要的不是所有成员共用一个不断增长的“共享大脑”，而是有边界的信息协作：成员保留独立推理空间，任务模型维护协作状态，产物系统保存成果，团队记忆沉淀可复用知识，每个 Agent 按当前角色和任务取必要信息。团队共享的是<strong>上下文来源</strong>，不是同一个 Context。Handoff 只需传四类：目标、已知事实、待处理事项、可用引用；完整搜索过程、工具调用记录、未验证的中间推理通常不必原样传。团队记忆只沉淀经过任务结果、外部数据、其他成员或人工确认的内容，并保留来源、适用范围与有效性。消息说明“发生了什么”，<strong>Task State 和 Artifact 才记录“当前事实是什么”</strong>：收到“任务完成”通知后，仍应读取任务当前状态；收到“报告已生成”，应通过 Artifact 引用读取报告本身。</p>
+    <p>身份上，原书区分人员主体、服务主体、Agent / 工作负载主体（每个 Agent 唯一，不与模型或临时容器绑定）、执行主体（实际发起访问的运行实例）、临时凭证（证明身份与范围的载体，<strong>凭证不是身份</strong>）、委托授权（谁允许 Agent 代办什么，<strong>委托也不是身份</strong>）。一次动作的有效权限是人员权限、团队边界、Agent 策略、资源策略、委托范围的<strong>交集</strong>，显式拒绝优先；Agent 间交接不会扩大权限。最关键的一条：<strong>入站权限</strong>（谁可以调用 Agent、发起什么任务）和<strong>出站权限</strong>（Agent 可以代表谁访问哪些资源）独立配置、分别校验，调用者能访问 Agent，不等于 Agent 能访问调用者的全部资源。</p>
+    <p>观测上，长程任务可能跨多条 Trace，不要强行塞进一棵调用树：用 W3C Trace Context 传播，teamId、taskId、taskRunId、sessionId 作业务关联；能连续传播的用父子 Span，跨 Trace、并行汇合的用 Span Links。评估结论与事实记录分开保存，并写明方法、版本和时间。</p>
+    <p class="go">把对象归位；再判断这些权限说法对不对。</p>
+  </div>
+  <div class="lab"><div id="objSort"></div></div>
+  <div class="lab"><p class="lab-t">权限判断</p><div id="perm"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Workspace vs Environment</h4>
+    <p><b>Workspace</b> 是 Agent 可直接操作的工作目录及映射其中的获准资源（文件、分支、快照、工具与凭证引用），按任务或项目的持久化策略管理，可以跨运行实例重新挂载。<b>Environment</b> 是本次执行采用的运行条件（计算、网络、文件系统、凭证映射、隔离），随运行实例或部署配置变化。前者让工作文件延续，后者约束每次运行能怎样访问和执行。</p>
+  </div>
+  <div class="notes" id="n-share"></div>
+</section>
+
+<section class="part" id="comm">
+  <div class="part-head"><h2>通信：四个通信面 × 四档交互语义</h2><span class="meta">原书 12.1–12.6、12.8–12.9 节</span></div>
+  <div class="sec-lede">
+    <p>进入 Agent 场景，四个前提要重新检查：调用耗时是否有界、会话是否依赖当前连接、等待期间占用哪些资源、通信端点是否会变化。全章的主线是<strong>让必要状态独立于连接存在</strong>：连接与进程内存里的内容断连即丢；外部状态存储保存任务记录、检查点、结果引用；持久消息通道保存消息、序号、确认位置，超出保留期就有缺口。<strong>消息重播不自动恢复进程，也不自动撤销或去重外部操作</strong>。</p>
+    <p>第一个坐标按通信双方分四个面（原书自己的分类）：<strong>人机面</strong>（用户与 Agent，AG-UI；要增量可见、随时打断，而前端连接最不可靠）、<strong>能力面</strong>（Agent 与工具，MCP；毫秒级查询和分钟级任务共用一套协议）、<strong>协作面</strong>（Agent 与 Agent，A2A；任务天然长跑）、<strong>内构面</strong>（服务端组件之间，无标准协议；海量会话通道的元数据成本与多租户隔离）。第二个坐标按耦合度分四档：<strong>S1 请求—响应</strong>、<strong>S2 请求域流式</strong>（当前流依赖连接）、<strong>S3 任务句柄</strong>（提交后凭标识查询或订阅）、<strong>S4 持久通道</strong>（订阅、确认、补读）。它们不是成熟度等级，一个系统可以同时用多档。每段通信都要回答契约六要素：<strong>标识、顺序、投递保证、续传点、生命周期、背压</strong>。</p>
+    <p>两个常被混为一谈的地方：token 流和 SSE 说明结果怎样逐步到达，<strong>不说明任务是否独立于连接存在</strong>；有任务句柄不一定能重播事件，有事件序号也不自动保证业务可恢复。MCP 与 A2A 走向相反方向，也不是路线之争：MCP 2026-07-28 移除了协议会话和初始化握手，改为逐请求元数据，长任务交给可选的 Tasks 扩展，<strong>协议无状态不等于应用无状态</strong>，状态责任转移到应用层的显式句柄；A2A 为长时间运行与人在回路设计，强化 Task 生命周期（提交、执行中、需要输入、需要授权、完成、失败、取消、拒绝），流式更新（S2，流完即断）、推送通知（触发“去拉取”）、任务查询（保证结果可寻址）按能力组合。同步也有它难以替代的优点：控制路径直接、进程内调用栈连续、运维和成本结构简单。选型原则仍是<strong>每个通信面选最低充分语义</strong>。</p>
+    <p class="go">点表格里的组合看例子；再对照原书给的默认选择。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">四个通信面 × 四档语义（原书表 12-4）</p>
+    <div class="grid44" id="g44"></div>
+    <div class="hb-info" id="g44I" style="margin-top:10px"><p>点一个格子。</p></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">每个通信面的默认语义与升级条件（原书表 12-12）</p>
+    <div id="up"></div>
+  </div>
+  <div class="lab"><p class="lab-t">MCP 与 A2A 的定位（原书表 12-7）</p><div id="mvsa"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：流式输出 vs 任务异步</h4>
+    <p><b>S2 流式</b>解决“过程可见”，作用域通常是一次请求，流断了就断了。<b>S3 任务异步</b>解决“执行与连接解耦”，断连后凭句柄查询结果。二者要分别检查：有没有独立于连接的任务句柄？有没有事件续传位置？断连是否取消执行、还能否查结果，由服务契约明确，不能从传输形式推断。</p>
+  </div>
+  <div class="notes" id="n-comm"></div>
+</section>
+
+<section class="part" id="inner">
+  <div class="part-head"><h2>内构面：通道键与手脑分离</h2><span class="meta">原书 12.7 节</span></div>
+  <div class="sec-lede">
+    <p>服务端内部要处理两件事：怎样组织并发会话的消息，以及怎样连接决策循环与工具执行。一种做法是为每个会话或任务开独立逻辑通道，按业务标识发送、订阅、记录消费位置。原书提炼的判据是：<strong>通道键决定治理粒度</strong>，通道以什么业务标识命名，隔离、限流、观测、回收就以什么粒度进行。三个案例：智能语音交互以会话标识为通道键（请求侧按会话分区保序，响应侧按会话通道回推，路由逻辑下沉到消息中间件，应用节点更接近无状态）；模型网关限流以“用户 × 模型”为键（网关只做粗粒度上限，漏桶从进程内搬到通道阵列，命中限流时只挂起该通道）；资产中心以“用户”为键（消息只带元数据和对象存储索引，单用户突发不牵连他人）。</p>
+    <p>规模上去后，“一会话一个标准主题”会让元数据先于业务压垮控制面；广播让单节点能力成为上限；每 Session 一个消费组会让消费组数量爆炸。另一个反模式是把会话和常驻工作进程一对一绑死，原书引用的说法是把 Worker “当成了宠物”。轻量通道（如 RocketMQ LiteTopic）让逻辑通道挂在少量父主题下，只在内存里表现为字符串键，首次发送自动创建、空闲自动回收、单通道挂起不牵连其他。</p>
+    <p><strong>决策与执行分离（手脑分离）</strong>：决策循环要访问任务状态、等待模型；工具执行要突发计算或更强隔离，分开部署可以分别伸缩。Anthropic Managed Agents 把 Agent 虚拟化为三个抽象：<strong>会话</strong>（追加式事件日志）、<strong>Harness</strong>（调模型、路由工具调用的循环，无状态，新实例凭会话标识拉历史续跑）、<strong>沙箱</strong>（降级为一只普通的“手”，失败表现为工具错误而不是会话中断）；会话不等于上下文窗口，日志完整保留，取用与压缩留给 Harness。原书还详细介绍了 Qoder Cloud Agent 的四层：脑（Agent Runtime）、路（MQ，Session 内有序、跨 Session 并行）、手（Sandbox Worker，完成即释放）、底（Session State），概括为“会话常驻、计算流动、状态可续”。</p>
+    <p class="go">给场景选通道键。</p>
+  </div>
+  <div class="lab"><div id="ckey"></div></div>
+  <div class="vendor"><b>案例说明</b>本节的语音交互、百炼网关限流、资产中心、Qoder Cloud Agent、RocketMQ LiteTopic 均为阿里云自有产品或客户案例；原书提醒压测结果要结合消息规模、并发、硬件与故障注入条件解释，共享队列也能通过分区、公平调度或应用配额实现隔离，比较时应验证活跃通道数、积压、公平性和管理成本。</div>
+  <div class="notes" id="n-inner"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. succeeded、强制标记成功、Outcome 有何区别？Checkpoint 能防重复副作用吗？</summary><p class="ans">succeeded 是 Runtime 给的执行状态，回答“这次跑完没有”；强制标记成功只在授权范围内改变执行状态并留审计；Outcome 由业务应用或获授权 Verifier 依据 Evidence 与成功标准判定。Checkpoint 只复用计算结果，外部写入已提交而 Checkpoint 未落盘时，重跑仍会重复副作用；要按外部系统能力选择幂等键、去重账本、outbox、fencing、对账与补偿。</p></details>
+    <details><summary>2. OR Join 为何要显式取消？多 Agent 结果的四个层次？</summary><p class="ans">不取消的话，未选分支继续消耗资源、产生副作用，并与下游基于先到结果的决策冲突；迟到结果只进审计日志。多 Agent 中：执行者提交 = 候选成果已产生；Leader 或指定审核者接受子任务 = 可用于下游；根任务完成 = 当前有效版本的成果共同覆盖目标、团队执行阶段结束；用户或指定验收者依约定规则确认接受并归档，任务才真正完结，未通过则沿原任务关系继续修订。</p></details>
+    <details><summary>3. 流式 = 异步吗？MCP 和 A2A 为何反向演进？</summary><p class="ans">不是。流式只说明结果逐步到达，可能只是当前调用的输出；任务异步要求有独立于连接的任务句柄。MCP 主要访问工具、资源，收敛协议会话有利于请求在实例间分配，状态由应用显式句柄承担（协议无状态 ≠ 应用无状态）；A2A 面向 Agent 间长任务交接，需要可查询的任务生命周期。两者可以组合：编排 Agent 经 A2A 委派，专业 Agent 经 MCP 调工具。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 完成语义 ---------- */
+S.sortGame($('#doneSort'), {
+  bins: [{ k: 'ex', t: '执行状态' }, { k: 'op', t: '节点运维状态' }, { k: 'cd', t: '候选证据' }, { k: 'ev', t: 'Evidence' }, { k: 'oc', t: '业务 Outcome' }],
+  items: [
+    { t: 'Runtime 返回 succeeded', k: 'ex', why: '回答“这次执行有没有跑完”，不回答业务目标是否达成。' },
+    { t: 'Worker-17 心跳超时', k: 'op', why: '基础设施健康信号，影响调度决策，不直接等于 Task 结论。' },
+    { t: 'LLM 的原始响应和执行日志', k: 'cd', why: '原始材料，能否作为 Evidence 要核验来源、完整性及与验收标准的关系。' },
+    { t: '报告结论可追溯到约定数据源，所需校验已完成', k: 'ev', why: '被成功标准明确引用的证据。' },
+    { t: '业务负责人依据验收标准确认“日报已达标”', k: 'oc', why: '获授权者依据 Evidence 与标准作出的最终判定。' },
+    { t: '运维在控制台点了“强制标记成功”', k: 'ex', why: '只能改变执行状态并留下审计（谁、何时、原因、原状态、新状态），不能直接判定 Outcome。' },
+    { t: 'LLM-as-a-Judge 给出 4.5 分', k: 'cd', why: '这是 Evaluation 的评分，可作为材料，但不是 Outcome 的天然权威。' }
+  ]
+});
+S.notes($('#n-done'), {
+  c: [
+    ['Task / Session', 'Task 有独立持久标识与业务 State，可跨多个 Session；Session 只是一段执行视图。'],
+    ['五层完成语义', '执行状态 → 节点运维状态 → 候选证据 → Evidence → 业务 Outcome。'],
+    ['Checkpoint ≠ 幂等', '复用计算结果；外部副作用是否重复取决于幂等与对账设计。']
+  ],
+  p: [
+    ['跨 Session 续跑', 'Runtime 显式装载授权的 Task State，再关联当前 Session。'],
+    ['强制标记成功', '只改执行状态 + 审计，不跨层判定 Outcome。'],
+    ['调度成功 ≠ 恰好一次', '执行端按业务操作标识核对结果。'],
+    ['信号 ≠ 事实源', 'Watch / 回调 / 轮询缺失时，重读权威 Task State 对账。']
+  ]
+});
+
+/* ---------- 异步 ---------- */
+HB.cards($('#sync'), {
+  opts: ['立即判定失败并重试', '看租约 / 心跳，失效后转 unknown 并对账', '按序号幂等消费，丢弃迟到事件', '以当前权威状态重新对账'],
+  items: [
+    { t: '调度器轮询 Worker 状态，这一次查询超时了。', a: 1, why: '单次轮询失败不能推断任务异常（网络分区、GC 暂停都可能）；租约失效后才转 unknown 并启动对账。' },
+    { t: '收到一条 running → succeeded 的回调，但它的事件序号比已处理的还小。', a: 2, why: '回调带 Task ID、事件序号、Worker 标识、租约 token，调度器据此幂等消费并丢弃迟到事件。' },
+    { t: 'Redis 订阅断开了 30 秒，重连后继续监听。', a: 3, why: 'Keyspace Notification 断连期间事件会丢，重连后以当前 key 状态为准重新对账。' },
+    { t: 'etcd Watch 返回 ErrCompacted。', a: 3, why: '客户端落后超过 compaction 阈值，要以最新 revision 重建 Watch 并重新读取全量。' }
+  ]
+});
+S.notes($('#n-async'), {
+  c: [
+    ['异步的核心', '执行生命周期与请求生命周期解耦：可靠接收确认 → Task ID → 后台执行 → 回调 / 推送 / 轮询。'],
+    ['三类组件', '任务队列（优先级 + FIFO + 积压降级）、调度器（选 Worker、租约、重试、背压）、执行状态机。'],
+    ['背压', '让消费速率自适应执行速率：并发配额、水位线、自适应拉取、租约超时、动态容量。']
+  ],
+  p: [
+    ['请求超时', '只表示没拿到结果，不证明执行已停。'],
+    ['三种同步方案组合', '回调为主、轮询 / 租约兜底、共享存储做权威。'],
+    ['HITL 等待', '内置调度只有内存状态就得留进程；具备持久化恢复才能释放执行资源。'],
+    ['审批回传', '带 Task ID、审批版本、授权主体、结论；接收方校验未过期、未重复、状态兼容。']
+  ]
+});
+
+/* ---------- 定时 ---------- */
+var MS = {
+  latest: ['run_latest', '只补跑错过窗口内最新的一次（6 点那次），其余忽略。适合“只关心最新状态”的巡检。'],
+  all: ['run_all', '补跑所有错过的触发点，但要在补跑数量、速率和并发上限内执行，避免恢复瞬间压垮下游。适合每小时数据都不能缺的场景。'],
+  skip: ['skip', '跳过所有错过的触发，只按下一个未来时间点（8 点）继续。适合过时即无意义的任务。'],
+  prompt: ['prompt', '不自动决策，挂起并通知运维或业务方人工选择。适合补跑代价高或需要判断的任务。']
+};
+function ms(v) {
+  var html = '';
+  for (var t = 0; t < 12; t++) {
+    var down = t >= 3 && t <= 6, cls = '', txt = t + '点';
+    if (down) { cls = 'down'; if (v === 'all' && t >= 3) cls = 'run'; else if (v === 'latest' && t === 6) cls = 'run'; else if (v === 'prompt') cls = 'ask'; else cls = 'miss'; }
+    else if (t < 3 || t >= 7) cls = (t === 7 && v === 'all') ? 'run' : (t < 3 || t >= 8 ? 'run' : 'run');
+    if (down && v === 'all') txt = t + '点↻';
+    if (down && v === 'latest' && t === 6) txt = '6点↻';
+    html += '<span class="' + cls + '">' + txt + '</span>';
+  }
+  $('#msRow').innerHTML = html;
+  $('#msV').innerHTML = '<b>' + MS[v][0] + '</b>：' + MS[v][1] + ' 补跑时以“调度 ID + 计划发生时间”识别同一次触发，避免重复。';
+}
+S.seg($('#msSeg'), ms); ms('latest');
+S.notes($('#n-cron'), {
+  c: [
+    ['触发类型', '时间：Cron / ScheduledAt / FixedRate；事件：Webhook / 消息队列 / 内部事件。'],
+    ['执行层统一', '两类触发都是向任务队列投递 Task，共享调度、并发、重试、对账。'],
+    ['错过策略', 'run_latest / run_all / skip / prompt（支持范围以调度系统为准）。']
+  ],
+  p: [
+    ['易忽略的属性', '任务并发数、阻塞处理策略、时区与夏令时、发生标识。'],
+    ['外置调度的边界', '持有 Runtime State 与触发计划，不接管业务 State 权威。'],
+    ['failover', '期间子任务可能执行多次，业务代码必须幂等。']
+  ]
+});
+
+/* ---------- DAG ---------- */
+var jm = 'and';
+function jn() {
+  var cOk = +$('#jcS').value === 1; $('#jcO').textContent = cOk ? '成功' : '失败';
+  var br = [['A 内部知识库', 3, true], ['B 网页搜索', 6, true], ['C 行业数据库', 9, cOk]];
+  var ready, res, cancelled = [];
+  if (jm === 'or') { ready = 3; res = '就绪：A 在 t=3 先成功。引擎显式取消 B、C；B、C 如果之后才返回，结果只进审计日志，不参与下游计算。'; cancelled = [1, 2]; }
+  else if (jm === 'and2') { ready = 6; res = '就绪：A、B 两个成功即满足“至少 2 个成功”（t=6）。' + (cOk ? 'C 仍在跑，是否取消由策略决定。' : '') ; }
+  else { ready = 9; res = cOk ? '就绪：三个分支都在 t=9 前成功，下游等待最慢的 C。' : '不就绪：所有分支已到终态，但 C 失败，不满足“全部成功”，按策略终止、降级或重试。'; }
+  var html = '';
+  br.forEach(function (b, i) {
+    var cx = cancelled.indexOf(i) >= 0, w = (cx ? ready : b[1]) / 10 * 100;
+    var cls = cx ? 'cx' : (b[2] ? 'ok' : 'bad');
+    var st = cx ? '已取消' : (b[2] ? '成功' : '失败');
+    html += '<span>' + b[0] + '</span><div class="lane"><span class="' + cls + '" style="left:0;width:' + w + '%"></span><i style="left:' + (ready / 10 * 100) + '%"></i></div><b class="st">' + st + '（t=' + (cx ? ready : b[1]) + '）</b>';
+  });
+  $('#join').innerHTML = html;
+  var ok = !(jm === 'and' && !cOk);
+  $('#jV').className = 'verdict3' + (ok ? '' : ' bad'); $('#jV').innerHTML = res + ' 竖线是下游可以开始的时刻。';
+}
+S.seg($('#jSeg'), function (v) { jm = v; jn(); });
+$('#jcS').addEventListener('input', jn); jn();
+S.notes($('#n-dag'), {
+  c: [
+    ['DAG 工作流', '节点是执行单元，有向边是依赖与数据流；循环靠有界展开或子流程，图本身无环。'],
+    ['业务节点 / 逻辑节点', '干活的（Agent、工具、代码、检索、审批、通知）/ 控流程的（分支、并行、汇聚、循环、等待、错误处理、子工作流）。'],
+    ['三种就绪条件', '普通依赖（上游 succeeded 或 skipped）、AND Join（全部到终态且满足策略）、OR Join（任一满足）。']
+  ],
+  p: [
+    ['OR Join 铁律', '显式取消未选分支；迟到结果进审计，不改变下游。'],
+    ['带环流转', '审批驳回等改用状态机或流程图模型。'],
+    ['步骤级 Checkpoint', '后续节点从 Checkpoint 读输入；外部副作用另需意图 / 结果记录与对账。'],
+    ['可观测要最小必要', '节点输入输出与 LLM 原始响应按需授权，不默认全开。']
+  ]
+});
+
+/* ---------- 团队 ---------- */
+HB.cards($('#topo'), {
+  opts: ['主管—执行', '对等协作', '分层编排'],
+  items: [
+    { t: '一次软件变更：一个 Agent 梳理范围、分派实现、测试、安全检查，再汇总交付。', a: 0, why: '集中协调、分散执行；目标、交付物、依赖清楚后应让执行者自主工作。' },
+    { t: '三位专家 Agent 对一份方案相互评审、直接协商修改。', a: 1, why: '缩短沟通路径，但要预先约定分歧怎么解决、谁整合共同产物、谁对最终交付负责。' },
+    { t: '一个大型迁移项目：前端组、后端组、数据组各自内部分工，总负责人只协调组间接口。', a: 2, why: '让局部问题在小组内解决；只有小组能承担相对完整的交付时，加层才有意义。' }
+  ]
+});
+var ACC = [
+  ['执行者提交结果', 'Coding Agent 提交补丁 Artifact V1：表示候选成果已经产生。'],
+  ['验证与返工', '测试 Agent 基于 V1 验证，发现不符合要求：失败用例、产物版本和修订要求关联回实现子任务；V2 提交后，旧结果作为历史保留，后续只对 V2 判断。'],
+  ['接受子任务结果', 'Leader 在授权范围内接受实现与验证子任务：表示它们可以用于下游。这不是最终业务验收。'],
+  ['根任务“已完成”', '代码补丁、修改说明、测试报告属于同一有效版本，必要检查已完成：团队执行阶段结束，产物具备交付条件。但这不是生命周期终态。'],
+  ['验收与归档', '用户或指定验收者取得产物，依约定规则确认接受后归档，Task 才真正完结；未通过就沿原 Task 继续修订，而不是另建一套任务。']
+];
+ACC.forEach(function (a) { h('li', { html: '<b>' + a[0] + '</b><small>' + a[1] + '</small>' }, $('#accFlow')); });
+S.stepper($('#accStep'), ACC.length, function (i) { S.$$('#accFlow li').forEach(function (x, k) { x.classList.toggle('on', k === i); x.classList.toggle('done', k < i); }); });
+S.notes($('#n-team'), {
+  c: [
+    ['Agent 团队', '围绕共同目标组织的 Agent 与人：稳定身份与能力边界、明确分工、可追踪、可验证。'],
+    ['三种拓扑', '主管—执行、对等协作、分层编排；不是演进阶段。'],
+    ['Task / Task Run / Session', '持续工作约定 / 一次实际执行 / 某 Agent 的交互上下文；不要求一一对应。'],
+    ['结果的四层', '提交 → 接受子任务 → 根任务完成 → 验收归档。']
+  ],
+  p: [
+    ['接入三路', '改代码加 SDK / 装插件与适配程序 / 外部适配远程 API；按实际能力安排工作。'],
+    ['能力 ≠ 角色', '擅长什么 vs 负责什么；成员、参与、执行、审核关系分别记录。'],
+    ['团队停止条件', '总预算、委派深度、派生数、重试、返工轮次、无进展处理；单 Agent 重试上限代替不了。'],
+    ['需求变化', '标明哪些分析可复用、旧结果对应哪个版本、哪些要返工，不直接覆盖。']
+  ]
+});
+
+/* ---------- 共享与权限 ---------- */
+S.sortGame($('#objSort'), {
+  bins: [{ k: 'c', t: 'Context' }, { k: 'm', t: 'Memory' }, { k: 's', t: 'Task State' }, { k: 'a', t: 'Artifact' }, { k: 'w', t: 'Workspace' }, { k: 'e', t: 'Environment' }],
+  items: [
+    { t: '交给测试 Agent 的 Handoff：目标、已知事实、待办、引用', k: 'c', why: '当前 Agent 此刻需要知道什么。' },
+    { t: '“该服务升级 Jackson 时必须同步升级 Spring”这条已验证经验', k: 'm', why: '跨任务、跨 Session 的已验证经验。' },
+    { t: '验证子任务：负责人测试 Agent，状态阻塞，原因缺少依赖', k: 's', why: '责任、依赖、进度与验收状态。' },
+    { t: '补丁 V2 与测试报告', k: 'a', why: '团队实际产出了什么。' },
+    { t: '开发者电脑上的项目目录和其中的分支', k: 'w', why: 'Agent 可直接操作的工作文件与获准资源。' },
+    { t: '本次运行只能访问内网、8 核 16G、凭证映射到只读账号', k: 'e', why: '这次执行采用的运行条件。' }
+  ]
+});
+HB.cards($('#perm'), {
+  opts: ['对', '不对'],
+  items: [
+    { t: '用户有权调用这个 Agent，所以 Agent 可以用该用户的全部资源。', a: 1, why: '入站权限只证明调用者能发起请求，不能直接转化为出站权限；出站访问不得超出本次任务的授权边界。' },
+    { t: 'Agent 拿到了一个临时凭证，这个凭证就是它的身份。', a: 1, why: '凭证只是证明身份与范围的载体；委托也不是身份。审计记录凭证标识或指纹，不记秘密。' },
+    { t: '有效权限 = 人员权限 ∩ 团队边界 ∩ Agent 策略 ∩ 资源策略 ∩ 委托范围，显式拒绝优先。', a: 0, why: '原书 11.7.2 节的规则。' },
+    { t: 'A 把任务交接给 B 时，B 自动继承 A 的全部权限，方便继续。', a: 1, why: 'Agent 间交接不会扩大权限：只获得当前任务所需且双方都被允许的最小范围。' },
+    { t: '策略后来变了，可以回头改写已结束 Task Run 里记录的决策结果。', a: 1, why: '每次 Task Run 固化策略版本和关键决策，策略变化不改写历史事实。' }
+  ]
+});
+S.notes($('#n-share'), {
+  c: [
+    ['共享上下文来源', '统一维护目标、约束、状态、事实、产物；每个 Agent 按角色取自己的 Context 视图。'],
+    ['Handoff 四类', '目标、已知事实、待处理事项、可用引用。'],
+    ['六种身份对象', '人员、服务、Agent / 工作负载、执行主体、临时凭证、委托授权（后两者不是身份）。'],
+    ['入站 / 出站', '谁能调用 Agent / Agent 能代表谁访问什么；独立配置、分别校验。']
+  ],
+  p: [
+    ['消息 vs 事实', '消息说发生了什么；Task State 与 Artifact 记录当前事实。'],
+    ['团队记忆门槛', '经任务结果、外部数据、其他成员或人工确认；保留来源、范围、有效性。'],
+    ['跨 Trace 关联', 'W3C Trace Context + 业务 ID；父子 Span 与 Span Links 按实际因果选。'],
+    ['评估 ≠ 事实', '评估结论单独存，写明方法、版本、时间。']
+  ]
+});
+
+/* ---------- 通信 ---------- */
+var G44 = {
+  rows: ['人机面', '能力面', '协作面', '内构面'],
+  cols: ['S1 请求—响应', 'S2 请求域流式', 'S3 任务句柄', 'S4 持久通道'],
+  c: [
+    ['表单式问答', 'token 流、前端流式协议', '收件箱与任务列表', '多端接入同一会话'],
+    ['工具调用', '秒级任务的请求内流式升级', 'MCP Tasks 扩展', '需要额外的持久通道契约'],
+    ['简单交互的同步返回', 'A2A 流式消息', 'A2A 任务 + 状态查询与推送', '消息中间件承载的 Agent 网格'],
+    ['组件间内部 RPC', '服务端组件间流式转发', '任务表 + 认领机制', '会话级通道、事件流']
+  ],
+  sem: ['S1：一次请求取得结果。解决短调用与直接反馈；不自带长任务查询与事件续传。', 'S2：一次请求中逐步返回事件。解决增量可见与进度反馈；单凭流不能保证断连后补齐。', 'S3：提交后凭标识查询或订阅。解决长任务查询、离线取回结果；不自动保证事件重播或业务恢复。', 'S4：按通道订阅、确认、补读。解决推送、削峰、重播、通道治理；仍需应用状态、幂等与运维机制。']
+};
+var g44 = '<div></div>' + G44.cols.map(function (c) { return '<div class="hd">' + c + '</div>'; }).join('');
+G44.rows.forEach(function (r, i) { g44 += '<div class="hd">' + r + '</div>' + G44.cols.map(function (c, j) { return '<div><button type="button" data-i="' + i + '" data-j="' + j + '">' + G44.c[i][j] + '</button></div>'; }).join(''); });
+$('#g44').innerHTML = g44;
+S.$$('#g44 button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    S.$$('#g44 button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    var i = +b.getAttribute('data-i'), j = +b.getAttribute('data-j');
+    $('#g44I').innerHTML = '<b>' + G44.rows[i] + ' · ' + G44.cols[j] + '：' + G44.c[i][j] + '</b><p>' + G44.sem[j] + '</p><p class="note" style="margin:4px 0 0">原书说明：本表展示可以采用的组合，不代表市场占有率或必须遵循的默认实现。</p>';
+  });
+});
+HB.vs($('#up'), {
+  k: '通信面', a: '默认语义', b: '升级触发条件',
+  rows: [
+    ['人机面', 'S2 请求域流式', '存在阻塞式人工审批，或需要跨设备、跨会话续看进度时升至 S3 或 S4'],
+    ['能力面', 'S1 请求—响应', '单个工具耗时超过网关超时，或需要跨实例恢复时升至 S3'],
+    ['协作面', '持续交接用 S3，简单交互可用 S1', '需要消息补读、扇出和独立消费治理时组合 S4'],
+    ['内构面', '按组件职责选 S1 或 S3', '需要削峰、消费位置和通道治理时组合 S4，并验证规模成本']
+  ]
+});
+HB.vs($('#mvsa'), {
+  k: '维度', a: 'MCP', b: 'A2A',
+  rows: [
+    ['方向', '垂直：Agent 到工具与数据', '水平：Agent 到 Agent'],
+    ['核心单元', '工具调用，单次操作', '任务，有状态工作流'],
+    ['能力发现', '按需发现接口（server/discover，2026-07-28 起）', 'Agent Card 预发布，支持签名'],
+    ['状态管理', '无状态核心，状态上推应用层', '完整任务生命周期状态机'],
+    ['传输绑定', 'Streamable HTTP', 'JSON-RPC、gRPC、REST 三种绑定'],
+    ['演进方向', '削弱会话状态', '强化任务']
+  ]
+});
+S.notes($('#n-comm'), {
+  c: [
+    ['四个通信面', '人机面（AG-UI）、能力面（MCP）、协作面（A2A）、内构面（无标准协议）。'],
+    ['四档语义', 'S1 请求—响应、S2 请求域流式、S3 任务句柄、S4 持久通道；不是成熟度等级。'],
+    ['契约六要素', '标识、顺序、投递保证、续传点、生命周期、背压。'],
+    ['协议无状态 ≠ 应用无状态', 'MCP 把状态责任交给应用层显式句柄。']
+  ],
+  p: [
+    ['主线', '让必要状态独立于连接与执行实例。'],
+    ['重播的边界', '消息重播不恢复进程，也不撤销或去重外部操作。'],
+    ['A2A 三种更新', '流式（当前过程可见）、推送（提醒“去拉取”）、查询（结果可寻址）。'],
+    ['同步的优点', '控制路径直接、进程内调用栈连续、运维与成本简单；按链路只在需要处加机制。']
+  ]
+});
+
+/* ---------- 内构面 ---------- */
+HB.cards($('#ckey'), {
+  opts: ['会话标识', '用户 × 模型', '用户', '会话 + 环境标识'],
+  items: [
+    { t: '语音交互：同一会话的音频分片必须按序处理，模型结果要回推到用户当前连接的网关节点。', a: 0, why: '请求侧以会话为分区键保序，响应侧以会话为通道回推；治理粒度是会话。' },
+    { t: '模型网关：百万租户调用数十种模型，要让每个客户在每个模型上有独立的限流节奏。', a: 1, why: '通道键取“用户 × 模型”，命中限流只挂起该通道。' },
+    { t: '资产中心：单个用户批量生成图片形成突发，不能拖慢其他用户。', a: 2, why: '通道键取“用户”，消息只带元数据和对象存储索引。' },
+    { t: '决策侧与执行 Worker 之间交接任务指令、执行事件和异步工作项。', a: 3, why: 'Qoder Cloud Agent 以 Session 标识命名通道（Session 内有序、跨 Session 并行），工作项按任务或环境路由。' }
+  ]
+});
+S.notes($('#n-inner'), {
+  c: [
+    ['通道键 → 治理粒度', '以什么业务标识命名通道，就以什么粒度隔离、限流、观测、回收。'],
+    ['手脑分离', '决策循环（脑）与工具执行（手）分进程，以会话通道相连，分别伸缩。'],
+    ['会话 / Harness / 沙箱', '追加式事件日志 / 无状态循环 / 一只普通的手。']
+  ],
+  p: [
+    ['规模化的三个失效', '每会话一个标准主题（元数据爆炸）、广播（单节点上限）、每会话一个消费组（消费组爆炸）。'],
+    ['宠物反模式', '会话与常驻 Worker 一对一绑死。'],
+    ['会话 ≠ 上下文窗口', '日志完整保留，压缩裁剪是 Harness 按需做的不可逆决策。'],
+    ['替换执行实例的前提', '保存了必要工作区与操作事实。']
+  ]
+});

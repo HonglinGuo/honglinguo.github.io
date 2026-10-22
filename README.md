@@ -15,6 +15,7 @@ src/study_build.py      通用系列构建脚本：python3 study_build.py <系�
 src/adp-series/         智能体设计模式系列（series.py 为配置，chN.html 为片段）
 src/infra-series/       AI Infra 系列
 src/nndl-series/        神经网络与深度学习（第二版）系列（ch0 由 gen_ch0.py 按 ch0.tpl.html 汇总各章生成，改章节后先运行它再 build）
+src/handbook-series/    AI Agent Handbook 系列（专用组件在 posts/study-shared/handbook.js/.css；ch0 同样由 gen_ch0.py 汇总生成）
 ```
 
 ## 新增文章

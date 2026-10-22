@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 的可观测性</title>
+<meta name="description" content="AI Agent Handbook 学习笔记（十）：AI 可观测的定义与六个挑战、四层采集架构、三种接入方式、Coding Agent 的 Hook 与 Daemon、eBPF 无侵入观测；Session / Trace / Span 与何时开新 Trace、十二种执行语义；错误延迟、Token 成本与输出质量指标；审计证据链与“证据缺失不等于安全”；AI 网关、推理引擎（TTFT / TPOT / 并发视图）与工具沙箱的基础设施观测。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.6'/%3E%3Ccircle cx='15' cy='12' r='2.4' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.tree { font-family: var(--f-num); font-size: 15px; line-height: 1.9; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: pre; }
+.tree button { font: inherit; font-family: var(--f-num); font-size: 15px; background: none; border: 0; padding: 0 4px; border-radius: 4px; cursor: pointer; color: var(--s1); font-weight: 700; }
+.tree button[aria-pressed="true"] { background: var(--s1); color: #fff; }
+.tree .c { color: var(--ink-3); }
+.cb { margin-top: 10px; display: grid; grid-template-columns: 4.5em minmax(0, 1fr) 5.5em; gap: 4px 8px; align-items: center; font-size: 15px; }
+.cb .lane { position: relative; height: 22px; background: var(--dim-soft); border-radius: 3px; }
+.cb .lane span { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
+.cb .w { background: var(--rule); } .cb .p { background: var(--s2); } .cb .d { background: var(--s1); } .cb .d.slow { background: var(--alert); }
+.cb .v { font-family: var(--f-num); text-align: right; color: var(--ink-2); }
+.legend4 { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 15px; color: var(--ink-2); margin-top: 6px; }
+.legend4 i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+</style>
+</head>
+<body data-series="handbook-series" data-part="10">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>AI Agent Handbook · 10</span><span>对应原书第 13 章</span><span>约 40 分钟</span></p>
+  <h1>请求成功，<em>不等于任务成功</em></h1>
+  <p class="lead">从这一篇进入原书的“治理”篇。Agent 的一次结果由编排、推理、上下文、检索、工具和运行环境共同决定，任何一环偏差都可能表现为变慢、变贵、失败，或者看似合理实则不可用。所以生产运行不能只问“服务是否可用”，还要回答 Agent 实际执行了什么、问题出在哪一步、异常由哪次模型或工具调用引起、应用层现象是否和推理引擎或执行环境有关。</p>
+  <p class="credit">本系列是开源白皮书《<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">AI Agent Handbook（企业级 Agent 白皮书）</a>》（阿里云团队编写的开源白皮书，Apache-2.0 协议；本笔记依据 2026 年 10 月 21 日的仓库版本）的学习笔记。原书按“架构 → 构建 → 运行 → 治理 → 调优 → 实践”组织三十章，这里重排成十五篇，用自己的话重讲，并把关键表格做成可以点、可以分类、可以走流程的互动。概念与结论取自原书，每节标出对应章节；为演示设的场景和数值标“示意”。原书由阿里云编写，涉及阿里云产品的方案与数字属于厂商自述，文中会单独标出。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-handbook/"><b>总览</b>架构地图</a>
+  <a href="../2026-10-22-handbook-1/" data-part="1"><b>01</b>新阶段</a>
+  <a href="../2026-10-22-handbook-2/" data-part="2"><b>02</b>参考架构</a>
+  <a href="../2026-10-22-handbook-3/" data-part="3"><b>03</b>Harness</a>
+  <a href="../2026-10-22-handbook-4/" data-part="4"><b>04</b>任务</a>
+  <a href="../2026-10-22-handbook-5/" data-part="5"><b>05</b>信息</a>
+  <a href="../2026-10-22-handbook-6/" data-part="6"><b>06</b>行动</a>
+  <a href="../2026-10-22-handbook-7/" data-part="7"><b>07</b>运行与状态</a>
+  <a href="../2026-10-22-handbook-8/" data-part="8"><b>08</b>AI 网关</a>
+  <a href="../2026-10-22-handbook-9/" data-part="9"><b>09</b>异步与多 Agent</a>
+  <a href="../2026-10-22-handbook-10/" aria-current="page" data-part="10"><b>10</b>可观测</a>
+  <a href="../2026-10-22-handbook-11/" data-part="11"><b>11</b>安全</a>
+  <a href="../2026-10-22-handbook-12/" data-part="12"><b>12</b>资产与验证</a>
+  <a href="../2026-10-22-handbook-13/" data-part="13"><b>13</b>模型调优</a>
+  <a href="../2026-10-22-handbook-14/" data-part="14"><b>14</b>Agent 调优</a>
+  <a href="../2026-10-22-handbook-15/" data-part="15"><b>15</b>实践与展望</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么</a><a href="#collect">采集接入</a><a href="#model">链路模型</a><a href="#metric">指标与质量</a><a href="#audit">审计</a><a href="#infra">基础设施</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Session、Trace、Span 各是什么？Agent 等用户补充信息时，该继续当前 Trace 还是开新 Trace？</li>
+    <li>为什么 Session ID、Trace ID 不该当指标标签？模型生成的 tool-call 为什么不能直接记成 TOOL Span？</li>
+    <li>审计研判的三种结论是什么？推理服务 TTFT 升高而 TPOT 稳定，应先查哪里？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么 Agent 需要专门的可观测性</h2><span class="meta">原书 13.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书的定义：AI 可观测性是通过指标、日志、Trace 和事件，理解 AI 原生应用内部状态和执行行为的能力，在传统可观测性上引入 Agent、模型、工具、上下文和任务等语义。它<strong>不等同于模型训练监控，也不同于用 AI 分析传统运维数据的 AIOps</strong>。OpenTelemetry 已把模型调用、Agent 操作纳入生成式 AI 语义约定，但规范仍在演进，平台要兼容标准也要能扩展语义。</p>
+    <p>挑战有六类：<strong>异常与任务质量难界定</strong>（同样输入可能走不同路径；错误规划、无效检索、工具误用、表面完成实则不对，“请求成功”不等于“任务成功”）；<strong>动态路径难还原</strong>（多轮调用、并行工具、子 Agent、异步回调，固定拓扑表达不了）；<strong>外部依赖可见性有限</strong>（托管模型、第三方工具只暴露有限信息）；<strong>跨步骤跨会话难关联</strong>（单次调用没问题，放进任务里可能是重复调用或异常循环）；<strong>异构场景难统一</strong>（语言、框架、SDK、协议、运行形态各不相同）；<strong>完整性、成本与安全难平衡</strong>（Prompt、响应、工具参数体量大，还可能含用户数据和凭证）。</p>
+    <p>“看什么”分四个维度：<strong>运行表现</strong>（任务是否完成、输出是否符合预期）、<strong>稳定性与性能</strong>（错误、超时、重试、异常循环、延迟）、<strong>成本与效率</strong>（Token、调用成本、资源效率）、<strong>行为审计</strong>（关键操作能否追溯主体、过程、结果）。“看哪里”分三层：任务与交互层、Agent 执行层、AI 基础设施层（网关、推理引擎、沙箱、Pod、GPU）。</p>
+    <p class="go">这些问题分别属于哪个观测维度？</p>
+  </div>
+  <div class="lab"><div id="dim"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="collect">
+  <div class="part-head"><h2>采集接入：多种入口，统一语义</h2><span class="meta">原书 13.2 节</span></div>
+  <div class="sec-lede">
+    <p>AI 应用的技术栈差异大，很难靠一种探针覆盖：自研 Agent 可以在代码和框架里埋点；Coding 与通用 Agent 只能用 Hook、插件、会话日志或本地数据库；网关和推理引擎提供服务端指标与访问日志；工具、沙箱、Pod、GPU 要靠运行时事件、节点采集和 eBPF。原书的四层架构：<strong>被观测对象层</strong> → <strong>采集接入层</strong>（多种方式可组合，组合时按原生调用 ID、时间边界和来源去重，避免同一次操作重复建 Span 或重复累计 Token）→ <strong>统一处理层</strong>（以 OTLP 接收，做协议适配、语义规范化、采样、过滤、脱敏，并保留“实际值还是估算值”）→ <strong>存储与分析层</strong>（Trace、Metrics、日志、事件各进合适的存储，通过共同标识联合查询）。</p>
+    <p>高代码应用有三种接入方式：<strong>手动埋点</strong>（语义最强，能表达目标、阶段和业务结果，原书以开源的 LoongSuite GenAI Utils 为例，默认不采集 Prompt 和回复正文）、<strong>进程启动时自动插桩</strong>（改启动命令即可覆盖 HTTP、数据库、受支持的模型 SDK 和框架，但推断不出“为什么调用”“属于哪个业务阶段”）、<strong>K8s 集群自动注入</strong>（解决探针交付和配置治理，兼容边界与进程探针相同）。生产常用“探针采集通用依赖 + 手动补业务语义”，但要避免对同一次调用重复建模。建议的层级是 <code>ENTRY → AGENT / WORKFLOW → STEP → LLM / RETRIEVAL / TOOL</code>；流式响应和生成器不能在函数返回迭代器时就结束 Span。</p>
+    <p>Coding Agent 只能从外部采：原生插件回调、生命周期 Hook（不能假定每个 Hook 都带模型用量）、本地 transcript / 日志 / 数据库。原书介绍的 LoongSuite Pilot 用“Agent 侧适配器 + 独立 Daemon”：适配器取证据，Daemon 做增量读取、跨来源合并和上报。几个要点：按原生调用 ID 配对，时间接近只是辅助；缺失和估算的信息明确标出，<strong>不能用零值或猜测值补齐</strong>；模型结束不等于轮次结束；游标已保存不代表后端已收到。<strong>eBPF</strong> 则从内核侧无侵入地补“实际发生了什么”：模型调用表现为网络请求与响应（可算 TTFT、TPOT），工具调用表现为进程、文件、网络事件，按进程关系和内核时间戳拼成轨迹。</p>
+    <p class="go">先选接入方式，再判断这条信息该用哪种遥测数据承载。</p>
+  </div>
+  <div class="lab"><p class="lab-t">选一种接入方式（据原书 13.2.2 节的对比整理）</p><div id="acc"></div></div>
+  <div class="lab"><p class="lab-t">Trace、Metrics 还是日志 / 事件？</p><div id="tele"></div></div>
+  <div class="notes" id="n-collect"></div>
+</section>
+
+<section class="part" id="model">
+  <div class="part-head"><h2>链路模型：Session、Trace、Span 与执行语义</h2><span class="meta">原书 13.3.1–13.3.2 节</span></div>
+  <div class="sec-lede">
+    <p>不区分关联范围和执行边界，就会出现两种错：把整个长会话记成一条持续很久的链路，或者把相关的多次执行割裂成互不相干的请求。原书用三层：<strong>Session</strong> 是一段连续会话的关联范围，可以跨多次请求、多条 Trace 和很长的时间间隔，不宜记成一条长时间不结束的 Trace；<strong>Trace</strong> 记录<strong>一次外部输入触发的活跃执行</strong>（用户消息、审批结果、回调、异步恢复），Agent 返回结果、转入跨请求等待或因错误中断时结束；<strong>Span</strong> 是有明确开始、结束和结果的基本执行单元，嵌套表示调用关系，同一父节点下时间重叠表示并行。</p>
+    <p>边界规则：内部重试、模型回退、工具重试如果没有结束当前活跃执行，留在同一 Trace，每次实际调用分别记录；流式输出覆盖到消费完成或被中断；AskUserQuestion 或 HITL 如果在同一进程内等待且没有释放控制权，可以沿用当前 Trace，如果已经返回请求、持久化状态或进入长等待，就结束当前 Trace，恢复时建新 Trace，用相同 Session 标识和前序关系或 Trace Link 关联。</p>
+    <p>原书给出十二种执行语义：ENTRY、AGENT、WORKFLOW、STEP、LLM、RETRIEVAL、MEMORY、TOOL、GUARDRAIL、COMPACTION、HITL、INTERRUPT。几条关键约定：<strong>TOOL 表示一次实际发生的工具执行，不表示模型生成的调用意图</strong>，审批等待不计入工具耗时；STEP 只在能可靠识别 ReAct 轮次时记录；由 LLM 自主发起的检索或记忆操作要放在对应 TOOL 之下；MEMORY 只记录明确的记忆读写，模型读取已组装的上下文不算；COMPACTION 下的摘要 LLM 调用挂在它下面，Trace 只留压缩事实和结果引用；预期的用户打断不一定是系统错误，但也不应标记为正常完成。Trace 的父子结构反映真实调用关系，<strong>不要为了得到固定的树形人为拼接</strong>；语义优先记录能直接观察和验证的事实，而不把拿不到的模型内部思维当必需字段。</p>
+    <p class="go">先判断要不要开新 Trace；再点调用树上的节点。</p>
+  </div>
+  <div class="lab"><p class="lab-t">同一条 Trace，还是新 Trace？</p><div id="tr"></div></div>
+  <div class="lab">
+    <p class="lab-t">一条典型 ReAct Agent Trace（据原书 13.3.2 节示意结构）</p>
+    <div class="tree" id="tree"></div>
+    <div class="hb-info" id="treeI" style="margin-top:10px"><p>点一个蓝色的语义标签。</p></div>
+  </div>
+  <div class="notes" id="n-model"></div>
+</section>
+
+<section class="part" id="metric">
+  <div class="part-head"><h2>错误延迟、Token 成本与输出质量</h2><span class="meta">原书 13.3.3–13.3.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>错误</strong>要分类：模型调用错误、检索失败、工具执行错误、参数校验失败、权限拒绝、超时、人工终止，并记录错误<strong>首次出现的步骤</strong>和后续传播；工具失败但 Agent 继续执行时，工具步骤的失败状态和任务最终状态都要保留。错误率只统计可直接观测的执行错误，不把“任务是否正确完成”混进来。<strong>延迟</strong>分请求端到端（P50 / P95 / P99、首个用户可见输出）和步骤耗时（各语义的分位数），用户可见首输出与模型首响应分开统计；模型性能看调用耗时、TTFT、TPOT、输出速率。</p>
+    <p><strong>Token</strong> 分别记录输入、输出、缓存（读取、写入）和可获得时的推理 Token；能拿到服务端用量就以它为准，估算要标明口径、与计费数据区分。成本要汇总到 Trace、Agent、Session，有稳定任务标识时再到任务层，并保留模型、供应商、Token 类型、计价版本、币种以便重算审计。缓存命中率可以按缓存读取 Token 占输入 Token 的比例计算，但不同供应商口径不一致。<strong>效率</strong>看每条 Trace 的步骤数、LLM 调用数、工具调用数、重复步骤占比：只有把成本和任务结果放在一起，才能区分合理的高成本任务和重复调用、异常重试造成的浪费。指标标签用应用、Agent、操作类型、模型、供应商、工具类型、结果、环境等<strong>低基数</strong>字段，Session ID、Trace ID、用户 ID、动态 Prompt 留在 Trace 或日志里下钻。</p>
+    <p><strong>质量</strong>不能从运行指标推断，要在 Trace 上额外做规则校验、模型评估或人工判断，分三层：最终结果、关键步骤（检索内容、工具选择、参数、子 Agent 路由）、执行轨迹。通用评估器有正确性、相关性、完整性、有据性、指令遵循、检索质量、工具调用正确性、轨迹质量、安全与合规；有明确答案的优先用确定性规则和业务系统校验，语义质量用 LLM-as-a-Judge，高风险或主观的结合专家复核。评估记录要保留评估器名称与版本、对象、分数、理由和证据，并关联到 Trace 或 Span。原书也提醒：通用评估器只给基础信号，替代不了面向具体业务目标的效果评价。</p>
+    <p class="go">这个字段适合做指标标签吗？</p>
+  </div>
+  <div class="lab"><div id="card"></div></div>
+  <div class="notes" id="n-metric"></div>
+</section>
+
+<section class="part" id="audit">
+  <div class="part-head"><h2>审计：可复核的证据链</h2><span class="meta">原书 13.4 节</span></div>
+  <div class="sec-lede">
+    <p>Agent 审计是在可观测数据之上，对身份、授权、执行行为和外部影响进行持续记录、检查和追溯。它要回答：谁在什么权限下、通过哪个 Agent 发起了什么任务，调用了哪些模型、数据、工具，实际影响了哪些对象，是否越过用户意图、组织策略或合规边界，结论能否复核。四者分工：<strong>可观测性</strong>还原发生了什么，<strong>评测</strong>衡量效果，<strong>审计</strong>判断是否合规、责任归谁、证据是否完整，<strong>Guardrail</strong> 在执行前或执行中允许、拒绝、脱敏、审批、限权。事后审计能发现风险，撤销不了已经发生的修改或泄露。</p>
+    <p>最小证据链包括四部分：<strong>主体与范围</strong>（用户、Agent、子 Agent、服务身份，租户、会话、任务、Trace 标识）、<strong>意图与授权</strong>（目标、指令来源、可用工具、权限范围、审批、当时生效的策略版本）、<strong>执行事实</strong>（模型、检索、记忆、工具参数与结果，以及进程、文件、网络、凭证使用等实际副作用）、<strong>结果与证据</strong>（状态、受影响对象、风险命中位置、原始事件引用、规则或模型版本）。eBPF 补充的是“实际发生”的证据，但缺少用户目标和业务授权，对加密流量可见性有限，要与应用埋点、Hook、网关日志、策略记录互证，<strong>不能单独据此认定越权或攻击</strong>。原始事实追加写入，检测结论以引用证据的派生记录存在，不为修正结论去改原始事件；审计数据本身也是高敏资产，完整审计不等于无边界地保存全部内容。</p>
+    <p>检测链路分层：<strong>原始事实 → 候选信号 → 上下文研判 → 已确认事件</strong>。研判结果至少区分三种：证据足以确认风险；证据足以说明风险链不成立或仍在授权范围内；关键证据缺失、暂时无法判断，<strong>第三种不能当成安全结论</strong>。严重性与置信度分别记录。模型可以辅助理解长上下文、降噪，但送进模型的审计材料本身可能含注入，要隔离数据与指令、限制工具、结构化输出，模型解释也是待验证输出。确认后进入有负责人、状态、处置动作、证据、关闭原因的事件响应；实时阻断的策略必须确定、低延迟、可解释、可回放，并有影子运行、灰度和回滚，开放式语义判断更适合异步调查。</p>
+    <p class="go">先勾选证据链；再给研判结论分类。</p>
+  </div>
+  <div class="lab"><p class="lab-t">最小证据链（原书 13.4.2 节）</p><div id="chainCk"></div></div>
+  <div class="lab"><p class="lab-t">研判结论是哪一种？（场景为示意）</p><div id="judge"></div></div>
+  <div class="notes" id="n-audit"></div>
+</section>
+
+<section class="part" id="infra">
+  <div class="part-head"><h2>AI 基础设施：网关、推理引擎、工具沙箱</h2><span class="meta">原书 13.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>AI 网关</strong>集中代理模型、MCP、工具访问，提供相对统一、稳定的观测入口，补应用侧埋点参差的问题。模型访问侧看请求与服务状态、性能分段（网关处理、上游等待、首个响应 Chunk、流式持续）、路由（请求模型 vs 实际模型、重试、Fallback、熔断）、用量与成本、调用身份与策略结果、安全策略执行、Trace 关联；MCP 侧还要区分初始化、能力协商、工具发现、资源读取，不应把所有 MCP 流量都归为 TOOL。同一次调用在 Agent 侧和网关侧各有记录：前者描述任务语义，后者描述代理、鉴权、路由过程，靠 Trace 上下文串起来。</p>
+    <p><strong>推理引擎</strong>（vLLM、SGLang 等）只看 HTTP 耗时或 GPU 利用率都不够。模型级指标看流量与可靠性、用户体验（E2E、TTFT、TPOT）、吞吐与负载形态（Token 吞吐、Prompt / 输出长度分布）、调度与缓存（Waiting / Running、队列时间、Prefill / Decode 耗时、KV Cache 使用与命中）；再下钻到 Pod 判断负载是否均衡，关联 GPU 的 SM Active、Tensor Active、显存带宽。端到端耗时可以近似拆为“队列等待 + Prefill + Decode + 框架及网络开销”，指标要<strong>联合解读</strong>而不是逐项设阈值。单条 Trace 只展示这个请求的经历，在 <strong>Continuous Batching</strong> 下，同批次的其他请求会共享计算与缓存，一个长 Prefill 或并发突增都可能拖慢它，所以要配合<strong>并发视图</strong>：以时间为横轴画出每个请求的 Wait、Prefill、Decode，沿某一时刻画竖线就是当时的执行快照。原书的排障闭环：指标发现 → Trace 找慢请求 → 并发分析还原现场 → Pod / GPU 验证根因 → 同流量同长度分布下对比验证。</p>
+    <p><strong>工具与沙箱</strong>：模型的 tool call 只表示计划调用，经过参数校验、权限检查、审批、策略拦截后可能被拒绝、取消或改写。要同时记录“计划做什么”和“实际发生什么”：工具调用事实、沙箱生命周期（调度、创建、冷启动、休眠、恢复、销毁）、命令与进程（退出码、信号、OOM）、资源使用、文件网络等副作用、策略与隔离结果，用 Trace 上下文、tool-call ID、沙箱实例 ID、Pod、进程 ID 关联。策略拒绝发生在执行前时，记录判定事件，<strong>不伪造命令执行 Span</strong>。</p>
+    <p class="go">先根据指标组合判断方向；再模拟 Continuous Batching 的相互影响（请求与时长为示意）。</p>
+  </div>
+  <div class="lab"><p class="lab-t">推理服务的指标组合，先查哪里？（原书 13.5.2 节）</p><div id="inf"></div></div>
+  <div class="lab">
+    <p class="lab-t">并发视图：同一批里的请求会互相影响</p>
+    <div class="seg" id="cbSeg"><button data-v="n" aria-pressed="true">正常</button><button data-v="p">插入一个超长 Prompt</button><button data-v="b">并发突增</button></div>
+    <div class="cb" id="cb"></div>
+    <div class="legend4"><span><i style="background:var(--rule)"></i>Wait</span><span><i style="background:var(--s2)"></i>Prefill</span><span><i style="background:var(--s1)"></i>Decode</span><span><i style="background:var(--alert)"></i>Decode 被拖慢</span></div>
+    <p class="verdict3" id="cbV"></p>
+  </div>
+  <div class="vendor"><b>参考实现说明</b>原书本章大量使用阿里云及其开源项目作示例：LoongSuite GenAI Utils / LoongSuite Python / LoongSuite Pilot、ack-onepilot、AgentSight（eBPF）、ARMS 推理引擎观测与 ACK 监控大盘。原书也同时引用了 OpenTelemetry 的 GenAI 语义约定（仍为 Development 状态）、OpenTelemetry Operator 与 OWASP 的 Agentic Top 10、Agent Control Standard。示例中的数值（如 596 次请求、193.39 ms 的 Trace）不应当作基线。</div>
+  <div class="notes" id="n-infra"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Session、Trace、Span 是什么？等用户补充信息时怎么处理？</summary><p class="ans">Session 是连续会话的关联范围，可跨多条 Trace；Trace 是一次外部输入触发的活跃执行，返回结果、转入跨请求等待或中断时结束；Span 是有明确起止和结果的基本操作单元。若在同一进程内等待且未释放控制权，可沿用当前 Trace；若已返回请求、持久化状态或长时间等待，就结束当前 Trace，用户回答时建新 Trace，用同一 Session 标识和前序关系 / Trace Link 关联。</p></details>
+    <details><summary>2. 为什么高基数字段不做标签？tool-call 为什么不能记成 TOOL？</summary><p class="ans">Session ID、Trace ID、用户 ID、tool-call ID 等是高基数字段，作为指标标签会导致时序数量失控，应保留在 Trace 或日志里下钻，指标用应用、模型、工具类型、结果等可控维度。模型生成的 tool-call 只是意图，可能被校验、权限、审批、策略拒绝或改写；TOOL 表示一次实际发生的执行，要由执行回调或结果记录确认，审批等待也不计入工具耗时。</p></details>
+    <details><summary>3. 审计研判三种结论？TTFT 升、TPOT 稳，查哪里？</summary><p class="ans">证据足以确认风险；证据足以说明风险链不成立或在授权内；关键证据缺失、暂无法判断（不能当成安全结论），严重性与置信度分开记录。E2E 与 TTFT 同时上升而 TPOT 稳定，优先查 Waiting 请求数、Queue Time、Prompt 长度和 Prefill，再用并发视图看是否并发突增排队或长 Prompt 进入，用 Pod / GPU 指标验证是否单实例倾斜。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-handbook-9/"><small>上一篇</small><span>09 · 异步任务、多 Agent 与分布式通信</span></a><a class="nx" href="../2026-10-22-handbook-11/"><small>下一篇</small><span>11 · Agent 安全</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">aliyun/ai-agent-handbook</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 为什么 ---------- */
+HB.cards($('#dim'), {
+  opts: ['运行表现', '稳定性与性能', '成本与效率', '行为审计'],
+  items: [
+    { t: '这个 Agent 生成的周报，结论是否符合数据？', a: 0, why: '任务是否完成、输出是否符合预期。' },
+    { t: '这周工具调用的超时率翻了一倍。', a: 1, why: '错误、超时、重试、异常循环、延迟。' },
+    { t: '同一类任务，A 团队的 Token 消耗是 B 团队的 5 倍。', a: 2, why: 'Token、调用成本、资源效率。' },
+    { t: '上周四是谁、在什么权限下让 Agent 删除了这批记录？', a: 3, why: '关键操作能否追溯主体、过程和结果。' },
+    { t: 'Agent 在两个工具之间来回调用了 30 次。', a: 1, why: '异常循环属于稳定性问题，也会推高成本。' }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['AI 可观测性', '用指标、日志、Trace、事件理解 AI 应用内部状态和执行行为；引入 Agent、模型、工具、上下文、任务语义。'],
+    ['不是什么', '不是模型训练监控，也不是用 AI 分析运维数据的 AIOps。'],
+    ['四个维度', '运行表现、稳定性与性能、成本与效率、行为审计。'],
+    ['三层对象', '任务与交互、Agent 执行、AI 基础设施。']
+  ],
+  p: [
+    ['六个挑战', '质量难界定、路径难还原、外部依赖不可见、跨步骤难关联、异构难统一、完整性成本安全难平衡。'],
+    ['最核心的一句', '“请求成功”不等于“任务成功”。'],
+    ['标准现状', 'OpenTelemetry GenAI 语义约定仍在演进，要兼容也要能扩展。']
+  ]
+});
+
+/* ---------- 采集 ---------- */
+HB.decide($('#acc'), {
+  qs: [
+    { id: 'code', q: '1. 能修改应用代码吗？', opts: [['y', '能'], ['n', '不能（第三方 Coding Agent、桌面客户端等）']], def: 'y' },
+    { id: 'sem', q: '2. 需要还原决策过程、执行阶段或按业务结果分析吗？', opts: [['y', '需要'], ['n', '主要看技术性能']], def: 'y' },
+    { id: 'k8s', q: '3. 是否在 Kubernetes 中有大量工作负载、多团队维护镜像？', opts: [['y', '是'], ['n', '否']], def: 'n' }
+  ],
+  decide: function (a) {
+    var out = [];
+    if (a.code === 'n') out.push(['Hook / 插件 / transcript + Daemon，补 eBPF', '只能从外部取证据：原生插件回调、生命周期 Hook、本地记录；按原生调用 ID 配对，缺失信息明确标识，不补零。eBPF 补充进程、文件、网络的实际行为。']);
+    else {
+      if (a.k8s === 'y') out.push(['K8s Operator 自动注入探针', '统一交付多语言探针、开关和升级；兼容边界与进程探针相同，不能替代业务语义埋点。需评估初始化耗时和资源。']);
+      else out.push(['进程启动时自动插桩', '改启动命令即可覆盖 HTTP、数据库、受支持的模型 SDK 与框架；覆盖程度取决于探针与依赖版本。']);
+      if (a.sem === 'y') out.push(['+ 手动埋点补业务语义', '在入口、Agent、Step 补目标、阶段、业务结果；探针已经为同一次调用建了 Span，就不要再建一个语义相同的 LLM / Tool Span。']);
+    }
+    return out.map(function (o) { return '<div class="hb-res" style="margin-bottom:8px"><h4>' + o[0] + '</h4><p>' + o[1] + '</p></div>'; }).join('') + '<p class="note">无论哪种方式：进程内只保留一套 TracerProvider 和导出链路；Prompt、响应、工具参数按需采集、截断、脱敏、采样、控权限。</p>';
+  }
+});
+HB.cards($('#tele'), {
+  opts: ['Trace', 'Metrics', '日志 / 事件'],
+  items: [
+    { t: '这一次任务里，模型调用、检索、工具、子 Agent 的先后与因果关系。', a: 0, why: 'Trace 记录一次活跃执行的因果关系。' },
+    { t: '过去一周各模型的错误率和 P99 延迟趋势。', a: 1, why: 'Metrics 观察聚合趋势，标签用模型、服务、结果等可控维度。' },
+    { t: '沙箱里某个脚本读写了哪些文件、连了哪些地址（量大、粒度细）。', a: 2, why: '数量大、不适合逐个建 Span 的运行时行为，记为事件或日志，用 Trace ID、tool-call ID、进程标识关联下钻。' },
+    { t: '策略判定结果和拒绝原因、控制面配置变更。', a: 2, why: '细节类信息进日志与事件。' },
+    { t: '采集链路自身的健康度（积压、失败数、延迟）。', a: 1, why: '用于持续监控的聚合指标。' }
+  ]
+});
+S.notes($('#n-collect'), {
+  c: [
+    ['四层采集架构', '被观测对象 → 采集接入 → 统一处理（OTLP、规范化、采样、脱敏）→ 存储与分析。'],
+    ['三种高代码接入', '手动埋点（语义最强）、进程自动插桩（改动少）、K8s 自动注入（统一交付）。'],
+    ['Hook + Daemon', '适配器在 Agent 侧取原生证据，Daemon 增量读取、合并、上报。'],
+    ['eBPF', '内核侧无侵入：网络请求响应还原模型调用，进程 / 文件 / 网络事件还原工具行为。']
+  ],
+  p: [
+    ['建议层级', 'ENTRY → AGENT / WORKFLOW → STEP → LLM / RETRIEVAL / TOOL。'],
+    ['组合采集', '按原生调用 ID、时间边界、来源去重；不重复建 Span、不重复累计 Token。'],
+    ['缺失就标缺失', '不用零值或猜测值补齐；估算值要标明。'],
+    ['两种保证', '读取游标已保存 ≠ 后端已收到；更强保证要待发送队列 + 交付确认 + 后端幂等。']
+  ]
+});
+
+/* ---------- 链路模型 ---------- */
+HB.cards($('#tr'), {
+  opts: ['同一条 Trace', '结束当前 Trace，恢复时建新 Trace'],
+  items: [
+    { t: '模型调用 503，同一次执行里自动换到备用模型重试。', a: 0, why: '内部重试和回退没有结束当前活跃执行，留在同一 Trace，每次实际调用分别记录。' },
+    { t: 'Agent 向用户提问，请求已返回，状态已持久化，用户两小时后回复。', a: 1, why: '已经返回请求、进入跨请求等待；用户回答触发新 Trace，用同一 Session 标识和前序关系关联。' },
+    { t: '同一进程内弹出确认框，用户 10 秒后点了确定，执行控制权一直没释放。', a: 0, why: '同一进程内等待且未释放控制权，可以沿用当前 Trace。' },
+    { t: '高风险操作进入审批队列，审批第二天通过后恢复执行。', a: 1, why: 'HITL 跨请求恢复，与补充信息同理。' },
+    { t: '流式输出持续了 40 秒才消费完。', a: 0, why: '流式输出属于同一 Trace，覆盖到消费完成或被中断。' }
+  ]
+});
+var SEM = {
+  ENTRY: 'AI 应用对一次外部请求或用户交互的完整处理。一个 Session 可以有多次 ENTRY，不应把整个长会话记成一个持续运行的 ENTRY。',
+  AGENT: '一次实际的 Agent 调用。同一 Agent 的多次调用分别记录；子 Agent 作为独立调用，并关联发起方（由派发工具启动时位于该 TOOL 下）。',
+  STEP: 'ReAct 循环中的一次推理与行动迭代。只在能可靠识别轮次时记录，不要把普通工作流节点统称为 STEP。',
+  GUARDRAIL: '围绕明确对象的规则校验、风险检测、策略决策。记录被校验对象、阶段、判定结果与处置（放行、阻断、脱敏、改写），紧邻被保护的操作。',
+  LLM: '一次真实发往模型的请求。工具执行后的再次推理、回退、重试分别记录；流式调用覆盖完整的响应消费。',
+  TOOL: '一次实际发生的工具执行，不是模型生成的调用意图。审批等待与实际执行要区分，不把人工等待计入工具耗时。',
+  RETRIEVAL: '从知识库、搜索或其他数据源召回。由 LLM 作为工具自主发起时，实际检索位于对应 TOOL 下。',
+  MEMORY: '明确的记忆查询、创建、更新、合并、删除。模型读取已组装的上下文不算 MEMORY。',
+  COMPACTION: '对上下文做摘要、裁剪、替换或卸载。记录触发原因和压缩前后规模；摘要 LLM 调用挂在它下面，不重复保存被替换的完整历史。'
+};
+var TREE = [
+  ['ENTRY', '一次外部请求或用户交互', 0], ['AGENT', '主 Agent 的一次运行', 1], ['STEP', 'ReAct 第 1 轮（可选）', 2],
+  ['GUARDRAIL', '检查 LLM 输入（可选）', 3], ['LLM', '生成本轮推理与行动', 3], ['GUARDRAIL', '检查工具参数与权限（可选）', 3],
+  ['TOOL', '检索或记忆 Tool（可选）', 3], ['RETRIEVAL', '实际检索操作', 4], ['TOOL', '其他 Tool：派发子 Agent（可选）', 3], ['AGENT', '子 Agent', 4],
+  ['STEP', 'ReAct 第 2 轮（可选）', 2], ['LLM', '基于观察继续决策或生成结果', 3], ['COMPACTION', '上下文压缩（可选）', 2], ['LLM', '生成上下文摘要', 3]
+];
+var th = '';
+TREE.forEach(function (t) { th += '  '.repeat(t[2]) + (t[2] ? '└ ' : '') + '<button type="button" data-k="' + t[0] + '">' + t[0] + '</button> <span class="c">' + t[1] + '</span>\n'; });
+$('#tree').innerHTML = th;
+S.$$('#tree button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    S.$$('#tree button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    var k = b.getAttribute('data-k'); $('#treeI').innerHTML = '<b>' + k + '</b><p>' + SEM[k] + '</p>';
+  });
+});
+S.notes($('#n-model'), {
+  c: [
+    ['Session', '连续会话的关联范围，可跨多条 Trace；不记成一条长 Trace。'],
+    ['Trace', '一次外部输入触发的活跃执行；返回、跨请求等待或中断时结束。'],
+    ['Span', '有明确起止和结果的操作单元；嵌套 = 调用，同父重叠 = 并行。'],
+    ['十二种执行语义', 'ENTRY、AGENT、WORKFLOW、STEP、LLM、RETRIEVAL、MEMORY、TOOL、GUARDRAIL、COMPACTION、HITL、INTERRUPT。']
+  ],
+  p: [
+    ['同一 Trace', '内部重试、回退、流式输出、同进程内未释放控制权的等待。'],
+    ['新 Trace', '已返回请求、持久化状态或长等待后的恢复；用 Session + 前序关系 / Trace Link 关联。'],
+    ['TOOL 的含义', '实际执行，不是意图；审批等待不计入工具耗时。'],
+    ['不要人为拼树', '父子结构反映真实调用；只记可观察、可验证的事实。']
+  ]
+});
+
+/* ---------- 指标 ---------- */
+HB.cards($('#card'), {
+  opts: ['适合做指标标签', '留在 Trace / 日志里下钻'],
+  items: [
+    { t: '模型名称（qwen-plus、gpt-x …）', a: 0, why: '低基数、可控维度。' },
+    { t: 'Session ID', a: 1, why: '高基数，作为标签会让时序数量失控。' },
+    { t: '工具类型（search、sql、shell）', a: 0, why: '可控维度。' },
+    { t: 'tool-call ID', a: 1, why: '每次调用一个，高基数。' },
+    { t: '执行结果（success / error / timeout）', a: 0, why: '可控维度。' },
+    { t: '用户的原始 Prompt', a: 1, why: '高基数且可能敏感，按需采集、脱敏。' },
+    { t: '用户 ID', a: 1, why: '高基数；需要按用户分析时在 Trace / 日志里聚合。' }
+  ]
+});
+S.notes($('#n-metric'), {
+  c: [
+    ['错误分类', '模型、检索、工具、参数校验、权限拒绝、超时、人工终止；记录首次出现的步骤与传播。'],
+    ['延迟两层', '端到端（分位数、首个用户可见输出）+ 步骤耗时；模型看 TTFT、TPOT、输出速率。'],
+    ['Token 与成本', '输入、输出、缓存读写、推理 Token；服务端用量优先，估算标口径；保留计价版本与币种。'],
+    ['质量三层', '最终结果、关键步骤、执行轨迹；评估记录关联到 Trace / Span。']
+  ],
+  p: [
+    ['错误率口径', '只统计可直接观测的执行错误，不混入任务是否正确完成。'],
+    ['缓存命中率', '缓存读取 Token ÷ 输入 Token（各家口径不同，按实际返回语义统计）。'],
+    ['效率要看结果', '成本与任务结果一起看，才能区分合理高成本与浪费。'],
+    ['评估器选型', '有明确答案 → 规则 / 业务校验；语义 → LLM-as-a-Judge；高风险主观 → 专家复核。']
+  ]
+});
+
+/* ---------- 审计 ---------- */
+HB.check($('#chainCk'), {
+  items: [
+    { t: '主体与范围', d: '用户、Agent、子 Agent、服务身份；租户、会话、任务、Trace', miss: '查得到发生了什么，却说不清是谁、在哪个任务里做的。' },
+    { t: '意图与授权', d: '目标、指令来源、可用工具、权限范围、审批、策略版本', miss: '无法判断行为是否越过用户意图或当时的授权。' },
+    { t: '执行事实', d: '模型、检索、记忆、工具参数与结果，进程 / 文件 / 网络 / 凭证副作用', miss: '只知道模型“打算”调用工具，不知道是否真的执行、改了什么。' },
+    { t: '结果与证据', d: '状态、受影响对象、风险位置、原始事件引用、规则或模型版本', miss: '结论无法复核，换一个人或一版规则就得出不同判断。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>四部分齐全</b>：应用埋点表达业务语义，运行时遥测验证实际副作用，两者通过会话、Trace、tool-call、进程关系互证。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　只记录 Prompt、最终回答或工具名中的一项，都不足以构成审计：</p>'; }
+});
+HB.cards($('#judge'), {
+  opts: ['确认风险', '风险链不成立 / 在授权内', '证据缺失，暂无法判断'],
+  items: [
+    { t: '网页里的注入指令被采纳，Agent 随后调用上传工具，eBPF 记录到向外部地址发送了 2 MB 数据，该地址不在白名单。', a: 0, why: '指令来源、工具执行、实际副作用、授权范围都有证据，风险链成立。' },
+    { t: '规则命中“rm -rf”，但上下文显示它清理的是任务自己的临时目录，且在批准的工作区内。', a: 1, why: '证据足以说明行为仍在授权范围内。' },
+    { t: '检测到一次可疑的凭证读取，但该时段的进程事件缺失，无法确认后续是否外发。', a: 2, why: '关键证据缺失，不能当作安全结论；严重性高时应优先补证据。' },
+    { t: '模型审计助手给出“这次操作看起来没问题”，没有引用任何原始事件。', a: 2, why: '模型解释也是待验证输出，不能替代原始事实、可复算规则和人工复核。' }
+  ]
+});
+S.notes($('#n-audit'), {
+  c: [
+    ['Agent 审计', '对身份、授权、执行行为和外部影响持续记录、检查、追溯。'],
+    ['四者分工', '可观测（发生了什么）、评测（效果）、审计（合规与责任）、Guardrail（执行前 / 中控制）。'],
+    ['检测链路', '原始事实 → 候选信号 → 上下文研判 → 已确认事件。']
+  ],
+  p: [
+    ['三种研判结论', '确认风险 / 不成立或在授权内 / 证据缺失（不等于安全）。'],
+    ['eBPF 的定位', '补“实际发生”的证据；缺业务授权与目标，不能单独认定越权。'],
+    ['原始事实不可改', '追加写入；结论以引用证据的派生记录存在。'],
+    ['阻断 vs 调查', '实时阻断要确定、低延迟、可解释、可回放、可回滚；语义判断走异步调查。']
+  ]
+});
+
+/* ---------- 基础设施 ---------- */
+HB.cards($('#inf'), {
+  opts: ['排队与 Prefill', 'Decode 受干扰或并发过高', '前缀变化 / 缓存不足 / 冷实例', '路由倾斜或单实例容量'],
+  items: [
+    { t: 'E2E 与 TTFT 同时上升，TPOT 基本稳定。', a: 0, why: '优先检查 Waiting 请求数、Queue Time、Prompt 长度和 Prefill。' },
+    { t: 'TTFT 正常，TPOT 上升。', a: 1, why: '检查 Decode 是否被同批 Prefill 干扰、并发是否过高、GPU 计算或显存带宽是否饱和。' },
+    { t: '吞吐下降，KV Cache 命中率同步降低。', a: 2, why: '检查请求前缀是否变化、缓存容量是否不足、流量是否被重新分配到冷实例。' },
+    { t: '模型整体 TTFT 上升，但只有一个 Pod 的 Queue Time 和 KV 使用率异常。', a: 3, why: '通常是路由倾斜或单实例容量不足；所有 Pod 同时恶化才更可能是整体容量或请求分布变化。' }
+  ]
+});
+// 每行：[到达, 等待, Prefill 长度, Decode 长度, Decode 是否被拖慢]
+var CBS = {
+  n: { rows: [[0, 0, 1, 7, 0], [1, 0, 1, 7, 0], [2, 0, 1, 7, 0], [3, 0, 1, 7, 0]], v: '四个请求错开进入，Wait 几乎为零，各自的 Decode 节奏稳定。' },
+  p: { rows: [[0, 0, 1, 10, 1], [1, 0, 1, 10, 1], [2, 0, 4, 6, 0], [3, 0, 1, 10, 1]], v: '请求 3 带着超长 Prompt 进入 Prefill（橙色长块），与它重叠的几个请求 Decode 迭代间隔被拉长，TPOT 同步升高。只看单条 Trace 会误判为“模型生成变慢”。可评估限制输入长度、长 Prompt 分流、降低单实例并发或 P/D 分离。' },
+  b: { rows: [[0, 0, 1, 7, 0], [0, 0, 1, 7, 0], [0, 4, 1, 7, 0], [0, 4, 1, 7, 0], [0, 5, 1, 7, 0]], v: '并发突增，执行槽位被占满，后到的请求在队列里等（灰色），Waiting、Queue Time、TTFT 同步上升，进入 Decode 后 TPOT 未必变差。先确认是瞬时尖峰还是持续容量不足，再决定限流、扩容或调整路由；盲目提高单实例并发可能让尾延迟更差。' }
+};
+function cb(k) {
+  var s = CBS[k], html = '', tot = 16;
+  function blk(cls, st, len) { return len ? '<span class="' + cls + '" style="left:' + (st / tot * 100) + '%;width:' + (len / tot * 100) + '%"></span>' : ''; }
+  s.rows.forEach(function (r, i) {
+    var t = r[0];
+    html += '<span>请求 ' + (i + 1) + '</span><div class="lane">' + blk('w', t, r[1]) + blk('p', t + r[1], r[2]) + blk('d' + (r[4] ? ' slow' : ''), t + r[1] + r[2], r[3]) + '</div>' +
+      '<span class="v">' + (r[1] ? 'Wait ' + r[1] : (r[4] ? 'TPOT ↑' : (r[2] > 1 ? '长 Prefill' : '正常'))) + '</span>';
+  });
+  $('#cb').innerHTML = html;
+  $('#cbV').className = 'verdict3' + (k === 'n' ? '' : ' bad'); $('#cbV').textContent = s.v;
+}
+S.seg($('#cbSeg'), cb); cb('n');
+S.notes($('#n-infra'), {
+  c: [
+    ['网关观测的价值', '跨应用统一覆盖、调用身份与权限、路由决策解释、策略验证、上游性能与错误定位。'],
+    ['推理引擎四类信号', '流量与可靠性、用户体验（E2E / TTFT / TPOT）、吞吐与负载形态、调度与缓存。'],
+    ['E2E 近似拆分', '队列等待 + Prefill + Decode + 框架及网络开销。'],
+    ['并发视图', '以时间为横轴画 Wait / Prefill / Decode，竖线即执行快照；解释 Continuous Batching 的相互影响。']
+  ],
+  p: [
+    ['排障闭环', '指标发现 → Trace 找慢请求 → 并发还原现场 → Pod / GPU 验证 → 同分布对比验证。'],
+    ['MCP ≠ 都是 TOOL', '初始化、能力协商、发现、资源读取、通知要分开。'],
+    ['工具与沙箱', '意图与事实分别记录，靠 tool-call ID、实例 ID、Pod、进程 ID 关联。'],
+    ['策略拒绝', '记录判定 Span 或事件，不伪造命令执行 Span。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>行动：受控执行、验证反馈与交付准备</title>
+<meta name="description" content="AI Agent Handbook 学习笔记（六）：Action Plane 与统一 Action Request、看见 / 注册 / 授权三个事实、Function Calling / MCP / A2A 的分层、面向 Agent 的 Tool 设计、Tool / MCP / Skill / Subagent / Remote Agent 的边界、Environment Contract 与 Sandbox、ALLOW / DENY / ASK 与 Preview—Approve—Commit—Verify、事件流续传与按身份展示、AG-UI 与 A2UI、Trace、Evaluation Harness 与从 Trace 到 Harness Patch。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='18' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M3 9h18M3 15h18' stroke='%2313171C' stroke-width='1.6'/%3E%3Ccircle cx='15' cy='12' r='2.4' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<style>
+.yaml { font-family: var(--f-num); font-size: 15px; line-height: 1.7; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; white-space: pre; overflow-x: auto; color: var(--ink-2); margin: 10px 0 0; }
+.yaml .k { color: var(--s1); font-weight: 600; } .yaml .al { color: var(--alert); font-weight: 600; } .yaml .ok { color: var(--ok); font-weight: 600; }
+.lc { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 0; font-size: 15px; }
+.lc span { border: 1px solid var(--rule); border-radius: 6px; padding: 3px 10px; background: var(--bg); color: var(--ink-3); }
+.lc span.on { background: var(--s1); color: #fff; border-color: var(--s1); }
+.lc span.wait { background: var(--s2); color: #fff; border-color: var(--s2); }
+.lc i { color: var(--ink-3); font-style: normal; }
+.evs { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-family: var(--f-num); font-size: 15px; max-height: 300px; overflow-y: auto; }
+.evs div { padding: 4px 10px; border-radius: 4px; background: var(--bg); border-left: 3px solid var(--rule); color: var(--ink-2); }
+.evs div.lost { opacity: .4; text-decoration: line-through; }
+.evs div.dup { border-left-color: var(--alert); }
+.evs div.re { border-left-color: var(--ok); }
+.evs div.hid { display: none; }
+.gran { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.gran div { border: 1px solid var(--hair); border-radius: 6px; padding: 8px; text-align: center; font-size: 15px; background: var(--bg); }
+.gran div.on { border-color: var(--s1); background: var(--s1-soft); font-weight: 600; }
+</style>
+</head>
+<body data-series="handbook-series" data-part="6">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>AI Agent Handbook · 06</span><span>对应原书第 6 章</span><span>约 35 分钟</span></p>
+  <h1>工具调用只是<em>一项意图</em></h1>
+  <p class="lead">模型输出的工具调用没有自动带上用户身份，不等于企业策略允许，也证明不了远程系统已经产生预期结果。把意图变成行动的是 Harness：选择并披露能力、校验参数、绑定身份与凭证、执行权限和审批、在隔离环境里运行、把结果变成 Observation，再把过程交给用户、观测和评估。原书称之为行动与反馈系统：Action Plane 连接外部世界并限制影响范围，Feedback Plane 把进度、结果和质量信号反馈给用户与下一个版本。</p>
+  <p class="credit">本系列是开源白皮书《<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">AI Agent Handbook（企业级 Agent 白皮书）</a>》（阿里云团队编写的开源白皮书，Apache-2.0 协议；本笔记依据 2026 年 10 月 21 日的仓库版本）的学习笔记。原书按“架构 → 构建 → 运行 → 治理 → 调优 → 实践”组织三十章，这里重排成十五篇，用自己的话重讲，并把关键表格做成可以点、可以分类、可以走流程的互动。概念与结论取自原书，每节标出对应章节；为演示设的场景和数值标“示意”。原书由阿里云编写，涉及阿里云产品的方案与数字属于厂商自述，文中会单独标出。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-handbook/"><b>总览</b>架构地图</a>
+  <a href="../2026-10-22-handbook-1/" data-part="1"><b>01</b>新阶段</a>
+  <a href="../2026-10-22-handbook-2/" data-part="2"><b>02</b>参考架构</a>
+  <a href="../2026-10-22-handbook-3/" data-part="3"><b>03</b>Harness</a>
+  <a href="../2026-10-22-handbook-4/" data-part="4"><b>04</b>任务</a>
+  <a href="../2026-10-22-handbook-5/" data-part="5"><b>05</b>信息</a>
+  <a href="../2026-10-22-handbook-6/" aria-current="page" data-part="6"><b>06</b>行动</a>
+  <a href="../2026-10-22-handbook-7/" data-part="7"><b>07</b>运行与状态</a>
+  <a href="../2026-10-22-handbook-8/" data-part="8"><b>08</b>AI 网关</a>
+  <a href="../2026-10-22-handbook-9/" data-part="9"><b>09</b>异步与多 Agent</a>
+  <a href="../2026-10-22-handbook-10/" data-part="10"><b>10</b>可观测</a>
+  <a href="../2026-10-22-handbook-11/" data-part="11"><b>11</b>安全</a>
+  <a href="../2026-10-22-handbook-12/" data-part="12"><b>12</b>资产与验证</a>
+  <a href="../2026-10-22-handbook-13/" data-part="13"><b>13</b>模型调优</a>
+  <a href="../2026-10-22-handbook-14/" data-part="14"><b>14</b>Agent 调优</a>
+  <a href="../2026-10-22-handbook-15/" data-part="15"><b>15</b>实践与展望</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#plane">Action Plane</a><a href="#proto">Tool 与协议</a><a href="#env">环境与 Sandbox</a><a href="#perm">权限与 HITL</a><a href="#stream">事件与交互</a><a href="#fb">Trace 与评估</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>“模型看见工具”“Harness 注册工具”“当前任务获得授权”有什么区别？为什么创建变更单和生产发布要拆成两个 Action？</li>
+    <li>Function Calling、MCP、A2A 各在哪一层？什么时候用 Tool，什么时候用 Remote Agent？</li>
+    <li>ASK 为什么不是默认兜底？Agent Harness 和 Evaluation Harness 有什么区别？</li>
+  </ol>
+</div>
+
+<section class="part" id="plane">
+  <div class="part-head"><h2>Action Plane：从意图到环境事实</h2><span class="meta">原书 6.1 节</span></div>
+  <div class="sec-lede">
+    <p>一条完整的行动链不从“调用 Tool”开始，也不在“返回文本”处结束：<strong>模型意图 → Schema 校验 → 身份绑定 → 策略判定（ALLOW / DENY / ASK）→ 审批 → 执行 → Observation → 状态与 Trace</strong>，再回到模型。原书强调三个必须区分的事实：模型<strong>看见</strong>某个工具（描述进了当前 Context）、Harness <strong>注册</strong>了它（系统知道怎么调用和解析）、当前用户和任务<strong>获得授权</strong>（这次具体行动才可以发生）。如果“出现在 Tool Schema 里”就等于“可以调用”，最小权限、用户委派、阶段性只读都无从谈起。</p>
+    <p>Function Calling、Shell、浏览器、远程 Agent 表达方式各不相同，Harness 先把它们转换成统一的 <strong>Action Request</strong>：action / task ID、能力与版本、参数和期望输出、行动者身份、目的与当前阶段、环境与资源范围、副作用 / 可逆性 / 风险分级、幂等键与超时、审批与审计要求。模型的自由文本只能作为 <code>purpose</code> 的候选，能力名、参数类型、影响范围和身份必须由确定性代码解析。Action 有自己的生命周期（REQUESTED → VALIDATED → AUTHORIZED / WAITING_APPROVAL → RUNNING → SUCCEEDED / FAILED / CANCELLED），和任务状态相关但不相同：一个工具失败不一定让任务失败。Action Result 也不只是给模型看的文本，要有状态（含“未知”和“部分完成”）、结构化数据、原始结果引用、错误类别与是否已产生副作用、实际执行身份与环境、对任务状态的<strong>候选 Patch</strong>（由 Harness 统一提交）、给 Verifier 的证据。</p>
+    <p>原书的案例：“创建变更单”和“发布生产”即使最终调用同一个变更平台，也必须是两个 Action，因为身份、风险、可逆性、审批要求都不同。企业 Tool 应优先暴露这种业务语义，而不是让模型用通用 HTTP 或 Shell 自己拼生产操作。</p>
+    <p class="go">切换两个 Action，看请求和生命周期的差别（字段取自原书 6.1.3 节）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">同一个变更平台，两个 Action</p>
+    <div class="seg" id="actSeg"><button data-v="c" aria-pressed="true">change.create</button><button data-v="d">production.deploy</button></div>
+    <pre class="yaml" id="actY"></pre>
+    <div class="lc" id="actLc"></div>
+  </div>
+  <div class="lab"><p class="lab-t">看见、注册还是授权？</p><div id="three"></div></div>
+  <div class="notes" id="n-plane"></div>
+</section>
+
+<section class="part" id="proto">
+  <div class="part-head"><h2>Tool、MCP 与远程 Agent</h2><span class="meta">原书 6.2 节</span></div>
+  <div class="sec-lede">
+    <p>三种协议处在不同层次：<strong>Function Calling</strong> 是模型与 Harness 之间的意图接口（想调哪个能力、给什么参数）；<strong>MCP</strong> 是 Harness 与能力提供方之间的连接协议（以标准方式发现和连接工具、资源）；<strong>A2A</strong> 面向拥有独立任务循环、状态和自主性的远程 Agent，传递任务、消息、状态和 Artifact。协议不替 Harness 做授权、租户隔离、业务语义验证和效果评估：MCP Server 能描述工具，不代表调用方有权访问底层数据；A2A Agent 声明完成，委派方仍要按契约验收。选择看能力本身：短时、参数明确、立即返回 → Tool；跨 Host 复用工具或数据 → MCP；有自己的任务循环、需要异步状态和 Artifact → A2A 或等价 Agent API。<strong>不看协议新旧或流行程度</strong>。</p>
+    <p>面向 Agent 的 Tool 设计，原书给了六条：名称和描述说明业务目的、适用条件与<strong>非目标</strong>；输入用明确类型、枚举、边界、示例；输出区分结构化结果、给模型的摘要、原始证据引用；声明是否只读、有无副作用、可否逆、是否支持预览和幂等；错误用稳定分类（能否重试、要改参数还是转人工）；认证和 Secret 留在执行侧。粒度太粗，一次调用影响太大，审批和验证都不精确；太细，模型要编排大量低级步骤。合理粒度对应一个<strong>可描述、可授权、可观察、可验证</strong>的业务动作。</p>
+    <p>远程 Agent 不应获得父 Agent 的全部 Context：发送最小必要信息，把数据使用限制作为机器可执行策略一并传递；对方返回的消息和 Artifact 都是外部输入，要过 Schema、权限和内容安全检查，不因为来源是另一个 Agent 就当成可信指令。能力数量多、多个团队共享时，用 Registry（元数据、所有者、版本、健康、作用域）+ Gateway（入口、身份、凭证、路由、限流、审计）避免治理逻辑在每套 Harness 里重复。</p>
+    <p class="go">先为案例里的能力选协议，再盖住右列自测五种对象的边界。</p>
+  </div>
+  <div class="lab"><p class="lab-t">用哪种连接？（前三项为原书案例）</p><div id="pc"></div></div>
+  <div class="lab"><p class="lab-t">五种能力对象的边界（原书 6.2.4 节）</p><div id="objVs"></div></div>
+  <div class="lab">
+    <p class="lab-t">一个适合 Agent 的 Tool：六条设计要求</p>
+    <div id="toolCk"></div>
+  </div>
+  <div class="notes" id="n-proto"></div>
+</section>
+
+<section class="part" id="env">
+  <div class="part-head"><h2>执行环境与 Sandbox 契约</h2><span class="meta">原书 6.3 节</span></div>
+  <div class="sec-lede">
+    <p>File、Shell、Code Interpreter、Browser、Computer Use 给模型提供了通用操作空间，也显著扩大了副作用和攻击面。原书的建议是：<strong>能用窄 Tool 完成的高风险动作，不要优先开放通用 Shell 或 Computer Use</strong>；处理长尾应用和非结构化工作区时，再用 Sandbox 把通用能力限制在可接受边界内。</p>
+    <p>Harness 不应假定“本机一定有某目录、某版本依赖、能访问公网”，而是提交一份 <strong>Environment Contract</strong>：镜像 / 系统 / 架构、挂载与读写范围、网络出入站策略、Secret 引用与委派身份、所需工具与版本、CPU / 内存 / 存储 / GPU 配额、超时与并发、持久化与快照要求、审计与清理策略。环境满足不了，Action 应<strong>在执行前失败或请求降级</strong>，而不是让模型进入不确定状态自己猜。隔离可以按 Agent、Session、Task 或 Action 划分：越细，污染和横向移动风险越低，创建和状态传递成本越高；在线多租户任务通常至少按 Task 或 Session 隔离。</p>
+    <p>Secret 不应出现在 System Prompt、Tool Schema、Task State 或模型可见的环境变量里，执行侧按 Action、身份和目的获取短时凭证，只注入目标进程，记录使用而不记录密文。网页、下载文件、工具返回一律标记为不可信内容。原书的案例：Sandbox 允许修改 payment-service 副本并构建，却不提供生产集群凭证，发布只能通过受控的 <code>production.deploy</code>；这样即使工作区里的恶意文件诱导模型执行部署命令，网络与 Secret 边界仍挡得住。<strong>Sandbox 防止进程越界，Policy 决定业务上是否允许，二者缺一不可</strong>。</p>
+    <p class="go">盖住“必要控制”一列自测，再拖动隔离粒度。</p>
+  </div>
+  <div class="lab"><p class="lab-t">五种环境能力的风险与控制（原书 6.3 节）</p><div id="envVs"></div></div>
+  <div class="lab">
+    <p class="lab-t">按什么粒度隔离环境？</p>
+    <label class="ctl"><span>隔离粒度</span><input type="range" id="grS" min="0" max="3" value="2"></label>
+    <div class="gran" id="gr"></div>
+    <p class="verdict3" id="grV"></p>
+  </div>
+  <div class="notes" id="n-env"></div>
+</section>
+
+<section class="part" id="perm">
+  <div class="part-head"><h2>Permission、HITL 与 Prompt Injection</h2><span class="meta">原书 6.4 节</span></div>
+  <div class="sec-lede">
+    <p>Harness 同时记录三种身份：发起任务的用户或服务、发起行动的 Agent 版本、实际执行工具或 Sandbox 动作的 Runtime 身份，并明确数据访问和副作用最终归属于谁。权限决策至少看主体、租户、目的、能力、参数、目标资源、环境、阶段、数据敏感度、影响范围、可逆性、预算和历史审批。只按 Tool 名称做静态白名单，分不清“读一条测试记录”和“导出整个生产库”。</p>
+    <p>策略结果统一为三类：<strong>ALLOW</strong>（直接执行并记录依据）、<strong>DENY</strong>（无论模型怎么解释都不执行，返回结构化原因和允许的替代项）、<strong>ASK</strong>（可以执行，但需指定的人或系统确认）。<strong>ASK 不是默认兜底</strong>：审批太多，用户会机械确认，Agent 也失去连续性。应优先用更窄的 Tool、参数约束、预览、资源范围和 Sandbox 降低风险，只在目的或后果无法由策略充分判断时请人参与。HITL 有三个层次：Plan 审批、Action 审批、结果验收。审批请求要写清做什么、为什么、以谁的身份、作用于什么、预计影响、参数与差异、是否可逆、失败怎么办、批准范围（仅本次、本任务、还是一类受限动作）；批准后 Harness 还要<strong>重新校验对象版本和策略</strong>，防止等待期间环境已经变了。不可逆或高影响动作统一用 <strong>Preview—Approve—Commit—Verify</strong>。</p>
+    <p>Guardrail 可以部署在输入、Context 构建、Action 请求、Tool 结果和输出各处，但不应是唯一安全边界：能编码的权限和资源限制交给 Policy 与 Sandbox，模型或分类器识别复杂语义风险，作为额外信号。Prompt Injection 的关键防线是<strong>区分指令与数据</strong>：网页、邮件、文档、MCP Server、工具结果、远程 Agent 的返回都不能改变平台政策、授权范围或当前 Tool Set。用户中途纠偏（Steering）应作为高优先级任务事件，在安全点处理，而不是追加到长历史末尾。</p>
+    <p class="go">先给动作选默认策略，再走一遍 Preview—Approve—Commit—Verify。</p>
+  </div>
+  <div class="lab"><p class="lab-t">默认策略是什么？（原书 6.4.1 节的风险示例）</p><div id="pol"></div></div>
+  <div class="lab">
+    <p class="lab-t">Preview—Approve—Commit—Verify</p>
+    <div class="selrow"><span>审批等待期间</span><div class="seg" id="pvSeg"><button data-v="n" aria-pressed="true">变更单没有变化</button><button data-v="y">有人又推了一个新提交</button></div></div>
+    <div class="selrow"><span>Commit 之后</span><div class="seg" id="pvSeg2"><button data-v="ok" aria-pressed="true">真实部署状态正常</button><button data-v="bad">健康检查失败</button></div></div>
+    <ol class="flow2" id="pvFlow"></ol>
+  </div>
+  <div class="notes" id="n-perm"></div>
+</section>
+
+<section class="part" id="stream">
+  <div class="part-head"><h2>事件流、Channel 与交互协议</h2><span class="meta">原书 6.5 节</span></div>
+  <div class="sec-lede">
+    <p>长任务如果只在结束时返回一段文本，用户不知道 Agent 在做什么、是否在等审批、是否卡住，也无法纠偏。Harness 应产生一组与内部事件对应、<strong>经过脱敏的外部语义事件</strong>：Text、Progress、Tool、State、Approval、Artifact、Error、Usage。模型的隐藏推理不需要流式暴露，用户要的是状态、可见说明、行动、证据和可操作选项。<strong>Channel</strong> 是 Agent 与 Web、App、IDE、IM 之间的适配层：映射身份、把线程映射到 Session 并选择或创建 Task、转换输入与输出、跨入口保持任务连续、做渠道级限制与审计。它不应成为唯一状态存储。</p>
+    <p>事件流必须假定网络会断、客户端会重复连接、消费者速度不同：每个事件有单调序号或可恢复游标，重连从最后确认位置续传，服务端去重；慢消费者先读状态快照再补关键事件。高频文本 token 和细粒度工具日志可以合并或采样，但<strong>状态、审批、Artifact、终态事件不能因背压丢弃</strong>。用户发出取消后，要区分“已收到取消”和“底层 Action 已安全停止”。同一个 Task 在不同 Channel、对不同身份显示的内容也不同，不能把内部 Trace 原样广播。</p>
+    <p>两个协议的分工：<strong>AG-UI</strong> 表达 Agent 与应用之间双向、流式的交互事件（生命周期、文本、工具、状态、中断）；<strong>A2UI</strong> 让 Agent 输出声明式界面（表单、卡片、列表、动作），客户端用本地受信组件渲染，而不执行模型生成的任意代码。原书提醒先稳定 Task、Event、Approval、Artifact 的语义模型，再选 AG-UI、A2UI、WebSocket、SSE 或消息平台承载。托管路径还有一个细节：Qoder Cloud Agents 等待工具确认时返回 <code>session.status_idle</code> 且 <code>stop_reason.type = requires_action</code>，不能仅凭 idle 判定完成，要用 <code>user.tool_confirmation</code> 回应。</p>
+    <p class="go">模拟一次断线重连；再切换观看者身份。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">断线续传（事件序列为示意）</p>
+    <div class="btnrow">
+      <button class="btn" type="button" id="evNext">推送下一条</button>
+      <button class="btn" type="button" id="evDrop">断线</button>
+      <span class="selrow" style="margin:0">重连方式<div class="seg" id="evMode"><button data-v="cur" aria-pressed="true">带游标续传</button><button data-v="new">新连接、不带游标</button></div></span>
+      <button class="btn pri" type="button" id="evRe">重连</button>
+      <button class="btn" type="button" id="evReset">重来</button>
+    </div>
+    <div class="selrow"><span>观看者</span><div class="seg" id="evWho"><button data-v="dev" aria-pressed="true">开发控制台</button><button data-v="appr">审批人</button><button data-v="cust">客户应用</button></div></div>
+    <div class="evs" id="evs"></div>
+    <p class="verdict3" id="evV">点“推送下一条”。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：AG-UI vs A2UI</h4>
+    <p><b>AG-UI</b> 处理“Agent 与应用如何交换事件”，是交互事件协议；<b>A2UI</b> 描述“界面是什么”，是声明式界面格式，由客户端用受信组件渲染。A2UI 的载荷可以通过 AG-UI 或别的传输发送，两者不互相替代。同站 <a href="../2026-10-15-agent-ui-protocols/">Agent UI 协议</a>一文有更详细的对照。</p>
+  </div>
+  <div class="notes" id="n-stream"></div>
+</section>
+
+<section class="part" id="fb">
+  <div class="part-head"><h2>Trace、Evaluation 与效果闭环</h2><span class="meta">原书 6.6 节</span></div>
+  <div class="sec-lede">
+    <p>问题可能出在 Context、计划、工具、权限、环境、状态或验证任一环节，所以 Task Trace 不能只记模型输入输出，要关联：Agent / 模型 / Harness 版本、Session / Task 拓扑、Context Manifest 与压缩决定、状态转换、模型调用与成本、Action 请求与审批、工具与远程结果、工作区变更与 Artifact、重试与降级、Verifier 结果、业务 Outcome 与反馈。关键是<strong>因果关系</strong>而不只是时间顺序：哪次决策用了哪份 Context、产生哪个 Action、更新了哪些状态、触发了哪次验证。原书说得很重：如果构建时没有稳定事件、版本和关联 ID，后续平台补不出可信的 Agent Trace。</p>
+    <p>再次区分两套系统：<strong>Agent Harness</strong> 在真实或测试环境中完成一次任务；<strong>Evaluation Harness</strong> 以一致方式运行、回放、比较多个 Agent 版本，必须固定或披露模型、推理设置、Harness、工具版本、预算、重试、环境和评分规则，否则分数差异可能来自运行条件。评测分三层：<strong>单步</strong>（工具选对没、参数对不对）、<strong>轨迹</strong>（绕路、重复、越权、过度消耗）、<strong>最终结果</strong>（目标是否真正达成）。只评结果会掩盖高成本或高风险轨迹，只评单步又会惩罚有效探索。人工反馈也不是天然真值，要和环境证据结合解释。</p>
+    <p>效果闭环不应从单条失败直接改 Prompt：<strong>Trace + Outcome → 失败聚类 → 诊断 → 最小针对性 Patch → 回归 → 发布门禁 → 新版本</strong>。Patch 与根因一一对应：缺事实调 Context / Knowledge；错误经验反复出现修 Memory；不会执行稳定方法加 Skill；工具误用改 Tool Schema 或权限；无进展调 Loop、Plan 或模型；环境不一致修 Environment Contract；完成误判强化 Verifier；只有确定是模型能力不足，才优先换模型。回归集要同时包含原失败用例、相邻正常用例、安全对抗用例；模型升级后，还要回头检查旧 Harness 里的补偿逻辑是否已经失效。</p>
+    <p class="go">先给根因配 Patch，再沿因果链走一遍原书的“错误审批”案例。</p>
+  </div>
+  <div class="lab"><p class="lab-t">这个失败该打什么 Patch？</p><div id="patch"></div></div>
+  <div class="lab">
+    <p class="lab-t">从一次错误审批到 Harness 修复（原书 6.6.3 节）</p>
+    <div id="caseStep"></div>
+    <ol class="flow2" id="caseFlow"></ol>
+  </div>
+  <div class="notes" id="n-fb"></div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 看见、注册、授权有何区别？为什么拆成两个 Action？</summary><p class="ans">看见是工具描述进入了本轮 Context；注册是系统知道怎么调用和解析；授权是当前用户和任务被允许执行这次具体行动。三者分开，最小权限、委派和只读阶段才成立。创建变更单（中风险、可逆、ALLOW）与生产发布（高风险、ASK、需审批类型 / 对象版本 / 目标环境 / 短时授权）的身份、风险、可逆性和审批不同，拆开才能分别授权、审计、重试和验证。</p></details>
+    <details><summary>2. 三种协议各在哪层？何时用 Tool，何时用 Remote Agent？</summary><p class="ans">Function Calling 是模型与 Harness 之间的意图接口；MCP 是 Harness 与能力提供方的连接协议；A2A 用于有独立任务循环的远程 Agent。短时、参数明确、立即返回的动作用 Tool；跨 Host 复用工具和数据用 MCP；有自己的循环、需要异步状态、进度、Artifact 的用 A2A 或 Agent API。把固定 API 包装成 Agent 不会自动获得规划恢复能力，把远程 Agent 当同步 Tool 会丢失任务语义。</p></details>
+    <details><summary>3. ASK 为什么不是兜底？两种 Harness 有何区别？</summary><p class="ans">审批过多导致机械确认、破坏连续性；应先用窄 Tool、参数约束、预览、资源范围和 Sandbox 降风险，只在策略无法充分判断时请人。Agent Harness 完成一次任务（产出轨迹、Artifact、证据、Outcome），其中的 Verifier 是单次完成门禁；Evaluation Harness 在固定条件下运行、回放、比较多个版本，产出指标、失败聚类和发布建议。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-handbook-5/"><small>上一篇</small><span>05 · 信息：上下文、状态与能力资产</span></a><a class="nx" href="../2026-10-22-handbook-7/"><small>下一篇</small><span>07 · 运行时、沙箱与状态存储</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/aliyun/ai-agent-handbook" rel="noopener">aliyun/ai-agent-handbook</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- Action Plane ---------- */
+var ACT = {
+  c: { y: 'action_id: act-241\ntask_id: remediation-2026-0917\ncapability: <span class="k">change.create@v3</span>\nactor:\n  user: u-1842\n  agent: remediation-agent@12\npurpose: 为已验证的漏洞修复创建待审批变更\narguments:\n  service: payment-service\n  patch_ref: artifacts/remediation.patch\n  evidence_refs: [evidence/unit-test.xml, evidence/security-scan.sarif]\nrisk: medium\nreversible: true\nidempotency_key: remediation-2026-0917:create-change\npolicy_decision: <span class="ok">ALLOW</span>', st: [0, 1, 2, 4, 5] },
+  d: { y: 'action_id: act-252\ntask_id: remediation-2026-0917\ncapability: <span class="k">production.deploy</span>\nactor:\n  user: u-1842\n  agent: remediation-agent@12\npurpose: 发布已获批准的变更\narguments:\n  change_id: CR-18427\n  approved_version: <span class="k">（引用已批准的对象版本）</span>\n  target_env: production\nrisk: <span class="al">high</span>\nreversible: <span class="al">false</span>\nidempotency_key: remediation-2026-0917:deploy-CR-18427\npolicy_decision: <span class="al">ASK</span>   <span class="k"># 进入 WAITING_APPROVAL</span>', st: [0, 1, 3] }
+};
+var LC = ['REQUESTED', 'VALIDATED', 'AUTHORIZED', 'WAITING_APPROVAL', 'RUNNING', 'SUCCEEDED'];
+function act(k) {
+  $('#actY').innerHTML = ACT[k].y;
+  $('#actLc').innerHTML = LC.map(function (s, i) { var on = ACT[k].st.indexOf(i) >= 0; return (i ? '<i>→</i>' : '') + '<span class="' + (on ? (s === 'WAITING_APPROVAL' ? 'wait' : 'on') : '') + '">' + s + '</span>'; }).join('');
+}
+S.seg($('#actSeg'), act); act('c');
+HB.cards($('#three'), {
+  opts: ['模型看见', 'Harness 注册', '当前任务获得授权'],
+  items: [
+    { t: 'Registry 里登记了 300 个能力，包括 <code>db.export_all</code>。', a: 1, why: '注册表示系统知道如何调用和解析它，不代表会披露给模型。' },
+    { t: '本轮 Context 的 Tool Descriptors 里出现了 <code>change.create</code>。', a: 0, why: '描述进入了当前 Context，模型可以提出调用。' },
+    { t: 'Policy 对 u-1842 在“发布准备”阶段调用 <code>change.create</code> 返回 ALLOW。', a: 2, why: '只有这一步才表示这次具体行动可以发生。' },
+    { t: 'Plan Mode 下，模型仍能看到写文件工具的名字，但调用会被拒绝。', a: 0, why: '可以被看见、被发现，但阶段性只读模式下未获授权。' }
+  ]
+});
+S.notes($('#n-plane'), {
+  c: [
+    ['Action Plane', '意图 → Schema → 身份 → 策略 → 审批 → 执行 → Observation → 状态与 Trace。'],
+    ['三个事实', '看见（在 Context 中）≠ 注册（系统能调用）≠ 授权（这次可执行）。'],
+    ['Action Request', 'ID、能力与版本、参数与输出、行动者、目的与阶段、环境范围、副作用 / 可逆 / 风险、幂等与超时、审批与审计。'],
+    ['Action Result', '状态（含未知 / 部分）、结构化数据、原始引用、错误与副作用、执行身份与环境、候选 State Patch、验证证据。']
+  ],
+  p: [
+    ['确定性解析', '能力名、参数类型、影响范围、身份由代码解析；模型文本只作 purpose 候选。'],
+    ['State Patch 统一提交', '避免每个 Tool 任意修改任务权威状态。'],
+    ['拆分业务动作', 'change.create 与 production.deploy 是两个 Action；别让模型用 HTTP / Shell 拼生产操作。'],
+    ['Action ≠ Task 状态', '工具失败不一定使任务失败；任务取消可能要等已提交 Action 返回再补偿。']
+  ]
+});
+
+/* ---------- 协议 ---------- */
+HB.cards($('#pc'), {
+  opts: ['本地 Tool / Function Calling', 'MCP', 'A2A / Agent API'],
+  items: [
+    { t: '读取 payment-service 的依赖清单。', a: 0, why: '短时、参数明确、立即返回的动作。' },
+    { t: '连接企业的安全扫描平台，多个 Agent 都要用。', a: 1, why: '跨 Host 复用的工具与数据能力。' },
+    { t: '委派给独立安全团队维护的审计 Agent，它会自己规划、异步返回报告。', a: 2, why: '有独立任务循环，需要异步状态、进度和 Artifact。' },
+    { t: '一个固定的查询汇率 API，有人提议把它包装成“汇率 Agent”。', a: 0, why: '包装成 Agent 不会自动获得规划和恢复能力，做成 Tool 即可。' }
+  ]
+});
+HB.vs($('#objVs'), {
+  k: '对象', a: '有无独立 Loop · 封装什么', b: '状态与责任 · 在 Harness 中怎么用',
+  rows: [
+    ['Tool', '否 · 一个可执行动作', '调用方负责组合和验收 · 产生一次 Action Request'],
+    ['MCP Server', '否（协议不要求）· 一组工具、资源', 'Server 负责实现，Host 负责选择、授权、集成 · 发现后注册为 Tool / Resource'],
+    ['Skill', '否 · 某类任务的方法、脚本、资料', '当前 Agent 仍负责 Loop 与结果 · 按需加载进 Context 并调用 Tool'],
+    ['Subagent', '是，通常同一 Harness 承载 · 有边界的子任务执行者', '父 Agent 保留总体责任 · 本地委派，父子状态直接关联'],
+    ['Remote Agent', '是，独立部署和治理 · 可持续执行的外部能力', '远程方对其任务承诺负责，委派方负责最终采用 · 通过 A2A 或 Agent API 建远程任务']
+  ]
+});
+HB.check($('#toolCk'), {
+  items: [
+    { t: '名称与描述', d: '业务目的、适用条件、非目标', miss: '模型在不该用的场景里调用它。' },
+    { t: '明确的输入 Schema', d: '类型、枚举、边界、示例', miss: '模型拼接任意请求，Harness 无法校验。' },
+    { t: '分层的输出', d: '结构化结果 / 模型摘要 / 原始证据引用', miss: 'Verifier 只能解析自然语言回执，无法再查询真实对象。' },
+    { t: '副作用声明', d: '只读？可逆？支持预览和幂等？', miss: '策略无法按风险区分，重试可能重复产生副作用。' },
+    { t: '稳定的错误分类', d: '可重试 / 改参数 / 转人工', miss: 'Harness 只能盲目重试或直接失败。' },
+    { t: 'Secret 留在执行侧', d: '不进 Tool 描述和 Context', miss: '凭证出现在模型输入里，可能被注入攻击带出。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>六条都满足</b>。例如 <code>change.create</code> 要求服务名、补丁引用、验证证据、回滚说明，返回稳定 <code>change_id</code>、对象版本、可审批状态和查询入口。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　缺了以后：</p>'; }
+});
+S.notes($('#n-proto'), {
+  c: [
+    ['Function Calling', '模型与 Harness 之间的意图接口。'],
+    ['MCP', 'Harness 与能力提供方之间的连接协议。'],
+    ['A2A', '面向有独立任务循环的远程 Agent：任务、消息、状态、Artifact。'],
+    ['Registry / Gateway', '能力元数据与版本 / 入口、身份、凭证、路由、限流、审计。']
+  ],
+  p: [
+    ['选协议看能力', '是否有独立循环、是否需要异步状态与 Artifact；不看新旧流行。'],
+    ['Tool 合理粒度', '一个可描述、可授权、可观察、可验证的业务动作。'],
+    ['远程 Agent', '最小必要信息 + 机器可执行的数据使用限制；返回内容当外部输入检查。'],
+    ['协议不做的事', '授权、租户隔离、业务语义验证、效果评估。']
+  ]
+});
+
+/* ---------- 环境 ---------- */
+HB.vs($('#envVs'), {
+  k: '环境能力', a: '主要风险', b: '必要控制',
+  rows: [
+    ['File', '越界读取、覆盖、路径穿越、敏感文件泄漏', '根目录、读写范围、版本和变更集'],
+    ['Shell', '任意代码、进程逃逸、网络与 Secret 暴露', '命令策略、用户权限、资源和网络隔离'],
+    ['Code Interpreter', '不受控依赖、资源耗尽、恶意输入执行', '临时环境、包策略、CPU / 内存 / 时间限制'],
+    ['Browser', 'Prompt Injection、会话劫持、误提交', '域名策略、下载隔离、操作确认、内容信任标记'],
+    ['Computer Use', '影响面难预测、视觉误判、不可逆操作', '应用范围、屏幕 / 输入隔离、预览与人工确认']
+  ]
+});
+var GR = [
+  ['Agent', '同一个 Agent 的所有任务共用一个环境：创建成本最低，但不同用户、任务之间残留数据和横向移动风险最高，多租户在线服务不可接受。'],
+  ['Session', '每个会话一个环境：在线多租户任务的常见下限之一。'],
+  ['Task', '每个任务一个环境：在线多租户任务通常至少按 Task 或 Session 隔离；长期工作区可持久化，但要把可共享基础镜像与私有可写层分开。'],
+  ['Action', '每次动作一个环境：污染与横向移动风险最低，但创建成本和状态传递成本最高，适合执行不可信代码等高风险动作。']
+];
+function gr() {
+  var i = +$('#grS').value;
+  $('#gr').innerHTML = GR.map(function (g, k) { return '<div class="' + (k === i ? 'on' : '') + '">按 ' + g[0] + '</div>'; }).join('');
+  $('#grV').textContent = GR[i][1];
+}
+$('#grS').addEventListener('input', gr); gr();
+S.notes($('#n-env'), {
+  c: [
+    ['Environment Contract', '镜像系统、挂载与读写、网络、Secret 与委派身份、工具版本、资源配额、超时并发、持久与快照、审计清理。'],
+    ['环境形态', '本地工作区、共享远程、托管隔离、企业自托管 Sandbox；托管 Harness 可配自托管 Sandbox。'],
+    ['环境生命周期', '创建、准备、挂载输入、运行、快照、恢复、清理、销毁；销毁前转存 Artifact、撤销临时凭证。']
+  ],
+  p: [
+    ['窄 Tool 优先', '能用窄 Tool 完成的高风险动作，不先开放通用 Shell / Computer Use。'],
+    ['满足不了就失败', '环境不符合契约时执行前失败或请求降级，不让模型猜。'],
+    ['Secret', '不进 Prompt / Schema / State / 可见环境变量；短时凭证只注入目标进程。'],
+    ['Sandbox + Policy', '一个防进程越界，一个决定业务是否允许，缺一不可。']
+  ]
+});
+
+/* ---------- 权限 ---------- */
+HB.cards($('#pol'), {
+  opts: ['ALLOW', 'ASK', 'DENY'],
+  items: [
+    { t: '读取当前项目内的非敏感文件。', a: 0, why: '直接执行，并记录读取范围。' },
+    { t: '修改工作区文件，但尚未提交到外部系统。', a: 0, why: 'ALLOW，同时提供 Diff 和可撤销能力。' },
+    { t: '向客户发送一封外部邮件。', a: 1, why: '对外发送属于高影响动作：ASK 或 DENY，要求预览并说明影响。' },
+    { t: '把补丁发布到生产环境。', a: 1, why: '发布、支付、删除、改生产数据：ASK 或 DENY，并走 Preview—Approve—Commit—Verify。' },
+    { t: '读取另一个租户的数据来“参考一下”。', a: 2, why: '跨租户访问一律 DENY。' },
+    { t: '为了方便后续步骤，请求一个长期有效的管理员 Secret。', a: 2, why: '请求长期 Secret、绕过安全控制：DENY。' }
+  ]
+});
+var pv = { ch: 'n', st: 'ok' };
+function pvDraw() {
+  var steps = [
+    ['Preview', '生成接近实际提交的内容：CR-18427 将发布 payment-service@a83c1e 到 production，影响 3 个实例，回滚入口为上一版本。无法回滚的部分必须在这里写明。'],
+    ['Approve', '服务负责人批准：绑定身份、范围（仅本次）和对象版本 a83c1e；生成短时、限定目标的授权，而不是把整个 Session 切成放行模式。'],
+    [pv.ch === 'y' ? 'Approve 后重新校验：不通过' : 'Approve 后重新校验', pv.ch === 'y' ? '对象版本已变为 b91f07，与批准的 a83c1e 不一致：拒绝提交，回到 Preview 重新审批。' : '对象版本、策略、目标环境与批准时一致，可以提交。'],
+    ['Commit', pv.ch === 'y' ? '（未执行）' : '使用幂等键 remediation-2026-0917:deploy-CR-18427 执行，超时也不会重复发布。'],
+    ['Verify', pv.ch === 'y' ? '（未执行）' : (pv.st === 'ok' ? '查询真实部署状态与健康检查，作为完成证据交付。' : '健康检查失败：进入 Repair / Compensate / Escalate，不能把“请求已发送”当成功。')]
+  ];
+  $('#pvFlow').innerHTML = steps.map(function (s, i) {
+    var cls = (pv.ch === 'y' && i >= 3) ? '' : 'on';
+    if (pv.ch === 'y' && i === 2) cls = 'on';
+    return '<li class="' + cls + '" style="' + ((pv.ch === 'y' && i === 2) || (pv.st === 'bad' && pv.ch === 'n' && i === 4) ? 'border-color:var(--alert);background:var(--alert-soft)' : '') + '"><b>' + s[0] + '</b><small>' + s[1] + '</small></li>';
+  }).join('');
+}
+S.seg($('#pvSeg'), function (v) { pv.ch = v; pvDraw(); });
+S.seg($('#pvSeg2'), function (v) { pv.st = v; pvDraw(); });
+pvDraw();
+S.notes($('#n-perm'), {
+  c: [
+    ['三种身份', '发起任务的用户 / 服务、发起行动的 Agent 版本、实际执行的 Runtime 身份。'],
+    ['ALLOW / DENY / ASK', '直接执行并记录依据 / 不执行并返回原因与替代项 / 指定人或系统确认后执行。'],
+    ['HITL 三层', 'Plan 审批、Action 审批、结果验收。'],
+    ['Preview—Approve—Commit—Verify', '预览影响 → 绑定身份、范围、对象版本 → 幂等提交 → 查真实状态；失败则修复、补偿或升级。']
+  ],
+  p: [
+    ['静态白名单不够', '分不清“读一条记录”和“导出整库”；决策要看目的、参数、资源、阶段、敏感度、可逆性。'],
+    ['ASK 不是兜底', '先用窄 Tool、参数约束、预览、范围、Sandbox 降风险。'],
+    ['批准后再校验', '等待期间对象版本和策略可能已变。'],
+    ['Prompt Injection', '区分指令与数据；外部内容不能改变政策、授权范围或当前 Tool Set。']
+  ]
+});
+
+/* ---------- 事件流 ---------- */
+var EVL = [
+  ['State', 'RUNNING', 'all'], ['Progress', '阶段：变更实施 · Todo 2/3', 'all'], ['Tool', 'Edit pom.xml', 'dev'], ['Text', '已升级依赖，正在运行测试…', 'dev appr'],
+  ['Tool', 'Bash mvn test → 128 passed', 'dev'], ['Usage', '本任务已用 41 万 token / 预算 60%', 'dev'], ['Artifact', 'remediation.patch v2', 'dev appr'],
+  ['Approval', '请求批准创建变更单 CR-18427', 'dev appr'], ['State', 'WAITING_APPROVAL', 'all'], ['Error', 'security-scan 超时，可重试', 'dev'], ['State', 'COMPLETED', 'all']
+];
+var ev = { sent: 0, ack: 0, online: true, rows: [], mode: 'cur', who: 'dev' };
+function evRender() {
+  $('#evs').innerHTML = ev.rows.map(function (r) {
+    var e = EVL[r.i], hide = e[2] !== 'all' && e[2].indexOf(ev.who) < 0;
+    return '<div class="' + r.c + (hide ? ' hid' : '') + '">#' + (r.i + 1) + ' ' + e[0] + ' · ' + e[1] + (r.tag || '') + '</div>';
+  }).join('');
+}
+function evV(t, bad) { var v = $('#evV'); v.className = 'verdict3' + (bad ? ' bad' : ''); v.innerHTML = t; }
+$('#evNext').addEventListener('click', function () {
+  if (ev.sent >= EVL.length) { evV('任务已到终态。'); return; }
+  var i = ev.sent++;
+  if (ev.online) { ev.rows.push({ i: i, c: '' }); ev.ack = i + 1; evV('客户端处理完 #' + (i + 1) + ' 后保存游标。'); }
+  else { ev.rows.push({ i: i, c: 'lost', tag: '（断线期间，客户端未收到）' }); evV('断线中：#' + (i + 1) + ' 没有送达。', true); }
+  evRender();
+});
+$('#evDrop').addEventListener('click', function () { ev.online = false; evV('连接断开。继续“推送下一条”，模拟断线期间服务端仍在产生事件。', true); });
+S.seg($('#evMode'), function (v) { ev.mode = v; });
+S.seg($('#evWho'), function (v) {
+  ev.who = v; evRender();
+  if (v === 'cust') evV('客户应用只看状态与进度：工具细节、用量、内部错误都不广播。'); else if (v === 'appr') evV('审批人看得到影响对象、产物和审批请求，看不到工具日志和用量。'); else evV('开发控制台可以看到详细 Tool 与用量事件。');
+});
+$('#evRe').addEventListener('click', function () {
+  if (ev.online) { evV('当前在线，不需要重连。'); return; }
+  ev.online = true;
+  if (ev.mode === 'cur') {
+    var miss = 0;
+    for (var i = ev.ack; i < ev.sent; i++) { ev.rows.push({ i: i, c: 're', tag: '（凭游标补发）' }); miss++; }
+    ev.ack = ev.sent;
+    evV('带上最后确认的游标 #' + ev.ack + ' 重连：服务端补发了 ' + miss + ' 条，按事件 ID 去重。' + (miss ? '' : '（断线期间没有新事件）'));
+  } else {
+    var lostState = false;
+    for (var k = ev.ack; k < ev.sent; k++) if (EVL[k][0] === 'State' || EVL[k][0] === 'Approval' || EVL[k][0] === 'Artifact') lostState = true;
+    evV('新连接只收建连之后的事件：断线期间的事件全部丢失' + (lostState ? '，其中包括状态 / 审批 / 产物事件，界面会显示错误的状态。' : '。') + '应带游标续传，或先读状态快照再补关键事件。', true);
+  }
+  evRender();
+});
+$('#evReset').addEventListener('click', function () { ev.sent = 0; ev.ack = 0; ev.online = true; ev.rows = []; evRender(); evV('点“推送下一条”。'); });
+S.notes($('#n-stream'), {
+  c: [
+    ['语义事件八类', 'Text、Progress、Tool、State、Approval、Artifact、Error、Usage；经过脱敏，不暴露隐藏推理。'],
+    ['Channel', '入口适配层：身份映射、线程 → Session → Task、输入输出转换、跨入口连续、渠道级限制；不做唯一状态存储。'],
+    ['AG-UI / A2UI', '交互事件协议 / 声明式界面格式。']
+  ],
+  p: [
+    ['可续传', '单调序号或游标，从最后确认位置续传，服务端去重。'],
+    ['背压', '文本 token 与细日志可合并采样；状态、审批、Artifact、终态不能丢。'],
+    ['取消的两层确认', '“已收到取消” vs “底层 Action 已安全停止”。'],
+    ['按身份生成视图', '开发、审批人、客户看到的不同；不广播内部 Trace。']
+  ]
+});
+
+/* ---------- Trace 与评估 ---------- */
+HB.cards($('#patch'), {
+  opts: ['Context / Knowledge', 'Memory', 'Skill', 'Tool Schema / 权限', 'Loop / Plan', 'Environment Contract', 'Verifier', '换模型 / 路由'],
+  items: [
+    { t: 'Agent 不知道公司已经禁用了某个依赖版本，因为相关制度从未进入 Context。', a: 0, why: '缺少事实，调整 Context 或 Knowledge。' },
+    { t: '一条错误的“经验”被反复召回，导致同类任务都走错路。', a: 1, why: '错误经验反复出现，修复 Memory。' },
+    { t: '每次都要摸索一遍依赖升级的标准步骤，结果还不稳定。', a: 2, why: '不会执行稳定方法，新增或修订 Skill。' },
+    { t: '模型把 <code>change_id</code> 填进了 <code>service</code> 参数。', a: 3, why: '工具误用，改进 Tool Schema 或权限。' },
+    { t: 'Agent 在两个工具之间来回调用二十次没有进展。', a: 4, why: '无进展，调整 Loop、Plan 或模型。' },
+    { t: '本地能跑通的测试，在云端沙箱里因为缺少依赖失败。', a: 5, why: '环境不一致，修复 Environment Contract。' },
+    { t: '安全扫描其实没跑完，任务却被判定为完成。', a: 6, why: '完成误判，强化 Verifier。' },
+    { t: '固定其他条件反复验证后，确认是模型推理能力不足以理解这类代码。', a: 7, why: '只有确定是模型能力本身不足时，才优先换模型或路由。' }
+  ]
+});
+var CASE = [
+  ['线上现象', '修复 Agent 创建变更单后，把用户此前对“生成草稿”的同意，错误解释为允许生产发布。'],
+  ['Context Manifest', '包含“可以生成变更”的用户回复。'],
+  ['Model Decision', '请求 production.deploy。'],
+  ['Policy Decision', '仅按 Tool 名称匹配，错误返回 ALLOW。这是根因。'],
+  ['Action 与 Outcome', '发布因目标环境无权限而失败，未造成生产变更，但触发高风险越权事件。'],
+  ['错误的 Patch', '在 Prompt 里再加一句“请谨慎发布”：模型可以绕过，问题仍在策略层。'],
+  ['正确的 Patch', '拆分 change.create 与 production.deploy；发布策略校验审批类型、对象版本、目标环境与短时授权；加入“草稿获批不得推导为发布获批”的确定性回归用例。'],
+  ['回归', '在 Evaluation Harness 中同时跑原失败样本、正常创建变更样本、合法发布样本、Prompt Injection 对抗样本，确认安全修复没让所有任务陷入无效审批。']
+];
+CASE.forEach(function (c) { h('li', { html: '<b>' + c[0] + '</b><small>' + c[1] + '</small>' }, $('#caseFlow')); });
+S.stepper($('#caseStep'), CASE.length, function (i) { S.$$('#caseFlow li').forEach(function (x, k) { x.classList.toggle('on', k === i); x.classList.toggle('done', k < i); }); });
+S.notes($('#n-fb'), {
+  c: [
+    ['Task Trace', '版本、拓扑、Context Manifest、状态转换、模型调用与成本、Action 与审批、结果、工作区与 Artifact、重试降级、Verifier、Outcome 与反馈。'],
+    ['Agent Harness vs Evaluation Harness', '完成一次任务 / 在固定条件下比较多个版本。'],
+    ['三层评测', '单步、轨迹、最终结果。']
+  ],
+  p: [
+    ['Trace 要因果', '决策 ← Context，Action → 状态 → 验证，能逐环关联。'],
+    ['评估要固定条件', '模型、推理设置、Harness、工具版本、预算、重试、环境、评分规则。'],
+    ['闭环', 'Trace + Outcome → 聚类 → 诊断 → 最小 Patch → 回归 → 门禁 → 新版本。'],
+    ['回归集三类', '原失败用例、相邻正常用例、安全对抗用例；模型升级后删掉失效的补偿逻辑。']
+  ]
+});
+})();
+</script>
+</body>
+</html>
