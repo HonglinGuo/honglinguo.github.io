@@ -1,0 +1,314 @@
+---
+title: 低代码平台：Coze、Dify、FastGPT、n8n
+desc: Hello-Agents 学习笔记（五）：低代码平台的价值与“更高层次的抽象”；平台组件和第四篇手写代码的一一对应；Coze、Dify、FastGPT、n8n 四个平台的定位、强项与局限；Dify 问题分类器路由、n8n AI Agent 节点的组装要点；按场景选平台与混合开发。
+kicker: <span>技术学习</span><span>Hello-Agents · 05</span><span>对应原书第 5 章</span><span>约 25 分钟</span>
+h1: 拖出来的，<em>还是同一个循环</em>
+lead: 第四篇手写了三个智能体，这一篇换成拖拽。原书实操了四个平台：Coze 做每日 AI 简报，Dify 做多功能个人助手，FastGPT 做带知识库的投顾助手，n8n 做自动回邮件的助手。界面会变、按钮会改名，这一篇不记操作步骤，只记三件事：平台上每个组件对应手写代码里的什么，四个平台各自强在哪、弱在哪，拿到一个需求该选哪个、或者哪部分用平台哪部分写代码。
+nav: why|为什么用平台;map|组件对照;four|四个平台;dify|Dify 路由;n8n|n8n 组装;choose|怎么选;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr); gap: 12px; align-items: center; margin-top: 10px; }
+.route .in { font-size: 16px; border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; background: var(--bg); color: var(--ink); }
+.route .arrow { font-family: var(--f-num); color: var(--ink-3); font-size: 15px; text-align: center; }
+.branches { display: flex; flex-direction: column; gap: 6px; }
+.branches div { border: 1px solid var(--hair); border-radius: 6px; padding: 6px 10px; font-size: 15px; color: var(--ink-3); background: var(--bg); }
+.branches div.on { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); font-weight: 600; }
+@media (max-width: 700px) { .route { grid-template-columns: minmax(0, 1fr); } .route .arrow { text-align: left; } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>低代码平台解决了手写智能体的哪些痛点？平台上的节点、插件、知识库分别对应手写代码里的什么？</li>
+    <li>Coze、Dify、FastGPT、n8n 的核心定位有什么不同？各自最大的局限是什么？</li>
+    <li>拿到一个需求，怎么在四个平台和纯代码之间选？什么叫混合开发？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么用平台</h2><span class="meta">原书 5.1.1 节</span></div>
+  <div class="sec-lede">
+    <p>原书把这一步类比为建网站从手写 HTML 走到 WordPress：手写是为了理解，实战中往往要站在巨人的肩膀上。第四篇的 ReActAgent 等类虽然可以复用，但业务逻辑一复杂，纯代码的维护成本和开发周期就急剧上升。</p>
+    <p>低代码平台的四个价值：<strong>降低门槛</strong>（API 调用、状态管理、并发控制都封装成节点，产品经理和业务专家也能参与设计）；<strong>提升效率</strong>（原型几小时甚至几分钟就能搭出来，精力放在业务逻辑和提示词上）；<strong>可视化与可观测</strong>（数据在节点之间怎么流、哪一步最慢、哪个工具调用失败，画布上一目了然，比翻终端日志直观）；<strong>沉淀最佳实践</strong>（预置 ReAct 模板、优化过的检索引擎、标准化的工具接入）。</p>
+    <p>原书的定位很清楚：<strong>平台不是要取代代码，而是更高一层的抽象</strong>，让你把注意力放在智能体“思考”与“行动”的逻辑上。</p>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>平台组件 ↔ 手写代码</h2><span class="meta">原书 5.2.1、5.5.1 节</span></div>
+  <div class="sec-lede">
+    <p>学平台最快的办法，是把每个组件翻译回第四篇的代码。原书给 Coze 打了个游戏比方：工作流是关卡路线图，插件是技能卡，知识库是游戏百科，数据库是云存档，效果评测是闯关评分。换成工程语言就是：<strong>工作流</strong>是你写的编排逻辑（主循环、Plan-and-Solve 的步骤序列）；<strong>插件 / 工具节点</strong>是注册进 ToolExecutor 的函数；<strong>知识库</strong>是第 8 篇要讲的 RAG；<strong>提示词</strong>还是那个模板；<strong>记忆</strong>是 history 或 Memory 类；<strong>AI Agent 节点</strong>则是把模型、记忆、工具打包好的 ReActAgent。</p>
+    <p>n8n 的两个基本概念尤其值得记：<strong>节点</strong>是最小执行单元，分<strong>触发节点</strong>（工作流的起点，比如收到邮件、定时、Webhook，一个工作流有且只有一个）和<strong>常规节点</strong>（处理数据和逻辑）；<strong>工作流</strong>是节点连成的图，节点之间传 JSON。</p>
+    <p class="go">每个平台组件，在第四篇的代码里对应什么？</p>
+  </div>
+  <div class="lab"><div id="mapCards"></div></div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="four">
+  <div class="part-head"><h2>四个平台，四种定位</h2><span class="meta">原书 5.1.2、5.2.3、5.3.3、5.4.3、5.5.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>Coze</strong>（字节跳动）主打零代码：可视化界面友好，插件商店极其丰富，一键发布到抖音、飞书、微信公众号等渠道；原书实操的是从 36 氪、虎嗅、GitHub、arXiv 等源抓取内容的“每日 AI 简报”。原书认为它最致命的局限是<strong>不支持 MCP</strong>（截至成书时仍在其路线图上），另外复杂插件配置仍需技术背景，导出的是只能导回 Coze 的 zip 而非通用 JSON。</p>
+    <p><strong>Dify</strong> 是开源的全栈 LLM 应用平台，融合后端即服务（BaaS）与 LLMOps：模型中立，Docker Compose 一键私有部署，Marketplace 插件数千个（原书写时 8000+），有 RAG 管道、工作流、RBAC 和审计日志。局限：对零基础用户仍有学习曲线；服务端是 Python，高并发有性能瓶颈；多模态支持有限；企业版贵；<strong>API 格式不兼容 OpenAI</strong>。</p>
+    <p><strong>FastGPT</strong> 把<strong>知识库问答当一等公民</strong>：导入、智能分块、索引增强（标题入索引、自动补充索引、图片自动索引）、检索，每一步都可配、可看；<strong>原生支持 MCP</strong>，模型中立。局限是模板和预置工具较少、免费额度紧、社区和文档仍在完善。</p>
+    <p><strong>n8n</strong> 本质是<strong>通用工作流自动化工具</strong>，LLM 只是流程里的一个节点；强项是“连接”，几百种预置节点能串起 SaaS、数据库和 API，支持私有部署。局限：复杂流程调试要逐节点查输入输出；<strong>内置 Simple Memory 和 Simple Vector Store 是内存级的，重启即丢</strong>，生产必须换 Redis、Pinecone 之类；导出 JSON 做版本管理远不如 git diff 清楚，多人协作易冲突；超高并发下调度有开销。</p>
+    <p class="go">先翻牌复习四个平台，再做一轮归类。</p>
+  </div>
+  <div class="lab"><div id="fourVs"></div></div>
+  <div class="lab"><div id="fourSort"></div></div>
+  <div class="notes" id="n-four"></div>
+</section>
+
+<section class="part" id="dify">
+  <div class="part-head"><h2>Dify：用分类器做路由</h2><span class="meta">原书 5.3.2 节，习题 3</span></div>
+  <div class="sec-lede">
+    <p>原书用 Dify 做了一个“超级个人助手”，覆盖日常问答、文案优化、多模态生成、数据查询、MCP 工具（高德地图等）几类请求。核心结构是一个<strong>问题分类器</strong>节点：先让 LLM 判断用户意图属于哪一类，再把请求分发给对应的子智能体，每个子智能体有自己专门的提示词（原书用“角色、背景、任务、限制、输出格式”五段式）和工具。</p>
+    <p>为什么不让一个智能体包办一切？原书习题 3 的答案方向：单一智能体的提示词会塞满所有任务的规则，彼此干扰；工具一多就容易选错；出了问题也难定位是哪类任务的规则没写好。分类器路由把问题拆小，每个分支可以单独调优、单独换模型，这正是<strong>路由模式</strong>，也是多智能体架构最简单的一种。</p>
+    <p>数据查询分支还有个典型问题：50 张表、每张 20 个字段，把全部 DDL 塞进提示词会撑爆上下文。思路是先检索、后生成：给每张表写摘要并向量化，按问题先召回相关的几张表，只把这几张的 DDL 交给模型写 SQL。</p>
+    <p class="go">输入一句话，看分类器会把它送到哪个分支（分类规则为示意，真实平台由 LLM 判断）。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="rtEx"></div>
+    <div class="route">
+      <div class="in" id="rtIn">点上面的示例</div>
+      <div class="arrow">问题分类器 →</div>
+      <div class="branches" id="rtBr"></div>
+    </div>
+    <p class="note" id="rtWhy"></p>
+  </div>
+  <div class="notes" id="n-dify"></div>
+</section>
+
+<section class="part" id="n8n">
+  <div class="part-head"><h2>n8n：一个 AI Agent 节点装下 ReAct</h2><span class="meta">原书 5.5.2–5.5.4 节</span></div>
+  <div class="sec-lede">
+    <p>n8n 的“智能邮件助手”分两段。<strong>准备知识</strong>：用 Code 节点放原始知识（JSON），经 Embeddings 模型向量化后写进 Simple Vector Store，只需在知识更新时跑一次。<strong>主工作流</strong>：Gmail 触发器（收到新邮件）→ AI Agent 节点 → Gmail 发送节点。</p>
+    <p>AI Agent 节点里挂三样东西：<strong>Chat Model</strong>（思考核心）、<strong>Memory</strong>（Simple Memory，用邮件的 threadId 作 key，同一线程的往来邮件共享上下文）、<strong>Tools</strong>（SerpAPI 搜公开信息，Simple Vector Store 以“作为 Agent 工具的检索模式”查私有知识）。System Message 里写角色、可用工具、执行步骤，并要求<strong>严格的 JSON 输出</strong>（含 shouldReply 等字段），后面的 Gmail 节点用表达式取 JSON 字段填收件人、主题和正文。</p>
+    <p>原书反复强调一个坑：向量库作为工具读取时，<strong>Memory Key 和 Embeddings 模型都必须和写入时完全一致</strong>，否则相当于拿错钥匙、说错语言，什么也查不到。另一个坑是工具的 Description：它就是第四篇说的“工具描述”，写清楚何时必须用这个工具，Agent 才会去用。</p>
+    <p class="go">一条一条拿掉，看这个邮件助手会坏在哪里。</p>
+  </div>
+  <div class="lab"><div id="n8nPipe"></div></div>
+  <div class="notes" id="n-n8n"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>怎么选：平台、代码，还是混合</h2><span class="meta">原书 5.6 节，习题 1、7</span></div>
+  <div class="sec-lede">
+    <p>原书的选型建议浓缩成四句：<strong>快速原型、非技术用户选 Coze；企业级应用、复杂业务逻辑、多模态选 Dify；私有知识库问答、智能客服选 FastGPT；深度业务集成、通用自动化选 n8n。</strong></p>
+    <p>更重要的是最后一句：<strong>混合开发</strong>才是工程化的最佳实践。用平台快速验证想法，用代码做精细控制；用平台处理标准化流程，用代码处理特殊逻辑。平台没有你要的工具（比如公司内部系统 API）时，三条路：写平台插件、包成 MCP 服务接入、或者在平台里用 HTTP / Code 节点直接调。</p>
+    <p class="go">原书习题 7 的三个应用，回答四个问题看推荐。</p>
+  </div>
+  <div class="lab"><div id="pickPf"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>路由、并行、提示词链这些编排模式在<a href="../2026-10-16-adp-1/">《Agentic 设计模式》01 篇</a>有模式卡；平台化交付与企业治理在<a href="../2026-10-22-handbook-3/">《AI Agent Handbook》03 篇</a>的“四个入口”里属于“基于云产品构建”。</div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书第 5 章习题与 Extra01</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="5-1">
+      <p class="iv-q">低代码平台、纯代码、混合开发三种模式各适合什么场景？<small>原书第 5 章习题 1</small></p>
+      <ul class="iv-a">
+        <li><b>低代码</b>：快速验证想法、标准化流程、非技术人员参与、内部工具；代价是定制深度、性能、版本管理受限。</li>
+        <li><b>纯代码</b>：核心产品、高并发、需要精细控制循环和状态、要求严格测试和版本管理。</li>
+        <li><b>混合</b>：平台做编排和可视化，复杂逻辑写成插件、MCP 服务或 Code 节点；或者原型用平台，跑通后把核心链路迁到代码。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="5-2">
+      <p class="iv-q">你用过哪些 Agent 平台或框架？选型是怎么选的？<small>Extra01 · Agent 第 12 题</small></p>
+      <ul class="iv-a">
+        <li><b>先说需求维度</b>：数据能否出域、是否需要私有部署、团队技术栈、需要哪些集成、预期并发、迭代速度。</li>
+        <li><b>再说候选与取舍</b>：如 Dify 私有部署 + 插件生态、n8n 做系统集成、FastGPT 做知识库问答；或代码框架（第 6 篇）做核心链路。</li>
+        <li><b>最后说评价指标</b>：任务成功率、响应延迟、单次成本、人工介入率、可维护性；并说明上线后怎么监控（第 12 篇）。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="5-3">
+      <p class="iv-q">问题分类器路由相比单一智能体有什么好处？会引入什么问题？<small>原书第 5 章习题 3</small></p>
+      <ul class="iv-a">
+        <li><b>好处</b>：每个分支提示词更短更专注、工具更少更不易选错、可以按分支选不同模型控制成本、出问题容易定位。</li>
+        <li><b>问题</b>：分类错误会把请求送错分支，需要兜底分支或置信度阈值；跨类请求（“查天气并写一段朋友圈文案”）需要拆分或多分支串联；分类本身多一次调用。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 平台解决了什么痛点？组件对应什么？</summary><p class="ans">降低门槛、提升效率、可视化与可观测、沉淀最佳实践，让人把精力放在业务逻辑和提示词上。工作流对应编排逻辑和主循环；插件 / 工具节点对应 ToolExecutor 里注册的函数；知识库对应 RAG；记忆对应 history 或 Memory；AI Agent 节点对应封装好的 ReActAgent；触发节点对应调用 run 的入口。</p></details>
+    <details><summary>2. 四个平台的定位与最大局限？</summary><p class="ans">Coze：零代码、插件丰富、多渠道发布；局限是不支持 MCP、配置只能导回 Coze。Dify：开源全栈、私有部署、插件市场大、企业级安全；局限是学习曲线、Python 服务端高并发性能、API 不兼容 OpenAI。FastGPT：知识库问答极致、原生 MCP；局限是生态和免费额度。n8n：通用自动化、连接能力强、私有部署；局限是内置存储非持久、调试和版本协作不如代码。</p></details>
+    <details><summary>3. 怎么选？什么是混合开发？</summary><p class="ans">快速原型选 Coze，企业复杂业务选 Dify，私有知识库问答选 FastGPT，深度业务集成选 n8n，核心链路或高并发用代码。混合开发是按阶段和模块组合：平台验证想法、代码精细控制；平台跑标准流程、代码处理特殊逻辑；缺的工具写成插件或 MCP 服务接入平台。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.notes($('#n-why'), {
+  c: [
+    ['低代码平台', '把 API 调用、状态管理、并发控制等封装成可拖拽的节点，图形化搭建智能体。'],
+    ['更高层次的抽象', '平台不取代代码，而是让人聚焦思考与行动的逻辑。']
+  ],
+  p: [
+    ['四个价值', '降低门槛、提升效率、可视化与可观测、沉淀最佳实践。']
+  ]
+});
+HB.cards($('#mapCards'), {
+  opts: ['工具函数', '编排逻辑', '记忆', '封装好的 Agent'],
+  items: [
+    { t: 'Coze 插件商店里的“必应搜索”插件', a: 0, why: '相当于第四篇注册进 ToolExecutor 的 search 函数，名称、描述、执行逻辑一样不少。' },
+    { t: 'Dify 工作流：开始 → 问题分类器 → 各分支 LLM → 结束', a: 1, why: '相当于手写的路由与流程控制代码。' },
+    { t: 'n8n 的 Simple Memory，key 设为邮件 threadId', a: 2, why: '相当于按会话隔离的 history；threadId 保证同一封邮件线程共享上下文。' },
+    { t: 'n8n 的 AI Agent 节点（挂了模型、记忆、两个工具）', a: 3, why: '就是一个打包好的 ReActAgent：模型 + 历史 + 工具清单 + 思考—行动循环。' },
+    { t: 'n8n 的 Code 节点：写一段 JavaScript 处理数据', a: 1, why: '平台留给你的“逃生口”，复杂逻辑仍然写代码，是混合开发的落点。' },
+    { t: 'FastGPT 里配置的“实时股票 MCP”', a: 0, why: '通过 MCP 协议接入的外部工具，第 10 篇讲协议本身。' }
+  ]
+});
+S.notes($('#n-map'), {
+  c: [
+    ['节点 / 工作流', '最小执行单元 / 节点连成的流程图，节点间传 JSON。'],
+    ['触发节点', '工作流起点（收邮件、定时、Webhook），一个工作流有且仅有一个。'],
+    ['AI Agent 节点', '把模型、记忆、工具整合在一个节点里，内部是自主决策循环。']
+  ],
+  p: [
+    ['翻译口诀', '插件 = 工具函数，工作流 = 编排代码，知识库 = RAG，记忆 = history，Agent 节点 = ReActAgent。'],
+    ['Coze 游戏比方', '工作流是关卡路线，插件是技能卡，知识库是百科，数据库是云存档，评测是闯关评分。']
+  ]
+});
+
+/* ---------- 四个平台 ---------- */
+HB.vs($('#fourVs'), {
+  a: 'Coze / Dify', b: 'FastGPT / n8n', k: '维度',
+  rows: [
+    ['核心定位', 'Coze：零代码 Agent 构建；Dify：开源全栈 LLM 应用平台（BaaS + LLMOps）', 'FastGPT：知识库问答优先的 RAG 平台；n8n：通用工作流自动化，LLM 是其中一个节点'],
+    ['最强项', 'Coze：插件生态、多渠道一键发布；Dify：插件市场、私有部署、企业级安全', 'FastGPT：分块、索引增强、检索全链路可控；n8n：几百种节点的连接能力'],
+    ['MCP', 'Coze：不支持（原书成书时）；Dify：支持（原书案例接了高德地图等）', 'FastGPT：原生支持；n8n：原书未展开'],
+    ['最大局限', 'Coze：无 MCP、配置只能导回 Coze；Dify：Python 服务端高并发瓶颈、API 不兼容 OpenAI', 'FastGPT：模板和工具少、免费额度紧；n8n：内置记忆和向量库非持久、版本协作弱'],
+    ['适合谁', 'Coze：入门用户、产品运营、个人创作者；Dify：有技术背景的开发者与企业团队', 'FastGPT：要做私有知识问答的团队；n8n：要把 AI 嵌进业务流程的开发者']
+  ]
+});
+S.sortGame($('#fourSort'), {
+  bins: [{ k: 'c', t: 'Coze' }, { k: 'd', t: 'Dify' }, { k: 'f', t: 'FastGPT' }, { k: 'n', t: 'n8n' }],
+  items: [
+    { t: '一键发布到抖音、飞书、微信公众号', k: 'c', why: 'Coze 的多渠道发布是它的招牌。' },
+    { t: '开启“图片自动索引”，让教材里的插图也能被检索', k: 'f', why: 'FastGPT 的索引增强选项之一。' },
+    { t: '收到新订单后：发确认邮件、更新库存、通知物流、写 CRM', k: 'n', why: '原书习题 4 的场景，纯粹的系统连接与自动化。' },
+    { t: 'AES-256 加密、RBAC 权限、审计日志，Docker Compose 私有部署', k: 'd', why: 'Dify 的企业级安全与部署能力。' },
+    { t: '服务重启后 Agent 忘了所有对话和知识', k: 'n', why: 'Simple Memory / Simple Vector Store 是内存级的，生产要换持久化存储。' },
+    { t: '导出的配置是 zip，只能导回同一平台', k: 'c', why: '原书指出的 Coze 局限，不像 Dify、n8n 导出通用 JSON。' }
+  ]
+});
+S.notes($('#n-four'), {
+  c: [
+    ['Coze', '字节跳动，零代码，插件丰富，多渠道发布；不支持 MCP。'],
+    ['Dify', '开源全栈，BaaS + LLMOps，模型中立，私有部署，插件市场大。'],
+    ['FastGPT', '知识库问答优先，RAG 全链路可配，原生 MCP。'],
+    ['n8n', '通用工作流自动化，连接能力强，LLM 只是节点之一。']
+  ],
+  p: [
+    ['Dify 的坑', 'Python 服务端高并发瓶颈；API 不兼容 OpenAI。'],
+    ['n8n 的坑', '内置记忆与向量库重启即丢；JSON 导出难以 diff。'],
+    ['FastGPT 的坑', '模板与预置工具少，免费额度紧。']
+  ]
+});
+
+/* ---------- Dify 路由 ---------- */
+var BR = [['qa', '日常问答'], ['copy', '文案优化'], ['img', '多模态生成'], ['data', '数据查询'], ['map', 'MCP 工具（地图等）']];
+var EX = [
+  ['什么是量子计算？用通俗的话讲讲', 'qa', '知识性问题，交给日常问答专家。'],
+  ['帮我把这段产品介绍改得更有吸引力', 'copy', '改写润色类，交给文案优化分支（原书该分支的提示词还硬性要求输出超过 500 字，习题 5 问这种长度要求是否合理）。'],
+  ['生成一张赛博朋克风格的城市夜景图', 'img', '需要调用图像生成模型。'],
+  ['上个月销售额最高的三个产品是什么', 'data', '要写 SQL 查库。表多时先检索相关表，再只把它们的 DDL 交给模型。'],
+  ['从中关村到首都机场怎么走最快', 'map', '需要实时地图数据，走 MCP 工具。'],
+  ['查一下明天北京天气，再写一段适合发朋友圈的文案', 'qa', '跨类请求：示意的分类器只能选一个分支，这正是路由的软肋。实际需要拆成两个子任务，或让一个能调工具的通用 Agent 兜底。']
+];
+EX.forEach(function (e) {
+  var b = h('button', { class: 'btn', type: 'button', text: e[0] }, $('#rtEx'));
+  b.addEventListener('click', function () {
+    $('#rtIn').textContent = e[0];
+    $('#rtBr').innerHTML = BR.map(function (x) { return '<div class="' + (x[0] === e[1] ? 'on' : '') + '">' + x[1] + '</div>'; }).join('');
+    $('#rtWhy').textContent = e[2];
+  });
+});
+$('#rtBr').innerHTML = BR.map(function (x) { return '<div>' + x[1] + '</div>'; }).join('');
+S.notes($('#n-dify'), {
+  c: [
+    ['问题分类器', '先用 LLM 判断意图类别，再把请求分发给对应子智能体。'],
+    ['五段式提示词', '角色、背景、任务、限制、输出格式（原书 Dify 案例的写法）。']
+  ],
+  p: [
+    ['路由的好处', '提示词专注、工具少不易选错、可分支选模型、易定位问题。'],
+    ['路由的软肋', '分类错误、跨类请求；需要兜底分支或拆分子任务。'],
+    ['表太多怎么办', '表摘要向量化 → 按问题召回相关表 → 只给这些表的 DDL。']
+  ]
+});
+
+/* ---------- n8n ---------- */
+HB.pipe($('#n8nPipe'), {
+  intro: '每一环都在：新邮件触发 → Agent 查知识、搜网络、按线程记忆思考 → 输出 JSON → 自动回信。试着拿掉一环。',
+  steps: [
+    { t: 'Gmail 触发器', d: 'Event = Message Received', miss: '工作流没有起点，永远不会运行（每个工作流必须有且仅有一个触发节点）。' },
+    { t: 'Chat Model', d: 'Agent 的思考核心', miss: 'AI Agent 节点无法推理，整个节点报错。' },
+    { t: 'Simple Memory（key = threadId）', d: '同一邮件线程共享上下文', miss: '每封邮件都当作陌生人处理，追问“上次说的那个”时 Agent 一无所知。' },
+    { t: 'Vector Store 工具（Key 与 Embeddings 与写入时一致）', d: '查私有知识：工作时间、回复策略', miss: '无法回答个人或项目相关问题；若只是 Key 或 Embeddings 不一致，现象是“工具调用成功但什么都查不到”，更难发现。' },
+    { t: '工具 Description', d: '“需要判断是否工作时间时必须使用此工具”', miss: 'Agent 不知道何时该用这个工具，可能直接凭空编一个回复时间。' },
+    { t: 'System Message 要求严格 JSON', d: 'shouldReply、正文等字段', miss: '下游 Gmail 节点的表达式取不到字段，回信为空或格式错乱。' },
+    { t: 'Gmail 发送节点', d: 'To / Subject / Message 用表达式取值', miss: 'Agent 想好了回复却发不出去。' }
+  ]
+});
+S.notes($('#n-n8n'), {
+  c: [
+    ['邮件助手结构', '知识准备流程（Code → Embeddings → Vector Store）+ 主流程（Gmail 触发 → AI Agent → Gmail 发送）。'],
+    ['AI Agent 节点三件套', 'Chat Model、Memory、Tools。']
+  ],
+  p: [
+    ['最大的坑', '向量库读写的 Memory Key 与 Embeddings 模型必须完全一致。'],
+    ['生产必改', 'Simple Memory / Simple Vector Store 换成 Redis、Pinecone 等持久化存储。'],
+    ['下游衔接', 'Agent 输出严格 JSON，下游用表达式取字段。']
+  ]
+});
+
+/* ---------- 选型 ---------- */
+HB.decide($('#pickPf'), {
+  qs: [
+    { id: 'app', q: '先选一个原书习题 7 的应用（会自动带入默认答案，可再调整）', opts: [['a', 'A：C 端 AI 写作小程序'], ['b', 'B：企业智能合同审核'], ['c', 'C：内部研发效能工具']], def: 'a' },
+    { id: 'priv', q: '数据必须留在客户私有环境吗？', opts: [['y', '必须'], ['n', '不必']], def: 'n' },
+    { id: 'team', q: '团队技术实力？', opts: [['weak', '只有前端 + 产品'], ['strong', '有较强的后端和算法']], def: 'weak' },
+    { id: 'integ', q: '需要和多个内部系统深度集成吗？', opts: [['y', '需要'], ['n', '基本不需要']], def: 'n' }
+  ],
+  decide: function (a) {
+    var out = [];
+    if (a.priv === 'y') out.push('<b>私有部署是硬约束</b>：排除只有 SaaS 的方案，在 Dify、n8n、FastGPT 自部署和纯代码之间选。');
+    if (a.team === 'weak' && a.priv === 'n' && a.integ === 'n') out.push('<b>推荐 Coze</b>：零代码、插件多、可直接发布到小程序等渠道，最快验证市场。代价是平台锁定，验证成功后核心链路可以考虑迁出。');
+    else if (a.integ === 'y' && a.team === 'strong') out.push('<b>推荐 n8n + 代码</b>：n8n 负责把代码审查、测试报告、Bug 跟踪、进度同步这些系统连起来，复杂判断写成服务或 Code 节点。');
+    else if (a.priv === 'y' && a.integ === 'y') out.push('<b>推荐 Dify 私有部署 + 自研插件</b>：合同审核的知识库和审核流程放在 Dify，对接 OA 和文档系统的部分写成插件或 MCP 服务；高敏感环节保留人工复核。');
+    else if (a.priv === 'y') out.push('<b>推荐 Dify 或 FastGPT 私有部署</b>：以知识库问答为主选 FastGPT，以多分支业务流程为主选 Dify。');
+    else out.push('<b>推荐 Dify</b>：兼顾可视化与扩展性；若团队很强且场景是核心产品，也可以直接用代码框架（下一篇）。');
+    return '<p>' + out.join('</p><p>') + '</p><p class="note">原书要求从技术可行性、开发效率、成本、可维护性、可扩展性、数据安全六个维度论证。</p>';
+  }
+});
+(function () {
+  var presets = { a: { priv: 'n', team: 'weak', integ: 'n' }, b: { priv: 'y', team: 'strong', integ: 'y' }, c: { priv: 'n', team: 'strong', integ: 'y' } };
+  var root = $('#pickPf');
+  var segs = S.$$('.seg', root);
+  S.$$('button', segs[0]).forEach(function (b) {
+    b.addEventListener('click', function () {
+      var p = presets[b.getAttribute('data-v')];
+      ['priv', 'team', 'integ'].forEach(function (k, i) {
+        var t = S.$$('button', segs[i + 1]).filter(function (x) { return x.getAttribute('data-v') === p[k]; })[0];
+        if (t) t.click();
+      });
+    });
+  });
+})();
+S.notes($('#n-choose'), {
+  c: [
+    ['混合开发', '平台验证想法、代码精细控制；平台跑标准流程、代码处理特殊逻辑。']
+  ],
+  p: [
+    ['原书选型四句', '原型选 Coze；企业复杂业务选 Dify；私有知识问答选 FastGPT；深度集成选 n8n。'],
+    ['平台缺工具时', '写平台插件、包成 MCP 服务、或用 HTTP / Code 节点直接调用。']
+  ]
+});

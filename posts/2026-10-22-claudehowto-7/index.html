@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hooks：在事件上挂确定性逻辑</title>
+<meta name="description" content="Claude How To 学习笔记（七）：Hook 是唯一不经模型判断的扩展机制；配置写在哪六个地方、五种类型；33 个事件按阶段分组，哪些能拦截；matcher 与 if 的分工；输入 JSON、退出码 0/2/其他、JSON 输出与 PreToolUse 决策优先级的模拟器；prompt 型 Stop hook；原文六个示例脚本对应哪个事件；调试与安全。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2.5' y='4' width='19' height='16' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M6.5 9.5l3 2.5-3 2.5' fill='none' stroke='%232340D6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 15h5' stroke='%2313171C' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.sim { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .sim { grid-template-columns: minmax(0, 1fr); } }
+.sim .selrow { flex-direction: column; align-items: flex-start; gap: 4px; margin: 0 0 10px; }
+.flow3 { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.flow3 div { border: 1px solid var(--hair); border-left: 4px solid var(--rule); border-radius: 0 6px 6px 0; padding: 7px 10px; background: var(--bg); font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.flow3 div b { color: var(--ink); }
+.flow3 div.ok { border-left-color: var(--ok); }
+.flow3 div.bad { border-left-color: var(--alert); }
+.flow3 div.ask { border-left-color: var(--s2); }
+.flow3 div.skip { opacity: .5; }
+</style>
+</head>
+<body data-series="claudehowto-series" data-part="7">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Claude How To · 07</span><span>对应原文 06-hooks</span><span>约 35 分钟</span></p>
+  <h1>必须发生的事，<em>别交给模型</em></h1>
+  <p class="lead">CLAUDE.md 和 Skill 里的规则是写给模型看的，模型通常照做，但没有保证。Hook 不一样：它是 Claude Code 程序在某个事件点（工具调用前后、你提交提示词时、会话开始结束时……）执行的命令、HTTP 请求、提示词或子代理，通过 JSON 输入和退出码与 Claude Code 对话，可以直接拦下一次工具调用。这一篇用一个模拟器把“退出码、JSON 决策、权限规则”三者的关系讲清楚，再把原文的几个示例脚本对应到事件上。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/luongnv89/claude-howto" rel="noopener">Claude How To</a>》（luongnv89 与社区贡献者编写，MIT 协议；本笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302）的学习笔记。原教程按十个模块（01-slash-commands 到 10-cli）组织，配了大量可复制的模板。这里重排成十二篇：先用一篇讲清七种扩展机制的分工，再逐个拆开，每个功能按“它解决什么问题、最小可用配置放在哪个路径、什么时候不该用”来写，并配上“读配置猜行为”、模拟器和场景判定题。功能与字段取自原文（主要依据英文原版，中文版是它的缩写译本），每节标出对应的原文目录；为演示设的场景和数值标“示意”。Claude Code 更新很快，原文里带版本号的细节以原文和官方文档为准。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-claudehowto/"><b>总览</b>速查卡</a>
+  <a href="../2026-10-22-claudehowto-1/" data-part="1"><b>01</b>全景</a>
+  <a href="../2026-10-22-claudehowto-2/" data-part="2"><b>02</b>斜杠命令</a>
+  <a href="../2026-10-22-claudehowto-3/" data-part="3"><b>03</b>Memory</a>
+  <a href="../2026-10-22-claudehowto-4/" data-part="4"><b>04</b>Skills</a>
+  <a href="../2026-10-22-claudehowto-5/" data-part="5"><b>05</b>Subagents</a>
+  <a href="../2026-10-22-claudehowto-6/" data-part="6"><b>06</b>MCP</a>
+  <a href="../2026-10-22-claudehowto-7/" aria-current="page" data-part="7"><b>07</b>Hooks</a>
+  <a href="../2026-10-22-claudehowto-8/" data-part="8"><b>08</b>Plugins</a>
+  <a href="../2026-10-22-claudehowto-9/" data-part="9"><b>09</b>回退与会话</a>
+  <a href="../2026-10-22-claudehowto-10/" data-part="10"><b>10</b>规划与权限</a>
+  <a href="../2026-10-22-claudehowto-11/" data-part="11"><b>11</b>后台与远程</a>
+  <a href="../2026-10-22-claudehowto-12/" data-part="12"><b>12</b>CLI 与脚本</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">它解决什么</a><a href="#events">事件地图</a><a href="#match">matcher 与 if</a><a href="#io">输入、退出码与决策</a><a href="#prompt">prompt 型 hook</a><a href="#ex">示例对号入座</a><a href="#debug">调试与安全</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Hook 和 CLAUDE.md、Skill 里的规则根本区别是什么？hooks 可以配在哪些地方，有哪五种类型？</li>
+    <li>一个 PreToolUse 命令型 hook，退出码 0、2、1 分别意味着什么？JSON 里返回 allow，权限 deny 规则还会生效吗？</li>
+    <li><code>matcher</code> 和 <code>if</code> 各筛选什么？Stop 和 SessionEnd 有什么不同？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>它解决什么</h2><span class="meta">原文 06-hooks「Overview」「Configuration」「Hook Types」</span></div>
+  <div class="sec-lede">
+    <p>原文的定义：Hook 是在 Claude Code 会话中<strong>特定事件发生时自动执行</strong>的动作，可以是 shell 命令、HTTP webhook、LLM 提示词、MCP 工具调用或子代理评估；它们通过 <strong>stdin 收 JSON</strong>，通过<strong>退出码和 stdout 上的 JSON</strong> 回传结果。用途：自动化、校验、权限管理、自定义工作流。</p>
+    <p>配置可以放在六个地方：<code>~/.claude/settings.json</code>（所有项目）、<code>.claude/settings.json</code>（项目，可提交）、<code>.claude/settings.local.json</code>（本地，不提交）、组织托管策略、插件的 <code>hooks/hooks.json</code>、以及 Skill 或子代理的 frontmatter（组件生命周期内有效）。五种类型：<strong>command</strong>（默认，跑 shell 命令；也可以用 <code>args</code> 数组直接 exec，免去 shell 转义）、<strong>http</strong>（POST 同样的 JSON 到一个 URL）、<strong>prompt</strong>（让模型按一段提示词做判断，多用于 Stop）、<strong>mcp_tool</strong>（直接调用一个 MCP 工具）、<strong>agent</strong>（起一个能用工具的子代理去检查，实验性）。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>Hook<small>settings.json 的 hooks 键</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>“每次都必须发生”（改完文件就格式化、会话结束记日志）和“绝不能发生”（拦下危险命令、禁止读密钥文件）的事，不靠模型自觉，由程序确定性执行。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcHk"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>需要理解和判断的指导（写 CLAUDE.md 或 Skill）；没在安全环境里测过的脚本（原文免责声明：hook 执行任意命令，后果自负）；只是想少弹确认框（先考虑权限 allow 规则或 <code>/fewer-permission-prompts</code>）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="events">
+  <div class="part-head"><h2>事件地图</h2><span class="meta">原文「Hook Events」</span></div>
+  <div class="sec-lede">
+    <p>原文列了 33 个事件。按会话的阶段看最好记：<strong>会话</strong>（SessionStart、SessionEnd、Setup、InstructionsLoaded）；<strong>提示词</strong>（UserPromptSubmit、UserPromptExpansion）；<strong>工具</strong>（PreToolUse、PermissionRequest、PermissionDenied、PostToolUse、PostToolUseFailure、PostToolBatch）；<strong>回合结束</strong>（Stop、StopFailure、SubagentStart、SubagentStop）；<strong>任务与团队</strong>（TaskCreated、TaskCompleted、TeammateIdle）；<strong>环境变化</strong>（ConfigChange、CwdChanged、DirectoryAdded、FileChanged、PreCompact、PostCompact、PreModelSwitch、PostModelSwitch、WorktreeCreate、WorktreeRemove）；<strong>其他</strong>（Notification、MessageDisplay、Elicitation、ElicitationResult）。</p>
+    <p>对每个事件要知道两件事：<strong>matcher 匹配的是什么</strong>（工具事件匹配工具名，SessionStart 匹配 startup / resume / clear / compact / fork，PreModelSwitch 匹配目标模型名……），以及<strong>能不能拦</strong>。能拦的主要是“之前”类事件（PreToolUse、UserPromptSubmit、PermissionRequest、PreCompact、PreModelSwitch）和回合结束类（Stop、SubagentStop）；“之后”类（PostToolUse、PostCompact、PostModelSwitch、SessionEnd）事情已经发生，只能观察、补充上下文或给反馈。</p>
+    <p class="go">点一个事件，看它什么时候触发、匹配什么、能不能拦。</p>
+  </div>
+  <div class="lab"><div id="ev"></div></div>
+  <div class="notes" id="n-events"></div>
+</section>
+
+<section class="part" id="match">
+  <div class="part-head"><h2>matcher 与 if：选哪个工具，选哪一次调用</h2><span class="meta">原文「Matcher Patterns」「Narrowing with if conditions」</span></div>
+  <div class="sec-lede">
+    <p>配置结构是三层：事件名 → 一组 <code>{ matcher, hooks: [...] }</code> → 每个 hook 的 <code>type</code>、<code>command</code>、<code>timeout</code> 等。<strong><code>matcher</code> 按工具名选</strong>：精确字符串 <code>"Write"</code>、正则 <code>"Edit|Write"</code>、逗号分隔 <code>"Write,Edit"</code>（v2.1.191 起）、通配 <code>"*"</code> 或空串、MCP 工具 <code>"mcp__memory__.*"</code>；大小写敏感，v2.1.195 起精确匹配，带连字符的名字不会误匹配。</p>
+    <p>要按<strong>参数</strong>再缩小范围，就在单个 hook 上加 <strong><code>if</code></strong>，用权限规则的语法：<code>Edit(src/**)</code>、<code>Read(.env)</code>、<code>Read(~/.ssh/**)</code>、<code>Bash(git push *)</code>。<code>if</code> 写在 hook 处理器那一层，和 <code>type</code>、<code>command</code> 平级，不是写在 matcher 上。路径锚点和权限规则一致：裸名字 <code>.env</code> 匹配任意深度，<code>src/**</code> 相对当前目录，<code>/src/**</code> 相对项目根，<code>//</code> 是绝对路径；v2.1.214 起单段 <code>dir/**</code> 只匹配 <code>当前目录/dir</code>，要任意深度写 <code>**/dir/**</code>。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="mq"></div></div>
+  <div class="notes" id="n-match"></div>
+</section>
+
+<section class="part" id="io">
+  <div class="part-head"><h2>输入、退出码与决策</h2><span class="meta">原文「Hook Input and Output」「PreToolUse」「Exit Codes」</span></div>
+  <div class="sec-lede">
+    <p>每个 hook 从 stdin 收到一段 JSON：公共字段有 <code>session_id</code>、<code>transcript_path</code>、<code>cwd</code>、<code>permission_mode</code>、<code>hook_event_name</code>，工具事件还有 <code>tool_name</code>、<code>tool_input</code>，子代理里还有 <code>agent_id</code>、<code>agent_type</code>。脚本必须<strong>从 stdin 读</strong>，不是从命令行参数读——原文排障一节专门强调。</p>
+    <p>回传有两条通道。<strong>退出码</strong>：0 成功，继续，并解析 stdout 上的 JSON；<strong>2 是阻断</strong>，操作被拦下，stderr 作为错误显示；其他非零是非阻断错误，继续执行，只在记录里提示一行。<strong>JSON 输出</strong>（退出码 0 时）：PreToolUse 用 <code>hookSpecificOutput.permissionDecision</code> 返回 <code>allow</code>（跳过确认）、<code>deny</code>（拒绝，理由给 Claude 看）、<code>ask</code>（弹确认，理由给你看）、<code>defer</code>（优雅退出，稍后再恢复）；还可以用 <code>updatedInput</code> 整体替换工具输入。多个 PreToolUse hook 意见不一时，优先级是 <strong>deny &gt; defer &gt; ask &gt; allow</strong>；而且无论 hook 返回什么，<strong>权限里的 deny 和 ask 规则照样生效</strong>。</p>
+    <p class="go">在模拟器里组合 hook 的返回和权限规则，看 Claude 的 Bash 调用最后怎样。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">PreToolUse，matcher: "Bash"（规则据原文，命令为示意）</p>
+    <div class="sim">
+      <div>
+        <div class="selrow"><span>Claude 要执行</span><div class="seg" id="smCmd"><button data-v="ls" aria-pressed="true">ls -la</button><button data-v="push">git push origin main</button><button data-v="rm">rm -rf /tmp/build</button></div></div>
+        <div class="selrow"><span>hook 脚本的返回</span><div class="seg" id="smHook"><button data-v="e0" aria-pressed="true">exit 0，无输出</button><button data-v="e2">exit 2 + stderr</button><button data-v="e1">exit 1（脚本出错）</button><button data-v="allow">JSON allow</button><button data-v="ask">JSON ask</button><button data-v="deny">JSON deny</button></div></div>
+        <div class="selrow"><span>权限规则（settings.json）</span><div class="seg" id="smPerm"><button data-v="none" aria-pressed="true">无相关规则</button><button data-v="allowls">allow: Bash(ls:*)</button><button data-v="denypush">deny: Bash(git push:*)</button></div></div>
+      </div>
+      <div><div class="flow3" id="smFlow"></div></div>
+    </div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：hook 的 allow 与权限规则</h4>
+    <p><b>hook 返回 allow</b> 只是跳过确认框（需要用户交互的工具、组织设为 ask 的连接器工具除外），<b>不能</b>推翻权限里的 deny 或 ask 规则。</p>
+    <p><b>退出码 2</b> 和 <b>JSON deny</b> 都能拦：前者 stderr 当错误显示，后者的 <code>permissionDecisionReason</code> 会交给 Claude，让它知道为什么被拒、换个做法。顶层的 <code>decision</code>/<code>reason</code> 写法在 PreToolUse 上已弃用。</p>
+  </div>
+  <div class="notes" id="n-io"></div>
+</section>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>prompt 型 hook：让模型判断“做完了没有”</h2><span class="meta">原文「Prompt Hooks」「Stop and SubagentStop」「Prompt-Based Hooks」</span></div>
+  <div class="sec-lede">
+    <p>prompt 型 hook 不跑脚本，而是把一段提示词交给模型评估，返回 <code>{"ok": false, "reason": "..."}</code> 这样的结构化判断（<code>ok: false</code> 时必须给理由）。最典型的用法是挂在 <strong>Stop</strong> 上：Claude 每次回答完准备停下时，检查“所有要求的文件都改了吗、还有没解决的报错吗”，没做完就把它拦回去继续干。Stop 和 SubagentStop 的输入里有 <code>last_assistant_message</code>，方便判断。</p>
+    <p>原文提醒了几个边界：同一回合 Stop hook <strong>连续拦截 8 次</strong>后，Claude Code 会强行结束这一回合，防止写坏的 hook 无限循环（<code>CLAUDE_CODE_STOP_HOOK_BLOCK_CAP</code> 可调，0 关闭）；v2.1.163 起 Stop hook 也可以只返回 <code>additionalContext</code> 给 Claude 反馈并继续，不带错误标签；在 PostToolUse 上，prompt hook 返回 <code>ok: false</code> 默认结束回合，加 <code>continueOnBlock: true</code> 则把理由交给 Claude 让它重试。另外要分清 <strong>Stop</strong>（每次 Claude 回答结束都触发）和 <strong>SessionEnd</strong>（整个会话结束时触发一次，默认只有 1.5 秒预算，给自己设 <code>timeout</code> 可以放宽到最多 60 秒）。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="pq"></div></div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="ex">
+  <div class="part-head"><h2>示例对号入座</h2><span class="meta">原文「Examples」及 06-hooks 目录下的脚本</span></div>
+  <div class="sec-lede">
+    <p>原文目录里放了一批可以直接拷的脚本：<code>format-code.sh</code>、<code>validate-bash.py</code>、<code>security-scan.py</code>、<code>validate-prompt.py</code>、<code>context-tracker.py</code>、<code>session-end.sh</code> 等，安装方式是拷到 <code>~/.claude/hooks/</code>、<code>chmod +x</code>，再在 settings.json 里登记。每个脚本的价值在于它挂在<strong>哪个事件</strong>、<strong>用什么方式回传</strong>：格式化只需要事后执行，不回传；危险命令要在之前用退出码 2 拦；安全扫描在之后用 <code>additionalContext</code> 把警告告诉 Claude；上下文统计用 UserPromptSubmit 和 Stop 一前一后两个事件配对计算。</p>
+    <p>原文 SessionEnd 示例还顺带讲了两个通用技巧：hook 运行时<strong>没有终端</strong>（<code>/dev/tty</code> 不可用），不能交互提问，要输入就通过启动时的环境变量传进去；脚本开头加一个守卫，只在特定项目里生效，避免全局安装后在别的项目里乱跑。</p>
+    <p class="go">把六个脚本放进它们该挂的事件。</p>
+  </div>
+  <div class="lab"><div id="sg"></div></div>
+  <div class="notes" id="n-ex"></div>
+</section>
+
+<section class="part" id="debug">
+  <div class="part-head"><h2>调试与安全</h2><span class="meta">原文「Debugging」「Security Considerations」「Hook Execution Details」</span></div>
+  <div class="sec-lede">
+    <p>调试三板斧：<code>claude --debug</code> 看详细的 hook 执行日志；会话里 <kbd>Ctrl+O</kbd> 打开详细模式看 hook 进度；最有用的是<strong>脱离 Claude 单独测</strong>：<code>echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' | python3 .claude/hooks/validate-bash.py; echo $?</code>，看退出码对不对。不执行的话依次检查 JSON 语法、matcher 是否匹配工具名、脚本是否可执行、是不是从 stdin 读。</p>
+    <p>执行细节：command、http、mcp_tool 默认超时 600 秒（prompt 30、agent 60，部分事件会调低）；所有匹配的 hook <strong>并行</strong>执行，完全相同的命令会去重。安全上原文的建议清单：校验所有输入、变量加引号 <code>"$VAR"</code>、拦截 <code>..</code> 路径穿越、用 <code>$CLAUDE_PROJECT_DIR</code> 写绝对路径、跳过 <code>.env</code> 和 <code>.git/</code> 等敏感文件；HTTP hook 要在请求头里用环境变量，必须显式列出 <code>allowedEnvVars</code>，防止把环境变量泄露给远端；组织可以在托管设置里用 <code>disableAllHooks</code> 统一关掉 hooks。</p>
+    <p class="go">这些说法对不对？</p>
+  </div>
+  <div class="lab"><div id="dq"></div></div>
+  <div class="notes" id="n-debug"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Hook 与 CLAUDE.md、Skill 规则的根本区别？配在哪、有哪五种？</summary><p class="ans">Hook 由 Claude Code 程序在事件点执行，不经过模型判断，是确定性的，能用退出码 2 拦下操作；CLAUDE.md 和 Skill 只是给模型的指令。配置位置：~/.claude/settings.json、.claude/settings.json、.claude/settings.local.json、托管策略、插件 hooks/hooks.json、Skill 或子代理的 frontmatter。五种类型：command、http、prompt、mcp_tool、agent。</p></details>
+    <details><summary>2. 退出码 0、2、1 的含义？hook 返回 allow，deny 规则还生效吗？</summary><p class="ans">0：成功，继续，并解析 stdout 的 JSON；2：阻断，操作被拦，stderr 作为错误显示；其他非零：非阻断错误，继续执行，记录里提示一行。PreToolUse 的 JSON 决策优先级 deny &gt; defer &gt; ask &gt; allow；无论 hook 返回什么，权限里的 deny 和 ask 规则都照样生效，hook 的 allow 只是跳过确认框。</p></details>
+    <details><summary>3. matcher 和 if 各筛选什么？Stop 与 SessionEnd 的区别？</summary><p class="ans">matcher 按工具名（或事件特有的值）选，支持精确、正则、逗号分隔、通配；if 写在单个 hook 上，用权限规则语法按工具参数筛，如 Edit(src/**)、Bash(git push *)。Stop 在 Claude 每次回答结束时触发，能拦（连续 8 次后强制结束）；SessionEnd 在会话结束时触发一次，不能拦，默认只有 1.5 秒预算。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-claudehowto-6/"><small>上一篇</small><span>06 · MCP：把外部系统接进来</span></a><a class="nx" href="../2026-10-22-claudehowto-8/"><small>下一篇</small><span>08 · Plugins：把一套配置打包分发</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/luongnv89/claude-howto" rel="noopener">luongnv89/claude-howto</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 它解决什么 ---------- */
+$('#fcHk').innerHTML = CH.file('.claude/settings.json', CH.esc('{\n  "hooks": {\n    "PostToolUse": [\n      {\n        "matcher": "Write|Edit",\n        "hooks": [\n          {\n            "type": "command",\n            "command": "\\"$CLAUDE_PROJECT_DIR/.claude/hooks/format-code.sh\\"",\n            "timeout": 30\n          }\n        ]\n      }\n    ]\n  }\n}'), '脚本放 .claude/hooks/，记得 chmod +x') +
+  '<p class="note">据原文“Complete Configuration Example”。脚本从 stdin 读 JSON，取 <code>tool_input.file_path</code>，按扩展名调 prettier、black 或 gofmt。</p>';
+S.notes($('#n-what'), {
+  c: [
+    ['Hook', '事件发生时由 Claude Code 自动执行的动作，JSON 进、退出码和 JSON 出。'],
+    ['五种类型', 'command、http、prompt、mcp_tool、agent。'],
+    ['六个位置', '用户、项目、本地 settings；托管策略；插件 hooks.json；Skill/子代理 frontmatter。']
+  ],
+  p: [
+    ['exec 形式', '<code>"command": "python3", "args": [...]</code>：不经 shell，免转义、防注入。'],
+    ['常用字段', '<code>timeout</code>、<code>async</code>、<code>statusMessage</code>、<code>onFailure: "block"</code>（失败时阻断，v2.1.295）。'],
+    ['查看', '会话里 <code>/hooks</code>。']
+  ]
+});
+
+/* ---------- 事件地图 ---------- */
+function E(t, when, m, b, use) { return { t: t, d: '<b>何时：</b>' + when + '<br><b>matcher：</b>' + m + '<br><b>能拦吗：</b>' + b + '<br><b>常见用途：</b>' + use, tag: b.indexOf('能') === 0 ? '可拦截' : '' }; }
+CH.layers($('#ev'), {
+  hint: '点一个事件。',
+  layers: [
+    { t: '会话', sub: '开始、结束、加载指令', cls: 'c5', items: [
+      E('SessionStart', '会话开始、恢复、/clear、压缩后、分叉', 'startup / resume / clear / compact / fork', '不能', '准备环境；写 <code>CLAUDE_ENV_FILE</code> 持久化环境变量；返回 <code>reloadSkills</code>、<code>sessionTitle</code>'),
+      E('Setup', '<code>--init-only</code>，或 <code>-p</code> 配合 <code>--init</code>/<code>--maintenance</code>', 'init / maintenance', '不能', 'CI 里装依赖、准备工具'),
+      E('InstructionsLoaded', 'CLAUDE.md 或规则文件加载后', '加载原因：session_start / nested_traversal / path_glob_match …', '不能', '审计、记录加载了哪些指令'),
+      E('SessionEnd', '会话结束', 'clear / resume / logout / prompt_input_exit / other', '不能', '清理、写最终日志（默认 1.5 秒预算）')
+    ] },
+    { t: '提示词', sub: '你按下回车之后', items: [
+      E('UserPromptSubmit', '你提交提示词、Claude 处理之前（v2.1.299 起先于命令展开）', '无', '能（decision: block）', '校验提示词、补充上下文'),
+      E('UserPromptExpansion', '你敲的斜杠命令或 MCP prompt 展开成提示词时', '命令名', '能', '检查或改写展开后的提示词')
+    ] },
+    { t: '工具', sub: '一次工具调用前后', cls: 'c2', items: [
+      E('PreToolUse', 'Claude 生成工具参数之后、执行之前', '工具名', '能（allow / deny / ask / defer）', '拦危险命令、改写输入'),
+      E('PermissionRequest', '弹出权限确认框时', '工具名', '能（自动批准或拒绝）', '按策略自动处理确认；agent 型 hook 不在此运行'),
+      E('PermissionDenied', 'auto 模式拒绝了一次工具调用', '工具名', '不能（可返回 retry）', '记录、统计'),
+      E('PostToolUse', '工具成功执行之后', '工具名', '不能拦（可 block 反馈）', '格式化、扫描、给 Claude 补充上下文；输入含 <code>duration_ms</code>'),
+      E('PostToolUseFailure', '工具执行失败', '工具名', '不能', '错误处理、记录'),
+      E('PostToolBatch', '一批工具调用完成之后', '无', '能', '汇总报告、批量校验')
+    ] },
+    { t: '回合结束', sub: 'Claude 或子代理停下', cls: 'c4', items: [
+      E('Stop', 'Claude 结束这一次回答', '无', '能（连续 8 次后强制结束）', '检查任务是否真的完成；有 <code>last_assistant_message</code>'),
+      E('StopFailure', 'API 错误导致回合结束', 'rate_limit / overloaded / server_error …', '不能', '错误恢复、记录'),
+      E('SubagentStart', '子代理启动', '子代理类型名', '不能', '为特定子代理做准备'),
+      E('SubagentStop', '子代理完成', '子代理类型名', '能', '校验子代理的产出')
+    ] },
+    { t: '任务与团队', sub: '需要 todo 工具或 Agent Teams', cls: 'c3', items: [
+      E('TaskCreated', '通过 TaskCreate 创建任务', '无', '能', '任务跟踪（只在启用 todo 工具时触发）'),
+      E('TaskCompleted', '任务被标记完成', '无', '能', '收尾动作（同上）'),
+      E('TeammateIdle', 'Agent Teams 的队员空闲', '无', '能', '派后续任务、通知')
+    ] },
+    { t: '环境变化', sub: '配置、目录、文件、压缩、模型', cls: 'c5', items: [
+      E('ConfigChange', '配置文件变化', 'user_settings / project_settings / local_settings / policy_settings / skills', '能（策略来源除外）', '响应配置更新'),
+      E('CwdChanged · DirectoryAdded · FileChanged', '工作目录变化 / 新增目录 / 监视的文件变化', 'FileChanged 匹配要监视的文件名，如 .envrc|.env', '不能', '切目录时的准备、文件变化时重建'),
+      E('PreCompact · PostCompact', '上下文压缩前 / 后', 'manual / auto（Pre）', 'Pre 能，Post 不能', '压缩前保存要点'),
+      E('PreModelSwitch · PostModelSwitch', '换模型前 / 后（v2.1.251+）', '目标模型的规范名，如 .*opus.*', 'Pre 能（exit 2 否决），Post 不能', '成本敏感项目禁止切到最贵的模型'),
+      E('WorktreeCreate · WorktreeRemove', '创建 / 删除 worktree', '无', '能（返回路径 / 非零退出使删除失败）', 'worktree 初始化和清理')
+    ] },
+    { t: '其他', sub: '通知、显示、MCP 交互', items: [
+      E('Notification', '发出通知时', 'permission_prompt / idle_prompt / agent_completed …', '不能', '自定义桌面或团队通知'),
+      E('MessageDisplay', '显示助手消息文本时', '无', '不能', '改写或隐藏显示的文字（v2.1.152）'),
+      E('Elicitation · ElicitationResult', 'MCP 服务器向你要输入 / 你回应后', 'MCP 服务器名', '能', '校验输入、处理回应')
+    ] }
+  ]
+});
+S.notes($('#n-events'), {
+  c: [
+    ['33 个事件', '会话、提示词、工具、回合结束、任务与团队、环境变化、其他。'],
+    ['能拦的', '主要是“之前”类（PreToolUse、UserPromptSubmit、PermissionRequest、PreCompact、PreModelSwitch）和 Stop/SubagentStop。'],
+    ['不能拦的', '“之后”类（PostToolUse、PostCompact、PostModelSwitch、SessionEnd）：只能观察、反馈。']
+  ],
+  p: [
+    ['TaskCreated / TaskCompleted', '只在启用 todo 工具时触发；其他模型上配置有效但永不触发（<code>CLAUDE_CODE_ENABLE_TODO_TOOLS=1</code>）。'],
+    ['SessionStart 小技巧', '往 <code>$CLAUDE_ENV_FILE</code> 追加 <code>export X=…</code> 持久化环境变量。'],
+    ['PreToolUse 常用 matcher', 'Agent、Bash、Glob、Grep、Read、Edit、Write、WebFetch、WebSearch。']
+  ]
+});
+
+/* ---------- matcher 与 if ---------- */
+CH.cfg($('#mq'), [
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "PostToolUse": [\n      { "matcher": "write",\n        "hooks": [ { "type": "command", "command": "./fmt.sh" } ] }\n    ]\n  }\n}',
+    q: 'Claude 用 Write 工具写了一个文件，fmt.sh 会跑吗？', opts: ['会', '不会，matcher 大小写敏感，应写 "Write"', '会，但只在 Edit 时'], a: 1,
+    why: '原文：matcher 匹配工具名，大小写敏感。' },
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "PreToolUse": [\n      { "matcher": "Edit|Write",\n        "hooks": [ { "type": "command",\n                     "if": "Edit(src/**)",\n                     "command": "./hooks/lint-src.sh" } ] }\n    ]\n  }\n}',
+    q: 'Claude 编辑 <code>docs/readme.md</code>，lint-src.sh 会跑吗？', opts: ['会，matcher 匹配了 Edit', '不会，if 只放行 src/ 下的编辑', '会，if 只对 Write 生效'], a: 1,
+    why: 'matcher 决定“哪个工具”，if 决定“哪一次调用”。<code>if</code> 用权限规则语法同时看工具名和参数。' },
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "PreToolUse": [\n      { "matcher": "Read",\n        "hooks": [ { "type": "command", "if": "Read(.env)",\n                     "command": "./hooks/block-secret-read.sh" } ] }\n    ]\n  }\n}',
+    q: 'Claude 读 <code>services/api/.env</code>，这个 hook 会触发吗？', opts: ['不会，只匹配根目录的 .env', '会，裸文件名 .env 匹配任意深度', '不会，if 不支持 Read'], a: 1,
+    why: '原文：Read/Edit/Write 的路径按 gitignore 语义，裸名字如 <code>.env</code> 匹配当前目录及以下任意深度。' },
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "PreToolUse": [\n      { "matcher": "Edit",\n        "hooks": [ { "type": "command", "if": "Edit(src/**)",\n                     "command": "./hooks/check.sh" } ] }\n    ]\n  }\n}',
+    q: '你在仓库根启动，Claude 编辑 <code>packages/web/src/app.ts</code>。hook 会触发吗？（v2.1.214 之后）', opts: ['会', '不会，单段 src/** 只匹配 当前目录/src；要任意深度写 **/src/**', '取决于文件扩展名'], a: 1,
+    why: 'v2.1.214 起，hook 的 if 条件里单段 <code>dir/**</code> 只匹配 <code>&lt;cwd&gt;/dir</code>。注意这个收窄只针对 hook 的 if 和 allow 规则，deny/ask 规则仍匹配任意深度。' }
+]);
+S.notes($('#n-match'), {
+  c: [
+    ['matcher', '按工具名（或事件特有值）选：精确、正则 <code>Edit|Write</code>、逗号 <code>Write,Edit</code>、通配 <code>*</code>。'],
+    ['if', '写在单个 hook 上，用权限规则语法按参数筛：<code>Bash(git push *)</code>。']
+  ],
+  p: [
+    ['大小写', 'matcher 大小写敏感。'],
+    ['路径锚点', '<code>.env</code> 任意深度；<code>src/**</code> 相对 cwd；<code>/src/**</code> 相对项目根；<code>//</code> 绝对路径；<code>~/</code> home。'],
+    ['任意深度', '写 <code>**/dir/**</code>。'],
+    ['MCP 工具', '<code>"matcher": "mcp__memory__.*"</code>。']
+  ]
+});
+
+/* ---------- 模拟器 ---------- */
+var SM = { cmd: 'ls', hook: 'e0', perm: 'none' };
+var CMDS = { ls: 'ls -la', push: 'git push origin main', rm: 'rm -rf /tmp/build' };
+function sm() {
+  var steps = [], c = CMDS[SM.cmd], res;
+  steps.push(['', '<b>1. Claude 生成工具调用</b>：Bash <code>' + c + '</code>']);
+  var h = SM.hook, hookTxt = { e0: '退出码 0，没有 JSON：不表态，继续正常流程', e2: '退出码 2，stderr 写“Blocked: …”：<b>阻断</b>', e1: '退出码 1：<b>非阻断错误</b>，记录里提示一行，继续正常流程', allow: 'JSON <code>permissionDecision: "allow"</code>：请求跳过确认', ask: 'JSON <code>permissionDecision: "ask"</code>：要求弹确认（理由显示给你）', deny: 'JSON <code>permissionDecision: "deny"</code>：拒绝（理由交给 Claude）' }[h];
+  steps.push([h === 'e2' || h === 'deny' ? 'bad' : h === 'ask' ? 'ask' : '', '<b>2. PreToolUse hook</b>：' + hookTxt]);
+  if (h === 'e2' || h === 'deny') {
+    steps.push(['skip', '<b>3. 权限规则</b>：不再需要']);
+    res = ['bad', h === 'e2' ? '<b>结果：被拦下。</b>stderr 作为错误显示。' : '<b>结果：被拒绝。</b>拒绝理由交给 Claude，它可以换个做法。'];
+  } else {
+    var p = SM.perm, pTxt, match = (p === 'allowls' && SM.cmd === 'ls') || (p === 'denypush' && SM.cmd === 'push');
+    if (p === 'none' || !match) pTxt = '没有匹配的规则';
+    else pTxt = p === 'allowls' ? '匹配 allow: Bash(ls:*)' : '匹配 <b>deny: Bash(git push:*)</b>';
+    var denyRule = match && p === 'denypush';
+    steps.push([denyRule ? 'bad' : '', '<b>3. 权限规则</b>：' + pTxt + (denyRule && h === 'allow' ? '。hook 的 allow <b>推翻不了</b> deny 规则' : '')]);
+    if (denyRule) res = ['bad', '<b>结果：被拒绝。</b>无论 hook 返回什么，deny 和 ask 规则照样生效。'];
+    else if (h === 'ask') res = ['ask', '<b>结果：弹出确认框</b>，由你决定。'];
+    else if (h === 'allow' || (match && p === 'allowls')) res = ['ok', '<b>结果：直接执行</b>，不弹确认。' + (h === 'allow' ? '（hook 的 allow 跳过了确认）' : '（allow 规则放行）')];
+    else res = ['ask', '<b>结果：按当前权限模式处理</b>（manual 模式下会弹确认）。' + (h === 'e1' ? '脚本出错不会拦截，除非 hook 设了 <code>onFailure: "block"</code>。' : '')];
+  }
+  steps.push(res);
+  $('#smFlow').innerHTML = steps.map(function (s) { return '<div class="' + s[0] + '">' + s[1] + '</div>'; }).join('');
+}
+S.seg($('#smCmd'), function (v) { SM.cmd = v; sm(); });
+S.seg($('#smHook'), function (v) { SM.hook = v; sm(); });
+S.seg($('#smPerm'), function (v) { SM.perm = v; sm(); });
+sm();
+S.notes($('#n-io'), {
+  c: [
+    ['输入', 'stdin 上的 JSON：session_id、cwd、hook_event_name、tool_name、tool_input……'],
+    ['退出码 0', '成功，继续，解析 stdout 的 JSON。'],
+    ['退出码 2', '阻断，stderr 作为错误显示。'],
+    ['其他非零', '非阻断错误，继续执行。']
+  ],
+  p: [
+    ['PreToolUse 决策', '<code>hookSpecificOutput.permissionDecision</code>：allow / deny / ask / defer。'],
+    ['多个 hook 冲突', 'deny &gt; defer &gt; ask &gt; allow。'],
+    ['权限规则仍生效', 'hook 的 allow 不能推翻 deny/ask 规则。'],
+    ['改写', '<code>updatedInput</code> 替换工具输入；PostToolUse 的 <code>updatedToolOutput</code> 改写工具输出（如去掉 ANSI 颜色、脱敏）。']
+  ]
+});
+
+/* ---------- prompt 型 ---------- */
+CH.cfg($('#pq'), [
+  { path: '~/.claude/settings.json', code: '{\n  "hooks": {\n    "Stop": [\n      { "hooks": [ { "type": "prompt",\n        "prompt": "Review if all tasks are complete. If incomplete, explain what is missing.",\n        "timeout": 30 } ] }\n    ]\n  }\n}',
+    q: '模型判断还有一项没做，返回 <code>{"ok": false, "reason": "Tests were not run after the last edit"}</code>。会怎样？', opts: ['Claude 停下，只显示警告', 'Claude 被拦回去，带着理由继续干', '会话结束'], a: 1,
+    why: 'Stop 上的 prompt hook 返回 ok: false 会阻止停止，Claude 继续工作。同一回合连续拦截 8 次后，Claude Code 会强制结束这一回合。' },
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "PostToolUse": [\n      { "matcher": "Write|Edit",\n        "hooks": [ { "type": "prompt",\n          "prompt": "Check this edit against our write policy. Hook input: $ARGUMENTS",\n          "continueOnBlock": true } ] }\n    ]\n  }\n}',
+    q: '某次编辑违反了策略，模型返回 ok: false。有了 continueOnBlock，会怎样？', opts: ['回合结束，显示警告', '理由交给 Claude，回合继续，它可以改正后重试', '编辑被撤销'], a: 1,
+    why: '默认情况下 PostToolUse 的 prompt hook 返回 ok: false 会结束回合；<code>continueOnBlock: true</code>（v2.1.139）改为把理由交给 Claude 并继续。适合“只读路径，换个地方写”这种 Claude 能自己处理的反馈。' },
+  { path: '.claude/settings.json', code: '{\n  "hooks": {\n    "SessionEnd": [\n      { "hooks": [ { "type": "command",\n        "command": "\\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-end.sh\\"" } ] }\n    ]\n  }\n}',
+    q: 'session-end.sh 要花 5 秒写日志，没设 timeout。会怎样？', opts: ['正常写完', '1.5 秒后被取消', '阻止会话结束直到写完'], a: 1,
+    why: 'SessionEnd 默认共享 1.5 秒预算，没有自己 timeout 的 hook 1.5 秒后被取消；设了 timeout 会把预算放宽到最多 60 秒。原文示例写的是 <code>"timeout": 10</code>。' }
+]);
+S.notes($('#n-prompt'), {
+  c: [
+    ['prompt 型 hook', '把提示词交给模型判断，返回 <code>{"ok": bool, "reason": "..."}</code>。'],
+    ['Stop', '每次 Claude 回答结束触发，能拦；输入含 <code>last_assistant_message</code>。'],
+    ['SessionEnd', '会话结束触发一次，不能拦；默认 1.5 秒预算。']
+  ],
+  p: [
+    ['防死循环', '连续拦 8 次后强制结束；<code>CLAUDE_CODE_STOP_HOOK_BLOCK_CAP</code>。'],
+    ['温和反馈', 'Stop 返回 <code>hookSpecificOutput.additionalContext</code>：给 Claude 反馈并继续，无错误标签。'],
+    ['continueOnBlock', 'PostToolUse 上的 prompt hook：把理由交给 Claude 继续。'],
+    ['agent 型', '能用工具多步检查，实验性；不在 PermissionRequest 上运行。']
+  ]
+});
+
+/* ---------- 示例对号入座 ---------- */
+S.sortGame($('#sg'), {
+  bins: [
+    { k: 'pre', t: 'PreToolUse' }, { k: 'post', t: 'PostToolUse' }, { k: 'ups', t: 'UserPromptSubmit' },
+    { k: 'pair', t: 'UserPromptSubmit + Stop' }, { k: 'end', t: 'SessionEnd' }
+  ],
+  items: [
+    { t: 'validate-bash.py：rm -rf / 就 exit 2', k: 'pre', why: '要在执行之前拦，用退出码 2。' },
+    { t: 'format-code.sh：按扩展名跑 prettier / black / gofmt', k: 'post', why: '写完之后格式化，不需要回传。' },
+    { t: 'security-scan.py：发现硬编码密码就提醒', k: 'post', why: '写完之后扫描，用 additionalContext 把警告告诉 Claude。' },
+    { t: 'validate-prompt.py：提示词里有“delete database”就拦', k: 'ups', why: '提示词进模型之前检查，返回 decision: block。' },
+    { t: 'context-tracker.py：统计每次请求用了多少 token', k: 'pair', why: '提交时记下当前量，回答结束时算差值，一前一后两个事件配对。' },
+    { t: 'session-end.sh：把今天学了哪几个模块记进 JSON', k: 'end', why: '整个会话结束时记一次，不是每次回答后都记。' }
+  ]
+});
+S.notes($('#n-ex'), {
+  c: [
+    ['拦截', 'PreToolUse + 退出码 2（validate-bash）。'],
+    ['事后处理', 'PostToolUse（format-code、security-scan）。'],
+    ['配对统计', 'UserPromptSubmit + Stop（context-tracker）。']
+  ],
+  p: [
+    ['安装（原文）', '<code>cp 06-hooks/*.sh ~/.claude/hooks/ && chmod +x ~/.claude/hooks/*.sh</code>，再登记到 settings.json。'],
+    ['没有终端', 'hook 不能交互提问；输入通过启动时的环境变量传。'],
+    ['守卫', '脚本开头判断项目路径，全局安装也只在目标项目生效。'],
+    ['路径', '用 <code>$CLAUDE_PROJECT_DIR</code>，别写死 /Users/你的名字。']
+  ]
+});
+
+/* ---------- 调试与安全 ---------- */
+S.quiz($('#dq'), [
+  { q: '同一事件匹配了三个 hook，它们怎么执行？', o: ['按配置顺序串行', '并行执行，完全相同的命令去重', '只执行第一个'], a: 1, why: '原文执行细节：所有匹配的 hook 并行执行；v2.1.302 起同一事件的 prompt/agent 型最多同时 12 个。' },
+  { q: '你的 hook 脚本从 <code>$1</code> 读工具参数，总是拿不到。原因？', o: ['权限不够', 'hook 的输入走 stdin 上的 JSON，不是命令行参数', '要用 --debug 才有参数'], a: 1, why: '原文排障：Always read from stdin, not command arguments。' },
+  { q: 'HTTP hook 想在请求头里带 <code>$API_TOKEN</code>，需要什么？', o: ['什么都不用', '在 hook 上显式列出 allowedEnvVars', '改用 command 型'], a: 1, why: '防止环境变量被意外发给远端，必须显式白名单。' },
+  { q: '怎样最快确认 validate-bash.py 的拦截逻辑对不对？', o: ['在 Claude 里反复试', '<code>echo \'{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}\' | python3 validate-bash.py; echo $?</code> 看是不是 2', '看 /hooks'], a: 1, why: '原文：脱离 Claude 用样例 JSON 单独测，检查退出码。' }
+]);
+S.notes($('#n-debug'), {
+  c: [
+    ['--debug', '<code>claude --debug</code> 看详细 hook 日志。'],
+    ['Ctrl+O', '详细模式，看 hook 执行进度。'],
+    ['单独测', '<code>echo \'{…}\' | 脚本; echo $?</code>。']
+  ],
+  p: [
+    ['超时', 'command/http/mcp_tool 600 秒，prompt 30，agent 60；部分事件更短。'],
+    ['安全清单', '校验输入、变量加引号、防 ..、用 $CLAUDE_PROJECT_DIR、跳过 .env/.git。'],
+    ['HTTP hook', '请求头里的变量需 <code>allowedEnvVars</code>。'],
+    ['组织关闭', '托管设置 <code>disableAllHooks</code>。']
+  ]
+});
+
+CH.tryNow($('#try'), '7', [
+  { t: '给你的 Python 项目加一个 PostToolUse 格式化 hook', d: 'matcher <code>Write|Edit</code>，脚本从 stdin 取 <code>tool_input.file_path</code>，<code>.py</code> 就跑 black 或 ruff format。' },
+  { t: '加一个 PreToolUse 守卫，读 <code>.env</code> 时退出码 2', d: '用 <code>"if": "Read(.env)"</code> 缩小范围；先用 echo 管道单独测一遍。' },
+  { t: '给长任务加一个 Stop 通知', d: '原文示例：hook 输出 <code>terminalSequence</code>（OSC 9）就能弹桌面通知，具体支持取决于终端。' }
+]);
+})();
+</script>
+</body>
+</html>

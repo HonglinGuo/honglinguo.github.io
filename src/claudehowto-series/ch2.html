@@ -1,0 +1,429 @@
+---
+title: 斜杠命令：内置命令、自定义命令与参数展开
+desc: Claude How To 学习笔记（二）：斜杠命令的四个来源（内置、Skill、插件、MCP prompt）；六十多个内置命令按用途分组速查；/branch、/fork、/subtask、/btw 的区别；自定义命令已并入 Skills，$ARGUMENTS、$0、!`命令`、@文件 的展开模拟；读配置猜行为。
+kicker: <span>技术学习</span><span>Claude How To · 02</span><span>对应原文 01-slash-commands</span><span>约 25 分钟</span>
+h1: 一个 <em>/</em> 后面，有四种来源
+lead: 在 Claude Code 里敲一个斜杠，弹出来的列表其实混着四种东西：Claude Code 自带的内置命令、你写的 Skill（以前叫自定义命令）、插件带来的命令、MCP 服务器暴露的 prompt。它们长得一样，背后的机制完全不同。这一篇先把内置命令按用途整理成一张能查的表，再讲怎么写自己的命令，以及参数、动态上下文和文件引用到底是怎么展开的。
+nav: kinds|四种来源;builtin|内置命令速查;copy|分叉与旁问;custom|写自己的命令;expand|展开模拟;cfg|读配置猜行为;ext|插件与 MCP 命令;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.bi-ctl { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 10px; }
+.bi-ctl input { font: inherit; font-size: 16px; padding: 5px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); width: 14em; max-width: 100%; }
+.bi { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 14px; }
+.bi div { border-top: 1px solid var(--hair); padding: 7px 0; font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.bi div code { font-family: var(--f-num); font-size: 15px; color: var(--s1); font-weight: 600; margin-right: 6px; }
+.bi div .ch-pill { margin-left: 4px; }
+.bi-empty { color: var(--ink-3); font-size: 15px; }
+.ex-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 760px) { .ex-row { grid-template-columns: minmax(0, 1fr); } }
+.ex-in { font: inherit; font-family: var(--f-num); font-size: 16px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); width: 100%; }
+.ex-out { white-space: pre-wrap; }
+.ex-out mark { background: var(--s1-soft); color: var(--ink); border-radius: 3px; padding: 0 2px; }
+.ex-out mark.sh { background: var(--ok-soft); }
+.ex-out mark.at { background: var(--s2-soft); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>斜杠命令有哪四种来源？自定义命令现在推荐放在哪里，和旧位置同名时谁生效？</li>
+    <li><code>/branch</code>、<code>/fork</code>、<code>/subtask</code>、<code>/btw</code> 都会“复制”或“绕开”当前对话，区别在哪？</li>
+    <li><code>$ARGUMENTS</code>、<code>$0</code>、<code>!`git status`</code>、<code>@src/a.ts</code> 分别在什么时候、由谁展开？</li>
+  </ol>
+</div>
+
+<section class="part" id="kinds">
+  <div class="part-head"><h2>四种来源</h2><span class="meta">原文 01-slash-commands「Overview」「Command Architecture」</span></div>
+  <div class="sec-lede">
+    <p>原文给斜杠命令下的定义是：在交互会话中<strong>控制 Claude 行为的快捷方式</strong>。按来源分四类：<strong>内置命令</strong>（<code>/help</code>、<code>/clear</code>、<code>/model</code>，Claude Code 自带）；<strong>Skills</strong>（你写的 <code>SKILL.md</code>，如 <code>/optimize</code>、<code>/pr</code>）；<strong>插件命令</strong>（<code>/插件名:命令名</code>）；<strong>MCP prompt</strong>（<code>/mcp__服务器__prompt名</code>）。</p>
+    <p>原文用一张流程图说明敲下命令以后发生什么：内置的直接执行；Skill 要先读 <code>SKILL.md</code>、解析 frontmatter、替换变量、执行其中的 shell 片段，再把结果作为提示词交给 Claude；插件命令加载插件里的定义；MCP 的则去执行服务器提供的 prompt。所以“内置命令”是程序功能，而其余三种本质上都是<strong>生成一段提示词</strong>。</p>
+    <p>一个容易踩的细节：从 v2.1.236 起，敲错的命令或当前会话不可用的命令按回车会<strong>报错</strong>，不再悄悄执行最接近的那个；无歧义的前缀和定义好的别名仍然可以用（以原文为准）。</p>
+    <p class="go">四类命令各自从哪来、谁执行，点开看。</p>
+  </div>
+  <div class="lab"><div id="kd"></div></div>
+  <div class="notes" id="n-kinds"></div>
+</section>
+
+<section class="part" id="builtin">
+  <div class="part-head"><h2>内置命令速查</h2><span class="meta">原文「Built-in Commands Reference」「Bundled Skills」</span></div>
+  <div class="sec-lede">
+    <p>原文列了六十多个内置命令和约二十个随附 Skill（随附 Skill 像命令一样用 <code>/</code> 调用，但实现上是 Skill，比如 <code>/code-review</code>、<code>/loop</code>、<code>/batch</code>）。在 Claude Code 里敲 <code>/</code> 能看到完整列表，敲 <code>/</code> 加几个字母可以过滤。</p>
+    <p>平时真正高频的其实不多。我按用途重新分了组，挑了原文表里对日常写代码最有用的条目；每条的说明是我对原文的转述。几个值得专门记住的：<code>/cd</code> 换工作目录<strong>不会打掉 prompt cache</strong>（以前换目录会让下一轮变慢变贵）；<code>/context</code> 用彩色网格看上下文占用；<code>/goal</code> 注册一个会话级的完成条件，Claude 会跨多轮一直做到满足为止；<code>/fewer-permission-prompts</code> 分析你最近的 Bash 和 MCP 调用，生成一份允许清单写进 <code>.claude/settings.json</code>。</p>
+    <p class="go">按分组看，或者直接搜关键词（比如“上下文”“review”“权限”）。</p>
+  </div>
+  <div class="lab">
+    <div class="bi-ctl"><div class="seg" id="biSeg"></div><input type="search" id="biQ" placeholder="搜索命令或说明" aria-label="搜索内置命令"></div>
+    <div class="bi" id="bi"></div>
+    <p class="ch-src">据原文 v2.1.302 版本的命令表转述，命令的增删很频繁，以原文和 <code>/help</code> 为准。已移除：<code>/pr-comments</code>（直接让 Claude 看 PR 评论）、<code>/vim</code>（改到 /config 的 Editor mode）、<code>/ultraplan</code>（改用 plan mode）；<code>/agents</code> 的创建向导已移除，改为让 Claude 创建或直接编辑 <code>.claude/agents/</code>。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：/code-review、/review、/simplify、/security-review</h4>
+    <p><b>/code-review</b> 找正确性 bug（随附 Skill），可带强度 <code>low</code>…<code>max</code>、<code>ultra</code>（云端多代理深度审查），<code>--fix</code> 直接改，<code>--comment</code> 发成 PR 行内评论。<b>/review</b> 现在是它的完整别名。</p>
+    <p><b>/simplify</b> 只做清理（复用、简化、效率、抽象层次）并直接应用修改，<b>不找 bug</b>。<b>/security-review</b> 专门分析分支的安全漏洞。</p>
+  </div>
+  <div class="notes" id="n-builtin"></div>
+</section>
+
+<section class="part" id="copy">
+  <div class="part-head"><h2>分叉与旁问：/branch、/fork、/subtask、/btw</h2><span class="meta">原文 01「Recent Changes」、09-advanced-features「Forking and Branching Sessions」</span></div>
+  <div class="sec-lede">
+    <p>这四个命令最容易混，因为它们都在“不打乱当前对话”的前提下做点别的事。原文的区分方式是看<strong>副本在哪里跑、结果回不回来</strong>：<code>/branch [名字]</code> 是你自己<strong>切进</strong>一个从当前点复制出来的对话，原对话保留，之后用 <code>/resume</code> 回去；<code>/fork [提示]</code> 把对话复制成一个<strong>独立的后台会话</strong>去跑，从此两边各走各的，结果不回来；<code>/subtask &lt;任务&gt;</code> 起一个继承完整对话的<strong>分叉子代理</strong>，你继续干活，它干完把结果交回当前对话；<code>/btw [问题]</code> 是一个<strong>临时的旁问</strong>，问完不污染主对话上下文。</p>
+    <p>原文专门提醒：<code>/fork</code> 和 <code>/subtask</code> 在 v2.1.212 <strong>互换了角色</strong>。在那之前有一段时间 <code>/fork</code> 起的是分叉子代理（也就是现在 <code>/subtask</code> 的行为），更早它又只是 <code>/branch</code> 的别名。网上的老教程很可能说的是旧行为。</p>
+    <p class="go">四个场景，各该用哪一个？</p>
+  </div>
+  <div class="tblw">
+    <table class="cmpt">
+      <tr><th>命令</th><th>副本在哪跑</th><th>你在哪</th><th>结果回到当前对话？</th></tr>
+      <tr><td><code>/branch</code></td><td>当前终端（你切进去）</td><td>副本里</td><td>不需要，原对话用 /resume 找回</td></tr>
+      <tr><td><code>/fork</code></td><td>新的后台会话（在 <code>claude agents</code> 里有一行）</td><td>原对话</td><td>不回来，各自独立</td></tr>
+      <tr><td><code>/subtask</code></td><td>分叉子代理（继承完整对话）</td><td>原对话</td><td>回来，完成后交回结果</td></tr>
+      <tr><td><code>/btw</code></td><td>一次性旁问</td><td>原对话</td><td>不写进主对话上下文</td></tr>
+    </table>
+  </div>
+  <div class="lab"><div id="cpq"></div></div>
+  <div class="notes" id="n-copy"></div>
+</section>
+
+<section class="part" id="custom">
+  <div class="part-head"><h2>写自己的命令：现在就是写 Skill</h2><span class="meta">原文「Custom Commands (Now Skills)」「Frontmatter Reference」</span></div>
+  <div class="sec-lede">
+    <p>原文最重要的一条更新是：<strong>自定义斜杠命令已经并入 Skills</strong>。老位置 <code>.claude/commands/名字.md</code> 继续有效、不用改；新写的推荐放 <code>.claude/skills/名字/SKILL.md</code>。两者都生成 <code>/名字</code>，如果同名，<strong>Skill 优先</strong>。迁移只需要把文件挪进同名目录、改名为 <code>SKILL.md</code>。</p>
+    <p>为什么推荐 Skill 形式？原文列了五点：能带目录（脚本、模板、参考文件）；Claude 可以在相关时<strong>自动调用</strong>；能控制谁可以调用；能用 <code>context: fork</code> 在隔离的子代理里跑；能渐进式加载附带文件。也就是说，命令只是 Skill 的一个子集：一个“只允许你手动调用”的 Skill，就是传统意义上的命令。</p>
+    <p class="go">下面是一张功能卡，以及 frontmatter 里和“命令”相关的字段。</p>
+  </div>
+  <div class="fcard">
+    <h3>自定义命令<small>.claude/skills/名字/SKILL.md</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>你反复输入的同一段指令（准备 PR、写提交信息、按团队格式生成文档），变成一个 <code>/名字</code>，还能带参数、带实时上下文。</dd>
+      <dt>最小可用配置</dt><dd><div id="fc1"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>一次性任务不值得做成命令（原文最佳实践）；复杂逻辑别塞进命令文件，拆成脚本放进 Skill 目录；有副作用的命令（部署、发消息）一定要加 <code>disable-model-invocation: true</code>，否则 Claude 可能觉得“代码看起来好了”就自己去部署。</dd>
+    </dl>
+  </div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>frontmatter 字段</th><th>作用</th><th>默认</th></tr>
+      <tr><td><code>name</code></td><td>命令名，变成 <code>/name</code></td><td>目录名</td></tr>
+      <tr><td><code>description</code></td><td>简述做什么、何时用；Claude 靠它决定是否自动调用</td><td>正文第一行非空内容</td></tr>
+      <tr><td><code>argument-hint</code></td><td>自动补全时提示参数</td><td>无</td></tr>
+      <tr><td><code>allowed-tools</code></td><td>命令运行期间免确认可用的工具，如 <code>Bash(git *)</code></td><td>继承</td></tr>
+      <tr><td><code>model</code></td><td>指定模型</td><td>继承</td></tr>
+      <tr><td><code>disable-model-invocation</code></td><td><code>true</code> 时只有你能调用，Claude 不会自动调用</td><td><code>false</code></td></tr>
+      <tr><td><code>user-invocable</code></td><td><code>false</code> 时从 <code>/</code> 菜单隐藏，只给 Claude 用</td><td><code>true</code></td></tr>
+      <tr><td><code>context</code> / <code>agent</code></td><td><code>fork</code> 时在隔离子代理里运行；<code>agent</code> 选子代理类型</td><td>无 / general-purpose</td></tr>
+      <tr><td><code>hooks</code></td><td>命令运行时注册的 hooks，注册后在本会话余下时间一直生效</td><td>无</td></tr>
+    </table>
+  </div>
+  <div class="notes" id="n-custom"></div>
+</section>
+
+<section class="part" id="expand">
+  <div class="part-head"><h2>展开模拟：参数、shell 片段与文件引用</h2><span class="meta">原文「Arguments」「Dynamic Context with Shell Commands」「File References」</span></div>
+  <div class="sec-lede">
+    <p>命令文件里有三种会被提前替换的东西。<strong><code>$ARGUMENTS</code></strong> 是调用时跟在命令后面的全部参数，<strong><code>$0</code>、<code>$1</code>…</strong> 是按空格切开的第几个参数（从 0 开始）。<strong><code>!`命令`</code></strong> 会在提示词发给 Claude 之前<strong>先在本机执行</strong>，把输出原样塞进去，Claude 只看到结果；所以原文的 <code>/commit</code> 示例里，<code>git status</code>、<code>git diff HEAD</code>、当前分支和最近五次提交都是现取的。<strong><code>@路径</code></strong> 把文件内容引进来。</p>
+    <p>两个和安全相关的细节：shell 片段要能执行，相应的工具得在 <code>allowed-tools</code> 里放行（比如 <code>Bash(git *)</code>）；从 v2.1.299 起，<code>UserPromptSubmit</code> 类型的 Hook 在命令展开<strong>之前</strong>运行，所以 Hook 拦下这条提示词时，里面的 <code>!</code> 片段也不会执行。另外 <code>${CLAUDE_PROJECT_DIR}</code> 会被替换成项目根目录的绝对路径。</p>
+    <p class="go">改一改调用参数，看最终发给 Claude 的提示词长什么样（shell 输出为示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>命令模板</span><div class="seg" id="exSeg"><button data-v="0" aria-pressed="true">/fix-issue</button><button data-v="1">/review-pr</button><button data-v="2">/commit</button></div></div>
+    <div class="ex-row">
+      <div><div id="exTpl"></div></div>
+      <div>
+        <p class="lab-t" style="margin-top:10px">你敲的</p>
+        <input class="ex-in" id="exIn" aria-label="调用命令">
+        <p class="lab-t" style="margin-top:12px">Claude 实际收到的</p>
+        <div class="ch-file"><div class="ch-fp"><span>展开后的提示词</span><em>蓝=参数 绿=shell 输出 橙=文件</em></div><pre class="ex-out" id="exOut"></pre></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes" id="n-expand"></div>
+</section>
+
+<section class="part" id="cfg">
+  <div class="part-head"><h2>读配置猜行为</h2><span class="meta">原文「Skill vs Command Conflict」「User-Only Command」等</span></div>
+  <div class="sec-lede">
+    <p>配置写出来以后，最常见的困惑是“它为什么没生效”或者“它怎么自己跑了”。下面五段配置都来自原文的规则，每段先猜它会怎样，再看解释。</p>
+    <p class="go">先猜，再点。</p>
+  </div>
+  <div class="lab"><div id="cfgQ"></div></div>
+  <div class="notes" id="n-cfg"></div>
+</section>
+
+<section class="part" id="ext">
+  <div class="part-head"><h2>插件命令与 MCP 命令</h2><span class="meta">原文「Plugin Commands」「MCP Prompts as Commands」「MCP Permission Syntax」</span></div>
+  <div class="sec-lede">
+    <p>插件带来的命令写作 <code>/插件名:命令名</code>，没有命名冲突时可以直接写 <code>/命令名</code>；从 v2.1.136 起也可以用空格代替冒号（<code>/myplugin review</code>），脚本里推荐冒号形式。MCP 服务器可以把它的 prompt 暴露成命令，格式固定为 <code>/mcp__服务器名__prompt名 [参数]</code>，比如 <code>/mcp__github__list_prs</code>。</p>
+    <p>MCP 的权限规则写法和命令名同一套前缀：<code>mcp__github</code> 是整个服务器，<code>mcp__github__*</code> 是它的全部工具，<code>mcp__github__get_issue</code> 是单个工具。v2.1.299 之后一条规则<strong>只匹配它点名的那个服务器</strong>，<code>mcp__github</code> 不会再顺带匹配名叫 <code>github__x</code> 的服务器（以原文为准）。</p>
+    <p class="go">四种命令的名字长什么样，判断一下它们各是哪一种。</p>
+  </div>
+  <div class="lab"><div id="nmq"></div></div>
+  <div class="notes" id="n-ext"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 斜杠命令的四种来源？自定义命令放哪，同名谁生效？</summary><p class="ans">内置命令、Skills（自定义命令）、插件命令（/插件名:命令名）、MCP prompt（/mcp__服务器__prompt）。自定义命令推荐放 .claude/skills/名字/SKILL.md，旧位置 .claude/commands/名字.md 仍可用；同名时 Skill 优先。</p></details>
+    <details><summary>2. /branch、/fork、/subtask、/btw 的区别？</summary><p class="ans">/branch：你切进当前对话的副本，原对话保留，用 /resume 回去。/fork：把对话复制成独立的后台会话，各走各的，结果不回来。/subtask：起一个继承完整对话的分叉子代理，你继续干活，它完成后把结果交回当前对话。/btw：临时旁问，不污染主对话上下文。/fork 与 /subtask 在 v2.1.212 互换过角色。</p></details>
+    <details><summary>3. $ARGUMENTS、$0、!`命令`、@文件 何时由谁展开？</summary><p class="ans">都在提示词发给 Claude 之前由 Claude Code 展开：$ARGUMENTS 是全部参数，$0/$1 是按位置的单个参数（从 0 开始）；!`命令` 在本机先执行，输出原样插入（需要 allowed-tools 放行对应工具，且 UserPromptSubmit Hook 先于展开运行，拦下提示词时片段不执行）；@路径 引入文件内容。Claude 只看到展开后的结果。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 四种来源 ---------- */
+CH.layers($('#kd'), {
+  hint: '点一类命令。',
+  layers: [
+    { t: '程序功能', sub: 'Claude Code 自己执行', cls: 'c5', items: [
+      { t: '内置命令', d: '<code>/clear</code>、<code>/model</code>、<code>/rewind</code> 等，六十多个；直接由 Claude Code 执行，不是提示词。', tag: '自带' }
+    ] },
+    { t: '生成提示词', sub: '展开后交给 Claude', items: [
+      { t: 'Skill（自定义命令）', d: '读 SKILL.md → 解析 frontmatter → 替换 $ARGUMENTS 等变量 → 执行 !`命令` → 把结果发给 Claude。位置：<code>.claude/skills/</code>（项目）或 <code>~/.claude/skills/</code>（个人）。', tag: '你写的' },
+      { t: '随附 Skill', d: '<code>/code-review</code>、<code>/simplify</code>、<code>/loop</code>、<code>/batch</code>、<code>/debug</code> 等，随 Claude Code 发布，格式和自定义 Skill 相同。', tag: '自带' },
+      { t: '插件命令', d: '<code>/插件名:命令名</code>，来自已安装插件；无冲突时可省略前缀。', tag: '插件' },
+      { t: 'MCP prompt', d: '<code>/mcp__服务器__prompt名</code>，由 MCP 服务器提供 prompt 模板。', tag: 'MCP' }
+    ] }
+  ]
+});
+S.notes($('#n-kinds'), {
+  c: [
+    ['斜杠命令', '交互会话里控制 Claude 行为的快捷方式。'],
+    ['四种来源', '内置、Skill、插件、MCP prompt。'],
+    ['本质区别', '内置命令是程序功能；其余三种展开成提示词交给 Claude。']
+  ],
+  p: [
+    ['敲错命令', 'v2.1.236 起报错，不再静默执行最接近的命令；前缀和别名仍可用。'],
+    ['看全部', '敲 <code>/</code> 看列表，<code>/</code> 加字母过滤；<code>/help</code>。']
+  ]
+});
+
+/* ---------- 内置命令速查 ---------- */
+var BI = [
+  ['ctx', '/clear', '清空对话（别名 /reset、/new）'],
+  ['ctx', '/compact [指令]', '压缩对话，可附带“压缩时重点保留什么”'],
+  ['ctx', '/context', '彩色网格显示上下文占用，超限时明确警告'],
+  ['ctx', '/rewind', '回退代码和/或对话（别名 /checkpoint、/undo），见第 9 篇'],
+  ['ctx', '/resume [会话]', '恢复会话（别名 /continue）；无参数打开选择器'],
+  ['ctx', '/rename [名字]', '给当前会话起名，便于 claude -r 找回'],
+  ['ctx', '/branch [名字]', '切进当前对话的副本，原对话保留'],
+  ['ctx', '/fork [提示]', '复制成独立的后台会话，你留在原处'],
+  ['ctx', '/subtask <任务>', '起继承完整对话的分叉子代理，结果交回'],
+  ['ctx', '/btw [问题]', '临时旁问，不污染主对话'],
+  ['ctx', '/recap', '回到会话时显示前情摘要'],
+  ['ctx', '/goal <条件>', '注册会话级完成条件，Claude 跨轮做到满足；/goal clear 清除'],
+  ['ctx', '/export [文件]', '导出当前对话到文件或剪贴板'],
+  ['ctx', '/copy [N]', '复制回复到剪贴板'],
+  ['ctx', '/cd <路径>', '换工作目录且不打掉 prompt cache'],
+  ['ctx', '/add-dir <路径>', '加一个工作目录'],
+  ['model', '/model [模型]', '选模型，左右键调强度；选择会保存为新会话默认，按 s 只用于本会话'],
+  ['model', '/effort [级别]', 'low → medium → high → xhigh → max；滑块里另有 Ultracode 开关'],
+  ['model', '/fast [on|off]', '快速模式（仅部分 Opus 型号，以原文为准）'],
+  ['model', '/plan [描述]', '进入规划模式'],
+  ['model', '/output-style [名字]', '列出或切换输出风格（Default、Explanatory、Learning、Concise 等）'],
+  ['cfg', '/config', '设置面板（别名 /settings）；也支持 /config 键=值'],
+  ['cfg', '/permissions', '查看和修改权限规则（别名 /allowed-tools）'],
+  ['cfg', '/fewer-permission-prompts', '分析最近的 Bash/MCP 调用，生成允许清单写进 .claude/settings.json'],
+  ['cfg', '/hooks', '查看 hooks 配置'],
+  ['cfg', '/mcp', '管理 MCP 服务器与 OAuth'],
+  ['cfg', '/memory', '编辑 CLAUDE.md，开关 auto memory'],
+  ['cfg', '/init', '初始化 CLAUDE.md'],
+  ['cfg', '/skills', '列出可用 Skill（可输入过滤）'],
+  ['cfg', '/reload-skills', '不重启重新扫描 Skill 目录'],
+  ['cfg', '/skill-doctor', '看哪些 Skill 没用上、各占多少上下文'],
+  ['cfg', '/plugin', '管理插件；/reload-plugins 重新加载'],
+  ['cfg', '/sandbox', '开关沙箱模式'],
+  ['cfg', '/doctor', '诊断安装健康（随附 Skill，提出修复，确认后应用）'],
+  ['cfg', '/status', '版本、模型、账号、会话类型'],
+  ['cfg', '/usage', '用量面板（/cost、/stats 是打开对应标签页的别名）'],
+  ['cfg', '/statusline', '配置状态栏'],
+  ['cfg', '/keybindings', '打开 ~/.claude/keybindings.json'],
+  ['cfg', '/terminal-setup', '配置终端快捷键'],
+  ['cfg', '/tui [default|fullscreen]', '切换渲染器，fullscreen 无闪烁'],
+  ['rev', '/code-review [强度] [--fix] [--comment]', '随附 Skill：找正确性 bug；ultra 为云端多代理深度审查'],
+  ['rev', '/review', '/code-review 的完整别名'],
+  ['rev', '/simplify', '只做清理（复用、简化、效率）并应用，不找 bug'],
+  ['rev', '/security-review', '分析分支的安全漏洞'],
+  ['rev', '/diff', '查看未提交改动的交互式 diff'],
+  ['auto', '/loop [间隔] [提示]', '随附 Skill：按间隔重复执行（别名 /proactive）'],
+  ['auto', '/batch <指令>', '随附 Skill：用 worktree 编排大规模并行修改'],
+  ['auto', '/schedule [描述]', '创建云端定时任务（Routines）'],
+  ['auto', '/tasks', '查看和停止后台任务（shell 与子代理）'],
+  ['auto', '/workflows', '查看动态工作流的运行'],
+  ['auto', '/remote-control', '从 claude.ai 或手机继续本机会话（别名 /rc）'],
+  ['auto', '/teleport', '把网页端会话拉到本地终端（别名 /tp）'],
+  ['auto', '/desktop', '转到桌面应用继续（别名 /app）'],
+  ['auto', '/team-onboarding', '根据最近 30 天的使用记录生成新同事上手指南'],
+  ['auto', '/insights', '生成会话分析报告']
+];
+var BIG = { all: '全部', ctx: '会话与上下文', model: '模型与模式', cfg: '配置与诊断', rev: '审查', auto: '自动化与远程' };
+var biCat = 'all';
+var seg = $('#biSeg');
+Object.keys(BIG).forEach(function (k) { h('button', { 'data-v': k, text: BIG[k], 'aria-pressed': k === 'all' ? 'true' : 'false' }, seg); });
+S.seg(seg, function (v) { biCat = v; biDraw(); });
+function biDraw() {
+  var q = ($('#biQ').value || '').trim().toLowerCase(), box = $('#bi'), n = 0;
+  box.innerHTML = '';
+  BI.forEach(function (r) {
+    if (biCat !== 'all' && r[0] !== biCat) return;
+    if (q && (r[1] + r[2]).toLowerCase().indexOf(q) < 0) return;
+    n++;
+    h('div', { html: '<code>' + CH.esc(r[1]) + '</code>' + r[2] + (biCat === 'all' ? ' <span class="ch-pill">' + BIG[r[0]] + '</span>' : '') }, box);
+  });
+  if (!n) h('p', { class: 'bi-empty', text: '没有匹配的命令。' }, box);
+}
+$('#biQ').addEventListener('input', biDraw);
+biDraw();
+S.notes($('#n-builtin'), {
+  c: [
+    ['随附 Skill', '随 Claude Code 发布、像命令一样调用的 Skill，如 /code-review、/loop、/batch。'],
+    ['/goal', '会话级完成条件，Claude 跨多轮工作直到满足。'],
+    ['/cd', '换目录不丢 prompt cache。']
+  ],
+  p: [
+    ['看上下文', '<code>/context</code>；压缩用 <code>/compact 保留xx</code>。'],
+    ['少弹确认', '<code>/fewer-permission-prompts</code> 生成允许清单。'],
+    ['审查', '<code>/code-review high --fix</code> 找 bug 并修；<code>/simplify</code> 只清理。'],
+    ['已移除', '/pr-comments、/vim、/ultraplan；/agents 向导改为让 Claude 创建。']
+  ]
+});
+
+/* ---------- 分叉与旁问 ---------- */
+CH.cards($('#cpq'), {
+  opts: ['/branch', '/fork', '/subtask', '/btw'],
+  items: [
+    { t: 'Claude 正在改一个大模块，你突然想问一句“Python 的 walrus 运算符是哪个版本加的”，又不想打断它或污染上下文。', a: 3, why: '临时旁问用 /btw，问答不进主对话上下文。' },
+    { t: '你想让另一个会话从当前进度出发，独立试一遍 OAuth 方案，自己继续在原对话里推进主线。', a: 1, why: '/fork 复制成独立的后台会话，结果不回来，两边互不影响。' },
+    { t: '你希望有个帮手带着当前全部上下文去查“为什么 auth 测试偶发失败”，查完把结论交回给你。', a: 2, why: '/subtask 起继承完整对话的分叉子代理，完成后结果交回当前对话。' },
+    { t: '你想亲自换一种思路继续聊下去，但保留现在这条对话，万一不行还能回来。', a: 0, why: '/branch 让你切进副本，原对话保留，用 /resume 回去。' }
+  ]
+});
+S.notes($('#n-copy'), {
+  c: [
+    ['/branch', '你切进副本；原对话用 /resume 找回。'],
+    ['/fork', '副本成为独立后台会话，结果不回来。'],
+    ['/subtask', '分叉子代理继承完整对话，结果交回。'],
+    ['/btw', '临时旁问，不污染主对话。']
+  ],
+  p: [
+    ['判断口诀', '谁在副本里？结果回不回来？'],
+    ['版本坑', '/fork 与 /subtask 在 v2.1.212 互换角色，老教程可能说的是旧行为。'],
+    ['CLI 等价', '<code>claude --resume 名字 --fork-session "提示"</code>。']
+  ]
+});
+
+/* ---------- 功能卡 ---------- */
+$('#fc1').innerHTML = CH.file('.claude/skills/fix-issue/SKILL.md', CH.esc('---\nname: fix-issue\ndescription: 按编号修复 GitHub issue，遵循团队规范\nargument-hint: [issue 编号]\ndisable-model-invocation: true\n---\n修复 issue #$ARGUMENTS：\n1. 读 issue 描述\n2. 实现修复\n3. 补测试\n4. 提交'), '项目级，提交进 git 团队共享') +
+  '<p class="note">个人用放 <code>~/.claude/skills/fix-issue/SKILL.md</code>；调用：<code>/fix-issue 123</code>。</p>';
+S.notes($('#n-custom'), {
+  c: [
+    ['自定义命令 = Skill', '新写放 <code>.claude/skills/名字/SKILL.md</code>；旧 <code>.claude/commands/名字.md</code> 仍可用。'],
+    ['同名冲突', 'Skill 优先。'],
+    ['disable-model-invocation', '<code>true</code> 时只能你手动调用，适合有副作用的命令。'],
+    ['user-invocable', '<code>false</code> 时从 / 菜单隐藏，只给 Claude 用。']
+  ],
+  p: [
+    ['迁移', '把 <code>commands/x.md</code> 挪成 <code>skills/x/SKILL.md</code>。'],
+    ['description', '写清“做什么 + 何时用”，是自动调用的依据。'],
+    ['不要做', '一次性任务做成命令；复杂逻辑塞进命令文件；硬编码敏感信息。']
+  ]
+});
+
+/* ---------- 展开模拟 ---------- */
+var EX = [
+  { path: '.claude/skills/fix-issue/SKILL.md', tpl: '---\nname: fix-issue\ndescription: 按编号修复 GitHub issue\n---\n修复 issue #$ARGUMENTS，遵循团队规范。\n参考实现：@src/utils/helpers.js', call: '/fix-issue 123' },
+  { path: '.claude/skills/review-pr/SKILL.md', tpl: '---\nname: review-pr\ndescription: 按优先级审查 PR\nargument-hint: [PR号] [优先级]\n---\n审查 PR #$0，优先级 $1。\n当前分支：!`git branch --show-current`', call: '/review-pr 456 high' },
+  { path: '.claude/skills/commit/SKILL.md', tpl: '---\nname: commit\ndescription: 根据当前改动生成一次提交\nallowed-tools: Bash(git *)\n---\n## 上下文\n- 状态：!`git status --short`\n- 最近提交：!`git log --oneline -3`\n## 任务\n根据以上改动生成一次提交。$ARGUMENTS', call: '/commit 用英文写' }
+];
+var SH = { 'git branch --show-current': 'feature/ran-slicing', 'git status --short': ' M src/sched/prb.py\n?? tests/test_prb.py', 'git log --oneline -3': 'a1c3e9f fix: clamp PRB index\n77b20d4 feat: add slice weights\n3f0e1aa chore: bump deps' };
+var exI = 0;
+function exDraw() {
+  var e = EX[exI];
+  $('#exTpl').innerHTML = CH.file(e.path, CH.esc(e.tpl));
+  var call = $('#exIn').value.trim(), parts = call.split(/\s+/), name = parts.shift() || '';
+  var args = parts.join(' ');
+  var body = e.tpl.replace(/^---[\s\S]*?---\n/, '');
+  var out = CH.esc(body);
+  out = out.replace(/\$ARGUMENTS/g, function () { return '<mark>' + CH.esc(args) + '</mark>'; });
+  out = out.replace(/\$(\d)/g, function (m, d) { return '<mark>' + CH.esc(parts[+d] || '') + '</mark>'; });
+  out = out.replace(/!`([^`]+)`/g, function (m, c) { return '<mark class="sh">' + CH.esc(SH[c] || '(命令输出)') + '</mark>'; });
+  out = out.replace(/@(\S+)/g, function (m, f) { return '<mark class="at">[' + f + ' 的文件内容]</mark>'; });
+  var warn = '';
+  if (name !== '/' + e.path.split('/')[2]) warn = '\n\n（提示：命令名应是 /' + e.path.split('/')[2] + '，否则不会匹配这个 Skill）';
+  $('#exOut').innerHTML = out + CH.esc(warn);
+}
+S.seg($('#exSeg'), function (v) { exI = +v; $('#exIn').value = EX[exI].call; exDraw(); });
+$('#exIn').value = EX[0].call;
+$('#exIn').addEventListener('input', exDraw);
+exDraw();
+S.notes($('#n-expand'), {
+  c: [
+    ['$ARGUMENTS', '调用时命令后面的全部参数。'],
+    ['$0、$1…', '按位置的单个参数，从 0 开始。'],
+    ['!`命令`', '发给 Claude 之前先在本机执行，输出原样插入。'],
+    ['@路径', '引入文件内容。']
+  ],
+  p: [
+    ['shell 片段要放行', '<code>allowed-tools: Bash(git *)</code>。'],
+    ['Hook 先于展开', 'UserPromptSubmit 拦下提示词时，<code>!</code> 片段不执行（v2.1.299 起）。'],
+    ['项目根', '<code>${CLAUDE_PROJECT_DIR}</code> 展开为绝对路径。'],
+    ['原文 /commit 示例', '状态、diff、分支、最近 5 次提交都用 <code>!`git …`</code> 现取。']
+  ]
+});
+
+/* ---------- 读配置猜行为 ---------- */
+CH.cfg($('#cfgQ'), [
+  { path: '.claude/skills/deploy/SKILL.md', code: '---\nname: deploy\ndescription: Deploy the application to production\ndisable-model-invocation: true\nallowed-tools: Bash(npm *), Bash(git *)\n---\nDeploy to production: run tests, build, push, verify.',
+    q: '你说了一句“代码看起来都好了”，Claude 会自己跑这个部署吗？', opts: ['会，description 匹配就会自动调用', '不会，只有你敲 /deploy 才执行', '会，但要先弹权限确认'], a: 1,
+    why: '<code>disable-model-invocation: true</code> 让 Claude 不能自动调用，只能由你手动 <code>/deploy</code>。原文专门用这个例子说明：有副作用的流程不应该让 Claude 因为“代码看起来好了”就去部署。' },
+  { path: '项目里同时存在两个文件', code: '.claude/commands/review.md\n.claude/skills/review/SKILL.md',
+    q: '敲 /review 时用的是哪个定义？', opts: ['commands 里的旧命令', 'skills 里的 SKILL.md', '两个都加载，内容拼在一起'], a: 1,
+    why: '同名时 Skill 优先。原文排障一节的建议是删掉或改名其中一个，避免困惑。（补充：/review 同时也是随附的 /code-review 的别名，自定义同名 Skill 会造成更多混淆。）' },
+  { path: '.claude/skills/legacy-context/SKILL.md', code: '---\nname: legacy-context\ndescription: How the old billing system works. Use when touching billing/.\nuser-invocable: false\n---\nThe legacy billing system ...',
+    q: '你敲 / 的时候能在菜单里看到它吗？Claude 能用吗？', opts: ['菜单里看不到，Claude 能在相关时自动用', '菜单里能看到，Claude 不能用', '两边都看不到，等于禁用'], a: 0,
+    why: '<code>user-invocable: false</code> 只是从 / 菜单隐藏，Claude 仍可自动调用。原文的用法：不适合当“动作”的背景知识（比如老系统怎么工作）。' },
+  { path: '.claude/skills/commit/SKILL.md', code: '---\nname: commit\ndescription: Create a git commit with context\n---\n- Current status: !`git status`\n- Current diff: !`git diff HEAD`\nCreate a single commit.',
+    q: '没写 allowed-tools，这里的 !`git status` 会怎样？', opts: ['照常静默执行', '需要相应的 Bash 权限，否则会走权限确认或被拦', '被当成普通文本发给 Claude'], a: 1,
+    why: '原文的 /commit 示例写了 <code>allowed-tools: Bash(git *)</code>，排障一节也提示“用到 bash 命令时检查 allowed-tools”。没有放行时，执行要受当前权限规则约束（具体表现取决于权限模式，以原文和官方文档为准）。' },
+  { path: '~/.claude/settings.json 里有一个 UserPromptSubmit hook', code: '{\n  "hooks": {\n    "UserPromptSubmit": [\n      { "hooks": [ { "type": "command",\n        "command": "~/.claude/hooks/validate-prompt.py" } ] }\n    ]\n  }\n}',
+    q: '这个 hook 判定你的 /commit 提示词要拦截（decision: block）。commit Skill 里的 !`git diff HEAD` 还会执行吗？', opts: ['会，展开先于 hook', '不会，hook 在展开之前运行', '取决于 hook 的超时'], a: 1,
+    why: '原文注明（v2.1.299）：UserPromptSubmit hook 在命令展开之前运行，hook 拦下提示词，<code>!</code> 片段也不会执行。之后才是 UserPromptExpansion 事件。' }
+]);
+S.notes($('#n-cfg'), {
+  c: [
+    ['它为什么自己跑了', '没加 <code>disable-model-invocation: true</code>，description 又匹配上了。'],
+    ['它为什么没生效', '路径或 name 不对、同名被 Skill 覆盖、工具没放行。']
+  ],
+  p: [
+    ['排障清单（原文）', '文件在 <code>.claude/skills/名字/SKILL.md</code> 或 <code>.claude/commands/名字.md</code>；name 对；必要时重启或 <code>/reload-skills</code>；<code>/help</code> 看列表。'],
+    ['执行不如预期', '指令写得更具体、加示例、检查 allowed-tools、先用简单输入试。']
+  ]
+});
+
+/* ---------- 插件与 MCP 命令 ---------- */
+CH.cards($('#nmq'), {
+  opts: ['内置命令', 'Skill', '插件命令', 'MCP prompt'],
+  items: [
+    { t: '<code>/mcp__jira__create_issue "Bug title" high</code>', a: 3, why: 'mcp__服务器__prompt 的固定格式。' },
+    { t: '<code>/frontend-design:frontend-design</code>', a: 2, why: '插件名:命令名。' },
+    { t: '<code>/compact 只保留接口设计的讨论</code>', a: 0, why: '内置命令，参数是压缩时的重点指令。' },
+    { t: '<code>/apps/web:deploy</code>', a: 1, why: '嵌套目录 <code>apps/web/.claude/skills/</code> 里的同名 Skill，用路径前缀区分（第 4 篇）。' }
+  ]
+});
+S.notes($('#n-ext'), {
+  c: [
+    ['插件命令', '<code>/插件名:命令名</code>；无冲突可省略前缀；也可用空格分隔。'],
+    ['MCP 命令', '<code>/mcp__服务器__prompt名 [参数]</code>。']
+  ],
+  p: [
+    ['MCP 权限规则', '<code>mcp__github</code>（整个服务器）、<code>mcp__github__*</code>（全部工具）、<code>mcp__github__get_issue</code>（单个）。'],
+    ['v2.1.299 起', '规则只匹配点名的服务器，不再顺带匹配相似名字。']
+  ]
+});
+
+CH.tryNow($('#try'), '2', [
+  { t: '把你最常手打的一段指令做成 <code>.claude/skills/&lt;名字&gt;/SKILL.md</code>', d: '比如“按 Conventional Commits 写英文提交信息”，用 <code>!`git diff --staged`</code> 现取改动，加 <code>disable-model-invocation: true</code>。' },
+  { t: '下次 Claude 埋头干活时，用 <code>/btw</code> 问一个无关的小问题', d: '感受一下它不进主上下文。' },
+  { t: '跑一次 <code>/fewer-permission-prompts</code>', d: '看它从你最近的调用里提议放行哪些只读命令，挑合理的接受。' }
+]);

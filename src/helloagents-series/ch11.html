@@ -1,0 +1,432 @@
+---
+title: Agentic RL：从 SFT 到 GRPO
+desc: Hello-Agents 学习笔记（十一）：把数学题求解映射成强化学习；LLM 训练全景（预训练、SFT、奖励模型、PPO，RLHF 与 RLAIF）；PBRFT 与 Agentic RL 的 MDP 对比；GSM8K 的三种数据格式；准确率、长度惩罚、步骤奖励的计算器与奖励黑客；SFT 为什么是桥梁、LoRA 省多少参数；GRPO 的组内相对奖励与 KL 监控；评估指标与错误分析；端到端流程与分布式选型。
+kicker: <span>技术学习</span><span>Hello-Agents · 11</span><span>对应原书第 11 章</span><span>约 40 分钟</span>
+h1: 先教格式，<em>再让它自己摸索</em>
+lead: 前十篇都在模型之外下功夫：提示、工具、记忆、上下文、协议。第十一章第一次动模型本身：用 TRL 在 GSM8K 小学数学题上，先 SFT 教会 Qwen3-0.6B 怎么写解题步骤，再用 GRPO 让它在“答对有奖”的信号下自己改进。原理部分在《动手学现代强化学习》系列里讲得更深，这一篇抓原书的实操主线：数据怎么变格式、奖励怎么算、LoRA 省了什么、GRPO 每一步在算什么、训练时盯哪几个数、训完怎么找错。
+nav: why|为什么用 RL;mdp|Agentic RL;data|数据格式;reward|奖励函数;sft|SFT 与 LoRA;grpo|GRPO;eval|评估与错误分析;pipe|完整流程;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.rw { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 10px; }
+.rw label { display: grid; grid-template-columns: 8.5em minmax(0, 1fr) 4em; gap: 8px; align-items: center; font-size: 15px; color: var(--ink-3); margin-top: 6px; }
+.rw label b { font-family: var(--f-num); color: var(--ink); text-align: right; }
+.rw .out { font-family: var(--f-num); font-size: 15px; line-height: 1.9; color: var(--ink-2); background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 10px 14px; }
+.rw .out b { color: var(--ink); font-size: 18px; }
+@media (max-width: 700px) { .rw { grid-template-columns: minmax(0, 1fr); } }
+.grp { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.grp div { display: grid; grid-template-columns: minmax(0, 1fr) 4.5em 5em 5em; gap: 8px; align-items: center; font-size: 15px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); }
+.grp div .n { font-family: var(--f-num); text-align: right; }
+.grp div .pos { color: var(--ok); font-weight: 700; }
+.grp div .neg { color: var(--alert); font-weight: 700; }
+.grp .hd { background: none; border: 0; color: var(--ink-3); padding-top: 0; padding-bottom: 0; }
+.grp div input { width: 4em; font: inherit; font-family: var(--f-num); font-size: 15px; padding: 2px 6px; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); color: var(--ink); text-align: right; }
+@media (max-width: 560px) { .grp div { grid-template-columns: minmax(0, 1fr) 4em 4.2em; } .grp div .n.z { display: none; } }
+.fmt pre { margin: 10px 0 0; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Agentic RL 和传统的偏好强化微调（PBRFT）在 MDP 上有什么区别？为什么 RL 之前要先做 SFT？</li>
+    <li>准确率、长度惩罚、步骤奖励怎么算、怎么组合？奖励黑客是怎么发生的？</li>
+    <li>GRPO 为什么不需要价值模型？训练时 KL 和奖励各该怎么看？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么要用强化学习</h2><span class="meta">原书 11.1.1–11.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>把“Janet 的鸭子每天下 16 个蛋，早餐吃 3 个、做松饼用 4 个，剩下的每个卖 2 美元，每天赚多少”这道题映射到 RL：<strong>智能体</strong>是 LLM 推理系统，<strong>环境</strong>是题目和验证系统，<strong>状态</strong>是题目加已有推理步骤，<strong>行动</strong>是生成下一步推理或最终答案，<strong>奖励</strong>是答案对不对（对 +1，错 0）。监督学习的三个局限是：质量完全取决于数据（只能模仿，难以超越）、缺乏探索、难以直接优化多步推理的中间过程。RL 让模型自己生成多个候选、按正确性拿奖励，从而学会哪些推理路径更好，甚至找到比人工标注更好的解法。</p>
+    <p>原书还铺了一遍 LLM 训练全景：<strong>预训练</strong>在海量文本上做下一个词预测（自监督），学到语言规律和世界知识；<strong>后训练</strong>让模型学会听指令、对齐人类偏好，分三步：<strong>SFT</strong>（用 prompt–completion 对学会指令和格式）、<strong>奖励建模</strong>（用 chosen / rejected 偏好对训练一个打分模型，目标是让好回答得分高于差回答）、<strong>强化学习微调</strong>（经典是 PPO：最大化奖励，同时用 KL 散度约束不要离参考模型太远）。人工标偏好太贵，于是有了 <strong>RLAIF</strong>：用强模型代替人打分，原书说效果接近甚至超过 RLHF。</p>
+    <p class="go">每个公式属于哪一阶段？</p>
+  </div>
+  <div class="lab"><div id="lossCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>RLHF、DPO、GRPO 的完整推导在<a href="../2026-10-19-modernrl-7/">《动手学现代强化学习》07</a>、<a href="../2026-10-19-modernrl-8/">08</a>、<a href="../2026-10-19-modernrl-9/">09 篇</a>；多轮轨迹与信用分配在<a href="../2026-10-19-modernrl-11/">11 篇</a>；后训练在 Agent 体系里的位置见<a href="../2026-10-16-agent-8/">《深入理解 AI Agent》08 篇</a>。</div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="mdp">
+  <div class="part-head"><h2>Agentic RL：从单步打分到多步轨迹</h2><span class="meta">原书 11.1.3–11.1.4 节，表 11.1</span></div>
+  <div class="sec-lede">
+    <p>传统后训练原书称为 <strong>PBRFT</strong>（基于偏好的强化微调）：给一个问题，模型生成一个完整回答，按质量打一次分，本质是单步。<strong>Agentic RL</strong> 把 LLM 当成嵌在顺序决策循环里的可学习策略：多步与环境交互，每一步改变状态，每一步都可以有反馈，优化整条轨迹的累积奖励。原书的例子：分析一个 GitHub 仓库的代码质量，调 API 拿到结构 +0.1，读到代码 +0.1，分析合理 +0.2，报告质量高 +0.6，总分 1.0。</p>
+    <p>用 MDP 五元组（S, A, P, R, γ）对比就很清楚：PBRFT 的状态只是 prompt、时间跨度 T = 1、没有状态转移、只有终局奖励；Agentic RL 的状态是 (prompt, o<sub>1</sub>, …, o<sub>t</sub>)、T ≫ 1、行动既有文本也有工具调用、状态随行动演化、奖励可稀疏可密集，目标是最大化 Σ γ<sup>t</sup> r(s<sub>t</sub>, a<sub>t</sub>)。原书列了 Agentic RL 想赋予的六种能力：<strong>推理、工具使用、记忆、规划、自我改进、感知</strong>，正好对应本书前面几章靠工程手段实现的那些能力，现在换成用训练把它们写进参数。</p>
+    <p>HelloAgents 的实现：集成 Hugging Face 的 <strong>TRL</strong>，模型用 <strong>Qwen3-0.6B</strong>（普通 GPU 就能训）；四层结构是数据集层（GSM8KDataset、create_sft_dataset、create_rl_dataset）、奖励函数层（Accuracy、LengthPenalty、Step）、训练器层（SFTTrainerWrapper、GRPOTrainerWrapper），对外仍然是一个工具 <code>RLTrainingTool</code>，用 action 区分 load_dataset、create_reward、train、evaluate。</p>
+    <p class="go">先翻牌复习两种范式的差别。</p>
+  </div>
+  <div class="lab"><div id="mdpVs"></div></div>
+  <div class="notes" id="n-mdp"></div>
+</section>
+
+<section class="part" id="data">
+  <div class="part-head"><h2>GSM8K 与三种数据格式</h2><span class="meta">原书 11.2.1、11.2.3 节，表 11.2–11.3</span></div>
+  <div class="sec-lede">
+    <p>为什么拿数学题练？答案明确、能自动判对错，不需要人工标注或奖励模型；解题天然是多步推理；学到的推理能力可迁移。<strong>GSM8K</strong> 有 7473 道训练题、1319 道测试题，小学 2 到 8 年级难度，需要 2 到 8 步推理。原始答案里用 <code>&lt;&lt;48/2=24&gt;&gt;</code> 标中间计算，用 <code>#### 72</code> 标最终答案。</p>
+    <p>同一道题要变成两种训练格式。<strong>SFT 格式</strong>：prompt 套上模型的对话模板（Qwen 的 &lt;|im_start|&gt;），completion 是完整解题过程加 “Final Answer:”，模型学的是怎么组织输出。<strong>RL 格式</strong>：prompt 相同，但只给 <code>ground_truth</code>（最终答案），不给过程，模型必须自己生成推理，奖励只看答案。自定义数据只要准备 question 和 answer（以 #### 结尾）两个字段，用 <code>format_math_dataset(raw, format_type="sft" | "rl")</code> 转换，可以直接传入训练，也可以 <code>register_dataset</code> 注册后按名字复用；自定义奖励函数签名是 <code>f(completions, **kwargs) -&gt; List[float]</code>，从 kwargs 里取 ground_truth。</p>
+    <p class="go">切换三种格式，对比同一道题。</p>
+  </div>
+  <div class="lab fmt">
+    <div class="seg" id="fmtSeg"><button data-v="0" aria-pressed="true">原始格式</button><button data-v="1">SFT 格式</button><button data-v="2">RL 格式</button></div>
+    <pre class="code-plain" id="fmtBox"></pre>
+    <p class="note" id="fmtNote"></p>
+  </div>
+  <div class="notes" id="n-data"></div>
+</section>
+
+<section class="part" id="reward">
+  <div class="part-head"><h2>奖励函数：定义什么是好</h2><span class="meta">原书 11.2.2 节，表 11.4</span></div>
+  <div class="sec-lede">
+    <p>好的奖励函数要能清楚定义成功、提供梯度信号、方差不过大、容易调整组合；坏的奖励只在结束时给分、可被“作弊”、多目标互相矛盾、方差大到不收敛。HelloAgents 内置三种：<strong>准确率奖励</strong>，答对 1 答错 0（提取答案时要处理 “Final Answer:”、“####”、取最后一个数字，以及 72.0 与 72 视为相同）；<strong>长度惩罚</strong>，r = r<sub>acc</sub> − α · max(0, l − l<sub>target</sub>)，α 默认 0.001；<strong>步骤奖励</strong>，r = r<sub>acc</sub> + β · s，s 是检测到的推理步骤数，β 默认 0.1。后两者都<strong>只在答对时生效</strong>，防止模型为了少扣分写一个错的短答案、或者为了多拿分在错误答案里堆步骤。</p>
+    <p>三者可以组合：准确率 + 长度惩罚适合对话和问答（要简洁），准确率 + 步骤奖励适合教育和可解释场景（要过程），三者平衡则要仔细调 α、β，避免某一项主导。准确率奖励的缺点是<strong>稀疏</strong>：训练初期几乎全错，没有梯度信号，所以原书的自定义示例给了一个带容差的版本（误差小于 0.01 得 1，小于 1 得 0.8……）。</p>
+    <p class="go">调参数，看三项各贡献多少（原书的三组示例输出可以在这里复现）。</p>
+  </div>
+  <div class="lab">
+    <div class="rw">
+      <div>
+        <div class="seg" id="accSeg"><button data-v="1" aria-pressed="true">答对</button><button data-v="0">答错</button></div>
+        <label>输出长度 l <input type="range" id="lS" min="20" max="1200" step="10" value="500"><b id="lV">500</b></label>
+        <label>目标长度 l_target <input type="range" id="ltS" min="50" max="600" step="10" value="200"><b id="ltV">200</b></label>
+        <label>α（长度惩罚） <input type="range" id="aS" min="0" max="0.003" step="0.0001" value="0.001"><b id="aV">0.001</b></label>
+        <label>步骤数 s <input type="range" id="sS" min="0" max="10" step="1" value="3"><b id="sV">3</b></label>
+        <label>β（步骤奖励） <input type="range" id="bS" min="0" max="0.3" step="0.01" value="0.1"><b id="bV">0.10</b></label>
+      </div>
+      <div class="out" id="rwOut"></div>
+    </div>
+  </div>
+  <div class="lab"><p class="lab-t">这是不是奖励黑客？（原书习题 3）</p><div id="hackCards"></div></div>
+  <div class="notes" id="n-reward"></div>
+</section>
+
+<section class="part" id="sft">
+  <div class="part-head"><h2>SFT 是桥梁，LoRA 省显存</h2><span class="meta">原书 11.3 节，表 11.5</span></div>
+  <div class="sec-lede">
+    <p>为什么不直接上 RL？原书对比了两段输出：预训练模型对 Natalia 卖发夹那道题，回答冗长、没有结构、没有明确答案（“我不确定怎么算 48 的一半，也许该用计算器？”）；SFT 之后变成 “Step 1 … Step 2 … Final Answer: 72”。前一种输出<strong>无法提取答案、无法计算奖励</strong>，RL 根本无从下手。所以 SFT 的作用是：学会输出格式、学会基本推理模式、建立基线能力、缩小 RL 的探索空间。它是从预训练模型通往强化学习的桥梁。</p>
+    <p>全量微调 0.6B 模型约需 12 GB 显存（FP16），7B、13B 在消费级显卡上几乎不可能。<strong>LoRA</strong> 的假设是微调带来的权重变化是低秩的：ΔW = BA，B 是 d × r，A 是 r × k，r 远小于 d 和 k；冻结原权重 W，只训练 B 和 A，前向是 h = Wx + BAx。关键超参：<strong>rank</strong>（典型 4 到 64，默认 8）、<strong>alpha</strong>（实际更新为 (α / r)·BA，常取等于 rank）、<strong>target_modules</strong>（通常是注意力的 q、k、v、o 投影，也可加 MLP 的 gate、up、down）。优点是显存大降、训练更快、部署方便（只存小适配器）、不易过拟合；代价是效果通常略逊于全量微调。</p>
+    <p class="go">先估再算。</p>
+  </div>
+  <div class="lab"><div id="loraGuess"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：SFT 的 loss 和预训练的 loss</h4>
+    <p>公式几乎一样，都是负对数似然。区别在于<b>数据和计算范围</b>：预训练在海量无标注文本上对每个 token 计算；SFT 在少量 prompt–completion 对上，通常<b>只对 completion 部分</b>计算 loss（prompt 部分被掩掉），目的是学“给定这种输入，该输出什么样的回答”，而不是继续学语言本身。</p>
+  </div>
+  <div class="notes" id="n-sft"></div>
+</section>
+
+<section class="part" id="grpo">
+  <div class="part-head"><h2>GRPO：和同组的自己比</h2><span class="meta">原书 11.4 节，表 11.6</span></div>
+  <div class="sec-lede">
+    <p>PPO 在 LLM 上的麻烦：要训练一个<strong>价值模型</strong>来估计优势 A(s, a)，训练时同时维护<strong>四个模型</strong>（策略、参考、价值、奖励），工程复杂、显存吃紧，还容易奖励崩塌。<strong>GRPO</strong>（DeepSeek 提出）的核心想法：<strong>对同一个问题采样一组答案，用组内平均奖励当基线</strong>，相对奖励 r<sub>i</sub> − r̄ 就代替了优势函数，不再需要价值模型，只剩策略和参考两个模型，方差也更小；再加上 KL 惩罚 −β · D<sub>KL</sub>(π<sub>θ</sub> ‖ π<sub>ref</sub>) 防止偏离 SFT 模型太远、忘掉学到的格式。</p>
+    <p>训练循环五步：<strong>采样</strong>（每题生成 num_generations 个答案组成一组）→ <strong>算奖励</strong> → <strong>算相对奖励</strong> → <strong>带 KL 惩罚更新策略</strong> → 重复。kl_coef 太小（0.01）策略会跑偏、格式混乱，太大（0.5）学不动、难以超越 SFT，原书建议 0.05 到 0.1。训练时盯四个数：<strong>平均奖励</strong>应逐渐上升（不升查学习率、KL 系数、奖励设计；先升后降可能是过拟合或奖励崩塌）；<strong>KL</strong> 应在 0.01 到 0.1（大于 0.5 说明跑太远，小于 0.001 说明几乎没更新）；<strong>准确率</strong>应提升；<strong>生成质量</strong>要人工抽查。可以接 Weights &amp; Biases 或 TensorBoard 看曲线。</p>
+    <p class="go">一组四个答案（原书 11.4.3 节的例子），改奖励看相对奖励怎么变。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>优势计算</span><div class="seg" id="normSeg"><button data-v="0" aria-pressed="true">原书写法：r − 均值</button><button data-v="1">再除以组内标准差</button></div></div>
+    <div class="grp" id="grp"></div>
+    <p class="note" id="grpNote"></p>
+  </div>
+  <div class="lab"><p class="lab-t">训练曲线诊断</p><div id="monCards"></div></div>
+  <div class="notes" id="n-grpo"></div>
+</section>
+
+<section class="part" id="eval">
+  <div class="part-head"><h2>评估与错误分析</h2><span class="meta">原书 11.5 节，表 11.7</span></div>
+  <div class="sec-lede">
+    <p>评估分三类指标。<strong>准确性</strong>：准确率；<strong>Accuracy@K</strong>（采样 K 个，有一个对就算对，反映模型的“潜力”）；数值误差（区分“差一点”和“完全错”）。<strong>效率</strong>：平均长度（推理成本）、推理步骤数（2 到 5 步说明能系统分解，太多说明冗余）、推理时间。<strong>质量</strong>：格式正确率（基本要求）、推理连贯性、可解释性（后两者常需人工或评估模型）。</p>
+    <p>只看准确率不够，要看错在哪。原书把错误分四类：<strong>计算错误</strong>（思路对、算错，如 48/2 = 25）、<strong>推理错误</strong>（思路错，如该先除后加却先加后除）、<strong>理解错误</strong>（没读懂题，如问“总共”只算了一部分）、<strong>格式错误</strong>（答案对但缺 Final Answer 标记）。原书的示例分布是计算 42.1%、理解 28.9%、推理 23.7%、格式 5.3%；按难度分，1–2 步题 78.5%、3–4 步 58.3%、5 步以上只有 31.6%。结论：格式错误少说明 SFT 有效，计算错误多说明可以给它一个计算器工具，难题差说明多步推理还要加强。</p>
+    <p class="go">这些错答属于哪一类？</p>
+  </div>
+  <div class="lab"><div id="errSort"></div></div>
+  <div class="lab"><p class="lab-t">原书示例：不同难度的准确率</p><div id="diffBars"></div></div>
+  <div class="notes" id="n-eval"></div>
+</section>
+
+<section class="part" id="pipe">
+  <div class="part-head"><h2>完整流程、调参与分布式</h2><span class="meta">原书 11.6 节，表 11.8</span></div>
+  <div class="sec-lede">
+    <p>端到端流水线六个阶段：<strong>数据准备 → SFT 训练 → SFT 评估 → GRPO 训练 → GRPO 评估 → 部署</strong>，原书把它写成一个读 config.json 的 <code>AgenticRLPipeline</code> 类，每阶段记日志、存结果。快速上手时只用 10 个样本、1 个 epoch 跑通流程，准确率很低是正常的，因为模型只见过 0.7% 的训练样本。</p>
+    <p>调参三法：<strong>网格搜索</strong>（遍历组合，简单但贵）、<strong>随机搜索</strong>（随机采样，参数空间大时更高效）、<strong>贝叶斯优化</strong>（如 Optuna，用概率模型指导搜索，样本效率高）。常调的是学习率、LoRA rank、kl_coef。分布式基于 Accelerate：<strong>单机 2–8 卡用 DDP</strong>（每卡一份完整模型，数据切分）；<strong>大于 7B 用 DeepSpeed ZeRO-2 或 ZeRO-3</strong>（切分优化器状态、梯度乃至参数）；<strong>多节点用 ZeRO-3 + Offload</strong>。训练脚本本身不用改，换配置文件和启动命令即可。</p>
+    <p class="go">拿掉流水线的一环，看会出什么问题。</p>
+  </div>
+  <div class="lab"><div id="pipeP"></div></div>
+  <div class="notes" id="n-pipe"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01《面试问题总结》· RLHF 与 Agent</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="11-1">
+      <p class="iv-q">你知道 DeepSeek 的 GRPO 吗？它和 PPO 的主要区别是什么？优劣是什么？<small>Extra01 · RLHF 第 10 题</small></p>
+      <ul class="iv-a">
+        <li><b>核心区别</b>：PPO 用价值模型估计优势；GRPO 对同一问题采样一组回答，用组内奖励的均值（通常再除以标准差）做基线，去掉了价值模型。</li>
+        <li><b>优点</b>：少一个与策略同规模的模型，显存与工程复杂度下降；组内相对比较方差小；特别适合有可验证奖励的任务（数学、代码）。</li>
+        <li><b>缺点</b>：每题要多次采样，生成开销大；组内全对或全错时优势为 0，没有学习信号；奖励只在序列末尾，信用分配粗。</li>
+        <li><b>补充</b>：仍保留 KL 约束（或放进 loss），原式也保留了 PPO 的 clip；原书公式是简化写法。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="11-2">
+      <p class="iv-q">如何解决信用分配问题？token 级和序列级奖励有何不同？<small>Extra01 · RLHF 第 12 题</small></p>
+      <ul class="iv-a">
+        <li><b>问题</b>：只在最后判对错时，不知道是哪一步推理或哪次工具调用带来了成功或失败。</li>
+        <li><b>序列级</b>：整条回答一个分，简单、不易被钻空子，但信号稀疏、方差大（GRPO 默认如此）。</li>
+        <li><b>token / 步骤级</b>：每步给分（如原书例子里工具调用成功 +0.1），信号密集，但需要过程奖励模型或规则，容易被奖励黑客利用。</li>
+        <li><b>手段</b>：价值函数与 GAE、过程奖励模型（PRM）、按步骤的中间奖励、对多轮轨迹做回合级折扣。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="11-3">
+      <p class="iv-q">什么是 RLAIF？它的潜力和风险分别是什么？<small>Extra01 · RLHF 第 13 题</small></p>
+      <ul class="iv-a">
+        <li><b>定义</b>：用强 AI 模型代替人类给候选回答打分或排序，再训练奖励模型或直接做偏好优化。</li>
+        <li><b>潜力</b>：成本低、速度快、可规模化，原书称效果接近甚至超过 RLHF；评审标准可以写成显式的原则（宪法式）。</li>
+        <li><b>风险</b>：继承并放大评审模型的偏见（偏好长回答、偏好自己的风格）；评审模型被钻空子；与真实人类偏好脱节。需要人工抽检、多评审交叉和对抗测试。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="11-4">
+      <p class="iv-q">有微调过 Agent 能力吗？数据集怎么收集？<small>Extra01 · Agent 第 13 题</small></p>
+      <ul class="iv-a">
+        <li><b>SFT 数据</b>：用强模型在目标环境里跑出成功轨迹（含思考、工具调用、观察），过滤掉失败和格式错误的，统一成训练模板；也可以从线上日志中挑人工确认过的好轨迹。</li>
+        <li><b>RL 数据</b>：只需要任务和可验证的成功标准（测试用例、标准答案、环境状态），让模型自己探索。</li>
+        <li><b>流程</b>：先 SFT 学格式和工具调用协议，再 RL 提升成功率；评估看任务成功率、步数、工具调用正确率、格式正确率，并做错误分类。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. PBRFT 与 Agentic RL 的区别？为何先 SFT？</summary><p class="ans">PBRFT 的状态只有 prompt，T = 1，无状态转移，只有终局奖励，优化单个回答；Agentic RL 的状态包含历史观察 (prompt, o<sub>1</sub>, …, o<sub>t</sub>)，T ≫ 1，行动含文本与工具调用，状态随行动演化，奖励可稀疏可密集，优化轨迹的累积折扣奖励。先 SFT 是因为预训练模型输出没有结构、无法提取答案和计算奖励；SFT 教会格式和基本推理，建立基线、缩小 RL 的探索空间。</p></details>
+    <details><summary>2. 三种奖励怎么算？奖励黑客？</summary><p class="ans">准确率：答对 1 答错 0。长度惩罚：答对时 1 − α · max(0, l − l<sub>target</sub>)，答错为 0。步骤奖励：答对时 1 + β · s，答错为 0。组合时 r = r<sub>acc</sub> − α · max(0, l − l<sub>target</sub>) + β · s。奖励黑客是模型找到拿高分的捷径却没真正完成任务，如为步骤奖励堆砌空洞的“Step”、为长度惩罚只输出一个数字；对策是附加奖励只在答对时生效、给附加项设上限、人工抽检、多指标监控。</p></details>
+    <details><summary>3. GRPO 为何不需价值模型？KL 与奖励怎么看？</summary><p class="ans">GRPO 对同一问题采样一组回答，用组内平均奖励做基线，r<sub>i</sub> − r̄（常再除以标准差）代替优势函数，因此不需要价值模型，只保留策略与参考模型。平均奖励应逐渐上升，先升后降警惕过拟合或奖励崩塌；KL 应在 0.01–0.1，大于 0.5 说明偏离过远需增大 kl_coef 或降学习率，小于 0.001 说明几乎没更新；kl_coef 建议 0.05–0.1。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.cards($('#lossCards'), {
+  opts: ['预训练', 'SFT', '奖励建模', 'RL（PPO）'],
+  items: [
+    { t: 'L = −Σ<sub>t</sub> log P(x<sub>t</sub> | x<sub>1</sub>, …, x<sub>t−1</sub>)，在数 TB 文本上', a: 0, why: '下一个词预测，自监督。' },
+    { t: 'L = −Σ<sub>i</sub> log P(y<sub>i</sub> | x<sub>i</sub>)，在 prompt–completion 对上', a: 1, why: '形式与预训练相同，数据是少量带标注的指令—回答对。' },
+    { t: 'L = −E[log σ(r<sub>φ</sub>(x, y<sub>w</sub>) − r<sub>φ</sub>(x, y<sub>l</sub>))]', a: 2, why: '让更好的回答 y<sub>w</sub> 得分高于更差的 y<sub>l</sub>。' },
+    { t: 'J = E[r<sub>φ</sub>(x, y)] − β · D<sub>KL</sub>(π<sub>θ</sub> ‖ π<sub>ref</sub>)', a: 3, why: '最大化奖励，同时不要偏离参考模型太远。' }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['数学题的 RL 映射', '智能体 = LLM；环境 = 题目与验证；状态 = 题目 + 已有步骤；行动 = 下一步或答案；奖励 = 是否答对。'],
+    ['后训练三步', 'SFT（指令与格式）→ 奖励建模（偏好对）→ 强化学习微调（PPO + KL）。'],
+    ['RLAIF', '用强 AI 模型代替人类做偏好标注，成本低，效果接近 RLHF。']
+  ],
+  p: [
+    ['监督学习三局限', '质量取决于数据只能模仿；缺乏探索；难以优化多步中间过程。'],
+    ['KL 项的作用', '防止策略偏离参考（SFT）模型太远。']
+  ]
+});
+
+HB.vs($('#mdpVs'), {
+  a: 'PBRFT（偏好强化微调）', b: 'Agentic RL', k: 'MDP 要素',
+  rows: [
+    ['状态', 's<sub>0</sub> = prompt，T = 1', 's<sub>t</sub> = (prompt, o<sub>1</sub>, …, o<sub>t</sub>)，T ≫ 1'],
+    ['行动', '一次生成完整文本 y', '文本或工具调用，a<sub>t</sub> ∈ {文本, 工具}'],
+    ['转移', '无，直接终止', 's<sub>t+1</sub> ~ P(· | s<sub>t</sub>, a<sub>t</sub>)，例如带上搜索结果'],
+    ['奖励', '终局一次，常由奖励模型给', '可稀疏（完成 +1）、可密集（工具调用成功 +0.1）、可混合'],
+    ['目标', 'max E[r(s<sub>0</sub>, y)]', 'max E[Σ γ<sup>t</sup> r(s<sub>t</sub>, a<sub>t</sub>)]，τ 为整条轨迹']
+  ]
+});
+S.notes($('#n-mdp'), {
+  c: [
+    ['PBRFT', '单步：给问题生成一个回答，按质量打一次分。'],
+    ['Agentic RL', '把 LLM 当可学习策略嵌入多步决策循环，优化轨迹累积奖励。'],
+    ['六种能力', '推理、工具使用、记忆、规划、自我改进、感知。']
+  ],
+  p: [
+    ['技术选型', 'TRL + Qwen3-0.6B；对外是 RLTrainingTool。'],
+    ['RLTrainingTool 的 action', 'load_dataset、create_reward、train、evaluate。']
+  ]
+});
+
+/* ---------- 数据格式 ---------- */
+var FMT = [
+  ['问题: Natalia sold clips to 48 of her friends in April, and then she sold half\n      as many clips in May. How many clips did Natalia sell altogether in April\n      and May?\n答案: Natalia sold 48/2 = <<48/2=24>>24 clips in May.\n      Natalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.\n      #### 72', '原始格式给人看：&lt;&lt;…&gt;&gt; 是中间计算，#### 后是最终答案。'],
+  ['{\n  "prompt": "<|im_start|>user\\nNatalia sold clips to 48 of her friends...<|im_end|>\\n<|im_start|>assistant\\n",\n  "completion": "Let me solve this step by step.\\n\\nStep 1: ...\\n\\nFinal Answer: 72<|im_end|>"\n}', 'SFT 格式：prompt 套对话模板，completion 是完整过程 + Final Answer。模型学“怎么写”。'],
+  ['{\n  "prompt": "<|im_start|>user\\nNatalia sold clips to 48 of her friends...<|im_end|>\\n<|im_start|>assistant\\n",\n  "ground_truth": "72"\n}', 'RL 格式：prompt 相同，只给最终答案用于算奖励，过程必须模型自己生成。']
+];
+function fmt(i) { $('#fmtBox').textContent = FMT[i][0]; $('#fmtNote').innerHTML = FMT[i][1]; }
+S.seg($('#fmtSeg'), function (v) { fmt(+v); }); fmt(0);
+S.notes($('#n-data'), {
+  c: [
+    ['GSM8K', '7473 训练 + 1319 测试的小学数学应用题，2–8 步推理。'],
+    ['SFT 格式', 'prompt（对话模板）+ completion（完整过程与 Final Answer）。'],
+    ['RL 格式', 'prompt + ground_truth（只有最终答案）。']
+  ],
+  p: [
+    ['为何选数学题', '答案可自动判对错、天然多步、能力可迁移。'],
+    ['自定义数据', 'question + answer（#### 结尾）→ format_math_dataset(raw, format_type)。'],
+    ['自定义奖励签名', 'f(completions, **kwargs) → List[float]，ground_truth 从 kwargs 取。']
+  ]
+});
+
+/* ---------- 奖励计算器 ---------- */
+var acc = 1;
+function rw() {
+  var l = +$('#lS').value, lt = +$('#ltS').value, a = +$('#aS').value, s = +$('#sS').value, b = +$('#bS').value;
+  $('#lV').textContent = l; $('#ltV').textContent = lt; $('#aV').textContent = S.f(a, 4); $('#sV').textContent = s; $('#bV').textContent = S.f(b, 2);
+  var pen = acc ? a * Math.max(0, l - lt) : 0, bon = acc ? b * s : 0;
+  $('#rwOut').innerHTML = '准确率 r<sub>acc</sub> = ' + acc + '<br>长度惩罚 = −' + S.f(pen, 3) + (acc ? '' : '（答错不计）') + '<br>步骤奖励 = +' + S.f(bon, 2) + (acc ? '' : '（答错不计）') +
+    '<br><br>只用准确率 + 长度惩罚：<b>' + S.f(acc - pen, 3) + '</b><br>只用准确率 + 步骤奖励：<b>' + S.f(acc + bon, 2) + '</b><br>三者组合：<b>' + S.f(acc - pen + bon, 3) + '</b>' +
+    (acc && pen > 1 ? '<br><span style="color:var(--alert)">长度惩罚超过 1，答对反而得负分：α 或 l_target 设得不合理。</span>' : '');
+}
+S.seg($('#accSeg'), function (v) { acc = +v; rw(); });
+['#lS', '#ltS', '#aS', '#sS', '#bS'].forEach(function (x) { $(x).addEventListener('input', rw); });
+rw();
+HB.cards($('#hackCards'), {
+  opts: ['是奖励黑客', '不是'],
+  items: [
+    { t: '用了步骤奖励后，模型开始写“Step 1: 读题。Step 2: 继续读题。Step 3: 思考……”，一道两步题写出 9 个 Step。', a: 0, why: '为拿 β · s 堆砌空洞步骤。对策：给步骤奖励设上限、只统计含计算的步骤、或改成按步骤正确性打分。' },
+    { t: '用了长度惩罚后，模型的回答从平均 480 字缩到 220 字，准确率不变。', a: 1, why: '这正是长度惩罚想要的效果：更简洁、推理成本更低。' },
+    { t: '准确率奖励只取“最后一个数字”，模型学会在结尾列出好几个候选数字，最后一个恰好常是正确答案。', a: 0, why: '钻了答案提取规则的空子。对策：要求严格的 Final Answer 格式，格式不符判错。' },
+    { t: '训练后平均奖励升高，人工抽查发现推理也更清楚了。', a: 1, why: '奖励上升与真实质量提升一致，是正常的进步。' }
+  ]
+});
+S.notes($('#n-reward'), {
+  c: [
+    ['准确率奖励', 'r = 1（答对）或 0；稀疏，训练初期缺信号。'],
+    ['长度惩罚', 'r = r<sub>acc</sub> − α · max(0, l − l<sub>target</sub>)，α 默认 0.001，仅答对时生效。'],
+    ['步骤奖励', 'r = r<sub>acc</sub> + β · s，β 默认 0.1，仅答对时生效。'],
+    ['奖励黑客', '模型找到拿高分的捷径，却没真正完成任务。']
+  ],
+  p: [
+    ['原书示例', '目标 200、长度 500、α = 0.001 → 0.7；3 个步骤、β = 0.1 → 1.3。'],
+    ['组合选择', '准确 + 长度：对话问答；准确 + 步骤：教育可解释；三者：需仔细调权重。'],
+    ['答案提取要点', 'Final Answer / #### / 最后一个数字；72.0 与 72 视为相同。']
+  ],
+  ph: '公式与要点'
+});
+
+/* ---------- LoRA ---------- */
+S.guess($('#loraGuess'), {
+  q: '一个 4096 × 4096 的权重矩阵，用 rank = 8 的 LoRA，可训练参数量是原矩阵的几分之一？（填倍数，例如原矩阵是 LoRA 的 N 倍）',
+  unit: '倍', ans: 256,
+  why: '原矩阵 4096 × 4096 = 16,777,216；LoRA 是 r(d + k) = 8 × 8192 = 65,536，正好少 256 倍。rank 翻倍参数也翻倍，这就是 rank 越大表达力越强、越吃显存的原因。'
+});
+S.notes($('#n-sft'), {
+  c: [
+    ['SFT 的作用', '学输出格式、学推理模式、建立基线、缩小 RL 探索空间。'],
+    ['LoRA', 'ΔW = BA（d × r 与 r × k），冻结 W，只训练 B 与 A；h = Wx + BAx。']
+  ],
+  p: [
+    ['参数量', '原 d × k；LoRA r(d + k)。4096²、r = 8 时少 256 倍。'],
+    ['LoRA 超参', 'rank 4–64（默认 8）；alpha 常等于 rank，更新为 (α / r)·BA；target_modules 选 q/k/v/o（可加 MLP）。'],
+    ['显存参考', 'Qwen3-0.6B 全量微调约 12 GB（FP16）。']
+  ]
+});
+
+/* ---------- GRPO ---------- */
+var GA = [
+  ['48 + 24 = 72. Final Answer: 72', 1],
+  ['48 + 24 = 72. Final Answer: 72', 1],
+  ['48 + 24 = 70. Final Answer: 70', 0],
+  ['Let me think... 72. Final Answer: 72', 1]
+];
+var norm = false;
+function grp() {
+  var box = $('#grp');
+  var rs = GA.map(function (x) { return x[1]; });
+  var m = rs.reduce(function (s, x) { return s + x; }, 0) / rs.length;
+  var sd = Math.sqrt(rs.reduce(function (s, x) { return s + (x - m) * (x - m); }, 0) / rs.length);
+  box.innerHTML = '<div class="hd"><span>组内答案</span><span class="n">奖励</span><span class="n">相对奖励</span><span class="n z">更新方向</span></div>';
+  GA.forEach(function (x, i) {
+    var adv = norm ? (sd > 1e-9 ? (x[1] - m) / sd : 0) : x[1] - m;
+    var row = h('div', null, box);
+    h('span', { text: x[0] }, row);
+    var cell = h('span', { class: 'n' }, row);
+    var inp = h('input', { type: 'number', step: '0.1', value: x[1], 'aria-label': '奖励' }, cell);
+    inp.addEventListener('change', function () { GA[i][1] = +inp.value || 0; grp(); });
+    h('span', { class: 'n ' + (adv > 1e-9 ? 'pos' : adv < -1e-9 ? 'neg' : ''), text: (adv > 0 ? '+' : '') + S.f(adv, 2) }, row);
+    h('span', { class: 'n z', text: adv > 1e-9 ? '提高概率' : adv < -1e-9 ? '降低概率' : '不变' }, row);
+  });
+  var all = rs.every(function (x) { return x === rs[0]; });
+  $('#grpNote').innerHTML = '组内均值 r̄ = ' + S.f(m, 3) + (norm ? '，标准差 = ' + S.f(sd, 3) : '') + '。' +
+    (all ? ' <b>全组奖励相同，相对奖励全为 0：这一题本轮没有任何学习信号。</b>这是 GRPO 的固有特点，所以题目难度要和模型水平匹配，太难（全错）太易（全对）都学不到东西。' :
+      ' 试着把第 4 个（对但啰嗦）的奖励改成 0.8（相当于加了长度惩罚），它的相对奖励会变低，模型就会倾向更简洁的写法。') +
+    (norm ? ' 除以标准差是 DeepSeekMath 原式的做法，让不同题目的优势尺度可比；原书正文写的是只减均值的简化形式。' : '');
+}
+S.seg($('#normSeg'), function (v) { norm = v === '1'; grp(); });
+grp();
+HB.cards($('#monCards'), {
+  opts: ['正常', '偏离过远', '几乎没学', '奖励崩塌或过拟合'],
+  items: [
+    { t: '平均奖励缓慢上升，KL 稳定在 0.03 左右。', a: 0, why: 'KL 在原书建议的 0.01–0.1 区间，奖励上升，健康。' },
+    { t: 'KL 一路涨到 0.8，抽查发现输出格式开始混乱。', a: 1, why: 'KL > 0.5 说明偏离参考模型太远，应增大 kl_coef 或降低学习率。' },
+    { t: 'KL 一直是 0.0003，平均奖励纹丝不动。', a: 2, why: 'KL < 0.001 说明策略几乎没更新，可以减小 kl_coef 或增大学习率。' },
+    { t: '平均奖励先升到 0.7，之后掉回 0.4，生成越来越短越来越怪。', a: 3, why: '先升后降是过拟合或奖励崩塌的信号，回看奖励设计，减小学习率或提早停止。' }
+  ]
+});
+S.notes($('#n-grpo'), {
+  c: [
+    ['PPO 的负担', '需要价值模型；四个模型（策略、参考、价值、奖励）；易不稳定。'],
+    ['GRPO', '同题采样一组，用组内均值做基线，相对奖励代替优势；只需策略与参考模型。'],
+    ['KL 惩罚', '−β · D<sub>KL</sub>(π<sub>θ</sub> ‖ π<sub>ref</sub>)，防止遗忘 SFT 学到的格式。']
+  ],
+  p: [
+    ['训练五步', '采样（num_generations）→ 奖励 → 相对奖励 → 带 KL 更新 → 重复。'],
+    ['kl_coef', '0.01 太小易跑偏；0.5 太大学不动；建议 0.05–0.1。'],
+    ['监控区间', '奖励应升；KL 0.01–0.1（> 0.5 跑偏，< 0.001 没学）；准确率升；人工抽查质量。'],
+    ['无信号情形', '组内奖励全相同时相对奖励为 0。']
+  ]
+});
+
+/* ---------- 评估 ---------- */
+S.sortGame($('#errSort'), {
+  bins: [{ k: 'c', t: '计算错误' }, { k: 'r', t: '推理错误' }, { k: 'u', t: '理解错误' }, { k: 'f', t: '格式错误' }],
+  items: [
+    { t: '“5 月卖了 48 / 2 = 25 个”', k: 'c', why: '思路对，算错了。' },
+    { t: '“先把 16 个蛋乘 2 美元，再减去吃掉的 7 个”', k: 'r', why: '运算顺序错，解题思路不对。' },
+    { t: '题目问“4 月和 5 月一共”，只算了 5 月的 24', k: 'u', why: '没读懂题目要求。' },
+    { t: '结尾写“所以答案是七十二”，没有 Final Answer 标记', k: 'f', why: '答案其实对，但格式不合要求，提取失败。' },
+    { t: '“每周 7 天，所以乘 7”（题目问的是每天）', k: 'u', why: '误解了问题的时间单位。' },
+    { t: '“9 × 2 = 16”', k: 'c', why: '典型计算错误，可以交给计算器工具。' }
+  ]
+});
+S.bars($('#diffBars'), [
+  { label: '简单（1–2 步，85 题）', value: 0.785, text: '78.5%' },
+  { label: '中等（3–4 步，96 题）', value: 0.583, text: '58.3%' },
+  { label: '困难（5 步以上，19 题）', value: 0.316, text: '31.6%', cls: 'cut' }
+]);
+S.notes($('#n-eval'), {
+  c: [
+    ['Accuracy@K', '采样 K 个答案，至少一个正确即算对，反映潜力。'],
+    ['三类指标', '准确性（准确率、@K、数值误差）、效率（长度、步数、时间）、质量（格式、连贯、可解释）。'],
+    ['四类错误', '计算错误、推理错误、理解错误、格式错误。']
+  ],
+  p: [
+    ['原书错误分布', '计算 42.1%、理解 28.9%、推理 23.7%、格式 5.3%。'],
+    ['按难度', '1–2 步 78.5%、3–4 步 58.3%、5 步以上 31.6%。'],
+    ['改进方向', '计算错多 → 给计算器工具；难题差 → 加强多步推理数据；格式错少 → SFT 有效。']
+  ]
+});
+
+/* ---------- 流程 ---------- */
+HB.pipe($('#pipeP'), {
+  intro: '六个阶段都在：数据 → SFT → 评估 → GRPO → 评估 → 部署。',
+  steps: [
+    { t: '数据准备', d: 'GSM8K 或自定义数据转 SFT / RL 格式', miss: '格式不对，训练器读不懂数据，或者 RL 拿不到 ground_truth 算不了奖励。' },
+    { t: 'SFT 训练', d: 'LoRA，学格式与推理模式', miss: '直接 GRPO：输出没有结构、提取不到答案，奖励几乎全 0，学不到东西。' },
+    { t: 'SFT 评估', d: '准确率、格式正确率', miss: '不知道 RL 的起点在哪，之后的提升无从比较。' },
+    { t: 'GRPO 训练', d: '奖励函数 + KL 约束', miss: '停在模仿水平，无法通过探索超越 SFT 数据。' },
+    { t: 'GRPO 评估', d: '同一测试集 + 错误分析', miss: '不知道 RL 有没有真提升，也可能没发现奖励黑客。' },
+    { t: '部署', d: '合并或挂载 LoRA 适配器，推理服务', miss: '模型只停留在实验目录里。' }
+  ]
+});
+S.notes($('#n-pipe'), {
+  c: [
+    ['端到端六阶段', '数据准备 → SFT → SFT 评估 → GRPO → GRPO 评估 → 部署。'],
+    ['调参三法', '网格搜索（贵但全）、随机搜索（高效）、贝叶斯优化（Optuna，样本效率高）。']
+  ],
+  p: [
+    ['分布式选型', '单机 2–8 卡 DDP；> 7B 用 ZeRO-2 / ZeRO-3；多节点 ZeRO-3 + Offload。'],
+    ['常调超参', '学习率、LoRA rank、kl_coef。'],
+    ['快速上手', '10 个样本、1 个 epoch 只为跑通流程，准确率低属正常。']
+  ]
+});

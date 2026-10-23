@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自建框架：从零写 HelloAgents</title>
+<meta name="description" content="Hello-Agents 学习笔记（七）：为什么自建框架、四条设计理念与“万物皆为工具”；HelloAgentsLLM 的多服务商与自动检测；Message、Config、Agent 抽象基类；SimpleAgent 的工具调用循环，ReAct、Reflection、Plan-and-Solve 的框架化；从文本协议到 Function Calling；Tool 基类、ToolRegistry、OpenAI schema、安全计算器与多源搜索降级。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 3.5v4M20.5 12h-4M12 20.5v-4M3.5 12h4' stroke='%2313171C' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.det { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 10px; }
+.det .env { display: flex; flex-direction: column; gap: 8px; }
+.det label { display: flex; gap: 8px; align-items: center; font-size: 15px; color: var(--ink-2); }
+.det label.txt { flex-direction: column; align-items: stretch; gap: 4px; }
+.det input[type=text] { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.det ol { margin: 0; padding-left: 1.4em; font-size: 15px; line-height: 1.75; color: var(--ink-3); }
+.det ol li.hit { color: var(--ink); font-weight: 600; }
+.det ol li.skip { text-decoration: line-through; }
+.det .res { margin-top: 8px; font-size: 17px; }
+.det .res b { font-family: var(--f-num); color: var(--s1); }
+@media (max-width: 700px) { .det { grid-template-columns: minmax(0, 1fr); } }
+.params { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.params div { display: grid; grid-template-columns: 1fr 0.8fr 1.6fr auto auto; gap: 6px; align-items: center; }
+.params input, .params select { font: inherit; font-size: 15px; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); min-width: 0; }
+.params label { font-size: 15px; color: var(--ink-3); display: flex; gap: 4px; align-items: center; }
+@media (max-width: 700px) { .params div { grid-template-columns: 1fr 1fr; } }
+.json { font-family: var(--f-num); font-size: 15px; white-space: pre; overflow-x: auto; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; margin-top: 10px; color: var(--ink); line-height: 1.55; }
+.fb { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.fb span { font-size: 15px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-3); }
+.fb span.ok { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.fb span.bad { border-color: var(--alert); background: var(--alert-soft); color: var(--ink); text-decoration: line-through; }
+.fb span.use { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); font-weight: 700; }
+</style>
+</head>
+<body data-series="helloagents-series" data-part="7">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Hello-Agents · 07</span><span>对应原书第 7 章</span><span>约 45 分钟</span></p>
+  <h1>把三个脚本，<em>收拢成一个框架</em></h1>
+  <p class="lead">第四篇的三个智能体各写各的：各有一个 LLM 客户端、一套工具管理、一份历史记录。第七章把它们收拢成一个小框架 HelloAgents：底层是统一的 LLM 接口、消息、配置和 Agent 基类，中间是四种范式的 Agent，旁边是一套工具系统。这一篇按“框架怎么搭起来”的顺序走：先看设计理念和目录，再看 LLM 怎么自动认出服务商，然后是三个基础类，最后是 Agent 和工具。后面几篇的记忆、RAG、上下文、协议，都是往这个框架里加工具。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">Hello-Agents：从零开始构建智能体</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 14 日的仓库版本）的学习笔记。原书十六章，按“概念 → 手写范式 → 平台与框架 → 自研框架 → 记忆、上下文、协议、训练、评估 → 综合案例”展开，代码量很大。这里重排成十三篇，用自己的话重讲：代码只保留能看清机制的骨架，做成可以逐行走读、可以填空回忆的互动；每篇末尾配原书面试题清单里的相关题目做口述演练。每节标出对应的原书章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-helloagents/"><b>总览</b>复习台</a>
+  <a href="../2026-10-22-helloagents-1/" data-part="1"><b>01</b>初识智能体</a>
+  <a href="../2026-10-22-helloagents-2/" data-part="2"><b>02</b>发展史</a>
+  <a href="../2026-10-22-helloagents-3/" data-part="3"><b>03</b>LLM 基础</a>
+  <a href="../2026-10-22-helloagents-4/" data-part="4"><b>04</b>经典范式</a>
+  <a href="../2026-10-22-helloagents-5/" data-part="5"><b>05</b>低代码平台</a>
+  <a href="../2026-10-22-helloagents-6/" data-part="6"><b>06</b>框架实践</a>
+  <a href="../2026-10-22-helloagents-7/" aria-current="page" data-part="7"><b>07</b>自建框架</a>
+  <a href="../2026-10-22-helloagents-8/" data-part="8"><b>08</b>记忆与检索</a>
+  <a href="../2026-10-22-helloagents-9/" data-part="9"><b>09</b>上下文工程</a>
+  <a href="../2026-10-22-helloagents-10/" data-part="10"><b>10</b>通信协议</a>
+  <a href="../2026-10-22-helloagents-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-22-helloagents-12/" data-part="12"><b>12</b>性能评估</a>
+  <a href="../2026-10-22-helloagents-13/" data-part="13"><b>13</b>综合案例</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么自建</a><a href="#arch">整体架构</a><a href="#llm">统一 LLM 接口</a><a href="#core">三个基础类</a><a href="#agents">Agent 框架化</a><a href="#proto">调用协议演进</a><a href="#tools">工具系统</a><a href="#iv">面试演练</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>HelloAgents 的四条设计理念是什么？“万物皆为工具”有什么好处和代价？</li>
+    <li>框架怎么自动认出你用的是哪家模型服务？优先级是什么？</li>
+    <li>从 <code>get_weather(city="北京")</code> 到 Function Calling，工具调用协议是怎么一步步演进的？工具怎样变成 OpenAI schema？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么自建，按什么原则建</h2><span class="meta">原书 7.1.1–7.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书先数落了现有框架的四个问题：<strong>过度抽象</strong>（LangChain 完成一个简单任务也要先懂 Chain、Agent、Tool、Memory、Retriever 十几个概念）、<strong>迭代太快不稳定</strong>（升级后代码跑不了）、<strong>黑盒化</strong>（核心逻辑封得太严，难以深度定制，社区不活跃时问题没人管）、<strong>依赖复杂</strong>（包大，易和别的项目冲突）。自建的价值则是从使用者跃迁为构建者：真正理解原理、完全掌控每一行、锻炼模块化与接口设计能力；何况金融、医疗等垂直领域本来就常要二次开发。</p>
+    <p>HelloAgents 的四条设计理念：<strong>轻量与教学友好</strong>（核心代码按章节组织，除 OpenAI SDK 和几个基础库外不引重依赖，出问题能直接读到源码）；<strong>基于标准 API</strong>（OpenAI 接口已是事实标准，不另造抽象，迁移和集成成本低）；<strong>渐进式学习</strong>（每章代码对应一个可 pip 安装的历史版本，比如本章对应 0.1.1）；<strong>万物皆为工具</strong>（除了 Agent 本身，Memory、RAG、RL、MCP 都抽象成工具，学习者回到“智能体调用工具”这一个核心逻辑上）。</p>
+    <p class="go">“万物皆为工具”是这本书后半部分的主线，先翻牌想清楚它的利弊（原书习题 1）。</p>
+  </div>
+  <div class="lab"><div id="allTool"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="arch">
+  <div class="part-head"><h2>整体架构：三层目录</h2><span class="meta">原书 7.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>框架遵循“<strong>分层解耦、职责单一、接口统一</strong>”：<code>core/</code> 是核心层（Agent 基类、统一 LLM 接口、消息、配置、异常）；<code>agents/</code> 是实现层（Simple、ReAct、Reflection、PlanAndSolve 四种 Agent）；<code>tools/</code> 是工具层（工具基类、注册表、工具链、异步执行器和内置的计算、搜索工具）。依赖方向是单向的：agents 依赖 core 和 tools，core 不依赖任何上层。</p>
+    <p class="go">点每个文件，看它负责什么、在本篇哪一节讲。</p>
+  </div>
+  <div class="lab"><div id="archL"></div></div>
+  <div class="notes" id="n-arch"></div>
+</section>
+
+<section class="part" id="llm">
+  <div class="part-head"><h2>统一 LLM 接口：自动认出服务商</h2><span class="meta">原书 7.2 节</span></div>
+  <div class="sec-lede">
+    <p>第四篇的 HelloAgentsLLM 只认一组 LLM_* 环境变量。框架版做了三件事：<strong>多服务商</strong>（ModelScope、OpenAI、智谱等，新服务商通过继承并重写初始化逻辑加入，think 等方法直接继承）；<strong>本地模型</strong>（vLLM 和 Ollama 都提供兼容 OpenAI 的接口，原书示例用 vLLM 起 Qwen1.5-0.5B-Chat 在 8000 端口，Ollama 默认 11434 端口）；<strong>自动检测</strong>，遵循“约定优于配置”。</p>
+    <p>自动检测由两个方法配合：<code>_auto_detect_provider</code> 推断服务商，<code>_resolve_credentials</code> 按服务商去找对应的密钥变量并补上默认 base_url。推断按优先级：<strong>① 特定服务商的环境变量</strong>（MODELSCOPE_API_KEY、OPENAI_API_KEY、ZHIPU_API_KEY……有一个就定了，最可靠）；<strong>② 解析 LLM_BASE_URL</strong>（域名匹配云服务商；localhost 或 127.0.0.1 再看端口，11434 是 Ollama、8000 是 vLLM，其他算 local）；<strong>③ 分析 LLM_API_KEY 的格式</strong>（如 ms- 前缀是 ModelScope，可能有歧义，只作辅助）；都不行就返回 auto，用通用配置。</p>
+    <p class="go">勾选环境变量、填 URL 和密钥，看检测逻辑一条条怎么走。试试原书习题 2：同时设置 OPENAI_API_KEY 和 localhost:11434。</p>
+  </div>
+  <div class="lab">
+    <div class="det">
+      <div class="env" id="detEnv"></div>
+      <div><ol id="detSteps"></ol><p class="res" id="detRes"></p></div>
+    </div>
+    <p class="note" id="detNote"></p>
+  </div>
+  <div class="notes" id="n-llm"></div>
+</section>
+
+<section class="part" id="core">
+  <div class="part-head"><h2>三个基础类：Message、Config、Agent</h2><span class="meta">原书 7.3 节</span></div>
+  <div class="sec-lede">
+    <p><strong>Message</strong> 用 Pydantic 的 BaseModel 定义，role 用 <code>Literal["user", "assistant", "system", "tool"]</code> 限死四种取值，正好对应 OpenAI 规范；除了 content 和 role 还带 timestamp 和 metadata，给日志和扩展留余地；<code>to_dict()</code> 只输出 role 和 content 交给 API。原书概括为“<strong>对内丰富，对外兼容</strong>”。</p>
+    <p><strong>Config</strong> 把散落在代码里的参数集中起来（默认模型、温度、max_tokens、debug、日志级别、最大历史长度），每项都有默认值保证零配置可用，<code>from_env()</code> 允许用环境变量覆盖，换部署环境不改代码。</p>
+    <p><strong>Agent</strong> 是继承 ABC 的抽象基类：构造函数明确核心依赖（名称、LLM、系统提示词、配置），自带 <code>_history</code> 和 add_message、clear_history、get_history 这些通用方法，最重要的是 <code>@abstractmethod run()</code>，强制每个子类都有统一的执行入口。这就是“接口统一”的落点：调用方只认 <code>agent.run(text)</code>，不关心背后是 ReAct 还是 Reflection。</p>
+    <p class="go">合上书，补全 Agent 基类。</p>
+  </div>
+  <div class="lab"><div id="agentBlank"></div></div>
+  <div class="notes" id="n-core"></div>
+</section>
+
+<section class="part" id="agents">
+  <div class="part-head"><h2>Agent 的框架化</h2><span class="meta">原书 7.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>SimpleAgent</strong> 是最基础的对话智能体，也是理解框架的入口。它把消息拼成 OpenAI 格式（系统提示词 + 历史 + 当前输入）；没工具就直接 <code>llm.invoke</code>；有工具就在系统提示词后面追加“可用工具”和调用格式 <code>[TOOL_CALL:工具名:参数]</code>，然后进入 <code>_run_with_tools</code> 循环：调模型 → 正则抠出所有工具调用 → 执行 → 把去掉标记的回答作为 assistant 消息、把工具结果作为一条 user 消息追加 → 再调模型，直到不再出现工具调用或达到 max_tool_iterations。另外提供 <code>stream_run</code> 流式输出和 add_tool、list_tools 等便利方法。</p>
+    <p><strong>ReActAgent</strong> 核心逻辑和第四篇一样，改进有三：工具来自统一的 <code>ToolRegistry</code>（而不是专用的 ToolExecutor）；提示词更严谨（强调每次只执行一步、只有确信信息足够才 Finish、工具信息不够就换参数再查）；可以用 <code>custom_prompt</code> 整体替换模板，跑满步数也会返回一句明确的失败信息并记入历史。<strong>Reflection</strong> 和 <strong>Plan-and-Solve</strong> 的默认提示词改成了通用版本（不再只针对代码或数学），通过 <code>custom_prompts</code> 字典按角色（initial / reflect / refine，或 planner / executor）定制。</p>
+    <p>0.2.8 之后加了 <strong>FunctionCallAgent</strong>：不再靠提示词约束格式，而是把工具转成 OpenAI 函数 schema，调用 <code>chat.completions.create(tools=…, tool_choice=…)</code>，由模型原生返回结构化的函数名和 JSON 参数，框架只需解析 JSON 并做类型转换。原书说这比提示词约束的方式更鲁棒。</p>
+    <p class="go">走一遍 SimpleAgent 带工具的一次运行。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">MySimpleAgent._run_with_tools 逐步走读（据原书 7.4.1 节精简，模型输出为示意）</p>
+    <div id="saTrace"></div>
+  </div>
+  <div class="notes" id="n-agents"></div>
+</section>
+
+<section class="part" id="proto">
+  <div class="part-head"><h2>工具调用协议的四次演进</h2><span class="meta">原书第 1、4、7 章对照</span></div>
+  <div class="sec-lede">
+    <p>这本书前七章里，“模型怎么告诉程序要调哪个工具”换了四种写法，放在一起看最清楚。前三种都是<strong>文本协议</strong>：模型写一段约定格式的字符串，宿主用正则抠出来；第四种是<strong>原生 Function Calling</strong>：工具以 JSON Schema 交给 API，模型返回结构化的调用对象。从前到后，宿主的解析工作越来越少，格式出错的机会也越来越少，但对模型和服务商的要求越来越高。</p>
+    <p class="go">先想一想右列，再翻开。</p>
+  </div>
+  <div class="lab"><div id="protoVs"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Function Calling 让模型执行了函数吗</h4>
+    <p>没有。Function Calling 只是把模型的输出从“一行约定格式的文本”换成了“结构化的 tool_calls 对象”（函数名 + JSON 参数）。<b>执行仍然是你的代码</b>：解析参数、调用函数、把结果作为 role 为 tool 的消息追加回去，再请模型继续。和第一篇说的“Observation 是你的代码写的”完全一致。</p>
+  </div>
+  <div class="notes" id="n-proto"></div>
+</section>
+
+<section class="part" id="tools">
+  <div class="part-head"><h2>工具系统</h2><span class="meta">原书 7.5 节</span></div>
+  <div class="sec-lede">
+    <p><strong>Tool 基类</strong>只有 name、description 和两个抽象方法：<code>run(parameters: dict) → str</code>（统一执行接口）和 <code>get_parameters() → List[ToolParameter]</code>（自描述：我需要哪些参数）。<strong>ToolParameter</strong> 记录参数名、类型、描述、是否必需、默认值。有了自描述，就能自动生成文档、做参数校验，以及用 <code>to_openai_schema()</code> 把工具转成 Function Calling 需要的 JSON Schema（必需参数进 required 列表；OpenAI schema 不支持 default 字段，所以默认值写进描述；数组类型补 items）。</p>
+    <p><strong>ToolRegistry</strong> 是管理中枢，两种注册方式：<code>register_tool(Tool)</code> 适合复杂工具，有完整参数定义；<code>register_function(name, description, func)</code> 适合简单函数，快速接入。<code>get_tools_description()</code> 生成塞进提示词的工具清单，<code>execute_tool()</code> 按名字执行。</p>
+    <p>两个示例工具各有一个值得记的工程细节。<strong>计算器</strong>不用 eval，而是用 <code>ast.parse</code> 解析表达式，只认常数、四则运算和白名单函数（sqrt、pi），其他节点一律拒绝，避免模型生成的“表达式”执行任意代码。<strong>多源搜索</strong>的 hybrid 模式：优先 Tavily（为 AI 优化的搜索），失败降级到 SerpApi，都不可用就明确提示配置哪个密钥，结果统一格式化成“AI 摘要 + 前三条标题、摘录、来源”。原书还给了<strong>工具链</strong>（多个工具顺序执行，前一步输出按模板填进后一步输入）和<strong>异步执行器</strong>（线程池并行跑多个工具）。</p>
+    <p class="go">编辑参数定义，看 to_openai_schema() 生成什么；再切换搜索后端的状态，看 hybrid 模式最后用了谁。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">ToolParameter → OpenAI schema</p>
+    <div class="bg-in"><input id="tName" value="get_current_weather" aria-label="工具名" style="font-family:var(--f-num);font-size:15px;padding:6px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);color:var(--ink);width:100%"></div>
+    <div class="params" id="params"></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn" type="button" id="addP">加一个参数</button></div>
+    <div class="json" id="schema"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">多源搜索的降级（hybrid 模式）</p>
+    <div class="selrow"><span>Tavily</span><div class="seg" id="tvSeg"><button data-v="ok" aria-pressed="true">可用</button><button data-v="err">调用报错</button><button data-v="none">未配置密钥</button></div></div>
+    <div class="selrow"><span>SerpApi</span><div class="seg" id="spSeg"><button data-v="ok" aria-pressed="true">可用</button><button data-v="err">调用报错</button><button data-v="none">未配置密钥</button></div></div>
+    <div class="fb" id="fbOut"></div>
+    <p class="note" id="fbNote"></p>
+  </div>
+  <div class="notes" id="n-tools"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 7 章习题</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="7-1">
+      <p class="iv-q">LLM 是如何学会调用外部 API 或工具的？请从 Function Calling 的角度解释。<small>Extra01 · Agent 第 5 题</small></p>
+      <ul class="iv-a">
+        <li><b>训练侧</b>：模型在包含“工具描述 + 何时调用 + 调用参数”的数据上做指令微调，学会在需要时输出结构化的调用而不是直接回答。</li>
+        <li><b>接口侧</b>：开发者在请求里用 JSON Schema 描述工具（名称、描述、参数类型与必需项）；模型返回 tool_calls（函数名 + JSON 参数）或普通文本；tool_choice 控制是否强制调用。</li>
+        <li><b>执行侧</b>：宿主解析参数、执行函数，把结果作为 role=tool 的消息追加，再请模型继续，直至给出最终回答。模型本身不执行任何东西。</li>
+        <li><b>对比文本协议</b>：不用正则、格式更稳，但依赖模型与服务商支持；描述写得好坏仍然决定选得对不对。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="7-2">
+      <p class="iv-q">“万物皆为工具”的设计有什么优势和局限？<small>原书第 7 章习题 1</small></p>
+      <ul class="iv-a">
+        <li><b>优势</b>：概念统一，学一个“调用工具”就够；Agent 主循环不用为记忆、检索、协议各写一套分支；新能力即插即用，按需加载。</li>
+        <li><b>局限</b>：有些能力不该由模型“决定是否调用”，比如每轮都要注入的上下文、必须执行的安全检查、对话结束后的记忆写入，做成工具可能被模型漏调；工具多了会挤占上下文、增加选错概率；跨工具的状态共享不自然。</li>
+        <li><b>折中</b>：确定性的步骤放在框架的固定流程里（钩子、中间件），需要模型判断的才做成工具。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="7-3">
+      <p class="iv-q">Agent 基类公开 run、把具体逻辑留给抽象方法，这是什么设计模式？配置为什么常做成单例？<small>原书第 7 章习题 3</small></p>
+      <ul class="iv-a">
+        <li><b>模板方法模式</b>：基类在公开方法里固定流程骨架（记录历史、计时、异常处理），把可变步骤交给子类实现的抽象方法；保证所有 Agent 行为一致，子类只关心核心逻辑。</li>
+        <li><b>单例</b>：全局只有一份配置实例，各模块读到的设置一致；避免重复读取环境变量，也避免某处修改后其他地方仍用旧值。代价是全局状态不利于测试，可用依赖注入替代。</li>
+        <li><b>Pydantic 的好处</b>：类型校验、默认值、序列化，错误在构造时就暴露。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="try">
+    <h4>动手练（原书习题 4、6）</h4>
+    <ol>
+      <li>给 ReflectionAgent 加“质量评分”：分数达标就提前停。<details><summary>思路</summary><p>反思提示词要求输出 JSON：{"score": 1–10, "feedback": "..."}，解析失败时按 0 分处理并记录；score ≥ 阈值直接返回当前版本。比找“无需改进”这几个字可靠，也能画出每轮分数曲线。</p></details></li>
+      <li>实现一个 Tree-of-Thought Agent。<details><summary>思路</summary><p>继承 Agent，run 里维护一个候选队列：每步让模型对当前状态生成 k 个下一步思路，再让模型（或规则）给每个思路打分，保留前 b 个继续扩展（束搜索），到达深度或得到满意解时返回。注意成本是 k × b × 深度次调用。</p></details></li>
+    </ol>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 四条设计理念？万物皆工具的利弊？</summary><p class="ans">轻量与教学友好、基于标准 OpenAI API、渐进式学习（每章一个可安装版本）、万物皆为工具（Memory、RAG、RL、MCP 都是工具）。好处是概念统一、主循环简单、能力即插即用；代价是必须执行的步骤可能被模型漏调、工具多了挤占上下文和增加误选，因此确定性的步骤更适合放进框架的固定流程。</p></details>
+    <details><summary>2. 自动检测的优先级？</summary><p class="ans">先看特定服务商的环境变量（MODELSCOPE_API_KEY、OPENAI_API_KEY、ZHIPU_API_KEY……），有就直接确定；再解析 LLM_BASE_URL（域名识别云服务商，localhost 加端口识别 Ollama 11434、vLLM 8000、其他 local）；再看 LLM_API_KEY 的格式（如 ms- 前缀）；都不行返回 auto。之后 _resolve_credentials 按服务商找密钥并补默认 base_url。所以同时设了 OPENAI_API_KEY 和 localhost:11434 时会判成 openai。</p></details>
+    <details><summary>3. 协议怎么演进？工具怎么变成 schema？</summary><p class="ans">第 1 章 Action 写 Python 调用风格 get_weather(city="北京")；第 4 章 Search[输入]；第 7 章 SimpleAgent 用 [TOOL_CALL:工具名:参数]，三者都靠正则解析；FunctionCallAgent 改用原生 Function Calling，模型返回结构化 tool_calls。to_openai_schema() 遍历 ToolParameter：每个参数生成 type 与 description，required 的进 required 列表，默认值写进描述（schema 不支持 default），数组补 items，外层包成 {type: function, function: {name, description, parameters}}。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-helloagents-6/"><small>上一篇</small><span>06 · 框架实践：AutoGen、AgentScope、CAMEL、LangGraph</span></a><a class="nx" href="../2026-10-22-helloagents-8/"><small>下一篇</small><span>08 · 记忆与检索：Memory 与 RAG</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">datawhalechina/hello-agents</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 设计理念 ---------- */
+HB.vs($('#allTool'), {
+  a: '收益', b: '代价与对策', k: '把它做成工具',
+  rows: [
+    ['Memory', '模型需要时主动 recall / store，主循环不用为记忆写分支', '模型可能忘了存或忘了取；关键信息的写入更适合放在每轮结束的固定钩子里'],
+    ['RAG', '检索变成一次普通的工具调用，和搜索、计算器平级', '每轮都该参考知识库的场景，交给模型决定会漏检；工具结果过长挤占上下文'],
+    ['MCP', '外部服务按协议接进来，就是多了几个工具', '一个 MCP 服务可能带来几十个工具，需要按需加载或检索工具'],
+    ['RL 训练', '训练流程也通过工具接口触发，概念统一', '训练是长时间离线任务，更像是外部系统而非对话中的即时动作']
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['现有框架四问题', '过度抽象、迭代快不稳定、黑盒化、依赖复杂。'],
+    ['四条设计理念', '轻量教学友好、基于标准 OpenAI API、渐进式学习、万物皆为工具。']
+  ],
+  p: [
+    ['万物皆为工具', '除 Agent 外，Memory、RAG、RL、MCP 都抽象为工具。'],
+    ['确定性 vs 判断', '必须发生的步骤放固定流程，需要模型判断的才做成工具。']
+  ]
+});
+
+/* ---------- 架构 ---------- */
+HB.layers($('#archL'), {
+  hint: '点一个文件，看它负责什么。',
+  layers: [
+    { t: 'core/ 核心层', sub: '不依赖上层', items: [
+      { t: 'agent.py', d: 'Agent 抽象基类：名称、LLM、系统提示词、配置、历史，抽象方法 run()。', tag: '三个基础类' },
+      { t: 'llm.py', d: 'HelloAgentsLLM：多服务商、本地模型、自动检测；think / invoke / stream_invoke。', tag: '统一 LLM 接口' },
+      { t: 'message.py', d: 'Message：Literal 限定四种角色，带时间戳和元数据，to_dict 对外兼容 OpenAI。', tag: '三个基础类' },
+      { t: 'config.py', d: 'Config：集中配置、默认值、from_env 覆盖。', tag: '三个基础类' },
+      { t: 'exceptions.py', d: '框架统一的异常体系。' }
+    ] },
+    { t: 'agents/ 实现层', sub: '继承 Agent', items: [
+      { t: 'simple_agent.py', d: '基础对话 + 可选 [TOOL_CALL] 工具循环 + 流式。', tag: 'Agent 框架化' },
+      { t: 'react_agent.py', d: 'ReAct：ToolRegistry + 更严谨的模板 + custom_prompt。', tag: 'Agent 框架化' },
+      { t: 'reflection_agent.py', d: '执行—反思—优化，通用默认提示词，custom_prompts 定制。', tag: 'Agent 框架化' },
+      { t: 'plan_solve_agent.py', d: '规划器 + 执行器，计划强制为 Python 列表。', tag: 'Agent 框架化' }
+    ] },
+    { t: 'tools/ 工具层', sub: '被 agents 使用', items: [
+      { t: 'base.py', d: 'Tool 基类与 ToolParameter：run、get_parameters、to_openai_schema。', tag: '工具系统' },
+      { t: 'registry.py', d: 'ToolRegistry：register_tool / register_function、描述、执行。', tag: '工具系统' },
+      { t: 'chain.py', d: 'ToolChain：多个工具顺序执行，输出按模板传给下一步。', tag: '工具系统' },
+      { t: 'async_executor.py', d: 'AsyncToolExecutor：线程池并行执行多个工具。', tag: '工具系统' },
+      { t: 'builtin/', d: 'calculator.py（ast 安全求值）、search.py（Tavily / SerpApi 混合）。', tag: '工具系统' }
+    ] }
+  ]
+});
+S.notes($('#n-arch'), {
+  c: [
+    ['三层', 'core 核心层、agents 实现层、tools 工具层。'],
+    ['三原则', '分层解耦、职责单一、接口统一。']
+  ],
+  p: [
+    ['依赖方向', 'agents → core、tools；core 不依赖上层。']
+  ]
+});
+
+/* ---------- 自动检测 ---------- */
+var ENV = [['MODELSCOPE_API_KEY', 'modelscope'], ['OPENAI_API_KEY', 'openai'], ['ZHIPU_API_KEY', 'zhipu']];
+var envOn = { OPENAI_API_KEY: true };
+var de = $('#detEnv');
+ENV.forEach(function (e) {
+  var lb = h('label', null, de);
+  var cb = h('input', { type: 'checkbox' }, lb);
+  cb.checked = !!envOn[e[0]];
+  h('span', { html: '设置了 <code>' + e[0] + '</code>' }, lb);
+  cb.addEventListener('change', function () { envOn[e[0]] = cb.checked; detect(); });
+});
+var lbu = h('label', { class: 'txt' }, de); h('span', { html: '<code>LLM_BASE_URL</code>' }, lbu);
+var iu = h('input', { type: 'text', value: 'http://localhost:11434/v1' }, lbu);
+var lbk = h('label', { class: 'txt' }, de); h('span', { html: '<code>LLM_API_KEY</code>' }, lbk);
+var ik = h('input', { type: 'text', value: '' }, lbk);
+[iu, ik].forEach(function (x) { x.addEventListener('input', detect); });
+function detect() {
+  var steps = [], res = null, why = '';
+  ENV.forEach(function (e) {
+    if (res) { steps.push(['skip', '检查 ' + e[0]]); return; }
+    if (envOn[e[0]]) { res = e[1]; steps.push(['hit', '检查 ' + e[0] + '：存在 → ' + e[1]]); why = '特定服务商的环境变量优先级最高，后面的规则都不再看。'; }
+    else steps.push(['', '检查 ' + e[0] + '：不存在']);
+  });
+  var u = iu.value.trim().toLowerCase(), k = ik.value.trim();
+  if (res) steps.push(['skip', '解析 LLM_BASE_URL']);
+  else if (!u) steps.push(['', '解析 LLM_BASE_URL：未设置']);
+  else {
+    if (u.indexOf('api-inference.modelscope.cn') >= 0) res = 'modelscope';
+    else if (u.indexOf('open.bigmodel.cn') >= 0) res = 'zhipu';
+    else if (u.indexOf('localhost') >= 0 || u.indexOf('127.0.0.1') >= 0) res = u.indexOf(':11434') >= 0 ? 'ollama' : u.indexOf(':8000') >= 0 ? 'vllm' : 'local';
+    steps.push([res ? 'hit' : '', '解析 LLM_BASE_URL：' + (res ? '命中 → ' + res : '没有可识别的域名或本地端口')]);
+    if (res) why = res === 'ollama' || res === 'vllm' || res === 'local' ? '本地地址按端口区分：11434 是 Ollama，8000 是 vLLM，其他本地端口记为 local。本地服务通常不需要密钥。' : '按域名特征识别云服务商。';
+  }
+  if (res) steps.push(['skip', '分析 LLM_API_KEY 格式']);
+  else if (k.indexOf('ms-') === 0) { res = 'modelscope'; steps.push(['hit', '分析 LLM_API_KEY：ms- 前缀 → modelscope']); why = '密钥格式只是辅助判断，可能有歧义，所以优先级最低。'; }
+  else steps.push(['', '分析 LLM_API_KEY 格式：无法判断']);
+  if (!res) { res = 'auto'; why = '都没识别出来，使用通用配置（LLM_API_KEY + LLM_BASE_URL）。'; }
+  $('#detSteps').innerHTML = steps.map(function (s) { return '<li class="' + s[0] + '">' + s[1] + '</li>'; }).join('');
+  $('#detRes').innerHTML = 'provider = <b>' + res + '</b>';
+  $('#detNote').textContent = why + (envOn.OPENAI_API_KEY && u.indexOf(':11434') >= 0 ? ' 习题 2 的情形：你本想用本地 Ollama，却因为环境里残留了 OPENAI_API_KEY 被判成 openai。这种优先级让“显式的服务商密钥”说了算，合理但容易踩坑，需要时直接传 provider 参数。' : '');
+}
+detect();
+S.notes($('#n-llm'), {
+  c: [
+    ['_auto_detect_provider', '按优先级推断服务商：专属环境变量 → base_url 域名 / 本地端口 → API 密钥格式 → auto。'],
+    ['_resolve_credentials', '按服务商查找对应密钥变量，并补上该服务商的默认 base_url。'],
+    ['约定优于配置', '只设 LLM_BASE_URL=http://localhost:11434/v1 即可用 Ollama，无需密钥和 provider。']
+  ],
+  p: [
+    ['本地端口', 'Ollama 11434，vLLM 8000。'],
+    ['加新服务商', '继承 HelloAgentsLLM 重写初始化逻辑，think 等方法直接继承。'],
+    ['踩坑', '残留的服务商专属环境变量会盖过 base_url 判断；必要时显式传 provider。']
+  ]
+});
+
+/* ---------- 基础类 ---------- */
+HA.blank($('#agentBlank'), {
+  code: String.raw`
+from abc import ABC, abstractmethod
+
+MessageRole = [[Literal["user", "assistant", "system", "tool"]]]
+
+class Agent([[ABC]]):
+    def __init__(self, name, llm, system_prompt=None, config=None):
+        self.name = name
+        self.llm = llm
+        self.system_prompt = system_prompt
+        self.config = config or [[Config()]]
+        self._history: list[Message] = []
+
+    [[@abstractmethod]]
+    def run(self, input_text: str, **kwargs) -> str:
+        pass
+
+    def add_message(self, message: Message):
+        self._history.append(message)`
+});
+S.notes($('#n-core'), {
+  c: [
+    ['Message', 'Pydantic 模型，role 限定四种，带 timestamp、metadata，to_dict 只输出 role 与 content。'],
+    ['Config', '集中配置，带默认值，from_env 用环境变量覆盖。'],
+    ['Agent 基类', 'ABC 抽象类：核心依赖 + 历史管理 + 抽象 run()，统一执行入口。']
+  ],
+  p: [
+    ['对内丰富，对外兼容', '内部消息带更多字段，发给 API 时只留标准字段。'],
+    ['接口统一', '调用方只认 agent.run(text)，不关心具体范式。']
+  ]
+});
+
+/* ---------- SimpleAgent 走读 ---------- */
+var SA = String.raw`
+def _run_with_tools(self, messages, input_text, max_tool_iterations):
+    current_iteration, final_response = 0, ""
+    while current_iteration < max_tool_iterations:
+        response = self.llm.invoke(messages)
+        tool_calls = self._parse_tool_calls(response)   # \[TOOL_CALL:([^:]+):([^\]]+)\]
+        if tool_calls:
+            tool_results, clean_response = [], response
+            for call in tool_calls:
+                tool_results.append(self._execute_tool_call(call['tool_name'], call['parameters']))
+                clean_response = clean_response.replace(call['original'], "")
+            messages.append({"role": "assistant", "content": clean_response})
+            messages.append({"role": "user",
+                "content": f"工具执行结果:\n{chr(10).join(tool_results)}\n\n请基于这些结果给出完整的回答。"})
+            current_iteration += 1
+            continue
+        final_response = response
+        break
+    if current_iteration >= max_tool_iterations and not final_response:
+        final_response = self.llm.invoke(messages)
+    self.add_message(Message(input_text, "user"))
+    self.add_message(Message(final_response, "assistant"))
+    return final_response
+`;
+function mb(r, t, hot) { return '<span class="box' + (hot ? ' hot' : '') + '"><b>' + r + '</b>: ' + t + '</span>'; }
+HA.trace($('#saTrace'), {
+  code: SA,
+  steps: [
+    { l: ['1-3'], t: '进入循环', s: '<p>run() 已拼好 messages：</p>' + mb('system', '你是一个智能助手，可以使用工具来帮助用户。\n## 可用工具\n- my_calculator: 简单的数学计算工具……\n## 工具调用格式\n[TOOL_CALL:{tool_name}:{parameters}]') + mb('user', '请帮我计算 15 * 8 + 32') },
+    { l: ['4-5'], t: '调模型并解析', s: '<p>模型输出（示意）：</p>' + mb('assistant(原始)', '我来计算一下。[TOOL_CALL:my_calculator:15 * 8 + 32]', true) + '<p>正则抠出 tool_name = my_calculator，parameters = 15 * 8 + 32。一次回复里可以有<b>多个</b>工具调用，会被逐个执行。</p>' },
+    { l: ['8-10'], t: '执行并清理', s: '<p>计算器用 ast 安全求值，返回 <code>152</code>。同时把调用标记从回复里删掉，得到 clean_response = “我来计算一下。”</p>' },
+    { l: ['11-13'], t: '追加两条消息', s: mb('assistant', '我来计算一下。') + mb('user', '工具执行结果:\n152\n\n请基于这些结果给出完整的回答。', true) + '<p>注意：工具结果是以 <b>user 角色</b>送回去的，这是文本协议下的折中；Function Calling 版本会用专门的 role=tool 消息。</p>' },
+    { l: ['3-5', '16-17'], t: '第二轮', s: '<p>模型这次不再调用工具：</p>' + mb('assistant', '15 × 8 + 32 = 152。') + '<p>没有工具调用即为最终回答，break。</p>' },
+    { l: ['18-19'], t: '兜底', s: '<p>如果模型一直在调工具、跑满 max_tool_iterations（默认 3），会再调一次模型强制拿一个回答。</p>' },
+    { l: ['20-22'], t: '记入历史', s: '<p>只把<b>用户输入和最终回答</b>写进 _history，中间的工具往返不保留。下一轮对话时模型看不到“152 是怎么算出来的”，这是一个有意的取舍：省上下文，但丢了过程。</p>' }
+  ]
+});
+S.notes($('#n-agents'), {
+  c: [
+    ['SimpleAgent', '对话 + 可选 [TOOL_CALL:名:参数] 工具循环 + 流式 stream_run。'],
+    ['框架化 ReAct', 'ToolRegistry 统一工具、更严谨的模板、custom_prompt 可替换、跑满步数返回明确失败。'],
+    ['custom_prompts', 'Reflection 按 initial / reflect / refine，Plan-and-Solve 按 planner / executor 定制提示词。'],
+    ['FunctionCallAgent', '工具转 OpenAI schema，原生 tools / tool_choice 调用，解析 JSON 参数并做类型转换。']
+  ],
+  p: [
+    ['工具循环', 'invoke → 解析调用 → 执行 → 追加 assistant(去标记) + user(工具结果) → 再 invoke，至无调用或达上限。'],
+    ['历史取舍', 'SimpleAgent 只记录用户输入与最终回答，不保留中间工具往返。']
+  ]
+});
+
+/* ---------- 协议演进 ---------- */
+HB.vs($('#protoVs'), {
+  a: '模型输出长什么样', b: '宿主怎么处理 / 代价', k: '版本',
+  rows: [
+    ['第 1 章 旅行助手', 'Action: get_weather(city="北京")；结束用 Finish[答案]', '三个正则分别抠函数名、参数串、key="value" 对；参数里有引号或逗号就容易坏'],
+    ['第 4 章 ReAct', 'Action: Search[华为最新手机]', '正则 (\\w+)\\[(.*)\\]，只能传一个字符串参数；输入里有方括号会出错'],
+    ['第 7 章 SimpleAgent', '回答文字中夹 [TOOL_CALL:my_calculator:15*8+32]，可以有多个', '正则抠出全部调用并从回复中删除；工具结果以 user 消息回传；参数里不能有冒号和右方括号'],
+    ['第 7 章 FunctionCallAgent', '结构化 tool_calls：{"name": "...", "arguments": "{JSON}"}', '解析 JSON、做类型转换，结果以 role=tool 回传；最稳，但依赖模型与服务商支持']
+  ]
+});
+S.notes($('#n-proto'), {
+  c: [
+    ['文本协议', '模型按约定格式写字符串，宿主用正则解析；通用、透明，但脆。'],
+    ['Function Calling', '工具以 JSON Schema 提供，模型返回结构化调用；稳，但依赖支持。']
+  ],
+  p: [
+    ['不变的分工', '模型只表达调用意图，执行和回填永远由宿主代码完成。']
+  ]
+});
+
+/* ---------- schema ---------- */
+var PS = [
+  { name: 'location', type: 'string', desc: 'The city and state, e.g. San Francisco, CA', req: true, def: '' },
+  { name: 'unit', type: 'string', desc: '温度单位 celsius 或 fahrenheit', req: false, def: 'celsius' }
+];
+function drawParams() {
+  var box = $('#params'); box.innerHTML = '';
+  PS.forEach(function (p, i) {
+    var row = h('div', null, box);
+    var n = h('input', { value: p.name, 'aria-label': '参数名' }, row);
+    var t = h('select', { 'aria-label': '类型' }, row);
+    ['string', 'number', 'integer', 'boolean', 'array'].forEach(function (x) { var o = h('option', { value: x, text: x }, t); if (x === p.type) o.selected = true; });
+    var d = h('input', { value: p.desc, 'aria-label': '描述' }, row);
+    var rl = h('label', null, row); var r = h('input', { type: 'checkbox' }, rl); r.checked = p.req; h('span', { text: '必需' }, rl);
+    var df = h('input', { value: p.def, placeholder: '默认值', 'aria-label': '默认值', style: 'width:6em' }, row);
+    [n, t, d, r, df].forEach(function (el) { el.addEventListener('input', sync); el.addEventListener('change', sync); });
+    function sync() { p.name = n.value; p.type = t.value; p.desc = d.value; p.req = r.checked; p.def = df.value; schema(); }
+    void i;
+  });
+  schema();
+}
+function schema() {
+  var props = {}, req = [];
+  PS.forEach(function (p) {
+    if (!p.name) return;
+    var o = { type: p.type, description: p.def ? p.desc + ' (默认: ' + p.def + ')' : p.desc };
+    if (p.type === 'array') o.items = { type: 'string' };
+    props[p.name] = o;
+    if (p.req) req.push(p.name);
+  });
+  var s = { type: 'function', function: { name: $('#tName').value, description: 'Get the current weather in a given location', parameters: { type: 'object', properties: props, required: req } } };
+  $('#schema').textContent = JSON.stringify(s, null, 2);
+}
+$('#tName').addEventListener('input', schema);
+$('#addP').addEventListener('click', function () { PS.push({ name: 'days', type: 'integer', desc: '预报天数', req: false, def: '1' }); drawParams(); });
+drawParams();
+
+/* ---------- 搜索降级 ---------- */
+var tv = 'ok', sp = 'ok';
+function fb() {
+  var out = [], used = null, msg = '';
+  if (tv === 'none') out.push('<span class="bad">Tavily 未配置</span>');
+  if (sp === 'none') out.push('<span class="bad">SerpApi 未配置</span>');
+  if (tv !== 'none') {
+    if (tv === 'ok') { used = 'Tavily'; out.push('<span class="use">用 Tavily</span>'); }
+    else {
+      out.push('<span class="bad">Tavily 报错</span>');
+      if (sp === 'ok') { used = 'SerpApi'; out.push('<span class="use">降级到 SerpApi</span>'); }
+      else if (sp === 'err') out.push('<span class="bad">SerpApi 也报错</span>');
+    }
+  } else if (sp !== 'none') {
+    if (sp === 'ok') { used = 'SerpApi'; out.push('<span class="use">用 SerpApi</span>'); }
+    else out.push('<span class="bad">SerpApi 报错</span>');
+  }
+  if (!used && !(tv === 'err' && sp === 'err')) out.push('<span class="ok">返回提示：请配置 TAVILY_API_KEY 或 SERPAPI_API_KEY</span>');
+  msg = used === 'Tavily' ? 'Tavily 是为 AI 优化的搜索，优先使用；返回“AI 摘要 + 前三条结果”。' : used === 'SerpApi' ? '降级到传统 Google 搜索结果，格式统一后交给模型，模型感知不到换了后端。' :
+    (tv === 'err' && sp === 'err') ? '按原书 _search_hybrid 的写法，Tavily 失败后直接 return self._search_serpapi(query)，外面没有再包 try，SerpApi 的异常会一路抛出去（除非它内部自己捕获）。工具里没兜住的异常，最好转成一段说明错误的 Observation 交给模型。' :
+    ((tv === 'err' && sp === 'none') || (tv === 'none' && sp === 'err')) ? '读原书代码会发现：这种情况会落到最后一句“没有可用的搜索源，请配置 TAVILY_API_KEY 或 SERPAPI_API_KEY”。可密钥明明配了，只是调用报错，这句提示会误导排查。更好的做法是把实际的错误信息一起返回。（我的读码观察）' :
+    '没有任何可用后端，明确告诉用户（和模型）缺什么配置，而不是返回空结果让模型瞎猜。';
+  if (tv === 'err' && sp === 'err') out.push('<span class="bad">异常向上抛出</span>');
+  $('#fbOut').innerHTML = out.join('');
+  $('#fbNote').textContent = msg;
+}
+S.seg($('#tvSeg'), function (v) { tv = v; fb(); });
+S.seg($('#spSeg'), function (v) { sp = v; fb(); });
+fb();
+S.notes($('#n-tools'), {
+  c: [
+    ['Tool 基类', 'name、description + 抽象方法 run(dict) → str 与 get_parameters() → List[ToolParameter]。'],
+    ['ToolParameter', '参数名、类型、描述、是否必需、默认值；支持校验与文档生成。'],
+    ['ToolRegistry', 'register_tool（复杂工具）/ register_function（简单函数）、get_tools_description、execute_tool。'],
+    ['to_openai_schema', '把参数定义转成 Function Calling 的 JSON Schema。']
+  ],
+  p: [
+    ['schema 细节', 'required 列表收集必需参数；默认值写进描述（schema 不支持 default）；array 补 items。'],
+    ['安全计算器', 'ast.parse 后只允许常数、四则运算与白名单函数，不用 eval。'],
+    ['多源搜索降级', 'Tavily → 失败降级 SerpApi → 都不可用时明确提示配置。'],
+    ['高级特性', 'ToolChain 顺序串联、AsyncToolExecutor 线程池并行。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

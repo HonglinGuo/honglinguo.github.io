@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skills：渐进式加载的能力包</title>
+<meta name="description" content="Claude How To 学习笔记（四）：Skill 的三级加载与描述预算；个人、项目、插件、企业四种位置与同名优先级；谁能调用（disable-model-invocation、user-invocable、skillOverrides）；frontmatter 全字段与字符串替换；context fork 在子代理里跑；怎样写好 description；随附 Skill 与安全开关。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2.5' y='4' width='19' height='16' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M6.5 9.5l3 2.5-3 2.5' fill='none' stroke='%232340D6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 15h5' stroke='%2313171C' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.inv { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.inv label { display: flex; gap: 8px; align-items: flex-start; font-size: 15px; color: var(--ink-2); cursor: pointer; border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px; background: var(--bg); }
+.inv input { margin-top: 4px; accent-color: var(--s1); width: 16px; height: 16px; flex: none; }
+.inv code { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+.lv3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+@media (max-width: 760px) { .lv3 { grid-template-columns: minmax(0, 1fr); } }
+.lv3 > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; color: var(--ink-2); line-height: 1.6; transition: opacity .2s; }
+.lv3 > div b { display: block; color: var(--ink); font-size: 16px; }
+.lv3 > div em { display: block; font-style: normal; font-family: var(--f-num); color: var(--s1); margin: 2px 0 4px; }
+.lv3 > div.off { opacity: .4; border-style: dashed; }
+.lv3 > div.on { border-color: var(--s1); background: var(--s1-soft); }
+</style>
+</head>
+<body data-series="claudehowto-series" data-part="4">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Claude How To · 04</span><span>对应原文 03-skills</span><span>约 30 分钟</span></p>
+  <h1>平时只露<em>一行描述</em>，用到才展开</h1>
+  <p class="lead">Skill 是一个目录：一份 SKILL.md 写说明，旁边可以放脚本、模板和参考资料。它和 CLAUDE.md 最大的区别是加载方式：启动时 Claude 只知道每个 Skill 叫什么、什么时候该用（约 100 tokens），真正需要时才读正文，正文里提到的文件再用到时才读。这让你可以装很多 Skill 而不把上下文塞满。原教程把自定义斜杠命令也并进了 Skill，所以这一篇其实是“怎么给 Claude 写可复用的说明书”。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/luongnv89/claude-howto" rel="noopener">Claude How To</a>》（luongnv89 与社区贡献者编写，MIT 协议；本笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302）的学习笔记。原教程按十个模块（01-slash-commands 到 10-cli）组织，配了大量可复制的模板。这里重排成十二篇：先用一篇讲清七种扩展机制的分工，再逐个拆开，每个功能按“它解决什么问题、最小可用配置放在哪个路径、什么时候不该用”来写，并配上“读配置猜行为”、模拟器和场景判定题。功能与字段取自原文（主要依据英文原版，中文版是它的缩写译本），每节标出对应的原文目录；为演示设的场景和数值标“示意”。Claude Code 更新很快，原文里带版本号的细节以原文和官方文档为准。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-claudehowto/"><b>总览</b>速查卡</a>
+  <a href="../2026-10-22-claudehowto-1/" data-part="1"><b>01</b>全景</a>
+  <a href="../2026-10-22-claudehowto-2/" data-part="2"><b>02</b>斜杠命令</a>
+  <a href="../2026-10-22-claudehowto-3/" data-part="3"><b>03</b>Memory</a>
+  <a href="../2026-10-22-claudehowto-4/" aria-current="page" data-part="4"><b>04</b>Skills</a>
+  <a href="../2026-10-22-claudehowto-5/" data-part="5"><b>05</b>Subagents</a>
+  <a href="../2026-10-22-claudehowto-6/" data-part="6"><b>06</b>MCP</a>
+  <a href="../2026-10-22-claudehowto-7/" data-part="7"><b>07</b>Hooks</a>
+  <a href="../2026-10-22-claudehowto-8/" data-part="8"><b>08</b>Plugins</a>
+  <a href="../2026-10-22-claudehowto-9/" data-part="9"><b>09</b>回退与会话</a>
+  <a href="../2026-10-22-claudehowto-10/" data-part="10"><b>10</b>规划与权限</a>
+  <a href="../2026-10-22-claudehowto-11/" data-part="11"><b>11</b>后台与远程</a>
+  <a href="../2026-10-22-claudehowto-12/" data-part="12"><b>12</b>CLI 与脚本</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">Skill 是什么</a><a href="#levels">三级加载</a><a href="#where">位置与优先级</a><a href="#who">谁能调用</a><a href="#fm">字段与替换</a><a href="#fork">在子代理里跑</a><a href="#desc">写好描述</a><a href="#safe">随附与安全</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Skill 的三级加载各在什么时候发生、大概花多少 token？装太多 Skill 会出什么问题？</li>
+    <li>同名 Skill 出现在个人目录和项目目录，谁生效？<code>disable-model-invocation</code> 和 <code>user-invocable</code> 各控制什么？</li>
+    <li><code>context: fork</code> 做了什么？一个好的 <code>description</code> 应该包含哪两部分？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>Skill 是什么</h2><span class="meta">原文 03-skills「Overview」「Creating Custom Skills」</span></div>
+  <div class="sec-lede">
+    <p>原文的定义：Agent Skills 是<strong>可复用、基于文件系统的能力</strong>，把某个领域的专业知识、工作流程和最佳实践打包成可发现的组件，Claude 在相关时自动使用。和普通提示词相比，提示词是一次性的、对话级的指令；Skill 按需加载，省掉了在每次对话里重复交代同一件事。</p>
+    <p>Skill 遵循开放标准 Agent Skills（agentskills.io），能在多个 AI 工具间通用；Claude Code 在标准之上加了调用控制、子代理执行、动态上下文注入等扩展。所以有些字段只在 Claude Code 里有效：上传到 claude.ai 或通过 Skills API 创建的 Skill，只认 <code>name</code>、<code>description</code>、<code>license</code>、<code>compatibility</code>、<code>metadata</code>、<code>allowed-tools</code> 这几个字段。</p>
+    <p>原文把 Skill 的内容分成两类：<strong>参考型</strong>（规范、模式、风格指南、领域知识，和当前工作一起生效）和<strong>任务型</strong>（一步步的操作说明，常用 <code>/名字</code> 直接调用）。前者像“背景知识”，后者像“操作手册”。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>Skill<small>.claude/skills/名字/SKILL.md</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>同一套专业知识或多步流程要反复交代；写进 CLAUDE.md 又会每次都占上下文。Skill 平时只露描述，相关时才加载。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcSk"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>一次性任务；和已有功能重复；范围太宽（“文档处理”不如“PDF 表单填写”）；需要隔离上下文、限定工具的专职角色（用 Subagent）；必须执行的检查（用 Hook）；来源不可信的 Skill 不审计就装。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="levels">
+  <div class="part-head"><h2>三级加载与描述预算</h2><span class="meta">原文「How Skills Work: Progressive Disclosure」「Automatic Discovery」</span></div>
+  <div class="sec-lede">
+    <p>原文用“渐进式披露”描述 Skill 的加载：<strong>第 1 级 元数据</strong>（frontmatter 里的 <code>name</code> 和 <code>description</code>），启动时就加载，每个约 100 tokens；<strong>第 2 级 指令</strong>（SKILL.md 正文），Skill 被触发时加载，原文给的量级是 5k tokens 以内；<strong>第 3 级 资源</strong>（附带的脚本、模板、参考文件），需要时才读，脚本通过 bash 执行时内容不必进上下文，所以“实际上没有上限”。</p>
+    <p>但第 1 级也不是免费的：每个列出来的 Skill 每一轮都带着它的描述。原文给了预算：所有 Skill 描述合计约占<strong>上下文窗口的 1%</strong>（取不到时按 8,000 字符），单个 Skill 的 <code>description</code> 加 <code>when_to_use</code> 在列表里最多显示 1,536 字符。Skill 装多了，名字都会保留，描述会被缩短——所以<strong>关键用途要写在描述的最前面</strong>。超预算时 <code>/context</code> 会给警告，<code>/skill-doctor</code> 能看到哪些 Skill 没用上、各花多少上下文。</p>
+    <p class="go">先估一下，再点一点三个级别。</p>
+  </div>
+  <div class="lab">
+    <div id="gs"></div>
+    <div class="selrow"><span>这一轮发生了什么</span><div class="seg" id="lvSeg"><button data-v="0" aria-pressed="true">会话刚启动</button><button data-v="1">你说“帮我审一下这段代码的安全问题”</button><button data-v="2">Skill 需要对照检查清单</button></div></div>
+    <div class="lv3" id="lv3"></div>
+  </div>
+  <div class="notes" id="n-levels"></div>
+</section>
+
+<section class="part" id="where">
+  <div class="part-head"><h2>位置与优先级</h2><span class="meta">原文「Skill Types &amp; Locations」「Automatic Discovery」</span></div>
+  <div class="sec-lede">
+    <p>Skill 有四种位置：<strong>企业</strong>（托管设置，全组织）、<strong>个人</strong> <code>~/.claude/skills/名字/SKILL.md</code>（你所有项目）、<strong>项目</strong> <code>.claude/skills/名字/SKILL.md</code>（随 git 共享给团队）、<strong>插件</strong> <code>&lt;插件&gt;/skills/名字/SKILL.md</code>。同名时<strong>企业 &gt; 个人 &gt; 项目</strong>，也就是说你个人目录里的同名 Skill 会盖过团队仓库里的。插件 Skill 带 <code>插件名:</code> 前缀，不会冲突。</p>
+    <p>发现机制有几个细节：在子目录里干活时，Claude Code 会顺带发现嵌套的 <code>.claude/skills/</code>（monorepo 里每个包可以有自己的 Skill）；嵌套目录里和根目录<strong>同名</strong>的 Skill 两个都加载，<code>/deploy</code> 跑根目录的，<code>/apps/web:deploy</code> 跑嵌套的。<code>--add-dir</code> 加进来的目录里的 Skill 改了立即生效；其他情况改完用 <code>/reload-skills</code> 重新扫描，不必重启。v2.1.133 起，Subagent 也能和主会话一样发现项目、个人、插件 Skill。</p>
+    <p class="go">判断这几种情况下生效的是哪一个。</p>
+  </div>
+  <div class="lab"><div id="whq"></div></div>
+  <div class="notes" id="n-where"></div>
+</section>
+
+<section class="part" id="who">
+  <div class="part-head"><h2>谁能调用</h2><span class="meta">原文「Controlling Skill Invocation」「Restricting Claude's Skill Access」「skillOverrides」</span></div>
+  <div class="sec-lede">
+    <p>默认情况下，你和 Claude 都能调用任何 Skill。两个 frontmatter 字段组合出三种模式：<code>disable-model-invocation: true</code> 时<strong>只有你</strong>能调用（用 <code>/名字</code>），适合有副作用的 <code>/commit</code>、<code>/deploy</code>、<code>/send-slack-message</code>——原文的原话是“你不会希望 Claude 因为代码看起来准备好了就决定去部署”；<code>user-invocable: false</code> 时<strong>只有 Claude</strong> 能调用，Skill 从 <code>/</code> 菜单隐藏，适合不构成“动作”的背景知识。</p>
+    <p>在 Skill 文件之外还有两层控制。<strong>权限规则</strong>：在 deny 里写 <code>Skill</code> 禁用全部，或用 <code>Skill(commit)</code>、<code>Skill(review-pr *)</code> 放行、<code>Skill(deploy *)</code> 禁止特定 Skill。<strong><code>skillOverrides</code></strong>（v2.1.129+）是按名字设置的“可见性”表，不改优先级：<code>on</code>（默认）、<code>name-only</code>（只列名字）、<code>user-invocable-only</code>（对 Claude 隐藏，菜单里还在）、<code>off</code>（两边都隐藏）；<code>/skills</code> 菜单会帮你写进 <code>.claude/settings.local.json</code>。插件 Skill 不受它影响，用 <code>/plugin</code> 管。</p>
+    <p class="go">勾一勾两个字段，看谁能调用、适合什么。</p>
+  </div>
+  <div class="lab">
+    <div class="inv">
+      <label><input type="checkbox" id="dmi"> <span><code>disable-model-invocation: true</code></span></label>
+      <label><input type="checkbox" id="uif"> <span><code>user-invocable: false</code></span></label>
+    </div>
+    <div class="ch-out" id="invOut" aria-live="polite"></div>
+  </div>
+  <div class="notes" id="n-who"></div>
+</section>
+
+<section class="part" id="fm">
+  <div class="part-head"><h2>字段与字符串替换</h2><span class="meta">原文「Optional Frontmatter Fields」「String Substitutions」「Stacking Skills」</span></div>
+  <div class="sec-lede">
+    <p>SKILL.md 的 frontmatter 字段全部可选，原文只推荐必写 <code>description</code>（不写时取正文第一行非空内容）。<code>name</code> 默认取目录名，可移植的写法是小写字母、数字、连字符，最长 64 字符。其余字段按用途分几组：<strong>调用</strong>（<code>disable-model-invocation</code>、<code>user-invocable</code>、<code>argument-hint</code>、<code>arguments</code>、<code>paths</code>：用 glob 限定什么时候自动激活）；<strong>工具</strong>（<code>allowed-tools</code> 运行期间免确认、<code>disallowed-tools</code> 运行期间拿掉）；<strong>模型</strong>（<code>model</code>、<code>effort</code>）；<strong>执行</strong>（<code>context: fork</code>、<code>agent</code>、<code>background</code>、<code>shell</code>）；<strong>挂钩</strong>（<code>hooks</code>，Skill 被调用时注册、本会话余下时间一直生效）。</p>
+    <p>正文里可用的替换变量：<code>$ARGUMENTS</code>、<code>$ARGUMENTS[N]</code> 或 <code>$N</code>、<code>${CLAUDE_SESSION_ID}</code>、<code>${CLAUDE_SKILL_DIR}</code>（SKILL.md 所在目录，引用自带脚本时很有用）、<code>${CLAUDE_PROJECT_DIR}</code>、<code>${CLAUDE_EFFORT}</code>（当前强度，可以让 Skill 按强度分支），以及 <code>!`命令`</code> 动态注入。在终端里还能<strong>叠加</strong>调用：<code>/write-tests /fix-issue 123</code> 会加载开头的全部 Skill（第一个加最多 5 个）并把尾部参数传给每一个；遇到以分叉子代理运行的 Skill（如 <code>/code-review</code>）就停止展开。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="fmq"></div></div>
+  <div class="notes" id="n-fm"></div>
+</section>
+
+<section class="part" id="fork">
+  <div class="part-head"><h2>在子代理里跑：context: fork</h2><span class="meta">原文「Running Skills in Subagents」「Skill Content Types」</span></div>
+  <div class="sec-lede">
+    <p>给 Skill 加上 <code>context: fork</code>，Skill 的内容就变成一个<strong>专用子代理的任务</strong>，在它自己的上下文窗口里执行，主对话保持干净。<code>agent</code> 字段决定用哪类子代理：<code>Explore</code>（只读调研、代码分析）、<code>Plan</code>（出实施计划）、<code>general-purpose</code>（需要全部工具的宽泛任务），或你自定义的 Subagent。从 v2.1.218 起，fork 类 Skill 默认<strong>在后台运行</strong>，要前台跑就写 <code>background: false</code>。</p>
+    <p>原文的典型例子是 <code>pr-summary</code>：用 <code>!`gh pr diff`</code>、<code>!`gh pr view --comments`</code> 现取 PR 内容，<code>context: fork</code> + <code>agent: Explore</code>，让一个只读子代理去读、去总结。这样一个大 diff 不会进主对话。一个容易混的点：<code>context: fork</code> 是 <strong>Skill 的字段</strong>，写在 Subagent 的定义文件里会被静默忽略（第 5 篇）。</p>
+    <p class="go">同一个“总结 PR”任务，两种写法跑起来有什么不同？</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>写法</span><div class="seg" id="fkSeg"><button data-v="0" aria-pressed="true">普通 Skill（同窗）</button><button data-v="1">context: fork + agent: Explore</button></div></div>
+    <div id="fkFile"></div>
+    <div id="fkLg" style="margin-top:12px"></div>
+  </div>
+  <div class="notes" id="n-fork"></div>
+</section>
+
+<section class="part" id="desc">
+  <div class="part-head"><h2>写好描述</h2><span class="meta">原文「Best Practices」「Troubleshooting」</span></div>
+  <div class="sec-lede">
+    <p>Claude 靠 <code>description</code> 决定什么时候激活 Skill，所以原文的最佳实践几乎都围绕描述：<strong>具体</strong>（“帮忙处理文档”不行，“从 PDF 提取文本和表格、填表、合并文档；处理 PDF 或用户提到表单、文档提取时使用”才行）；<strong>聚焦</strong>（一个 Skill 一种能力）；<strong>包含触发词</strong>（用户自然会说的词，如 Excel、spreadsheet、.xlsx）。原文的模板句式是“做什么。在……时使用。”</p>
+    <p>排障也围绕描述：Claude 不用你的 Skill，就把描述写得更具体、加上触发词，或者先用 <code>/名字</code> 直接调用确认它本身能跑；Skill 触发得太频繁，就把描述写窄，或加 <code>disable-model-invocation: true</code> 改成只能手动调用。正文控制在 <strong>500 行以内</strong>，详细资料放进 <code>references/</code> 等子目录，在 SKILL.md 里用相对路径链接过去。</p>
+    <p class="go">三道题：哪个描述写得最好？</p>
+  </div>
+  <div class="lab"><div id="dq"></div></div>
+  <div class="ch-file"><div class="ch-fp"><span>推荐的 Skill 目录结构（原文）</span></div><pre>my-skill/
+├── SKILL.md          <i># 主说明，必需，500 行以内</i>
+├── templates/        <i># 让 Claude 填写的模板</i>
+├── examples/         <i># 期望输出的样例</i>
+├── references/       <i># 领域知识、规格说明（用到才读）</i>
+└── scripts/          <i># Claude 可执行的脚本（记得 chmod +x）</i></pre></div>
+  <div class="notes" id="n-desc"></div>
+</section>
+
+<section class="part" id="safe">
+  <div class="part-head"><h2>随附 Skill 与安全开关</h2><span class="meta">原文「Bundled Skills」「Security Considerations」</span></div>
+  <div class="sec-lede">
+    <p>Claude Code 自带一批 Skill，不用安装：<code>/batch</code>（用 git worktree 编排大规模并行修改）、<code>/code-review</code>（找正确性 bug，v2.1.218 起作为后台子代理运行）、<code>/simplify</code>（只清理不找 bug）、<code>/loop</code>（按间隔重复执行）、<code>/debug</code>（读调试日志排查当前会话）、<code>/fewer-permission-prompts</code>、<code>/claude-api</code>（检测到 anthropic SDK 导入时自动激活）、<code>/run</code> 与 <code>/verify</code>（启动应用、实际观察修复是否生效，不只是测试通过）。原文还提到一个约定：如果你的项目或个人 Skill 里有一个叫 <code>verify</code> 的，Claude 会在提交前自动运行它（纯文档、纯测试的提交除外，v2.1.286，以原文为准）。</p>
+    <p>安全上，原文的态度很明确：<strong>只用可信来源的 Skill</strong>，把安装 Skill 当作安装软件来对待。恶意 Skill 可以指挥 Claude 调用工具、执行代码；会从外部 URL 拉东西的 Skill 也可能被篡改。两个开关值得知道：<code>"disableSkillShellExecution": true</code> 让所有 <code>!`命令`</code> 被替换成“策略禁用”的占位文字，去掉这一层注入面而不禁用 Skill 本身；<code>"disableBundledSkills": true</code>（或 <code>CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1</code>）对模型隐藏随附 Skill，减少噪声。</p>
+    <p class="go">名字冲突是个实际的坑，判断一下。</p>
+  </div>
+  <div class="lab"><div id="sfq"></div></div>
+  <div class="notes" id="n-safe"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 三级加载各在何时、花多少？装太多会怎样？</summary><p class="ans">第 1 级元数据（name + description）启动即加载，每个约 100 tokens；第 2 级 SKILL.md 正文在触发时加载，5k tokens 以内；第 3 级资源（脚本、模板、参考）用到才读，脚本执行时内容可以不进上下文。所有描述合计预算约为上下文窗口的 1%（缺省 8,000 字符），单个描述加 when_to_use 最多 1,536 字符；装多了描述会被截断，名字保留。用 /context 看警告，/skill-doctor 看哪些没用上。</p></details>
+    <details><summary>2. 个人与项目同名谁生效？两个调用字段各控制什么？</summary><p class="ans">企业 &gt; 个人 &gt; 项目，个人的同名 Skill 盖过项目的；插件 Skill 有前缀不冲突。disable-model-invocation: true 让 Claude 不能自动调用，只能你 /名字 调用（适合有副作用的）；user-invocable: false 从 / 菜单隐藏，只给 Claude 自动用（适合背景知识）。skillOverrides 调可见性，不改优先级。</p></details>
+    <details><summary>3. context: fork 做了什么？好描述包含哪两部分？</summary><p class="ans">context: fork 让 Skill 的内容成为一个分叉子代理的任务，在独立上下文窗口执行，agent 字段选 Explore、Plan、general-purpose 或自定义子代理；v2.1.218 起默认后台运行。好描述 = 做什么 + 什么时候用（含用户自然会说的触发词），关键用途放最前面。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-claudehowto-3/"><small>上一篇</small><span>03 · Memory：CLAUDE.md 与自动记忆</span></a><a class="nx" href="../2026-10-22-claudehowto-5/"><small>下一篇</small><span>05 · Subagents：另开一个上下文</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/luongnv89/claude-howto" rel="noopener">luongnv89/claude-howto</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- Skill 是什么 ---------- */
+$('#fcSk').innerHTML = CH.file('.claude/skills/api-conventions/SKILL.md', CH.esc('---\nname: api-conventions\ndescription: 本仓库的 REST 接口设计约定。新增或修改\n  services/api/ 下的接口时使用。\n---\n写接口时：\n- 路径用复数名词，版本放 /api/v1/\n- 统一错误格式 {code, message, data}\n- 入参必须有 Pydantic 校验\n详细字段约定见 [references/fields.md](references/fields.md)'), '项目级；个人级放 ~/.claude/skills/') +
+  '<p class="note">示意内容。也可以把现成的 Skill 目录整个拷进去：原文的 <code>cp -r 03-skills/code-review-specialist ~/.claude/skills/</code>。</p>';
+S.notes($('#n-what'), {
+  c: [
+    ['Skill', '基于文件系统、可复用的能力包：SKILL.md + 可选的脚本、模板、参考文件。'],
+    ['开放标准', 'Agent Skills（agentskills.io）；Claude Code 在其上扩展了调用控制、子代理执行等。'],
+    ['两类内容', '参考型（规范、知识，随对话生效）和任务型（操作步骤，常用 /名字 调用）。']
+  ],
+  p: [
+    ['只认 6 个字段的场合', '上传到 claude.ai 或 Skills API：name、description、license、compatibility、metadata、allowed-tools。'],
+    ['不该用', '一次性任务、范围太宽、需要隔离上下文（用 Subagent）、必须执行（用 Hook）。']
+  ]
+});
+
+/* ---------- 三级加载 ---------- */
+S.guess($('#gs'), {
+  q: '你装了 40 个 Skill，一个都没触发。启动时它们的描述大约占多少 tokens？',
+  unit: 'tokens', ans: 4000,
+  fmt: function (x) { return Math.round(x).toLocaleString(); },
+  why: '按原文“每个约 100 tokens”估算：40 × 100 ≈ 4,000 tokens，而且每一轮都带着。描述合计的预算约为上下文窗口的 1%，超了会截断描述。'
+});
+var LV3 = [
+  ['第 1 级 · 元数据', '约 100 tokens / 个', 'frontmatter 的 name + description。启动时全部加载，Claude 只知道“有这么个 Skill、什么时候该用”。'],
+  ['第 2 级 · 指令', '5k tokens 以内', 'SKILL.md 正文。Claude 判断要用这个 Skill（或你 /名字 调用）时才加载。'],
+  ['第 3 级 · 资源', '用到才读，实际无上限', '附带的模板、参考文件、脚本。脚本通过 bash 执行，内容不必进上下文。']
+];
+function lv3(k) {
+  $('#lv3').innerHTML = LV3.map(function (l, i) { return '<div class="' + (i <= k ? 'on' : 'off') + '"><b>' + l[0] + '</b><em>' + l[1] + '</em>' + l[2] + '</div>'; }).join('');
+}
+S.seg($('#lvSeg'), function (v) { lv3(+v); });
+lv3(0);
+S.notes($('#n-levels'), {
+  c: [
+    ['渐进式披露', '元数据常驻 → 正文触发时 → 资源用到时。'],
+    ['描述预算', '合计约为上下文窗口的 1%（缺省 8,000 字符）；单个 description + when_to_use 最多显示 1,536 字符。']
+  ],
+  p: [
+    ['描述写法', '关键用途放最前面，超预算时会被截断。'],
+    ['调预算', '<code>SLASH_COMMAND_TOOL_CHAR_BUDGET</code>；单条上限 <code>skillListingMaxDescChars</code>。'],
+    ['看占用', '<code>/context</code> 看警告，<code>/skill-doctor</code> 看哪些没用上。']
+  ]
+});
+
+/* ---------- 位置与优先级 ---------- */
+CH.cards($('#whq'), {
+  opts: ['个人目录的', '项目目录的', '两个都加载'],
+  items: [
+    { t: '<code>~/.claude/skills/deploy/</code> 和 <code>.claude/skills/deploy/</code> 都存在，你敲 <code>/deploy</code>。', a: 0, why: '企业 &gt; 个人 &gt; 项目：个人的同名 Skill 生效。想改可见性用 skillOverrides，它不改优先级。' },
+    { t: '仓库根 <code>.claude/skills/deploy/</code> 和 <code>apps/web/.claude/skills/deploy/</code> 同名，你在 apps/web 里干活。', a: 2, why: '嵌套目录同名时两个都加载：<code>/deploy</code> 跑根目录的，<code>/apps/web:deploy</code> 跑嵌套的。' },
+    { t: '团队仓库里有 <code>.claude/skills/lint-fix/</code>，你个人目录没有同名的。', a: 1, why: '没有冲突，项目 Skill 正常生效，团队成员 pull 后立即可用。' }
+  ]
+});
+S.notes($('#n-where'), {
+  c: [
+    ['四种位置', '企业（托管）、个人 <code>~/.claude/skills/</code>、项目 <code>.claude/skills/</code>、插件 <code>&lt;插件&gt;/skills/</code>。'],
+    ['同名优先级', '企业 &gt; 个人 &gt; 项目；插件带前缀不冲突。']
+  ],
+  p: [
+    ['monorepo', '嵌套 <code>.claude/skills/</code> 自动发现；同名两个都加载，用路径前缀区分。'],
+    ['改了不生效', '<code>/reload-skills</code>；<code>--add-dir</code> 目录里的改动实时生效。'],
+    ['Subagent 也能用', 'v2.1.133 起子代理与主会话看到同一份 Skill 目录。']
+  ]
+});
+
+/* ---------- 谁能调用 ---------- */
+function inv() {
+  var d = $('#dmi').checked, u = $('#uif').checked, r;
+  if (d && u) r = ['没人能调用', '两个都设：你看不到菜单项，Claude 也不会自动调用，这个 Skill 等于停用。要停用还是用 <code>skillOverrides: "off"</code> 更清楚。', 'warn'];
+  else if (d) r = ['只有你能调用', '<code>/名字</code> 手动触发，Claude 不会自动用。适合有副作用的：/commit、/deploy、/send-slack-message。', 'okc'];
+  else if (u) r = ['只有 Claude 能调用', '从 / 菜单隐藏，Claude 在相关时自动用。适合背景知识，比如解释老系统怎么工作的 legacy-system-context。', ''];
+  else r = ['你和 Claude 都能调用', '默认模式。参考型、无副作用的 Skill 用这个。', ''];
+  $('#invOut').innerHTML = '<div class="ch-res ' + r[2] + '"><h4>' + r[0] + '</h4><p>' + r[1] + '</p></div>';
+}
+$('#dmi').addEventListener('change', inv); $('#uif').addEventListener('change', inv); inv();
+S.notes($('#n-who'), {
+  c: [
+    ['disable-model-invocation: true', '只有你能调用。'],
+    ['user-invocable: false', '只有 Claude 能调用（菜单隐藏）。'],
+    ['skillOverrides', '按名字设可见性：on / name-only / user-invocable-only / off；不改优先级。']
+  ],
+  p: [
+    ['权限规则', 'deny 里写 <code>Skill</code> 禁用全部；<code>Skill(commit)</code>、<code>Skill(deploy *)</code> 针对单个。'],
+    ['有副作用就手动', '原文：不要让 Claude 因为代码看起来好了就去部署。'],
+    ['插件 Skill', '不受 skillOverrides 影响，用 <code>/plugin</code> 管理。']
+  ]
+});
+
+/* ---------- 字段与替换 ---------- */
+CH.cfg($('#fmq'), [
+  { path: '.claude/skills/api-lint/SKILL.md', code: '---\nname: api-lint\ndescription: Check API handlers against our conventions\npaths: "src/api/**/*.ts"\n---\n...',
+    q: '你在改 <code>src/web/</code> 下的页面，Claude 会自动激活这个 Skill 吗？', opts: ['会，description 匹配就行', '一般不会，paths 限定了自动激活的范围', '会，paths 只影响 /api-lint 的补全'], a: 1,
+    why: '<code>paths</code> 是限定自动激活时机的 glob，格式和带 paths 的 rules 相同。手动 <code>/api-lint</code> 不受限。' },
+  { path: '.claude/skills/safe-review/SKILL.md', code: '---\nname: safe-review\ndescription: Read-only review of the current diff\nallowed-tools: Read, Grep, Glob\ndisallowed-tools: Write, Edit\n---\nReview the diff ...',
+    q: 'Skill 运行期间，Claude 想改一个文件会怎样？', opts: ['弹权限确认', 'Write 和 Edit 被拿掉，用不了', '自动放行，因为 allowed-tools 里没禁'], a: 1,
+    why: '<code>allowed-tools</code> 是“免确认可用”，<code>disallowed-tools</code>（v2.1.152）是“运行期间拿掉”。两者互补。' },
+  { path: '.claude/skills/deep-audit/SKILL.md', code: '---\nname: deep-audit\ndescription: Audit a module\n---\nAudit $ARGUMENTS.\n[ "${CLAUDE_EFFORT}" = "max" ] && run the full checklist',
+    q: '这里的 <code>${CLAUDE_EFFORT}</code> 是什么？', opts: ['你在 frontmatter 里设的 effort', '当前会话的强度级别，可用来让 Skill 按强度分支', '固定为 high'], a: 1,
+    why: '原文的替换变量表：<code>${CLAUDE_EFFORT}</code> 是当前强度（low…max），v2.1.120 起可用，可以写按强度分支的逻辑。' },
+  { path: '.claude/skills/fmt/SKILL.md', code: '---\nname: fmt\ndescription: Format changed files\nhooks:\n  PostToolUse:\n    - matcher: "Edit|Write"\n      hooks:\n        - type: command\n          command: "${CLAUDE_SKILL_DIR}/scripts/fmt.sh"\n---\n...',
+    q: '你调用了一次 /fmt，之后这个 hook 什么时候失效？', opts: ['/fmt 执行完就失效', '本会话余下时间一直生效', '永久写进 settings.json'], a: 1,
+    why: '原文：Skill 的 hooks 在 Skill 被调用时注册，并在本会话余下时间保持生效（只有 Skill frontmatter 支持 <code>once: true</code>，首次成功后移除）。' },
+  { path: '终端里输入', code: '/write-tests /fix-issue 123',
+    q: '会发生什么？', opts: ['只加载 /write-tests，其余当参数', '两个 Skill 都加载，123 传给每一个', '报错，一次只能一个命令'], a: 1,
+    why: 'v2.1.199 起叠加调用会加载开头的全部 Skill（第一个加最多 5 个），尾部参数传给每一个；遇到分叉子代理类 Skill 停止展开；通过 -p 或 SDK 只加载第一个。' }
+]);
+S.notes($('#n-fm'), {
+  c: [
+    ['必写字段', '只有 <code>description</code> 是推荐必写；name 默认取目录名。'],
+    ['allowed-tools / disallowed-tools', '运行期间免确认 / 运行期间拿掉。'],
+    ['paths', '限定自动激活的 glob。'],
+    ['hooks', 'Skill 调用时注册，本会话余下时间生效。']
+  ],
+  p: [
+    ['替换变量', '<code>$ARGUMENTS</code>、<code>$N</code>、<code>${CLAUDE_SKILL_DIR}</code>、<code>${CLAUDE_PROJECT_DIR}</code>、<code>${CLAUDE_SESSION_ID}</code>、<code>${CLAUDE_EFFORT}</code>、<code>!`命令`</code>。'],
+    ['叠加调用', '<code>/a /b 参数</code>：最多 6 个 Skill，参数传给每个。'],
+    ['布尔值', 'v2.1.218 起也接受 yes/no、on/off、1/0。']
+  ]
+});
+
+/* ---------- context: fork ---------- */
+var FK = [
+  '---\nname: pr-summary\ndescription: Summarize changes in a pull request\n---\n## Pull request context\n- PR diff: !`gh pr diff`\n- PR comments: !`gh pr view --comments`\n## Your task\nSummarize this pull request...',
+  '---\nname: pr-summary\ndescription: Summarize changes in a pull request\ncontext: fork\nagent: Explore\n---\n## Pull request context\n- PR diff: !`gh pr diff`\n- PR comments: !`gh pr view --comments`\n## Your task\nSummarize this pull request...'
+];
+var drawFk = CH.ledger($('#fkLg'), { cap: 30000, label: '主对话里新增' });
+function fk(i) {
+  $('#fkFile').innerHTML = CH.file('.claude/skills/pr-summary/SKILL.md', CH.esc(FK[i]), '据原文示例');
+  drawFk(i ? [
+    { t: '分叉子代理读 diff 和评论', v: 18000, cls: 'iso', d: '在 Explore 子代理自己的窗口里完成，默认后台运行（v2.1.218 起）。' },
+    { t: '交回的总结', v: 700, cls: 'demand', d: '主对话只收到这一段。' }
+  ] : [
+    { t: 'Skill 正文 + 展开的 diff 和评论', v: 18000, cls: 'demand', d: '大 diff 直接进入主对话，之后每一轮都带着。' },
+    { t: 'Claude 写的总结', v: 700, cls: 'demand', d: '' }
+  ]);
+}
+S.seg($('#fkSeg'), function (v) { fk(+v); }); fk(0);
+S.notes($('#n-fork'), {
+  c: [
+    ['context: fork', '把 Skill 内容交给一个分叉子代理，在独立窗口执行。'],
+    ['agent', '<code>Explore</code>（只读调研）、<code>Plan</code>（出计划）、<code>general-purpose</code>（全工具）或自定义子代理。'],
+    ['background', 'fork 类默认 true（后台）；写 false 前台跑。']
+  ],
+  p: [
+    ['适合', '会读大量内容、结果只要一段总结的任务。'],
+    ['只属于 Skill', '写在 Subagent 定义里会被静默忽略。'],
+    ['老版本坑', 'v2.1.145 之前 fork 类 Skill 偶发无限重调用，原文建议升级。']
+  ]
+});
+
+/* ---------- 写好描述 ---------- */
+S.quiz($('#dq'), [
+  { q: '一个处理 Excel 的 Skill，哪个 description 最好？', o: ['Helps with spreadsheets.', 'Analyze Excel spreadsheets, generate pivot tables, create charts. Use when working with Excel files, spreadsheets, or .xlsx files.', 'A very powerful and comprehensive data tool.'], a: 1, why: '原文示例：说清做什么，再列出用户会说的触发词（Excel、spreadsheets、.xlsx）。' },
+  { q: 'Skill 范围怎么划？', o: ['“文档处理”：一个 Skill 管所有文档', '“PDF 表单填写”：一个 Skill 一种能力', '越大越好，减少 Skill 数量'], a: 1, why: '原文：One Skill = one capability。“Document processing” 是反例。' },
+  { q: '你的 Skill 老是在不相关的时候被触发，原文建议？', o: ['把 description 写得更宽', '把描述写窄，或加 disable-model-invocation: true 改为只能手动调用', '删掉 description'], a: 1, why: '触发太频繁：描述更具体，或改成手动调用。' }
+]);
+S.notes($('#n-desc'), {
+  c: [
+    ['description 公式', '做什么 + 什么时候用（含触发词）。'],
+    ['500 行', 'SKILL.md 正文上限；细节放 references/ 等子目录，用相对路径链接。']
+  ],
+  p: [
+    ['不触发', '描述加触发词；问 Claude 有哪些 Skill；先 /名字 直接调用测试。'],
+    ['触发太多', '描述写窄或 <code>disable-model-invocation: true</code>。'],
+    ['YAML 报错', '检查 --- 标记、缩进、不要用 Tab。'],
+    ['脚本不跑', '<code>chmod +x scripts/*</code>。']
+  ]
+});
+
+/* ---------- 随附与安全 ---------- */
+CH.cards($('#sfq'), {
+  opts: ['覆盖了随附的 /code-review', '不冲突'],
+  items: [
+    { t: '你把原文的审查 Skill 拷到 <code>~/.claude/skills/code-review/</code>。', a: 0, why: '原文提醒：这样会替换掉随附的 /code-review（但 /review 仍跑随附的那个）。所以原文把示例命名为 <code>code-review-specialist</code>。' },
+    { t: '你拷到 <code>~/.claude/skills/code-review-specialist/</code>。', a: 1, why: '名字不同，两者共存：<code>/code-review-specialist</code> 跑你的，<code>/code-review</code> 跑随附的。' }
+  ]
+});
+S.notes($('#n-safe'), {
+  c: [
+    ['随附 Skill', '/batch、/code-review、/simplify、/loop、/debug、/run、/verify、/claude-api 等，无需安装。'],
+    ['名叫 verify 的 Skill', 'Claude 会在提交前自动运行（文档、测试类提交除外，以原文为准）。']
+  ],
+  p: [
+    ['只装可信来源', '当作安装软件对待，审计目录里所有文件。'],
+    ['disableSkillShellExecution', '<code>true</code> 时 <code>!`命令`</code> 被替换为占位文字。'],
+    ['disableBundledSkills', '对模型隐藏随附 Skill；环境变量 <code>CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1</code>。'],
+    ['命名避坑', '别和随附 Skill 同名（如 code-review）。']
+  ]
+});
+
+CH.tryNow($('#try'), '4', [
+  { t: '跑一次 <code>/skill-doctor</code>，关掉从来没用过的 Skill', d: '描述每一轮都在占上下文。' },
+  { t: '把 CLAUDE.md 里最长的那段流程搬成一个 Skill', d: '描述写成“做什么。在……时使用。”，正文里的长资料放进 <code>references/</code>。' },
+  { t: '给一个会读大量文件的 Skill 加上 <code>context: fork</code> 和 <code>agent: Explore</code>', d: '比较前后主对话的 <code>/context</code> 占用。' }
+]);
+})();
+</script>
+</body>
+</html>

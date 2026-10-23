@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆与检索：Memory 与 RAG</title>
+<meta name="description" content="Hello-Agents 学习笔记（八）：LLM 的两个局限（无状态与知识静态）；从人类记忆模型到四种智能体记忆（工作、情景、语义、感知）及其存储与评分公式；MemoryTool 的 add、search、forget、consolidate；RAG 的三阶段演进与“五层七步”管道、Markdown 结构感知分块与 Token 估算；MQE、HyDE 与扩展检索；文档问答助手如何组合两者。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 3.5v4M20.5 12h-4M12 20.5v-4M3.5 12h4' stroke='%2313171C' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.sc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.sc .mem { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 14px; background: var(--bg); }
+.sc .mem h4 { margin: 0 0 6px; font-size: 16px; }
+.sc label { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 3.4em; gap: 8px; align-items: center; font-size: 15px; color: var(--ink-3); margin-top: 4px; }
+.sc label b { font-family: var(--f-num); color: var(--ink); text-align: right; }
+.sc .out { margin-top: 8px; font-family: var(--f-num); font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+.sc .out b { color: var(--ink); font-size: 17px; }
+.sc .mem.win { border-color: var(--ok); box-shadow: inset 4px 0 0 var(--ok); }
+@media (max-width: 700px) { .sc { grid-template-columns: minmax(0, 1fr); } }
+.mstore { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.mstore div { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) 4.5em 4.5em; gap: 8px; align-items: center; font-size: 15px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); transition: opacity .3s; }
+.mstore div .ty { font-weight: 700; color: var(--ink); }
+.mstore div .n { font-family: var(--f-num); text-align: right; }
+.mstore div.gone { opacity: .35; text-decoration: line-through; }
+.mstore div.moved { border-color: var(--ok); background: var(--ok-soft); }
+.mstore .hd { background: none; border: 0; color: var(--ink-3); padding-top: 0; padding-bottom: 0; }
+@media (max-width: 560px) { .mstore div { grid-template-columns: 4.5em minmax(0, 1fr) 3.6em; } .mstore div .n.age { display: none; } }
+.chk-in textarea { width: 100%; min-height: 220px; font-family: var(--f-num); font-size: 15px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); box-sizing: border-box; }
+.chunks { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.chunks div { border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 6px 6px 0; padding: 8px 12px; background: var(--bg); font-size: 15px; line-height: 1.6; color: var(--ink-2); white-space: pre-wrap; }
+.chunks div b { display: block; font-family: var(--f-num); font-size: 15px; color: var(--ink); margin-bottom: 4px; white-space: normal; }
+.chunks div mark { background: var(--s2-soft); color: var(--ink); }
+.qx { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.qx div { font-size: 15px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); line-height: 1.6; }
+.qx div b { color: var(--ink); margin-right: 8px; }
+.qx div.mqe { border-left: 4px solid var(--s1); }
+.qx div.hyde { border-left: 4px solid var(--s2); }
+.qx div.hit { border-left: 4px solid var(--ok); }
+</style>
+</head>
+<body data-series="helloagents-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Hello-Agents · 08</span><span>对应原书第 8 章</span><span>约 45 分钟</span></p>
+  <h1>记住聊过的，<em>查到没学过的</em></h1>
+  <p class="lead">LLM 有两个先天短板：每次调用都是独立的，聊过就忘；知识停在训练截止那天，没学过的不知道。第八章给 HelloAgents 加了两样东西来补：记忆系统负责“记住聊过的”，RAG 负责“查到没学过的”。两者都被做成工具（memory_tool 和 rag_tool），延续上一篇“万物皆为工具”。这一篇的重点是几个能算、能动手的东西：四种记忆各用什么公式打分，遗忘和整合怎么操作，文档怎么被切成块，查询怎么被扩展。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">Hello-Agents：从零开始构建智能体</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 14 日的仓库版本）的学习笔记。原书十六章，按“概念 → 手写范式 → 平台与框架 → 自研框架 → 记忆、上下文、协议、训练、评估 → 综合案例”展开，代码量很大。这里重排成十三篇，用自己的话重讲：代码只保留能看清机制的骨架，做成可以逐行走读、可以填空回忆的互动；每篇末尾配原书面试题清单里的相关题目做口述演练。每节标出对应的原书章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-helloagents/"><b>总览</b>复习台</a>
+  <a href="../2026-10-22-helloagents-1/" data-part="1"><b>01</b>初识智能体</a>
+  <a href="../2026-10-22-helloagents-2/" data-part="2"><b>02</b>发展史</a>
+  <a href="../2026-10-22-helloagents-3/" data-part="3"><b>03</b>LLM 基础</a>
+  <a href="../2026-10-22-helloagents-4/" data-part="4"><b>04</b>经典范式</a>
+  <a href="../2026-10-22-helloagents-5/" data-part="5"><b>05</b>低代码平台</a>
+  <a href="../2026-10-22-helloagents-6/" data-part="6"><b>06</b>框架实践</a>
+  <a href="../2026-10-22-helloagents-7/" data-part="7"><b>07</b>自建框架</a>
+  <a href="../2026-10-22-helloagents-8/" aria-current="page" data-part="8"><b>08</b>记忆与检索</a>
+  <a href="../2026-10-22-helloagents-9/" data-part="9"><b>09</b>上下文工程</a>
+  <a href="../2026-10-22-helloagents-10/" data-part="10"><b>10</b>通信协议</a>
+  <a href="../2026-10-22-helloagents-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-22-helloagents-12/" data-part="12"><b>12</b>性能评估</a>
+  <a href="../2026-10-22-helloagents-13/" data-part="13"><b>13</b>综合案例</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">两个短板</a><a href="#types">四种记忆</a><a href="#score">评分公式</a><a href="#ops">记忆的操作</a><a href="#rag">RAG 管道</a><a href="#chunk">动手分块</a><a href="#adv">高级检索</a><a href="#iv">面试演练</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Memory 和 RAG 各解决 LLM 的哪个短板？什么时候该查记忆、什么时候该查知识库？</li>
+    <li>四种记忆分别存什么、存在哪、怎么打分？遗忘和整合怎么做？</li>
+    <li>一份 PDF 到被检索出来经过哪些步骤？MQE 和 HyDE 各解决什么问题？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>两个短板，两个工具</h2><span class="meta">原书 8.1.2–8.1.3 节</span></div>
+  <div class="sec-lede">
+    <p><strong>短板一：无状态导致遗忘。</strong>每次 API 调用都是独立计算，模型不会自己记住上次聊了什么。第七章的 SimpleAgent 虽然在 <code>_history</code> 里暂存了当前对话，但那只是进程内的一个临时列表：重启或换个实例就没了，也不能检索、遗忘、整合。后果是上下文丢失、无法个性化、无法从经验中学习、前后矛盾。</p>
+    <p><strong>短板二：知识是静态的。</strong>训练有截止时间，专业领域可能不够深，回答没有出处、也难以核对。RAG 的思路是生成之前先从外部知识库检索相关内容，作为上下文一起交给模型。</p>
+    <p>原书把两者设计成两个独立工具：<code>memory_tool</code> 存取对话中产生的交互信息，<code>rag_tool</code> 从用户提供的知识库里检索，并可以把重要的检索结果自动写进记忆。记忆系统分四层（基础设施：MemoryManager、MemoryItem、MemoryConfig、BaseMemory；记忆类型；存储后端：Qdrant 向量、Neo4j 图、SQLite 文档；嵌入服务：百炼 DashScope、本地 Transformer、TF-IDF 兜底），RAG 系统也分四层（文档处理、嵌入、向量存储、智能问答）。</p>
+    <p class="go">原书习题 4 问：什么时候该查 RAG、什么时候该查 Memory？先练练判断。</p>
+  </div>
+  <div class="lab"><div id="routeCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Memory vs RAG</h4>
+    <p>两者底层都可以用向量检索，区别在<b>数据从哪来、属于谁</b>。<b>Memory</b> 存的是智能体在交互中自己产生、关于这个用户和这段经历的信息，会被不断写入、整合、遗忘；<b>RAG</b> 查的是外部提供的、相对稳定的知识文档，通常批量导入、按命名空间隔离。一句话：Memory 回答“我们之间发生过什么”，RAG 回答“资料里是怎么说的”。</p>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="types">
+  <div class="part-head"><h2>四种记忆，四种寿命</h2><span class="meta">原书 8.1.1、8.2.1、8.2.5 节</span></div>
+  <div class="sec-lede">
+    <p>原书从认知心理学的经典模型出发：人类记忆分<strong>感觉记忆</strong>（0.5–3 秒，容量巨大）、<strong>工作记忆</strong>（15–30 秒，约 7±2 项）、<strong>长期记忆</strong>（程序性记忆，以及陈述性记忆里的<strong>语义记忆</strong>“巴黎是法国首都”和<strong>情景记忆</strong>“昨天的会议”）；记忆的形成经过编码、存储、检索、整合、遗忘五个阶段。</p>
+    <p>映射到智能体，就是四种记忆：<strong>工作记忆</strong>存当前会话的临时上下文，纯内存、容量默认 50 条、TTL 自动过期（默认 60 分钟），用 TF-IDF 加关键词匹配做词法检索；<strong>情景记忆</strong>存具体事件和经历，带会话 ID 和时间，SQLite 存结构化数据、Qdrant 存向量，先按时间、重要性等结构化过滤再做语义检索；<strong>语义记忆</strong>存抽象知识、概念、用户偏好、长期规则，写入时自动抽取实体和关系存进 Neo4j 知识图谱，同时向量存进 Qdrant，检索时向量和图两路并行再融合；<strong>感知记忆</strong>存图像、音频等多模态数据，按模态分开建向量集合（文本、CLIP 图像、CLAP 音频）避免维度不匹配。</p>
+    <p class="go">原书习题 1 的“个人健康管理助手”：每条信息应该放进哪种记忆？</p>
+  </div>
+  <div class="lab"><div id="memSort"></div></div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>类型</th><th>存什么</th><th>存储</th><th>检索</th><th>寿命</th></tr>
+      <tr><td>工作记忆</td><td>当前会话的临时上下文</td><td>纯内存</td><td>TF-IDF + 关键词</td><td>容量 50、TTL 60 分钟，会话结束清理</td></tr>
+      <tr><td>情景记忆</td><td>具体事件、交互经历</td><td>SQLite + Qdrant</td><td>结构化过滤 + 向量</td><td>长期，可按时间回溯</td></tr>
+      <tr><td>语义记忆</td><td>概念、规则、偏好、领域知识</td><td>Qdrant + Neo4j</td><td>向量 + 图，融合排序</td><td>长期，高持久性</td></tr>
+      <tr><td>感知记忆</td><td>图像、音频等多模态</td><td>SQLite + 分模态 Qdrant 集合</td><td>同模态向量（可跨模态）</td><td>按重要性与空间动态管理</td></tr>
+    </table>
+  </div>
+  <div class="notes" id="n-types"></div>
+</section>
+
+<section class="part" id="score">
+  <div class="part-head"><h2>评分公式：相关、新近、重要</h2><span class="meta">原书 8.2.5 节</span></div>
+  <div class="sec-lede">
+    <p>每种记忆检索时都要给候选打分排序，公式长得像但侧重不同，可以一起记。共同的结构是<strong>（相关性的加权组合）×（0.8 + 重要性 × 0.4）</strong>：重要性在 0 到 1 之间，乘子落在 [0.8, 1.2]，原书解释说这样能让重要性起调节作用，又不至于压过相似度。</p>
+    <p>不同之处在括号里：<strong>工作记忆</strong>是（TF-IDF 相似度 × 0.7 + 关键词得分 × 0.3）再乘时间衰减；<strong>情景记忆</strong>是向量相似度 × 0.8 + 时间近因性 × 0.2；<strong>语义记忆</strong>是向量相似度 × 0.7 + 图相似度 × 0.3；<strong>感知记忆</strong>和情景一样是 0.8 / 0.2。时间近因性用指数衰减 exp(−0.1 × 小时数 / 24)，最低保留 0.1。原书习题 1 让你解释：情景记忆强调“什么时候发生的”，所以带近因性；语义记忆强调“概念之间怎么关联”，所以带图检索。</p>
+    <p class="go">两条记忆比一比：调相似度、近因、重要性，看谁排在前面。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>记忆类型</span><div class="seg" id="typeSeg"><button data-v="ep" aria-pressed="true">情景记忆</button><button data-v="se">语义记忆</button><button data-v="wk">工作记忆</button></div></div>
+    <div class="sc" id="scBox"></div>
+    <p class="note" id="scNote"></p>
+  </div>
+  <div class="notes" id="n-score"></div>
+</section>
+
+<section class="part" id="ops">
+  <div class="part-head"><h2>记忆的操作：存、查、忘、整合</h2><span class="meta">原书 8.2.3–8.2.4 节</span></div>
+  <div class="sec-lede">
+    <p><strong>MemoryTool</strong> 是统一入口，“统一入口，分发处理”：一个 <code>execute(action, **kwargs)</code>，按 action 分发到 add、search、summary、stats、update、remove、forget、consolidate、clear_all。底下是 <strong>MemoryManager</strong>，按配置启用哪些记忆类型（默认工作、情景、语义，感知需显式开启），负责协调；具体存储和检索由各记忆类型自己实现。这是关注点分离：Tool 管接口和参数，Manager 管逻辑。</p>
+    <p><code>add</code> 时自动补会话 ID 和时间戳，可指定 memory_type 和 importance（0 到 1）。<code>search</code> 支持单个或多个类型、<code>min_importance</code>（默认 0.1）过滤低质量记忆。<code>forget</code> 有三种策略：<strong>基于重要性</strong>（删掉低于阈值的）、<strong>基于时间</strong>（删掉超过天数的）、<strong>基于容量</strong>（超限时删最不重要的）。<code>consolidate</code> 模拟记忆固化：默认把重要性超过 0.7 的工作记忆提升为情景记忆，也可以把重要性超过 0.8 的情景记忆提升为语义记忆。</p>
+    <p class="go">对这个小记忆库执行几个操作（记忆内容与数值为示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="opsBtn"></div>
+    <div class="mstore" id="mstore"></div>
+    <p class="note" id="opsNote"></p>
+  </div>
+  <div class="notes" id="n-ops"></div>
+</section>
+
+<section class="part" id="rag">
+  <div class="part-head"><h2>RAG：从朴素到模块化</h2><span class="meta">原书 8.3.1–8.3.4 节</span></div>
+  <div class="sec-lede">
+    <p>RAG 拆开是三个词：<strong>检索</strong>（从知识库查相关内容）、<strong>增强</strong>（把检索结果融入提示词）、<strong>生成</strong>（产出有依据的答案）。流程分两段：<strong>数据准备</strong>（提取、分块、向量化、入库）和<strong>应用</strong>（提问、检索、注入提示、生成）。</p>
+    <p>原书把发展分三个阶段：<strong>朴素 RAG</strong>（2020–2021）“检索—读取”，靠 TF-IDF、BM25 关键词匹配，检索结果原样拼进提示；<strong>高级 RAG</strong>（2022–2023）转向稠密嵌入的语义检索，并加入查询重写、分块优化、重排序；<strong>模块化 RAG</strong>（2023 至今）各环节可插拔组合，混合检索、多查询扩展、假设文档嵌入，生成侧加思维链、自我反思。</p>
+    <p>HelloAgents 的 RAG 是“五层七步”：用户层（RAGTool）、应用层（问答、搜索、管理）、处理层（解析、分块、向量化）、存储层（向量库、文档存储）、基础层（嵌入模型、LLM、数据库）。处理链路是<strong>任意格式 → MarkItDown 转换 → Markdown → 结构感知分块 → 向量化 → 存储检索</strong>。关键设计是先用微软开源的 MarkItDown 把 PDF、Word、Excel、PPT、图片（OCR）、音频（转录）统统转成 Markdown（PDF 另有增强处理，失败退回纯文本读取），后面就只需一套分块逻辑。嵌入用百炼 API，不可用退到本地 all-MiniLM-L6-v2，再不行用 TF-IDF 兜底；不同知识库用 <code>rag_namespace</code> 隔离。</p>
+    <p class="go">每条描述属于哪个阶段？</p>
+  </div>
+  <div class="lab"><div id="ragSort"></div></div>
+  <div class="notes" id="n-rag"></div>
+</section>
+
+<section class="part" id="chunk">
+  <div class="part-head"><h2>动手分块</h2><span class="meta">原书 8.3.4 节（2）</span></div>
+  <div class="sec-lede">
+    <p>分块分两步。第一步<strong>按标题切段</strong>：逐行扫描，遇到 # 开头的标题行就把缓冲区里的段落落盘，并维护一个标题栈（遇到同级或更高级标题时弹栈），每个段落都记下它的<strong>标题路径</strong>，比如“第三章 &gt; 3.2 分词”。第二步<strong>按 Token 数装箱</strong>：段落依次放进当前块，放不下就封箱；封箱时从尾部往回保留不超过 overlap 的段落，作为下一块的开头（<strong>重叠</strong>保证跨块的信息连续）。</p>
+    <p>Token 数用一个中英文混合的近似：<strong>CJK 汉字个数，加上按空白切分得到的片段数</strong>（英文大致一词一个；中文因为几乎没有空格，基本就是字数）。这比调用真正的分词器便宜得多，又比按字符数准确。标题路径会作为元数据随块入库，检索结果能告诉你答案出自哪一节。</p>
+    <p class="go">改 chunk_tokens 和 overlap，看块怎么变（实现按原书逻辑移植，段落以空行分隔为简化）。黄色是与上一块重叠的段落。</p>
+  </div>
+  <div class="lab">
+    <div class="chk-in"><textarea id="mdIn" aria-label="Markdown 文本"></textarea></div>
+    <div class="sliders" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:8px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:15px;color:var(--ink-3)">chunk_tokens <b id="ctV" style="font-family:var(--f-num);color:var(--ink)">60</b><input type="range" id="ctS" min="20" max="200" step="5" value="60"></label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:15px;color:var(--ink-3)">overlap_tokens <b id="ovV" style="font-family:var(--f-num);color:var(--ink)">20</b><input type="range" id="ovS" min="0" max="80" step="5" value="20"></label>
+    </div>
+    <div class="chunks" id="chunks"></div>
+  </div>
+  <div class="notes" id="n-chunk"></div>
+</section>
+
+<section class="part" id="adv">
+  <div class="part-head"><h2>高级检索：MQE 与 HyDE</h2><span class="meta">原书 8.3.5 节</span></div>
+  <div class="sec-lede">
+    <p>用户的说法和文档的写法常常对不上。<strong>多查询扩展（MQE）</strong>解决<strong>用词多样性</strong>：让 LLM 把一个问题改写成几种语义等价的说法（“如何学习 Python”→“Python 入门教程”“Python 学习方法”），分别检索再合并，提升召回率，对模糊查询和术语查询特别有效。<strong>假设文档嵌入（HyDE）</strong>解决<strong>语义鸿沟</strong>：问题是疑问句，文档是陈述句，两者在向量空间里分布不同；HyDE 让 LLM 先写一段“可能的答案”，用这段答案去检索，即使假答案内容不全对，它带的术语和表述风格也更接近真实文档。</p>
+    <p>两者整合在 <code>search_vectors_expanded</code> 里：<strong>扩展</strong>（原查询 + MQE 改写 + HyDE 段落，去重）→ <strong>检索</strong>（每个扩展查询都检索，候选池按 <code>candidate_pool_multiplier</code>，默认 4 倍放大）→ <strong>合并</strong>（去重、按分数排序取 top-k）。原书的建议：一般查询开 MQE；专业领域 MQE 和 HyDE 都开；性能敏感时只做基础检索或只开 MQE。注意每开一项都要多调一次 LLM。</p>
+    <p class="go">一步步看一次扩展检索（扩展内容与命中文档为示意）。</p>
+  </div>
+  <div class="lab">
+    <div id="qxStep"></div>
+    <div class="qx" id="qx"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：MQE vs HyDE</h4>
+    <p>两者都用 LLM 生成新的检索查询，区别在生成的是什么。<b>MQE</b> 生成的是<b>更多的问题</b>（换说法），对付“同一件事不同叫法”；<b>HyDE</b> 生成的是<b>一段假答案</b>（换文体），对付“问句和陈述句长得不像”。MQE 增加召回的广度，HyDE 拉近查询与文档的距离；HyDE 的假答案如果方向错了，也可能把检索带偏。</p>
+  </div>
+  <div class="xlink"><b>和已学系列对照：</b>记忆的分层与跨会话设计见<a href="../2026-10-16-agent-3/">《深入理解 AI Agent》03 篇·记忆与知识库</a>；企业里“上下文、状态与能力资产”的划分见<a href="../2026-10-22-handbook-5/">《AI Agent Handbook》05 篇</a>。</div>
+  <div class="notes" id="n-adv"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 8 章习题</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="8-1">
+      <p class="iv-q">如何为 Agent 设计短期记忆和长期记忆？可以借助哪些工具或技术？<small>Extra01 · Agent 第 4 题</small></p>
+      <ul class="iv-a">
+        <li><b>短期</b>：当前会话的消息窗口或工作记忆，容量上限 + TTL，超长时摘要或截断；纯内存即可。</li>
+        <li><b>长期</b>：情景（事件，带时间与会话，适合回溯）+ 语义（抽象知识与偏好，可配知识图谱）；向量库（Qdrant 等）、图数据库（Neo4j）、关系库（SQLite）组合。</li>
+        <li><b>生命周期</b>：写入时打重要性；检索按相关 × 近因 × 重要性排序；定期整合（短期中重要的升为长期）和遗忘（低重要、过期、超容量）。</li>
+        <li><b>工程要点</b>：用户级隔离、隐私数据的彻底删除（向量与图里的副本都要删）、写入时机放在固定钩子而非全靠模型自觉。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="8-2">
+      <p class="iv-q">解释 RAG 的工作原理。与微调相比它解决了什么问题？完整流水线有哪些步骤？<small>Extra01 · RAG 第 1、2 题</small></p>
+      <ul class="iv-a">
+        <li><b>原理</b>：生成前从外部知识库检索相关片段，注入提示词，让模型基于资料作答。</li>
+        <li><b>相对微调</b>：知识可随时更新、不改权重；可给出处、可核对；对长尾和私有知识更省成本；微调更适合改变风格、格式和能力而非灌知识。</li>
+        <li><b>流水线</b>：文档解析（如 MarkItDown 转 Markdown）→ 清洗与分块（结构感知、重叠）→ 嵌入 → 入库（命名空间隔离）→ 查询处理（改写、MQE、HyDE）→ 检索（向量 / 混合）→ 重排 → 拼上下文 → 生成并引用来源。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="8-3">
+      <p class="iv-q">怎么选切块大小和重叠长度？背后的权衡是什么？<small>Extra01 · RAG 第 3 题</small></p>
+      <ul class="iv-a">
+        <li><b>块太大</b>：一个向量混了多个主题，相似度被稀释；塞进上下文浪费 Token。</li>
+        <li><b>块太小</b>：语义不完整，答案被切到两块里，需要更多块才能拼全。</li>
+        <li><b>重叠</b>：缓解边界切断，但增加存储和重复召回。</li>
+        <li><b>做法</b>：先按文档结构（标题、段落）切，再按 Token 装箱；按嵌入模型的最佳输入长度和问题粒度调参；用检索评测集（召回率、MRR）对比几组参数。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="8-4">
+      <p class="iv-q">除了基础向量检索，还有哪些技术能提升 RAG 的检索质量？“Lost in the Middle”是什么？<small>Extra01 · RAG 第 5、6 题</small></p>
+      <ul class="iv-a">
+        <li><b>查询侧</b>：查询改写、MQE、HyDE、子问题分解。</li>
+        <li><b>检索侧</b>：混合检索（BM25 + 向量）、元数据过滤、知识图谱多跳、父子块（小块检索大块返回）。</li>
+        <li><b>排序侧</b>：交叉编码器重排、去重与多样性。</li>
+        <li><b>Lost in the Middle</b>：模型对长上下文开头和结尾的信息利用得好，中间的容易被忽略；缓解办法是减少无关片段、把最相关的放在开头或结尾、压缩摘要后再注入（第 9 篇上下文工程）。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="try">
+    <h4>动手练（原书习题 3）</h4>
+    <ol>
+      <li>设计一个“智能遗忘”策略，综合重要性、访问频率、时间衰减。<details><summary>思路</summary><p>为每条记忆维护 access_count 和 last_access；保留分 = w1 × 重要性 + w2 × log(1 + 访问次数) + w3 × exp(−λ × 距上次访问天数)；定期删掉保留分最低的若干条，或在容量超限时触发。被检索到时更新访问统计，相当于“复习”。</p></details></li>
+      <li>要“忘记”用户的隐私数据，从数据库删除就够了吗？<details><summary>思路</summary><p>不够。向量库里的向量和载荷、图数据库里由这条记忆抽出的实体与关系、文档库的原文、嵌入缓存、日志与备份里都可能有副本。需要按 memory_id 级联删除所有存储，并对派生出的知识（图谱节点）做引用计数，没有其他来源支撑的一并删除。</p></details></li>
+    </ol>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Memory 与 RAG 各补哪个短板？何时查哪个？</summary><p class="ans">Memory 补“无状态导致遗忘”：保存交互中产生的、关于用户和经历的信息，支持检索、整合、遗忘；RAG 补“知识静态有限”：从外部文档知识库检索资料作为上下文。问“我们之间发生过什么、用户喜欢什么”查记忆；问“资料里怎么规定、某个事实是什么”查知识库；两者都可能相关时并行检索再合并。</p></details>
+    <details><summary>2. 四种记忆存什么、存哪、怎么打分？遗忘与整合？</summary><p class="ans">工作记忆：当前会话临时上下文，纯内存，容量 50、TTL 60 分钟，(TF-IDF × 0.7 + 关键词 × 0.3) × 时间衰减 × 重要性乘子。情景记忆：事件经历，SQLite + Qdrant，(向量 × 0.8 + 近因 × 0.2) × (0.8 + 重要性 × 0.4)。语义记忆：概念偏好规则，Qdrant + Neo4j，(向量 × 0.7 + 图 × 0.3) × 重要性乘子。感知记忆：多模态，分模态集合，同情景记忆公式。遗忘三策略：按重要性、按时间、按容量；整合默认把重要性 > 0.7 的工作记忆升为情景记忆。</p></details>
+    <details><summary>3. PDF 到被检索的步骤？MQE 与 HyDE？</summary><p class="ans">MarkItDown 把 PDF 等转成 Markdown → 按标题切段并记录标题路径 → 按近似 Token 数装箱、带重叠 → 预处理后用嵌入模型向量化 → 存入 Qdrant（命名空间隔离）→ 查询时扩展、检索、合并去重、取 top-k → 注入提示生成。MQE 生成多种问法解决用词差异、提高召回；HyDE 生成假设答案用来检索，解决问句与文档的语义鸿沟。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-helloagents-7/"><small>上一篇</small><span>07 · 自建框架：从零写 HelloAgents</span></a><a class="nx" href="../2026-10-22-helloagents-9/"><small>下一篇</small><span>09 · 上下文工程：给模型看什么</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">datawhalechina/hello-agents</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+HB.cards($('#routeCards'), {
+  opts: ['查记忆', '查知识库', '两者都查'],
+  items: [
+    { t: '“你还记得我上周说过想学哪门课吗？”', a: 0, why: '答案在过去的对话里，属于情景记忆。' },
+    { t: '“Happy-LLM 这本书第三章讲的位置编码公式是什么？”', a: 1, why: '答案在外部文档中，走 RAG。' },
+    { t: '“根据我目前的学习进度，下一步该看文档的哪一章？”', a: 2, why: '进度在记忆里，章节内容在知识库里，要两路结果结合推理。' },
+    { t: '“我不吃辣，帮我推荐几道菜。”（下一次对话又来要菜谱）', a: 0, why: '“不吃辣”是长期偏好，应写入语义记忆，下次直接用。' },
+    { t: '“公司差旅报销标准里，一线城市住宿上限是多少？”', a: 1, why: '制度文档里的稳定知识。' }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['无状态', '每次调用独立计算，模型不会自己记住上次对话。'],
+    ['RAG', '检索—增强—生成：先查外部知识，再把结果作为上下文交给模型。'],
+    ['两个工具', 'memory_tool 存取交互信息；rag_tool 检索知识库，可把重要结果写入记忆。']
+  ],
+  p: [
+    ['记忆四层架构', '基础设施（Manager、Item、Config、Base）→ 记忆类型 → 存储后端（Qdrant、Neo4j、SQLite）→ 嵌入服务（DashScope、本地、TF-IDF）。'],
+    ['Memory vs RAG', '“我们之间发生过什么” vs “资料里是怎么说的”。']
+  ]
+});
+
+/* ---------- 四种记忆 ---------- */
+S.sortGame($('#memSort'), {
+  bins: [{ k: 'w', t: '工作记忆' }, { k: 'e', t: '情景记忆' }, { k: 's', t: '语义记忆' }, { k: 'p', t: '感知记忆' }],
+  items: [
+    { t: '用户刚说“今天中午吃了一碗牛肉面”', k: 'w', why: '当前会话的临时信息，可能在会话结束时整合成情景记忆。' },
+    { t: '10 月 20 日夜跑 5 公里，配速 6 分', k: 'e', why: '有时间、有事件的具体经历，按时间回溯分析趋势。' },
+    { t: '用户对花生过敏', k: 's', why: '长期稳定、必须遵守的事实，属于语义记忆，并且重要性应设得很高。' },
+    { t: '用户上传的一张晚餐照片', k: 'p', why: '图像模态，存进图像向量集合。' },
+    { t: '“减脂期每日热量缺口建议 300–500 千卡”这条规则', k: 's', why: '抽象知识，可在知识图谱里关联到“减脂”目标。' },
+    { t: '上周三晚失眠，只睡了 4 小时', k: 'e', why: '具体事件；多次出现后可总结出语义层面的规律。' },
+    { t: '智能手表同步来的一段心率曲线（音频 / 时序数据）', k: 'p', why: '非文本的感知数据。' }
+  ]
+});
+S.notes($('#n-types'), {
+  c: [
+    ['人类记忆模型', '感觉记忆、工作记忆（7±2）、长期记忆（程序性；陈述性又分语义与情景）。'],
+    ['五个阶段', '编码、存储、检索、整合、遗忘。'],
+    ['工作记忆', '当前会话临时上下文；纯内存，容量 50，TTL 60 分钟。'],
+    ['情景 / 语义 / 感知', '事件经历（SQLite+Qdrant）/ 抽象知识（Qdrant+Neo4j）/ 多模态（分模态集合）。']
+  ],
+  p: [
+    ['语义记忆写入', '嵌入 → 抽取实体与关系写入 Neo4j → 向量写入 Qdrant。'],
+    ['感知记忆为何分集合', '文本、图像、音频编码器维度不同，分开避免维度不匹配。']
+  ]
+});
+
+/* ---------- 评分 ---------- */
+var stype = 'ep';
+var MEMS = [
+  { n: '记忆 A：上周讨论过的 RAG 分块问题', sim: 0.82, x: 0.5, imp: 0.4, age: 168 },
+  { n: '记忆 B：昨天提到的检索调参经验', sim: 0.70, x: 0.5, imp: 0.9, age: 20 }
+];
+function rec(h) { return Math.max(0.1, Math.exp(-0.1 * h / 24)); }
+function score(m) {
+  var w = 0.8 + m.imp * 0.4, base, desc;
+  if (stype === 'ep') { var r = rec(m.age); base = m.sim * 0.8 + r * 0.2; desc = '(' + S.f(m.sim, 2) + ' × 0.8 + 近因 ' + S.f(r, 3) + ' × 0.2)'; }
+  else if (stype === 'se') { base = m.sim * 0.7 + m.x * 0.3; desc = '(' + S.f(m.sim, 2) + ' × 0.7 + 图 ' + S.f(m.x, 2) + ' × 0.3)'; }
+  else { var td = rec(m.age); base = (m.sim * 0.7 + m.x * 0.3) * td; desc = '(' + S.f(m.sim, 2) + ' × 0.7 + 关键词 ' + S.f(m.x, 2) + ' × 0.3) × 衰减 ' + S.f(td, 3); }
+  return { s: base * w, t: desc + ' × ' + S.f(w, 2) };
+}
+function drawScore() {
+  var box = $('#scBox'); box.innerHTML = '';
+  var xl = stype === 'se' ? '图相似度' : stype === 'wk' ? '关键词得分' : '';
+  var res = MEMS.map(function (m) { return score(m); });
+  MEMS.forEach(function (m, i) {
+    var d = h('div', { class: 'mem' + (res[i].s >= res[1 - i].s ? ' win' : '') }, box);
+    h('h4', { text: m.n }, d);
+    function sl(lab, key, min, max, step, fmt) {
+      var lb = h('label', null, d);
+      h('span', { text: lab }, lb);
+      var inp = h('input', { type: 'range', min: min, max: max, step: step, value: m[key] }, lb);
+      var v = h('b', { text: fmt(m[key]) }, lb);
+      inp.addEventListener('input', function () { m[key] = +inp.value; v.textContent = fmt(m[key]); upd(); });
+    }
+    sl('向量 / TF-IDF', 'sim', 0, 1, 0.01, function (x) { return S.f(x, 2); });
+    if (xl) sl(xl, 'x', 0, 1, 0.01, function (x) { return S.f(x, 2); });
+    if (stype !== 'se') sl('距今小时', 'age', 0, 720, 1, function (x) { return x + 'h'; });
+    sl('重要性', 'imp', 0, 1, 0.05, function (x) { return S.f(x, 2); });
+    h('div', { class: 'out', html: '' }, d);
+  });
+  function upd() {
+    var r = MEMS.map(function (m) { return score(m); });
+    S.$$('.mem', box).forEach(function (d, i) {
+      d.classList.toggle('win', r[i].s >= r[1 - i].s);
+      d.querySelector('.out').innerHTML = r[i].t + '<br>= <b>' + S.f(r[i].s, 3) + '</b>';
+    });
+    $('#scNote').textContent = stype === 'ep' ? '情景记忆看“什么时候发生”：同样相关，昨天的比上周的分高。默认数值下，相似度略低但更新、更重要的 B 胜出。' : stype === 'se' ? '语义记忆不看时间，看概念之间的图关联：图相似度高的知识能补上纯向量检索漏掉的隐含关联。' : '工作记忆是词法检索（TF-IDF 不是稠密嵌入），再乘时间衰减；它只活在当前会话里。';
+  }
+  upd();
+}
+S.seg($('#typeSeg'), function (v) { stype = v; drawScore(); });
+drawScore();
+S.notes($('#n-score'), {
+  c: [
+    ['重要性乘子', '0.8 + 重要性 × 0.4，范围 [0.8, 1.2]：调节但不压过相似度。'],
+    ['时间近因性', 'max(0.1, exp(−0.1 × 小时数 / 24))，指数衰减，保底 0.1。']
+  ],
+  p: [
+    ['工作记忆', '(TF-IDF × 0.7 + 关键词 × 0.3) × 时间衰减 × (0.8 + 重要性 × 0.4)'],
+    ['情景 / 感知记忆', '(向量 × 0.8 + 近因 × 0.2) × (0.8 + 重要性 × 0.4)'],
+    ['语义记忆', '(向量 × 0.7 + 图 × 0.3) × (0.8 + 重要性 × 0.4)']
+  ],
+  ph: '公式'
+});
+
+/* ---------- 操作 ---------- */
+var STORE0 = [
+  ['working', '用户刚问了 Python 装饰器怎么写', 0.6, 0],
+  ['working', '用户说下周要做 RAG 项目汇报', 0.85, 0],
+  ['working', '用户说“好的谢谢”', 0.1, 0],
+  ['episodic', '9 月 15 日完成了第一个 Python 项目', 0.8, 37],
+  ['episodic', '8 月初问过一次 pip 换源', 0.15, 80],
+  ['episodic', '上周连续三次问分块参数怎么调', 0.85, 6],
+  ['semantic', '用户是 Python 开发者，主攻数据分析', 0.9, 40],
+  ['semantic', '用户喜欢先看代码再看解释', 0.7, 12]
+];
+var store;
+function resetStore() { store = STORE0.map(function (x) { return { t: x[0], c: x[1], imp: x[2], age: x[3], st: '' }; }); drawStore(); $('#opsNote').textContent = '共 ' + store.length + ' 条。'; }
+var TL = { working: '工作', episodic: '情景', semantic: '语义' };
+function drawStore() {
+  $('#mstore').innerHTML = '<div class="hd"><span>类型</span><span>内容</span><span class="n">重要性</span><span class="n age">距今</span></div>' + store.map(function (m) {
+    return '<div class="' + m.st + '"><span class="ty">' + TL[m.t] + '</span><span>' + m.c + '</span><span class="n">' + S.f(m.imp, 2) + '</span><span class="n age">' + m.age + ' 天</span></div>';
+  }).join('');
+}
+var OPS = [
+  ['forget importance_based, threshold=0.2', function () { var n = 0; store.forEach(function (m) { if (!m.st && m.imp < 0.2) { m.st = 'gone'; n++; } }); return '删除重要性低于 0.2 的记忆 ' + n + ' 条：“好的谢谢”这种寒暄最该忘。'; }],
+  ['forget time_based, max_age_days=30', function () { var n = 0; store.forEach(function (m) { if (!m.st && m.age > 30) { m.st = 'gone'; n++; } }); return '删除超过 30 天的记忆 ' + n + ' 条。注意“用户是 Python 开发者”这条重要的语义记忆也被删了：单纯按时间遗忘会误伤长期知识，这正是习题 3 要你设计综合策略的原因。'; }],
+  ['consolidate working → episodic, 0.7', function () { var n = 0; store.forEach(function (m) { if (!m.st && m.t === 'working' && m.imp > 0.7) { m.t = 'episodic'; m.st = 'moved'; n++; } }); return '把重要性超过 0.7 的工作记忆提升为情景记忆 ' + n + ' 条：“下周要做 RAG 汇报”会话结束后也不会丢。'; }],
+  ['consolidate episodic → semantic, 0.8', function () { var n = 0; store.forEach(function (m) { if (!m.st && m.t === 'episodic' && m.imp > 0.8) { m.t = 'semantic'; m.st = 'moved'; n++; } }); return '把重要性超过 0.8 的情景记忆提升为语义记忆 ' + n + ' 条。原书的整合只改类型，不做抽象；更理想的做法是让 LLM 把多条事件总结成一条规律（“用户在分块调参上反复卡住”）。'; }]
+];
+OPS.forEach(function (o) {
+  var b = h('button', { class: 'btn', type: 'button', html: '<code>' + o[0] + '</code>' }, $('#opsBtn'));
+  b.addEventListener('click', function () { var msg = o[1](); drawStore(); $('#opsNote').textContent = msg; });
+});
+var rb = h('button', { class: 'btn pri', type: 'button', text: '重置' }, $('#opsBtn'));
+rb.addEventListener('click', resetStore);
+resetStore();
+S.notes($('#n-ops'), {
+  c: [
+    ['MemoryTool', '统一入口 execute(action, **kwargs)，按 action 分发；负责接口与参数。'],
+    ['MemoryManager', '按配置启用记忆类型并协调；具体存取由各类型实现。'],
+    ['forget 三策略', '基于重要性、基于时间、基于容量。'],
+    ['consolidate', '把重要的短期记忆提升为长期记忆，模拟记忆固化。']
+  ],
+  p: [
+    ['add', 'memory_type + importance，自动补会话 ID 和时间戳。'],
+    ['search', 'memory_type 或 memory_types，min_importance 默认 0.1。'],
+    ['整合默认值', 'working → episodic，阈值 0.7；episodic → semantic 常用 0.8。'],
+    ['默认启用', 'working、episodic、semantic；perceptual 需显式开启。']
+  ]
+});
+
+/* ---------- RAG ---------- */
+S.sortGame($('#ragSort'), {
+  bins: [{ k: 'n', t: '朴素 RAG' }, { k: 'a', t: '高级 RAG' }, { k: 'm', t: '模块化 RAG' }],
+  items: [
+    { t: '用 BM25 按关键词找文档，原样拼进提示', k: 'n', why: '“检索—读取”的最初形态。' },
+    { t: '用稠密嵌入做语义检索', k: 'a', why: '向量数据库与嵌入成熟后的核心变化。' },
+    { t: '检索后用重排序模型重新排序', k: 'a', why: '原书列在高级 RAG 的优化技术里。' },
+    { t: '同时开启 MQE 与 HyDE，多路检索后合并', k: 'm', why: '多查询扩展与假设文档嵌入属于模块化阶段。' },
+    { t: '生成后让模型自我反思、修正答案', k: 'm', why: '生成侧的自我反思与修正。' },
+    { t: 'BM25 与向量检索结果混合', k: 'm', why: '原书把混合检索列在模块化阶段。' }
+  ]
+});
+S.notes($('#n-rag'), {
+  c: [
+    ['RAG 三个词', '检索（查知识库）、增强（融入提示）、生成（有依据地作答）。'],
+    ['三阶段', '朴素（关键词，原样拼接）→ 高级（稠密嵌入、改写、分块、重排）→ 模块化（混合检索、MQE、HyDE、反思）。'],
+    ['MarkItDown', '微软开源的文档转换工具，把各种格式统一转成 Markdown。']
+  ],
+  p: [
+    ['处理链路', '任意格式 → MarkItDown → Markdown → 结构感知分块 → 向量化 → 存储检索。'],
+    ['五层', '用户层、应用层、处理层、存储层、基础层。'],
+    ['嵌入降级', '百炼 API → 本地 all-MiniLM-L6-v2 → TF-IDF。'],
+    ['隔离', '不同知识库用 rag_namespace 区分。']
+  ]
+});
+
+/* ---------- 分块 ---------- */
+$('#mdIn').value = '# 第三章 大语言模型基础\n\n语言模型的根本任务是计算一个词序列出现的概率。\n\n## 3.1 N-gram\n\nN-gram 用马尔可夫假设只看前 N-1 个词，概率用计数估计。它有两个缺陷：数据稀疏和泛化能力差。\n\n平滑技术可以缓解稀疏问题，但无法根除。\n\n## 3.2 分词\n\n现代大模型普遍采用子词分词。BPE 从字符开始，反复合并最高频的相邻对。\n\n分词直接影响上下文窗口、API 成本和模型的异常行为。\n\n### 3.2.1 BPE 示例\n\n语料 hug pug pun bun，第一次合并 u 和 g 得到 ug。';
+function isCjk(c) { var o = c.codePointAt(0); return (o >= 0x4E00 && o <= 0x9FFF) || (o >= 0x3400 && o <= 0x4DBF) || (o >= 0xF900 && o <= 0xFAFF) || (o >= 0x20000 && o <= 0x2CEAF); }
+function tok(t) { var c = 0; for (var ch of t) if (isCjk(ch)) c++; return c + t.split(/\s+/).filter(function (x) { return x; }).length; }
+function paras(text) {
+  var lines = text.split('\n'), stack = [], out = [], buf = [];
+  function flush() { var c = buf.join('\n').trim(); if (c) out.push({ c: c, hp: stack.join(' > ') || null }); buf = []; }
+  lines.forEach(function (ln) {
+    if (/^\s*#/.test(ln)) {
+      flush();
+      var lvl = ln.trim().match(/^#+/)[0].length, title = ln.trim().replace(/^#+/, '').trim();
+      if (lvl <= stack.length) stack = stack.slice(0, lvl - 1);
+      stack.push(title);
+    } else if (!ln.trim()) flush();
+    else buf.push(ln);
+  });
+  flush();
+  return out;
+}
+function chunkIt() {
+  var CT = +$('#ctS').value, OV = +$('#ovS').value;
+  $('#ctV').textContent = CT; $('#ovV').textContent = OV;
+  var ps = paras($('#mdIn').value), chunks = [], cur = [], ct = 0, i = 0, guard = 0;
+  while (i < ps.length && guard++ < 500) {
+    var p = ps[i], pt = tok(p.c) || 1;
+    if (ct + pt <= CT || !cur.length) { cur.push(p); ct += pt; i++; }
+    else {
+      chunks.push(cur.slice());
+      var kept = [], kt = 0;
+      for (var j = cur.length - 1; j >= 0 && OV > 0; j--) { var t = tok(cur[j].c) || 1; if (kt + t > OV) break; kept.unshift(cur[j]); kt += t; }
+      if (kt + pt > CT) { kept = []; kt = 0; }
+      cur = kept.map(function (x) { return Object.assign({ ov: true }, x); }); ct = kt;
+    }
+  }
+  if (cur.length) chunks.push(cur);
+  $('#chunks').innerHTML = chunks.map(function (c, k) {
+    var hp = null; for (var q = c.length - 1; q >= 0; q--) if (c[q].hp) { hp = c[q].hp; break; }
+    var n = c.reduce(function (s, x) { return s + (tok(x.c) || 1); }, 0);
+    return '<div><b>chunk ' + (k + 1) + ' · 约 ' + n + ' tokens · heading_path: ' + (hp || '无') + '</b>' + c.map(function (x) { var t = x.c.replace(/</g, '&lt;'); return x.ov ? '<mark>' + t + '</mark>' : t; }).join('\n\n') + '</div>';
+  }).join('');
+}
+['#ctS', '#ovS'].forEach(function (x) { $(x).addEventListener('input', chunkIt); });
+$('#mdIn').addEventListener('input', chunkIt);
+chunkIt();
+S.notes($('#n-chunk'), {
+  c: [
+    ['标题路径', '按 Markdown 标题维护标题栈，每个段落记录“一级 > 二级 > 三级”路径。'],
+    ['Token 装箱', '段落依次装入当前块，超过 chunk_tokens 就封箱。'],
+    ['重叠', '封箱后从尾部保留不超过 overlap_tokens 的段落作为下一块开头。']
+  ],
+  p: [
+    ['Token 近似', 'CJK 字符数 + 按空白切分的片段数。'],
+    ['为何先转 Markdown', '所有格式共用一套基于标题结构的分块逻辑。'],
+    ['没有标题的文档', '原书习题 2：可按句子嵌入相似度变化找语义边界。']
+  ]
+});
+
+/* ---------- MQE / HyDE ---------- */
+var QX = [
+  ['原始查询', [['', '如何让 RAG 检索更准']]],
+  ['MQE 扩展', [['', '如何让 RAG 检索更准'], ['mqe', 'MQE：RAG 召回率优化方法'], ['mqe', 'MQE：向量检索精度提升技巧']]],
+  ['HyDE 假设段落', [['', '如何让 RAG 检索更准'], ['mqe', 'MQE：RAG 召回率优化方法'], ['mqe', 'MQE：向量检索精度提升技巧'], ['hyde', 'HyDE：提升 RAG 检索质量通常从查询和文档两侧入手。查询侧可以做查询改写与多查询扩展；文档侧要合理设置分块大小与重叠，并保留标题等元数据；检索后可以用交叉编码器重排……']]],
+  ['逐个检索并合并', [['hit', '命中「8.3.5 高级检索策略」（原查询 + 两条 MQE 都召回到）'], ['hit', '命中「8.3.4 智能分块策略」（只有 HyDE 段落召回到，它包含“分块”“重叠”这些术语）'], ['hit', '命中「3.3.2 模型幻觉 · RAG 缓解」（MQE 召回到）'], ['', '候选池 = top_k × 4，去重后按分数排序取 top_k']]]
+];
+S.stepper($('#qxStep'), QX.length, function (i) {
+  $('#qx').innerHTML = QX[i][1].map(function (x) { return '<div class="' + x[0] + '">' + x[1] + '</div>'; }).join('') + (i === 3 ? '' : '<div style="border:0;background:none;color:var(--ink-3)">' + (i === 0 ? '只用原问题检索，问句和文档写法差得远。' : i === 1 ? 'enable_mqe=True, mqe_expansions=2：多一次 LLM 调用，得到两种新说法。' : 'enable_hyde=True：再多一次 LLM 调用，得到一段陈述句风格、带术语的假答案。') + '</div>');
+}, QX.map(function (x) { return x[0]; }));
+S.notes($('#n-adv'), {
+  c: [
+    ['MQE 多查询扩展', 'LLM 生成多个语义等价问法分别检索，解决用词多样性，提高召回。'],
+    ['HyDE 假设文档嵌入', 'LLM 先写一段假设答案再用它检索，弥合问句与文档的语义鸿沟。'],
+    ['扩展检索', '扩展（去重）→ 每个查询检索（候选池 × 4）→ 去重合并排序取 top-k。']
+  ],
+  p: [
+    ['原书建议', '一般查询开 MQE；专业领域 MQE + HyDE；性能敏感只用基础检索或仅 MQE。'],
+    ['代价', '每开一项多一次 LLM 调用；HyDE 方向错了会带偏检索。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>七件套全景：slash 命令、Memory、Skills、Subagents、MCP、Hooks、Plugins 各管什么</title>
+<meta name="description" content="Claude How To 学习笔记（一）：Claude Code 七种扩展机制的分工总图——谁触发、放在哪、占不占主上下文、什么时候用；上下文账本看清启动时到底加载了什么；场景判定题练边界；原文推荐的学习顺序与自测定级。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2.5' y='4' width='19' height='16' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M6.5 9.5l3 2.5-3 2.5' fill='none' stroke='%232340D6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 15h5' stroke='%2313171C' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.lv { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.lv label { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px; background: var(--bg); font-size: 15px; line-height: 1.55; cursor: pointer; color: var(--ink-2); }
+.lv input { margin-top: 4px; accent-color: var(--s1); flex: none; width: 16px; height: 16px; }
+.lvt td:nth-child(2) { white-space: nowrap; }
+.tog { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 6px 0 12px; }
+.tog label { font-size: 15px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.tog input[type=checkbox] { accent-color: var(--s1); width: 16px; height: 16px; }
+.tog input[type=range] { accent-color: var(--s1); width: 130px; }
+.tog output { font-family: var(--f-num); color: var(--ink); min-width: 2.2em; display: inline-block; }
+</style>
+</head>
+<body data-series="claudehowto-series" data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Claude How To · 01</span><span>对应原文 README、claude_concepts_guide、LEARNING-ROADMAP</span><span>约 25 分钟</span></p>
+  <h1>先分清<em>谁管什么</em>，再学怎么配</h1>
+  <p class="lead">Claude Code 的可扩展点很多：斜杠命令、CLAUDE.md、Skills、Subagents、MCP、Hooks、Plugins，再加上 Checkpoints、权限模式和 CLI。原教程开篇就点出一个现象：大多数人只用到了它很小一部分能力，原因不是功能藏得深，而是官方文档按功能讲，没讲这些东西怎么分工、怎么组合。这一篇不讲任何一个功能的细节，只做一件事：把七件套的边界划清楚，后面十一篇再逐个拆开。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/luongnv89/claude-howto" rel="noopener">Claude How To</a>》（luongnv89 与社区贡献者编写，MIT 协议；本笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302）的学习笔记。原教程按十个模块（01-slash-commands 到 10-cli）组织，配了大量可复制的模板。这里重排成十二篇：先用一篇讲清七种扩展机制的分工，再逐个拆开，每个功能按“它解决什么问题、最小可用配置放在哪个路径、什么时候不该用”来写，并配上“读配置猜行为”、模拟器和场景判定题。功能与字段取自原文（主要依据英文原版，中文版是它的缩写译本），每节标出对应的原文目录；为演示设的场景和数值标“示意”。Claude Code 更新很快，原文里带版本号的细节以原文和官方文档为准。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-claudehowto/"><b>总览</b>速查卡</a>
+  <a href="../2026-10-22-claudehowto-1/" aria-current="page" data-part="1"><b>01</b>全景</a>
+  <a href="../2026-10-22-claudehowto-2/" data-part="2"><b>02</b>斜杠命令</a>
+  <a href="../2026-10-22-claudehowto-3/" data-part="3"><b>03</b>Memory</a>
+  <a href="../2026-10-22-claudehowto-4/" data-part="4"><b>04</b>Skills</a>
+  <a href="../2026-10-22-claudehowto-5/" data-part="5"><b>05</b>Subagents</a>
+  <a href="../2026-10-22-claudehowto-6/" data-part="6"><b>06</b>MCP</a>
+  <a href="../2026-10-22-claudehowto-7/" data-part="7"><b>07</b>Hooks</a>
+  <a href="../2026-10-22-claudehowto-8/" data-part="8"><b>08</b>Plugins</a>
+  <a href="../2026-10-22-claudehowto-9/" data-part="9"><b>09</b>回退与会话</a>
+  <a href="../2026-10-22-claudehowto-10/" data-part="10"><b>10</b>规划与权限</a>
+  <a href="../2026-10-22-claudehowto-11/" data-part="11"><b>11</b>后台与远程</a>
+  <a href="../2026-10-22-claudehowto-12/" data-part="12"><b>12</b>CLI 与脚本</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么先看全景</a><a href="#map">一张分工图</a><a href="#matrix">对照总表</a><a href="#ledger">上下文账本</a><a href="#pick">场景判定</a><a href="#path">学习顺序</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>七种扩展机制分别由谁触发？哪些“每次都加载”，哪些“按需加载”，哪些“根本不进主上下文”？</li>
+    <li>“每次提交前必须跑 lint”这件事，写进 CLAUDE.md、写成 Skill、配成 Hook，效果有什么根本区别？</li>
+    <li>原文推荐的学习顺序是什么？为什么 Checkpoints 和 CLI 基础排在 Skills 之前？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么先看全景</h2><span class="meta">原文 README「问题在哪里」</span></div>
+  <div class="sec-lede">
+    <p>原教程把自己定位成“教程”而不是“参考手册”。它在 README 里列了三个痛点：<strong>官方文档讲功能，不讲组合</strong>（知道有 slash command，却不知道怎么和 hooks、memory、subagents 串成真正省时间的工作流）；<strong>没有学习路径</strong>（先学 MCP 还是 hooks？结果每样都碰一点）；<strong>示例太基础</strong>（hello world 级的命令帮不了你搭一条能用的审查流水线）。</p>
+    <p>这对天天用 Claude Code 写代码的人尤其成立：你大概已经会用 <code>/clear</code>、<code>/compact</code>、写过 CLAUDE.md，但未必说得清“一条团队规范应该写进 CLAUDE.md、做成 Skill，还是配成 Hook”。这三者的差别不在写法，而在<strong>谁来执行、是否一定执行、占不占上下文</strong>。</p>
+    <p>所以这一篇先建立一个判断框架：每种机制回答三个问题——<strong>谁触发它</strong>（你、Claude 还是事件）、<strong>它住在哪</strong>（哪个文件、什么作用域）、<strong>它花的是谁的上下文</strong>（主对话、按需、还是另开窗口）。后面每一篇都会回到这三个问题。</p>
+    <p class="go">先看原文给每个功能的一句话定位，点开每一项。</p>
+  </div>
+  <div class="lab"><div id="one"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>一张分工图：按“谁触发”来分</h2><span class="meta">原文 claude_concepts_guide「Feature Comparison Matrix」</span></div>
+  <div class="sec-lede">
+    <p>原文在概念总览里用一张矩阵比较各功能的调用方式和持久性。按我的理解，最好用的切法是<strong>触发者</strong>：有些东西只在你敲 <code>/</code> 时才动（内置命令、手动调用的 Skill）；有些由 Claude 自己判断要不要用（自动触发的 Skill、委派给 Subagent、调用 MCP 工具）；有些每次会话都在（CLAUDE.md、Skill 的描述）；还有一类完全不经过模型判断，由事件确定性地触发（Hooks）。Plugin 则不在这条轴上，它是把以上几种打包分发的“容器”。</p>
+    <p>这张图最重要的一个结论：<strong>只有 Hooks 是确定性的</strong>。写进 CLAUDE.md 或 Skill 的规则是给模型看的“指令”，模型大多数时候会照做，但没有保证；Hook 则是 Claude Code 程序本身在某个事件点执行的脚本，可以直接拦下一次工具调用。原文在 Skills 一篇里有一句话很到位：“不要把 Claude 当 linter 用，用确定性的工具。”</p>
+    <p class="go">点每一块，看它的定位和对应的那一篇。</p>
+  </div>
+  <div class="lab"><div id="mapL"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：写进 CLAUDE.md、做成 Skill、配成 Hook</h4>
+    <p><b>CLAUDE.md</b>：每次会话完整加载，是“永远在场的提醒”，模型通常照做但不保证；内容越长，遵循度越低（原文建议控制在 200 行内）。</p>
+    <p><b>Skill</b>：平时只占一行描述，相关时才加载正文，适合多步骤流程和参考资料；同样是给模型的指令，不保证执行。</p>
+    <p><b>Hook</b>：Claude Code 在事件点（如工具调用前后）执行的脚本，不经过模型判断，退出码 2 就能拦下操作。凡是“必须发生”或“绝不能发生”的事，用 Hook。</p>
+  </div>
+  <div class="notes" id="n-map"></div>
+</section>
+
+<section class="part" id="matrix">
+  <div class="part-head"><h2>对照总表</h2><span class="meta">原文 README「功能对比」、04-subagents「Comparison with Other Features」</span></div>
+  <div class="sec-lede">
+    <p>原文分散在几处的对比表，我合成了一张，按“谁触发 / 放在哪 / 占用的上下文 / 最适合”四列排列。路径一列是最常用的那个位置，完整的作用域层级（企业、个人、项目、插件）放到各自的篇里讲。</p>
+    <p>两点值得先记住。第一，<strong>自定义斜杠命令已经并入 Skills</strong>：<code>.claude/commands/</code> 下的文件还能用，但新写的推荐放 <code>.claude/skills/&lt;名字&gt;/SKILL.md</code>，同名时 Skill 优先。第二，<strong>MCP 服务器不是 settings.json 里的键</strong>，项目级的要写在根目录的 <code>.mcp.json</code>；Hooks 和权限才写在 <code>settings.json</code> 里。</p>
+    <p class="go">先盖住右边两列，自己想一想再翻开。</p>
+  </div>
+  <div class="lab"><div id="vsT"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Skill 与 Subagent</h4>
+    <p><b>Skill</b> 加载进<b>当前</b>对话的上下文，是“给我自己加一份说明书”；<b>Subagent</b> 是<b>另开</b>一个独立上下文窗口的助手，只把结果摘要交回来，是“派一个人去干活”。</p>
+    <p>两者可以叠加：Skill 的 frontmatter 写 <code>context: fork</code>，就会让这个 Skill 在一个分叉出来的子代理里运行；Subagent 的 <code>skills:</code> 字段可以预加载若干 Skill。注意 <code>context: fork</code> 是 Skill 的字段，写在 Subagent 定义里会被静默忽略。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：MCP 与 Memory</h4>
+    <p>原文的说法很简洁：<b>Memory 存的是不怎么变的东西</b>（偏好、规范、项目背景），<b>MCP 取的是实时在变的东西</b>（当前的 issue、数据库查询结果、线上服务状态）。把今天的 PR 列表抄进 CLAUDE.md，明天就过期了。</p>
+  </div>
+  <div class="notes" id="n-matrix"></div>
+</section>
+
+<section class="part" id="ledger">
+  <div class="part-head"><h2>上下文账本：启动时到底装了什么</h2><span class="meta">原文 02-memory、03-skills「Progressive Disclosure」、05-mcp「Tool Search」</span></div>
+  <div class="sec-lede">
+    <p>分工的另一面是成本。每一种机制都会花上下文，但花法不同。原文给出的几条事实可以拼成一本账：<strong>CLAUDE.md 每次会话完整加载</strong>（用 <code>@</code> 导入也一样，导入只是整理，不省上下文）；<strong>每个 Skill 启动时只占约 100 tokens 的描述</strong>，被触发后才加载正文（原文给的量级是 5k 以内），附带的脚本和参考文件要用时才读；<strong>MCP 工具默认走 Tool Search</strong>，定义被延后，用到才发现；<strong>Subagent 另开窗口</strong>，主对话只收到结果；<strong>Hook 在模型之外运行</strong>，除非它主动往对话里回写内容。</p>
+    <p>这本账解释了原文反复强调的几条建议：CLAUDE.md 要短（每一行都在和当前任务争注意力）；多步骤流程搬进 Skill；Skill 多了以后描述也会被截断（总预算约为上下文窗口的 1%）；长篇的调研交给 Subagent，避免把主对话塞满。</p>
+    <p class="go">调一调下面的开关，看主对话里常驻的部分怎么变化（数值为示意，量级取自原文）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">会话启动 + 一次任务后的上下文构成</p>
+    <div class="tog">
+      <label>CLAUDE.md 行数 <input type="range" id="lgMd" min="20" max="600" step="20" value="150"><output id="lgMdV">150</output></label>
+      <label>已安装 Skill 数 <input type="range" id="lgSk" min="0" max="60" step="5" value="20"><output id="lgSkV">20</output></label>
+      <label><input type="checkbox" id="lgTs" checked> MCP Tool Search 开启（默认）</label>
+      <label><input type="checkbox" id="lgHit"> 这次任务触发了一个 Skill</label>
+      <label><input type="checkbox" id="lgSub"> 把调研交给 Subagent</label>
+    </div>
+    <div id="lg"></div>
+    <p class="ch-src">原文数据：Skill 描述约 100 tokens/个、触发后正文 5k 以内；CLAUDE.md 建议 200 行内；MCP 默认延后加载工具定义。行数折算 tokens、MCP 工具定义大小、调研内容大小为示意。</p>
+  </div>
+  <div class="notes" id="n-ledger"></div>
+</section>
+
+<section class="part" id="pick">
+  <div class="part-head"><h2>场景判定：这件事该交给谁</h2><span class="meta">原文 claude_concepts_guide「Selection Decision Tree」及各模块“何时用”</span></div>
+  <div class="sec-lede">
+    <p>原文概念总览里有一棵选型树：重复性的小任务，手动触发就做成斜杠命令、希望自动触发就做成 Skill；要外部数据，实时的用 MCP、跨会话不变的用 Memory；复杂项目有多个角色，就用 Subagents；要完整自动化，组合 Skills、Subagents、MCP。再加上原文其他模块的判断：要确定性执行用 Hooks，要分发给团队用 Plugins。</p>
+    <p>判断时最容易混的是三对：<strong>Skill 与 CLAUDE.md</strong>（流程放 Skill，事实和约定放 CLAUDE.md）、<strong>Skill 与 Hook</strong>（建议放 Skill，强制放 Hook）、<strong>Skill 与 Subagent</strong>（要不要另开上下文）。</p>
+    <p class="go">十个场景，选你认为最合适的那一个机制。</p>
+  </div>
+  <div class="lab"><div id="pk"></div></div>
+  <div class="notes" id="n-pick"></div>
+</section>
+
+<section class="part" id="path">
+  <div class="part-head"><h2>学习顺序与自测定级</h2><span class="meta">原文 LEARNING-ROADMAP.md</span></div>
+  <div class="sec-lede">
+    <p>原教程的目录编号（01 到 10）不是推荐的学习顺序。它在学习路线里按三条原则重排：<strong>依赖</strong>（基础概念先学）、<strong>复杂度</strong>（简单的先学）、<strong>使用频率</strong>（常用的先学）。于是顺序变成：Slash Commands → Memory → Checkpoints → CLI 基础 → Skills → Hooks → MCP → Subagents → 高级功能 → Plugins，全程约 11 到 13 小时。Checkpoints 和 CLI 基础排得靠前，是因为它们让你“敢试”：有回退，才放心让 Claude 大改。</p>
+    <p>原文还给了一份 8 题自测：勾得越多，起点越靠后。0 到 2 项从 Level 1 开始，3 到 5 项从 Level 2（Skills + Hooks）开始，6 到 8 项直接从 Level 3（高级功能）开始；拿不准就往低一级走。本系列的篇目顺序按功能分组排，和原文路线不完全一致，下面的结果会同时告诉你该先读哪几篇。</p>
+    <p class="go">诚实地勾一下。</p>
+  </div>
+  <div class="lab">
+    <div class="lv" id="lv"></div>
+    <div class="ch-out" id="lvOut" aria-live="polite"></div>
+  </div>
+  <div class="tblw" style="margin-top:22px">
+    <table class="cmpt">
+      <tr><th>原文列出的常见用途</th><th>会组合的功能</th></tr>
+      <tr><td>自动化代码审查</td><td>Slash Commands + Subagents + Memory + MCP</td></tr>
+      <tr><td>团队新人上手</td><td>Memory + Slash Commands + Plugins</td></tr>
+      <tr><td>CI/CD 自动化</td><td>CLI + Hooks + 后台任务</td></tr>
+      <tr><td>文档生成</td><td>Skills + Subagents + Plugins</td></tr>
+      <tr><td>安全审计</td><td>Subagents + Skills + Hooks（只读模式）</td></tr>
+      <tr><td>DevOps 流水线</td><td>Plugins + MCP + Hooks + 后台任务</td></tr>
+      <tr><td>复杂重构</td><td>Checkpoints + Plan Mode + Hooks</td></tr>
+    </table>
+  </div>
+  <div class="notes" id="n-path"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 七种机制分别由谁触发？哪些每次加载、哪些按需、哪些不进主上下文？</summary><p class="ans">你触发：内置斜杠命令、手动调用的 Skill（/名字）。Claude 自己判断：自动触发的 Skill、委派 Subagent、调用 MCP 工具。每次会话都加载：CLAUDE.md（完整）、Skill 描述（每个约 100 tokens）。事件触发：Hooks，由 Claude Code 程序执行，不经过模型。打包分发：Plugins。按需加载的是 Skill 正文和资源、MCP 工具定义（默认 Tool Search）；Subagent 另开上下文窗口，Hook 在模型之外运行，都不占主对话（除非回写内容）。</p></details>
+    <details><summary>2. “提交前必须跑 lint”写进 CLAUDE.md、做成 Skill、配成 Hook 有何区别？</summary><p class="ans">CLAUDE.md 和 Skill 都是给模型的指令：前者每次都在，后者相关时才加载，模型通常会照做但没有保证。Hook 是 Claude Code 在事件点执行的脚本，不经模型判断，可以用退出码 2 拦下操作，是唯一确定性的机制。“必须发生”的事用 Hook，原文的说法是不要把 Claude 当 linter 用。</p></details>
+    <details><summary>3. 原文推荐的学习顺序？为什么 Checkpoints、CLI 靠前？</summary><p class="ans">Slash Commands → Memory → Checkpoints → CLI 基础 → Skills → Hooks → MCP → Subagents → 高级功能 → Plugins，按依赖、复杂度、使用频率排序，全程约 11–13 小时。Checkpoints 让你敢于试错（随时回退），CLI 基础（交互模式与 -p、管道）是后面自动化的地基，所以放在 Level 1。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-claudehowto/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-22-claudehowto-2/"><small>下一篇</small><span>02 · 斜杠命令：内置命令与自定义命令</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/luongnv89/claude-howto" rel="noopener">luongnv89/claude-howto</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var P = '../2026-10-22-claudehowto-';
+function L(n, sec, t) { return '<a href="' + P + n + '/' + (sec ? '#' + sec : '') + '">' + (t || ('第 ' + n + ' 篇')) + '</a>'; }
+
+/* ---------- 一句话定位 ---------- */
+CH.layers($('#one'), {
+  hint: '点任意一项，看原文给它的一句话定位。',
+  layers: [
+    { t: '七件套', sub: '本系列 02–08 篇', items: [
+      { t: 'Slash Commands', d: '在交互会话里控制 Claude 行为的快捷方式：内置命令（/clear、/model）、自定义命令（现已并入 Skills）、插件命令、MCP prompt。见 ' + L(2) },
+      { t: 'Memory', d: '跨会话保留的上下文：你写的 CLAUDE.md（每次完整加载）+ Claude 自己写的 auto memory。见 ' + L(3) },
+      { t: 'Skills', d: '可复用、基于文件系统的能力包（说明 + 脚本 + 模板），平时只露描述，相关时自动或手动加载。见 ' + L(4) },
+      { t: 'Subagents', d: '有独立上下文窗口、自定义系统提示词和工具权限的专职助手，干完只交回结果。见 ' + L(5) },
+      { t: 'MCP', d: 'Model Context Protocol，让 Claude 访问外部工具、API 和实时数据的标准方式。见 ' + L(6) },
+      { t: 'Hooks', d: '在会话事件（工具调用前后、提交提示词、会话开始结束等）上自动执行的命令、HTTP、提示词或子代理。见 ' + L(7) },
+      { t: 'Plugins', d: '把命令、Skills、Subagents、MCP、Hooks 打包成一个可安装、可版本化、可分发的单元。见 ' + L(8) }
+    ] },
+    { t: '配套能力', sub: '本系列 09–12 篇', cls: 'c3', items: [
+      { t: 'Checkpoints', d: '每次提交提示词自动打快照，Esc 两下或 /rewind 回退代码和/或对话。见 ' + L(9) },
+      { t: 'Plan Mode · 权限模式', d: '先规划后执行；manual / acceptEdits / plan / auto / dontAsk / bypassPermissions 控制 Claude 无需确认能做什么。见 ' + L(10) },
+      { t: '后台任务 · 定时 · 远程', d: 'Ctrl+B 放后台、/loop 与 /schedule、Remote Control、Web 会话、Desktop。见 ' + L(11) },
+      { t: 'CLI', d: 'claude -p 非交互模式、输出格式、会话恢复、权限与工具旗标，用于脚本和 CI。见 ' + L(12) }
+    ] }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['原教程定位', '教程而非参考手册：讲功能怎么组合，配可复制模板和学习路线。'],
+    ['判断框架', '谁触发它、它住在哪、它花谁的上下文。'],
+    ['七件套', 'Slash Commands、Memory、Skills、Subagents、MCP、Hooks、Plugins。']
+  ],
+  p: [
+    ['三个痛点', '文档讲功能不讲组合；没有学习路径；示例太基础。'],
+    ['配套能力', 'Checkpoints、Plan Mode 与权限、后台与远程、CLI。']
+  ]
+});
+
+/* ---------- 分工图 ---------- */
+CH.layers($('#mapL'), {
+  hint: '点一块，看它属于哪种触发方式。',
+  layers: [
+    { t: '你手动触发', sub: '敲 / 才动', cls: 'c5', items: [
+      { t: '内置命令', d: '/clear、/compact、/model、/rewind 等六十多个，外加约 20 个随附 Skill（如 /code-review、/loop）。', tag: '02 篇' },
+      { t: '手动 Skill', d: '<code>/名字</code> 调用；frontmatter 写 <code>disable-model-invocation: true</code> 后只能你来调（适合部署、提交这类有副作用的）。', tag: '04 篇' },
+      { t: '插件命令', d: '<code>/插件名:命令名</code>，无冲突时可省略前缀。', tag: '08 篇' },
+      { t: 'MCP prompt', d: '<code>/mcp__服务器__prompt</code>，由 MCP 服务器暴露。', tag: '06 篇' }
+    ] },
+    { t: 'Claude 自己判断', sub: '看描述决定用不用', items: [
+      { t: '自动 Skill', d: '靠 <code>description</code> 匹配当前任务；<code>user-invocable: false</code> 的 Skill 只给 Claude 用。', tag: '04 篇' },
+      { t: '委派 Subagent', d: '根据 <code>description</code> 自动委派，写上 “use PROACTIVELY” 会更积极；也可以点名或 @ 提及。', tag: '05 篇' },
+      { t: 'MCP 工具', d: '连上服务器后，工具出现在 Claude 的工具列表里（默认延后加载、按需发现）。', tag: '06 篇' }
+    ] },
+    { t: '每次都在', sub: '会话启动即加载', cls: 'c2', items: [
+      { t: 'CLAUDE.md', d: '用户级、项目级、本地级多个文件<b>拼接</b>进上下文，不互相覆盖；子目录里的按需加载。', tag: '03 篇' },
+      { t: 'Auto memory', d: 'Claude 自己写的笔记，<code>MEMORY.md</code> 前 200 行（或 25KB）启动时加载。', tag: '03 篇' },
+      { t: 'Skill 描述', d: '每个约 100 tokens，所有描述合计有预算上限（约上下文窗口的 1%）。', tag: '04 篇' }
+    ] },
+    { t: '事件触发', sub: '不经过模型，确定性', cls: 'c4', items: [
+      { t: 'Hooks', d: '33 个事件 × 5 种类型（command、http、prompt、mcp_tool、agent）。PreToolUse 退出码 2 即可拦截工具调用。', tag: '07 篇' }
+    ] },
+    { t: '打包分发', sub: '容器，不是新能力', cls: 'c3', items: [
+      { t: 'Plugins', d: '<code>.claude-plugin/plugin.json</code> + skills/ agents/ hooks/ .mcp.json；一条命令安装，可版本化、可走 marketplace。', tag: '08 篇' }
+    ] }
+  ]
+});
+S.notes($('#n-map'), {
+  c: [
+    ['唯一确定性的机制', 'Hooks：由 Claude Code 程序在事件点执行，不经过模型判断。'],
+    ['给模型的指令', 'CLAUDE.md、Skill、Subagent 提示词：通常照做，没有保证。'],
+    ['Plugin 的位置', '打包分发的容器，本身不提供新能力。']
+  ],
+  p: [
+    ['必须发生 / 绝不能发生', '用 Hook（退出码 2 拦截）。'],
+    ['原文金句', '不要把 Claude 当 linter 用，用确定性工具。']
+  ]
+});
+
+/* ---------- 对照总表 ---------- */
+CH.vs($('#vsT'), {
+  k: '功能', a: '谁触发 · 放在哪', b: '占用的上下文 · 最适合',
+  hint: '先想右列，再点格子翻开。',
+  rows: [
+    ['斜杠命令（内置）', '你 · 随 Claude Code 自带', '执行时才进入对话 · 会话控制（清空、压缩、换模型、回退）'],
+    ['自定义命令 = Skill', '你（/名字）或 Claude · <code>.claude/skills/名字/SKILL.md</code>（旧位置 <code>.claude/commands/名字.md</code>）', '描述常驻、正文按需 · 可复用的流程和专业知识'],
+    ['Memory', '自动加载 · <code>./CLAUDE.md</code>、<code>~/.claude/CLAUDE.md</code>、<code>./CLAUDE.local.md</code>', '每次完整加载 · 项目约定、个人偏好、长期背景'],
+    ['Subagents', 'Claude 自动委派或你点名 · <code>.claude/agents/名字.md</code>', '另开独立窗口，只交回结果 · 拆分任务、隔离噪声、并行'],
+    ['MCP', 'Claude 调工具 · 项目级 <code>.mcp.json</code>，或 <code>claude mcp add</code>', '工具定义默认按需发现 · 实时外部数据与服务'],
+    ['Hooks', '事件 · <code>settings.json</code> 的 <code>hooks</code> 键', '在模型之外运行 · 校验、拦截、格式化、通知'],
+    ['Plugins', '一条命令安装 · <code>.claude-plugin/plugin.json</code>', '取决于里面装了什么 · 团队分发一整套配置']
+  ]
+});
+S.notes($('#n-matrix'), {
+  c: [
+    ['自定义命令', '已并入 Skills；<code>.claude/commands/</code> 仍可用，同名时 Skill 优先。'],
+    ['Skill vs Subagent', 'Skill 进当前上下文（加说明书）；Subagent 另开窗口（派人干活）。'],
+    ['MCP vs Memory', 'Memory 存不变的；MCP 取实时变的。']
+  ],
+  p: [
+    ['MCP 写在哪', '项目根 <code>.mcp.json</code>，不是 settings.json 的键。'],
+    ['Hooks 写在哪', '<code>settings.json</code> 的 <code>hooks</code> 键（或插件 hooks.json、Skill/Agent frontmatter）。'],
+    ['context: fork', 'Skill 字段，让 Skill 在分叉子代理里跑；写在 Subagent 定义里会被忽略。']
+  ]
+});
+
+/* ---------- 上下文账本 ---------- */
+var drawLg = CH.ledger($('#lg'), { cap: 30000 });
+function lg() {
+  var md = +$('#lgMd').value, sk = +$('#lgSk').value, ts = $('#lgTs').checked, hit = $('#lgHit').checked, sub = $('#lgSub').checked;
+  $('#lgMdV').textContent = md; $('#lgSkV').textContent = sk;
+  drawLg([
+    { t: 'CLAUDE.md', v: md * 12, cls: 'always', d: '每次会话完整加载；超过 200 行遵循度下降（原文）。' },
+    { t: 'Skill 描述 × ' + sk, v: sk * 100, cls: 'always', d: '每个约 100 tokens；总预算约为窗口的 1%，超了会截断描述。' },
+    { t: 'MCP 工具定义（3 个服务器）', v: ts ? 300 : 9000, cls: 'always', d: ts ? '默认 Tool Search：只留检索入口，定义按需加载。' : '关闭后所有工具描述一次性发给模型。' },
+    { t: '被触发的 Skill 正文', v: 4000, cls: 'demand', on: hit, d: '触发后才加载，原文给的量级是 5k 以内；脚本和参考文件要用时才读。' },
+    { t: '调研过程（读了 40 个文件）', v: 16000, cls: sub ? 'iso' : 'demand', d: sub ? '交给 Subagent：在它自己的窗口里读，主对话只收到一段摘要。' : '在主对话里直接调研：读过的内容全部留在上下文里。' },
+    { t: 'Subagent 交回的摘要', v: 800, cls: 'demand', on: sub, d: '结果被提炼后交回主对话。' },
+    { t: 'Hooks', v: 0, cls: 'iso', tag: '模型之外', d: '在模型之外运行，不占上下文（除非输出 additionalContext 回写）。' }
+  ]);
+}
+['#lgMd', '#lgSk', '#lgTs', '#lgHit', '#lgSub'].forEach(function (s) { $(s).addEventListener('input', lg); $(s).addEventListener('change', lg); });
+lg();
+S.notes($('#n-ledger'), {
+  c: [
+    ['渐进式披露', 'Skill 分三级加载：描述（常驻）→ 正文（触发时）→ 资源（用到才读）。'],
+    ['@ 导入不省上下文', '导入的文件同样在加载时整个拉进来，只是让 CLAUDE.md 更好维护。'],
+    ['Tool Search', 'MCP 工具定义默认延后、按需发现，不把所有定义塞进上下文。']
+  ],
+  p: [
+    ['CLAUDE.md 变长了', '多步流程搬到 Skill，按目录的规则搬到 <code>.claude/rules/</code> 加 <code>paths:</code>。'],
+    ['调研会读很多文件', '交给 Subagent，主对话只收摘要。'],
+    ['看实际占用', '<code>/context</code> 看上下文构成；<code>/skill-doctor</code> 看哪些 Skill 没用上。']
+  ]
+});
+
+/* ---------- 场景判定 ---------- */
+CH.cards($('#pk'), {
+  opts: ['CLAUDE.md', 'Skill', 'Subagent', 'MCP', 'Hook', 'Plugin'],
+  items: [
+    { t: '项目统一用 pnpm，不要用 npm；测试命令是 <code>pnpm test:unit</code>。', a: 0, why: '短小、每次都相关的项目事实和约定，放 CLAUDE.md。' },
+    { t: '每次 Claude 改完 .py 文件，自动跑一遍 black 格式化。', a: 4, why: '“每次都必须发生”的动作，用 PostToolUse Hook 挂在 Write/Edit 上，确定性执行。' },
+    { t: '发版有 9 个步骤（改版本号、生成 changelog、打 tag……），每月做一次。', a: 1, why: '多步骤、可复用、只在需要时才相关，做成 Skill；有副作用，加 <code>disable-model-invocation: true</code> 只允许手动调用。' },
+    { t: '让 Claude 查一下 Jira 上我名下本周到期的单子。', a: 3, why: '实时变化的外部数据，用 MCP 接入。' },
+    { t: '先在整个仓库里摸清楚鉴权逻辑分布在哪些文件，再回来和我讨论方案。', a: 2, why: '大量阅读会塞满主对话，交给 Subagent（比如内置的 Explore）在独立窗口里查，只交回摘要。' },
+    { t: '绝不允许 Claude 执行 <code>rm -rf</code> 开头的命令。', a: 4, why: 'PreToolUse Hook 检查 Bash 命令，匹配就退出码 2 拦截；也可以配权限 deny 规则。写进 CLAUDE.md 只是提醒。' },
+    { t: '把团队的审查命令、两个审查子代理、GitHub MCP 和格式化 Hook 一次性发给 20 个同事。', a: 5, why: '把多种组件打包、版本化、一条命令安装，就是 Plugin 的用途。' },
+    { t: '写 API 时要遵守的一套 40 条接口规范，只在改 <code>src/api/</code> 时才需要。', a: 1, why: '较长的参考知识、只在特定场景相关：做成 Skill（或用 <code>.claude/rules/</code> 加 <code>paths:</code> 只在碰到匹配文件时加载）。不要塞进 CLAUDE.md。' },
+    { t: '我习惯回答里先给结论再展开，代码注释写“为什么”而不是“是什么”。', a: 0, why: '个人偏好，放 <code>~/.claude/CLAUDE.md</code>（用户级），所有项目生效。' },
+    { t: '需要一个只读的安全审查员：只能 Read 和 Grep，按严重度输出发现。', a: 2, why: '限定工具、专属提示词、独立上下文：定义一个 Subagent，<code>tools: Read, Grep</code>。' }
+  ]
+});
+S.notes($('#n-pick'), {
+  c: [
+    ['选型树（原文）', '重复小任务：手动→命令，自动→Skill；外部数据：实时→MCP，不变→Memory；多角色→Subagents。'],
+    ['三对易混', 'Skill/CLAUDE.md（流程 vs 事实）、Skill/Hook（建议 vs 强制）、Skill/Subagent（同窗 vs 另开）。']
+  ],
+  p: [
+    ['短而常用的约定', 'CLAUDE.md。'],
+    ['长而偶尔用的知识', 'Skill 或带 <code>paths:</code> 的 rules。'],
+    ['必须执行的检查', 'Hook。'],
+    ['发给团队', 'Plugin。']
+  ]
+});
+
+/* ---------- 学习顺序与自测 ---------- */
+var LV = [
+  '我能启动 Claude Code 并对话（<code>claude</code>）',
+  '我创建或编辑过 CLAUDE.md',
+  '我用过至少 3 个内置斜杠命令（如 /help、/compact、/model）',
+  '我写过自定义斜杠命令或 Skill（SKILL.md）',
+  '我配置过 MCP 服务器（如 GitHub、数据库）',
+  '我在 ~/.claude/settings.json 里配过 hooks',
+  '我创建或用过自定义 Subagent（.claude/agents/）',
+  '我用过 <code>claude -p</code> 做脚本或 CI'
+];
+var lvb = $('#lv');
+LV.forEach(function (t) {
+  var lb = h('label', null, lvb);
+  var cb = h('input', { type: 'checkbox' }, lb);
+  h('span', { html: t }, lb);
+  cb.addEventListener('change', lvUpd);
+});
+function lvUpd() {
+  var n = S.$$('#lv input').filter(function (x) { return x.checked; }).length, r;
+  if (n <= 2) r = ['Level 1：入门', '原文起点 Milestone 1A（Slash Commands + Memory），约 3 小时。', '先读 ' + L(2, '', '02 斜杠命令') + '、' + L(3, '', '03 Memory') + '、' + L(9, '', '09 回退与会话') + '、' + L(12, '', '12 CLI') + '。'];
+  else if (n <= 5) r = ['Level 2：搭工作流', '原文起点 Milestone 2A（Skills + Hooks），约 5 小时。', '先读 ' + L(4, '', '04 Skills') + '、' + L(7, '', '07 Hooks') + '、' + L(6, '', '06 MCP') + '、' + L(5, '', '05 Subagents') + '。'];
+  else r = ['Level 3：进阶与团队', '原文起点 Milestone 3A（高级功能），约 5 小时。', '先读 ' + L(10, '', '10 规划与权限') + '、' + L(11, '', '11 后台与远程') + '、' + L(8, '', '08 Plugins') + '、' + L(12, '', '12 CLI') + '。'];
+  $('#lvOut').innerHTML = '<div class="ch-res"><h4>勾了 ' + n + ' / 8 项 · ' + r[0] + '</h4><p>' + r[1] + '</p><p>' + r[2] + '</p></div><p class="note">拿不准就往低一级走：快速复习熟悉的内容，比漏掉基础概念划算（原文建议）。</p>';
+}
+lvUpd();
+S.notes($('#n-path'), {
+  c: [
+    ['排序三原则', '依赖、复杂度、使用频率。'],
+    ['Level 1', 'Slash Commands、Memory、Checkpoints、CLI 基础（约 3 小时）。'],
+    ['Level 2', 'Skills、Hooks、MCP、Subagents（约 5 小时）。'],
+    ['Level 3', '高级功能、Plugins、CLI 精通（约 5 小时）。']
+  ],
+  p: [
+    ['推荐顺序', 'Slash → Memory → Checkpoints → CLI → Skills → Hooks → MCP → Subagents → 高级 → Plugins。'],
+    ['自测定级', '8 题：0–2 / 3–5 / 6–8 对应三个起点。'],
+    ['原文配套', '在 Claude Code 里跑 <code>/self-assessment</code>、<code>/lesson-quiz hooks</code>（需克隆原仓库，以原文为准）。']
+  ]
+});
+
+CH.tryNow($('#try'), '1', [
+  { t: '在你最常用的项目里敲 <code>/context</code>', d: '看一眼上下文里 CLAUDE.md、Skills、MCP 各占了多少，对照本篇的账本。' },
+  { t: '把你现在的 CLAUDE.md 逐条过一遍，给每条贴标签：事实 / 流程 / 必须执行的检查', d: '流程类准备搬去 Skill（第 4 篇），必须执行的检查准备改成 Hook（第 7 篇）。' },
+  { t: '做一遍原文的 8 题自测，记下自己的起点', d: '按结果挑本系列的阅读顺序。' }
+]);
+})();
+</script>
+</body>
+</html>

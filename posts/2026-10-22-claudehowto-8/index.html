@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugins：把一套配置打包分发</title>
+<meta name="description" content="Claude How To 学习笔记（八）：插件解决的是分发问题；插件目录结构与 plugin.json 清单；本地 --plugin-dir、marketplace 安装、启用与更新的生命周期回放；marketplace.json 与七种来源；插件的安全边界（子代理字段限制、敏感配置进钥匙串、压缩包校验）；什么时候该做插件、什么时候不该。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2.5' y='4' width='19' height='16' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M6.5 9.5l3 2.5-3 2.5' fill='none' stroke='%232340D6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 15h5' stroke='%2313171C' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+</head>
+<body data-series="claudehowto-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Claude How To · 08</span><span>对应原文 07-plugins</span><span>约 25 分钟</span></p>
+  <h1>插件不是新能力，<em>是一个包</em></h1>
+  <p class="lead">前面几篇讲的命令、Skills、Subagents、MCP、Hooks，各自都是复制几个文件就能用。问题在于团队里二十个人各自复制，版本就乱了。插件把这些组件装进一个带清单的目录，一条命令安装、可以版本化、可以通过 marketplace 分发。所以学插件的重点不是“它能做什么”，而是“怎么组织、怎么装、怎么让团队用上同一套”。原教程目录里带了三个完整的示例插件：pr-review、devops-automation、documentation。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/luongnv89/claude-howto" rel="noopener">Claude How To</a>》（luongnv89 与社区贡献者编写，MIT 协议；本笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302）的学习笔记。原教程按十个模块（01-slash-commands 到 10-cli）组织，配了大量可复制的模板。这里重排成十二篇：先用一篇讲清七种扩展机制的分工，再逐个拆开，每个功能按“它解决什么问题、最小可用配置放在哪个路径、什么时候不该用”来写，并配上“读配置猜行为”、模拟器和场景判定题。功能与字段取自原文（主要依据英文原版，中文版是它的缩写译本），每节标出对应的原文目录；为演示设的场景和数值标“示意”。Claude Code 更新很快，原文里带版本号的细节以原文和官方文档为准。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-claudehowto/"><b>总览</b>速查卡</a>
+  <a href="../2026-10-22-claudehowto-1/" data-part="1"><b>01</b>全景</a>
+  <a href="../2026-10-22-claudehowto-2/" data-part="2"><b>02</b>斜杠命令</a>
+  <a href="../2026-10-22-claudehowto-3/" data-part="3"><b>03</b>Memory</a>
+  <a href="../2026-10-22-claudehowto-4/" data-part="4"><b>04</b>Skills</a>
+  <a href="../2026-10-22-claudehowto-5/" data-part="5"><b>05</b>Subagents</a>
+  <a href="../2026-10-22-claudehowto-6/" data-part="6"><b>06</b>MCP</a>
+  <a href="../2026-10-22-claudehowto-7/" data-part="7"><b>07</b>Hooks</a>
+  <a href="../2026-10-22-claudehowto-8/" aria-current="page" data-part="8"><b>08</b>Plugins</a>
+  <a href="../2026-10-22-claudehowto-9/" data-part="9"><b>09</b>回退与会话</a>
+  <a href="../2026-10-22-claudehowto-10/" data-part="10"><b>10</b>规划与权限</a>
+  <a href="../2026-10-22-claudehowto-11/" data-part="11"><b>11</b>后台与远程</a>
+  <a href="../2026-10-22-claudehowto-12/" data-part="12"><b>12</b>CLI 与脚本</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">它解决什么</a><a href="#struct">目录与清单</a><a href="#life">安装与生命周期</a><a href="#market">marketplace</a><a href="#safe">安全边界</a><a href="#when">什么时候做插件</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>一个插件目录里可以放哪些组件？清单文件在哪？新插件该用 <code>commands/</code> 还是 <code>skills/</code>？</li>
+    <li>本地开发的插件怎么加载测试？从 marketplace 装完以后，什么情况下还需要 <code>/reload-plugins</code>？</li>
+    <li>插件里的子代理有哪些字段会被忽略？为什么？什么场景不该做成插件？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>它解决什么</h2><span class="meta">原文 07-plugins「Overview」「Standalone vs Plugin」「Plugin Features Comparison」</span></div>
+  <div class="sec-lede">
+    <p>原文的定义：插件是把斜杠命令、子代理、MCP 服务器、hooks 等定制<strong>打包成一个整体、一条命令安装</strong>的集合，是最高层的扩展机制。它和单独配置的差别，原文用一张对比表说得很直白：命令、Skill、子代理都是“手动复制、手动版本管理、复制文件分享”；插件是“一条命令安装、自动版本、用安装 ID 分享、可以走 marketplace”。</p>
+    <p>命名上也有区别：单独配置的命令叫 <code>/hello</code>，插件里的叫 <code>/插件名:hello</code>（没有冲突时可以省前缀）。原文的建议是：个人的快速工作流用单独配置；要打包多种功能、分享给团队、或者公开发布时，用插件。v2.1.157 起还有一个轻量路径：<code>claude plugin init 名字</code> 在 <code>~/.claude/skills/名字/</code> 下搭一个插件骨架，下次会话自动加载为 <code>名字@skills-dir</code>，不需要 marketplace。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>Plugin<small>my-plugin/.claude-plugin/plugin.json</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>一套由多种组件组成的工作流（比如“审查命令 + 两个审查子代理 + GitHub MCP + 格式化 hook”）要让很多人用上同一个版本，并且能更新、能回退、能统一管控。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcPl"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>原文的判断表：快速的小任务自动化（用命令）；单一领域的专业知识（用 Skill，插件太重）；专项分析（用子代理）；实时数据接入（单独配 MCP，不必打包）。另外：不相关的功能别捆在一个插件里。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="struct">
+  <div class="part-head"><h2>目录与清单</h2><span class="meta">原文「Plugin Definition Structure」「Plugin Structure Example」「LSP server configuration」</span></div>
+  <div class="sec-lede">
+    <p>清单在 <code>.claude-plugin/plugin.json</code>，必要的是身份字段（<code>name</code>、<code>description</code>、<code>version</code>、<code>author</code>，可选 homepage、repository、license）；另外可以声明 <code>dependencies</code>（依赖的其他插件，可带语义化版本约束）、<code>keywords</code>（marketplace 搜索用）、<code>userConfig</code>（用户可配置项）、<code>lspServers</code>、<code>outputStyles</code>、<code>experimental.monitors</code> 等，用来指向默认目录以外的组件。</p>
+    <p>组件按目录约定放：<code>skills/</code>（推荐）、<code>commands/</code>（<strong>旧做法</strong>，官方建议新插件用 skills/）、<code>agents/</code>、<code>hooks/hooks.json</code>、<code>.mcp.json</code>、<code>.lsp.json</code>（给 Claude 提供诊断、跳转定义、查引用等代码智能）、<code>bin/</code>（插件启用时加进 PATH，排在你自己的 PATH 之后，所以覆盖不了系统命令）、<code>settings.json</code>（只有 <code>agent</code> 和 <code>subagentStatusLine</code> 两个键生效）。插件根目录只有一个 <code>SKILL.md</code>、没有 skills/ 子目录时，整个插件就是一个 Skill（v2.1.142）。</p>
+    <p class="go">点每个目录，看它放什么。</p>
+  </div>
+  <div class="lab"><div id="tree"></div></div>
+  <div class="notes" id="n-struct"></div>
+</section>
+
+<section class="part" id="life">
+  <div class="part-head"><h2>安装与生命周期</h2><span class="meta">原文「Installation Methods」「Testing a Plugin」「Plugin CLI Commands」「Auto-Update」</span></div>
+  <div class="sec-lede">
+    <p>开发阶段用 <code>claude --plugin-dir ./my-plugin</code> 直接加载本地目录（可重复写多次加载多个；也接受 .zip；<code>--plugin-url</code> 从网址取一个 zip 只用于本次会话）。改了文件用 <code>/reload-plugins</code> 热重载。原教程自己的三个示例插件就是这样用的，因为这个仓库本身不是 marketplace，<code>/plugin install</code> 用不了。</p>
+    <p>正式安装走 marketplace：<code>/plugin marketplace add 所有者/仓库</code> 加一个市场，<code>/plugin install 插件@市场</code> 安装（v2.1.275 起可以一步写成 <code>/plugin install 插件 --marketplace 所有者/仓库</code>）。从 v2.1.221 起安装通常<strong>立即生效</strong>：看安装摘要最后一行，“Plugin is now active.” 就不用管，“Run /reload-plugins to activate.” 才需要重载。官方市场默认自动更新，第三方和本地市场默认不自动更新；<code>marketplace update</code> 只刷新目录，<strong>不更新已装插件</strong>，更新插件用 <code>claude plugin update 名字</code>。装之前可以在 <code>/plugin</code> 的浏览页看每个插件每轮大约要多占多少上下文，装好后 <code>claude plugin details 名字</code> 也能看。</p>
+    <p class="go">回放一遍从开发到团队安装的过程（输出为示意）。</p>
+  </div>
+  <div class="lab"><div id="term"></div></div>
+  <div class="notes" id="n-life"></div>
+</section>
+
+<section class="part" id="market">
+  <div class="part-head"><h2>marketplace</h2><span class="meta">原文「Plugin Marketplace」「Marketplace definition schema」「Plugin source types」「Strict mode」</span></div>
+  <div class="sec-lede">
+    <p>市场本身就是一个带 <code>.claude-plugin/marketplace.json</code> 的仓库：必填 <code>name</code>、<code>owner</code>、<code>plugins</code> 数组，每个插件条目写 <code>name</code> 和 <code>source</code>。来源有七种：<strong>相对路径</strong>、<strong>GitHub</strong>（可用 <code>ref</code> 或 <code>sha</code> 锁版本）、<strong>git URL</strong>、<strong>git 子目录</strong>（monorepo 里的某个包）、<strong>npm</strong>、<strong>压缩包</strong>（只允许 HTTPS，可带 <code>sha256</code> 校验，上限 256 MiB）、<strong>命令</strong>（由本地工具打印插件目录路径）。官方市场是 <code>anthropics/claude-plugins-official</code>，首次交互启动时自动注册；社区市场 <code>anthropics/claude-plugins-community</code> 要手动添加，收录的插件经过自动校验并锁定到具体提交。</p>
+    <p>组织管控用托管设置：<code>strictKnownMarketplaces</code>（只允许名单内的市场；空数组表示全部禁止）、<code>blockedMarketplaces</code>（黑名单，可按主机名或路径正则）、<code>enabledPlugins</code> 里把某个插件设为 <code>false</code>（任何层级都装不了）、<code>disableCommandPluginSources</code>（禁用命令来源）。这些在安装、更新、刷新、自动更新的每个环节都会检查。市场条目的 <code>strict</code> 决定谁说了算：默认 <code>true</code> 时插件自己的 plugin.json 为准、市场条目只做补充；<code>false</code> 时市场条目就是插件的全部定义。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="mkq"></div></div>
+  <div class="notes" id="n-market"></div>
+</section>
+
+<section class="part" id="safe">
+  <div class="part-head"><h2>安全边界</h2><span class="meta">原文「Plugin Security」「Plugin Options」「Persistent Plugin Data」「archive source」「Mods」</span></div>
+  <div class="sec-lede">
+    <p>插件里的子代理定义有四个字段<strong>会被忽略</strong>：<code>hooks</code>、<code>mcpServers</code>、<code>permissionMode</code>、<code>initialPrompt</code>。子代理文件本身照常加载，只是这些键无效。理由是防止插件借一个子代理文件悄悄注册事件处理、接入外部服务或提升权限；插件真要带 hooks 和 MCP，就在插件层面（<code>hooks/hooks.json</code>、<code>.mcp.json</code>）明明白白地声明。</p>
+    <p>其他几条：插件的 <code>userConfig</code> 里标了 <code>sensitive: true</code> 的值存进<strong>系统钥匙串</strong>，不落明文配置文件；<code>${CLAUDE_PLUGIN_DATA}</code> 是插件专属的持久目录（<code>~/.claude/plugins/data/&lt;id&gt;/</code>），升级保留，最后一处卸载时删除（<code>--keep-data</code> 可保留）；压缩包来源不是你自己构建的就<strong>一定要锁 sha256</strong>，否则谁控制那个网址谁就控制在你会话里跑的代码。v2.1.287 起还有一类叫 Mod 的插件，能改界面、拦工具调用、调用模型，原文明确说它<strong>以你的权限运行</strong>，只从信任的作者和市场安装。</p>
+    <p class="go">这些说法对不对？</p>
+  </div>
+  <div class="lab"><div id="sq"></div></div>
+  <div class="notes" id="n-safe"></div>
+</section>
+
+<section class="part" id="when">
+  <div class="part-head"><h2>什么时候做插件</h2><span class="meta">原文「Plugin Use Cases」「Publishing a Plugin」「Best Practices」</span></div>
+  <div class="sec-lede">
+    <p>原文的用例表把答案说得很清楚：<strong>新人上手、框架配置、企业规范</strong>适合做插件（一次装好全部配置、集中分发、版本可控）；<strong>快速任务自动化、单一领域知识、专项分析、实时数据接入</strong>不适合（分别用命令、Skill、子代理、MCP）。判断的关键是两个问题：是不是<strong>多种组件</strong>一起才成立？是不是要给<strong>很多人</strong>用同一个版本？</p>
+    <p>发布流程原文列了九步，核心是：组织好目录、写 plugin.json 和 README、用 <code>--plugin-dir</code> 本地测试、<code>claude plugin validate</code> 校验、<code>claude plugin tag ./my-plugin</code> 按 plugin.json 里的版本打 <code>名字--v版本</code> 标签、提交到市场。最佳实践里我觉得最值得记的两条：<strong>用语义化版本、保持向后兼容</strong>；<strong>不要把不相关的功能捆在一起</strong>。</p>
+    <p class="go">这几件事，该做成插件吗？</p>
+  </div>
+  <div class="lab"><div id="wq"></div></div>
+  <div class="notes" id="n-when"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 插件能放哪些组件？清单在哪？commands/ 还是 skills/？</summary><p class="ans">清单在 .claude-plugin/plugin.json。组件：skills/、commands/（旧做法）、agents/、hooks/hooks.json、.mcp.json、.lsp.json、bin/（加进 PATH）、settings.json（只有 agent 和 subagentStatusLine 生效），以及主题、监视器、输出风格等。新插件用 skills/，commands/ 只是保持兼容。</p></details>
+    <details><summary>2. 本地插件怎么测？装完何时还要 /reload-plugins？</summary><p class="ans">claude --plugin-dir ./my-plugin（可多次、可 zip），改了用 /reload-plugins 热重载。从 marketplace 装（/plugin marketplace add + /plugin install 名字@市场）后看摘要最后一行：“Plugin is now active.” 不用管，“Run /reload-plugins to activate.” 才需要重载（v2.1.221 起）。marketplace update 只刷新目录，更新插件用 claude plugin update。</p></details>
+    <details><summary>3. 插件子代理哪些字段被忽略？哪些场景不该做插件？</summary><p class="ans">hooks、mcpServers、permissionMode、initialPrompt 被忽略，防止插件借子代理注册事件、接外部服务或提权；需要的话在插件层声明。快速小任务（用命令）、单一领域知识（用 Skill）、专项分析（用子代理）、实时数据（单独配 MCP）不该做插件；不相关的功能也别捆在一起。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-claudehowto-7/"><small>上一篇</small><span>07 · Hooks：在事件上挂确定性逻辑</span></a><a class="nx" href="../2026-10-22-claudehowto-9/"><small>下一篇</small><span>09 · Checkpoints 与会话管理</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/luongnv89/claude-howto" rel="noopener">luongnv89/claude-howto</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 它解决什么 ---------- */
+$('#fcPl').innerHTML = CH.file('my-plugin/.claude-plugin/plugin.json', CH.esc('{\n  "name": "team-review",\n  "description": "团队统一的代码审查流程",\n  "version": "1.0.0",\n  "author": { "name": "platform-team" },\n  "license": "MIT"\n}')) +
+  CH.file('my-plugin/ 目录', CH.esc('my-plugin/\n├── .claude-plugin/plugin.json\n├── skills/review-pr/SKILL.md\n├── agents/security-reviewer.md\n└── hooks/hooks.json')) +
+  '<p class="note">示意内容。本地测试：<code>claude --plugin-dir ./my-plugin</code>；之后用 <code>/team-review:review-pr</code> 调用。</p>';
+S.notes($('#n-what'), {
+  c: [
+    ['Plugin', '把命令、Skills、子代理、MCP、hooks 打包成一条命令安装、可版本化、可分发的单元。'],
+    ['命名', '插件命令 <code>/插件名:命令</code>，无冲突可省前缀。'],
+    ['轻量骨架', '<code>claude plugin init 名字</code> 生成到 <code>~/.claude/skills/名字/</code>，自动加载为 <code>名字@skills-dir</code>。']
+  ],
+  p: [
+    ['单独配置 vs 插件', '个人快速工作流单独配；多组件、分享、发布用插件。'],
+    ['原文示例插件', 'pr-review、devops-automation、documentation（07-plugins/ 下）。']
+  ]
+});
+
+/* ---------- 目录与清单 ---------- */
+CH.layers($('#tree'), {
+  hint: '点一个目录或文件。',
+  layers: [
+    { t: '清单', sub: '必需', cls: 'c5', items: [
+      { t: '.claude-plugin/plugin.json', d: 'name、description、version、author 等身份字段；可选 dependencies、keywords、userConfig、lspServers、outputStyles、experimental.monitors 等。' }
+    ] },
+    { t: '能力组件', sub: '按约定目录自动发现', items: [
+      { t: 'skills/', d: '每个子目录一个 SKILL.md，新插件的推荐做法。plugin.json 里的 skills 条目和默认 skills/ 目录会合并（v2.1.136）。' },
+      { t: 'commands/', d: '旧做法：扁平的 Markdown 命令文件。现有的继续可用，官方建议新插件改用 skills/。' },
+      { t: 'agents/', d: '子代理定义；插件子代理的 hooks、mcpServers、permissionMode、initialPrompt 被忽略。' },
+      { t: 'hooks/hooks.json', d: '插件级 hooks，格式同 settings.json 的 hooks 键；可用 <code>${CLAUDE_PLUGIN_ROOT}</code>、<code>${CLAUDE_PLUGIN_DATA}</code>。' },
+      { t: '.mcp.json', d: '插件带的 MCP 服务器，用 <code>${CLAUDE_PLUGIN_ROOT}</code> 引用插件内路径。' },
+      { t: '.lsp.json', d: 'LSP 服务器（如 gopls、pyright），给 Claude 即时诊断、跳转定义、查引用。必填 command 和 extensionToLanguage。' }
+    ] },
+    { t: '运行辅助', sub: '', cls: 'c2', items: [
+      { t: 'bin/', d: '插件启用时加进 Bash 工具的 PATH，排在你自己的 PATH 之后，所以覆盖不了 git、ls 等系统命令。记得 chmod +x。' },
+      { t: 'settings.json', d: '只有 <code>agent</code>（让插件里某个子代理作为主线程）和 <code>subagentStatusLine</code> 两个键生效，其余被丢弃。' },
+      { t: 'monitors / themes / output-styles', d: '后台监视器（如 tail -f 日志，事件推给 Claude）、配色主题、输出风格。' }
+    ] },
+    { t: '其他', sub: '不参与加载', cls: 'c3', items: [
+      { t: 'scripts/ templates/ docs/ tests/', d: '辅助脚本、模板、文档、测试，由 Skill 或 hook 引用。' }
+    ] }
+  ]
+});
+S.notes($('#n-struct'), {
+  c: [
+    ['清单', '<code>.claude-plugin/plugin.json</code>。'],
+    ['commands/ 是旧做法', '新插件用 <code>skills/</code>。'],
+    ['bin/', '启用时加进 PATH，排在用户 PATH 之后。'],
+    ['插件 settings.json', '只有 agent、subagentStatusLine 生效。']
+  ],
+  p: [
+    ['单 Skill 插件', '根目录只有 SKILL.md、没有 skills/：整个插件就是一个 Skill。'],
+    ['LSP 必填', '<code>command</code>、<code>extensionToLanguage</code>。'],
+    ['插件路径变量', '<code>${CLAUDE_PLUGIN_ROOT}</code>（安装目录）、<code>${CLAUDE_PLUGIN_DATA}</code>（持久数据）。']
+  ]
+});
+
+/* ---------- 安装与生命周期 ---------- */
+CH.term($('#term'), [
+  { cmd: 'claude plugin init team-review --with skills agents hooks', out: 'Created ~/.claude/skills/team-review/ (loads next session as team-review@skills-dir)', note: '<b>搭骨架。</b><code>--with</code> 只生成需要的组件目录。也可以手工建目录。' },
+  { cmd: 'claude --plugin-dir ./team-review', out: '已加载本地插件 team-review', note: '<b>本地测试。</b>init 生成在 ~/.claude/skills 下的会自动加载；建在仓库里的插件目录用 <code>--plugin-dir</code> 加载。检查命令、子代理、MCP、hooks 都能用。可以写多个 <code>--plugin-dir</code>；也接受 .zip。' },
+  { p: '>', cmd: '/reload-plugins', out: 'Reloaded 1 plugin', note: '<b>热重载。</b>改了 skills 或 hooks 后，不用重启会话。' },
+  { cmd: 'claude plugin validate ./team-review --strict', out: '✓ plugin.json valid\n✓ 3 skills, 1 agent, 1 hooks file', note: '<b>校验。</b><code>--strict</code> 把警告当错误；<code>--json</code> 输出机器可读报告。' },
+  { cmd: 'claude plugin tag ./team-review --push', out: 'Created tag team-review--v1.0.0', note: '<b>打标签。</b>参数是插件路径，不是版本号；标签名从 plugin.json 的 name 和 version 生成。' },
+  { p: '>', cmd: '/plugin marketplace add my-org/claude-plugins', out: 'Added marketplace my-team-plugins', note: '<b>同事侧：加市场。</b>其他 git 服务要写完整 https URL。' },
+  { p: '>', cmd: '/plugin install team-review@my-team-plugins', out: 'Installed team-review 1.0.0\nPlugin is now active.', note: '<b>安装。</b>最后一行是 “Plugin is now active.” 就不用管；是 “Run /reload-plugins to activate.” 才重载。' },
+  { cmd: 'claude plugin details team-review', out: 'skills: 3  hooks: 1  mcp: 0\nprojected ctx: +480 tokens per turn', note: '<b>看成本。</b>每轮常驻的上下文开销（Skill 描述、hooks、MCP 描述之和），装之前也能在 /plugin 浏览页看到。数值为示意。' },
+  { cmd: 'claude plugin update team-review', out: 'Updated team-review 1.0.0 -> 1.1.0', note: '<b>更新。</b><code>marketplace update</code> 只刷新目录，不更新已装插件。' }
+], ['搭骨架', '本地加载', '热重载', '校验', '打标签', '加市场', '安装', '看成本', '更新']);
+S.notes($('#n-life'), {
+  c: [
+    ['--plugin-dir', '本地加载插件目录或 zip，可写多次；开发和测试用。'],
+    ['/reload-plugins', '热重载；装完摘要说要重载时才需要。'],
+    ['marketplace update', '只刷新目录，不更新已装插件。']
+  ],
+  p: [
+    ['安装', '<code>/plugin marketplace add 所有者/仓库</code> → <code>/plugin install 名字@市场</code>。'],
+    ['一步安装', '<code>/plugin install 名字 --marketplace 所有者/仓库</code>（v2.1.275+）。'],
+    ['管理', '<code>claude plugin list / enable / disable / uninstall / update / details / prune</code>。'],
+    ['自动更新', '官方市场默认开；第三方默认关；<code>DISABLE_AUTOUPDATER=1</code> 全关。']
+  ]
+});
+
+/* ---------- marketplace ---------- */
+CH.cfg($('#mkq'), [
+  { path: 'my-team-plugins/.claude-plugin/marketplace.json', code: '{\n  "name": "my-team-plugins",\n  "owner": { "name": "my-org" },\n  "plugins": [\n    { "name": "deploy-helper",\n      "source": { "source": "github", "repo": "my-org/deploy-helper", "ref": "v2.0.0" } }\n  ]\n}',
+    q: '同事装 deploy-helper 时，拿到的是哪个版本？', opts: ['仓库默认分支的最新代码', 'v2.0.0 这个 tag', '最近一次发布的 npm 版本'], a: 1,
+    why: 'GitHub 和 git 来源支持 <code>ref</code>（分支或 tag）和 <code>sha</code>（提交）锁定版本，保证可复现。' },
+  { path: 'marketplace.json 里的一个条目', code: '{ "name": "lint-plugin",\n  "source": { "source": "archive",\n              "url": "https://cdn.example.com/lint-plugin-1.2.0.zip" } }',
+    q: '没写 sha256，有什么风险？', opts: ['没风险，HTTPS 已经够了', '谁控制这个网址，谁就控制在你会话里跑的代码', '安装会直接失败'], a: 1,
+    why: '原文：压缩包来源只允许 HTTPS，sha256 可选但对非自建的包应当锁定；不匹配时安装失败，提示完整性校验不通过。' },
+  { path: '托管设置 managed-settings.json', code: '{\n  "strictKnownMarketplaces": []\n}',
+    q: '员工还能添加什么市场？', opts: ['任何市场', '一个都不能（锁死）', '只有官方市场'], a: 1,
+    why: '不设 = 不限制；空数组 = 全部禁止；对象数组 = 白名单（可用 <code>"owner/*"</code> 通配一个 GitHub 所有者）。这个键只在托管设置里有效。' },
+  { path: '托管设置', code: '{\n  "enabledPlugins": { "risky-tool@community": false }\n}',
+    q: '员工能在自己的项目里装这个插件吗？', opts: ['能，项目设置可以覆盖', '不能，任何层级都装不了，市场里也看不到', '能装但不能启用'], a: 1,
+    why: '托管设置里把插件设为 false：在每个作用域都阻止安装，并从市场列表隐藏。' }
+]);
+S.notes($('#n-market'), {
+  c: [
+    ['marketplace.json', '<code>.claude-plugin/marketplace.json</code>：name、owner、plugins[{name, source}]。'],
+    ['七种来源', '相对路径、github、git URL、git 子目录、npm、archive、command。'],
+    ['strict', 'true（默认）插件 plugin.json 为准；false 市场条目即全部定义。']
+  ],
+  p: [
+    ['官方市场', '<code>claude-plugins-official</code> 自动注册；社区市场 <code>anthropics/claude-plugins-community</code> 手动加。'],
+    ['锁版本', 'github/git 用 <code>ref</code> 或 <code>sha</code>；archive 用 <code>sha256</code>。'],
+    ['组织管控', 'strictKnownMarketplaces、blockedMarketplaces、enabledPlugins:false、disableCommandPluginSources。']
+  ]
+});
+
+/* ---------- 安全边界 ---------- */
+S.quiz($('#sq'), [
+  { q: '插件的 <code>agents/helper.md</code> 里写了 <code>hooks:</code> 和 <code>mcpServers:</code>，会怎样？', o: ['子代理加载失败', '子代理照常加载，这两个键被忽略', '正常生效'], a: 1, why: '插件子代理的 hooks、mcpServers、permissionMode、initialPrompt 被忽略，需要的话在插件层声明。' },
+  { q: '插件的 userConfig 里 apiKey 标了 <code>sensitive: true</code>，值存在哪？', o: ['settings.json 明文', '系统钥匙串', '插件目录的 .env'], a: 1, why: '敏感配置进钥匙串，不落明文配置文件。安装时可用 <code>--config key=value</code> 预设。' },
+  { q: '插件 bin/ 里放了一个叫 <code>git</code> 的可执行文件，会覆盖系统 git 吗？', o: ['会', '不会，插件 bin/ 排在你自己的 PATH 之后', '会，但只在插件命令里'], a: 1, why: '原文：bin/ 加在用户 PATH 之后，插件遮蔽不了系统命令。' },
+  { q: '卸载插件时，<code>${CLAUDE_PLUGIN_DATA}</code> 里的数据会怎样？', o: ['永远保留', '从最后一处卸载时删除，<code>--keep-data</code> 可保留', '升级时就会清空'], a: 1, why: '目录在 <code>~/.claude/plugins/data/&lt;id&gt;/</code>，首次引用时创建，升级保留。' }
+]);
+S.notes($('#n-safe'), {
+  c: [
+    ['插件子代理限制', 'hooks、mcpServers、permissionMode、initialPrompt 被忽略。'],
+    ['sensitive 配置', '存进系统钥匙串。'],
+    ['CLAUDE_PLUGIN_DATA', '插件专属持久目录，升级保留，卸载删除。']
+  ],
+  p: [
+    ['压缩包', '非自建一律锁 sha256。'],
+    ['Mods', '以你的权限运行，只从信任来源装；组织可用 <code>allowManagedModsOnly</code>。'],
+    ['只装可信插件', '和 Skill 一样当作安装软件对待。']
+  ]
+});
+
+/* ---------- 什么时候做插件 ---------- */
+CH.cards($('#wq'), {
+  opts: ['做成插件', '不必，用单独配置'],
+  items: [
+    { t: '新人入职：一次装好团队的命令、CLAUDE.md 片段之外的审查子代理、GitHub MCP 和格式化 hook。', a: 0, why: '原文用例：Team Onboarding → 用插件，即时完成全部配置。' },
+    { t: '给自己写一个“按英文 Conventional Commits 生成提交信息”的命令。', a: 1, why: '快速任务自动化，原文：用命令（Skill），插件是过度设计。' },
+    { t: '一份 5G NR 调度参数的领域知识说明，只有你自己用。', a: 1, why: '单一领域专业知识：用 Skill，插件太重。' },
+    { t: '公司要求所有项目统一一套安全审查流程，并能统一升级。', a: 0, why: '企业规范：集中分发、版本控制，用插件（配合 marketplace 和托管设置）。' },
+    { t: '接一个查询线上监控指标的数据源。', a: 1, why: '实时数据接入：单独配 MCP。真要分发给团队，可以再放进某个插件的 .mcp.json。' }
+  ]
+});
+S.notes($('#n-when'), {
+  c: [
+    ['该做插件', '新人上手、框架配置、企业规范：多组件 + 多人同版本。'],
+    ['不该做插件', '快速任务（命令）、单一知识（Skill）、专项分析（子代理）、实时数据（MCP）。']
+  ],
+  p: [
+    ['发布要点', '--plugin-dir 测试 → <code>claude plugin validate</code> → <code>claude plugin tag</code> → 提交市场。'],
+    ['最佳实践', '语义化版本、向后兼容、写 README、别捆不相关功能、别硬编码凭据。'],
+    ['评测', '<code>claude plugin eval</code> 跑插件的评测集（v2.1.269+）。']
+  ]
+});
+
+CH.tryNow($('#try'), '8', [
+  { t: '把原仓库克隆下来，用 <code>claude --plugin-dir ./07-plugins/pr-review</code> 试一下示例插件', d: '敲 <code>/</code> 看它带来了哪些命令，<code>claude plugin details pr-review</code> 看每轮成本。' },
+  { t: '盘点你自己的 <code>.claude/</code>：哪些命令、子代理、hooks 是团队都该有的', d: '列成清单，作为第一个团队插件的候选内容。' },
+  { t: '在 <code>/plugin</code> 里看看已装插件，把不用的禁用', d: '每个插件都可能带来常驻的 Skill 描述和 hook。' }
+]);
+})();
+</script>
+</body>
+</html>

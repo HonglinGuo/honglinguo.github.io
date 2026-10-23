@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>初识智能体：一个循环跑起来</title>
+<meta name="description" content="Hello-Agents 学习笔记（一）：智能体的定义与四要素，传统智能体从反射到学习的演进阶梯，按决策架构、时间维度、知识表示三种分类；PEAS 描述任务环境；Thought-Action-Observation 循环逐行走读一个五十行的旅行助手；Workflow 与 Agent 的区别。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 3.5v4M20.5 12h-4M12 20.5v-4M3.5 12h4' stroke='%2313171C' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.ladder { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.ladder button { font: inherit; font-size: 15px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink-2); line-height: 1.5; }
+.ladder button b { display: block; color: var(--ink); font-size: 16px; }
+.ladder button small { font-family: var(--f-num); color: var(--ink-3); font-size: 15px; }
+.ladder button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+@media (max-width: 760px) { .ladder { grid-template-columns: minmax(0, 1fr); } }
+.peas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.peas div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.peas div b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 16px; }
+@media (max-width: 760px) { .peas { grid-template-columns: minmax(0, 1fr); } }
+.props { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.props span { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 12px; font-size: 15px; color: var(--ink-2); background: var(--bg); }
+.props span.y { border-color: var(--s2); color: var(--ink); background: var(--s2-soft); }
+</style>
+</head>
+<body data-series="helloagents-series" data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Hello-Agents · 01</span><span>对应原书第 1 章</span><span>约 30 分钟</span></p>
+  <h1>智能体不是一次调用，<em>是一个循环</em></h1>
+  <p class="lead">第一章回答三个问题：智能体是什么、它怎么跟世界打交道、最小的一个怎么写。答案落在同一个结构上：感知 → 思考 → 行动 → 观察，周而复始。原书用五十行 Python 把这个循环写了出来，没有任何框架；这一篇把这段代码拆开逐行走一遍，后面十二篇的范式、框架、记忆、协议，都是在这个循环的某一环上加东西。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">Hello-Agents：从零开始构建智能体</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 14 日的仓库版本）的学习笔记。原书十六章，按“概念 → 手写范式 → 平台与框架 → 自研框架 → 记忆、上下文、协议、训练、评估 → 综合案例”展开，代码量很大。这里重排成十三篇，用自己的话重讲：代码只保留能看清机制的骨架，做成可以逐行走读、可以填空回忆的互动；每篇末尾配原书面试题清单里的相关题目做口述演练。每节标出对应的原书章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-helloagents/"><b>总览</b>复习台</a>
+  <a href="../2026-10-22-helloagents-1/" aria-current="page" data-part="1"><b>01</b>初识智能体</a>
+  <a href="../2026-10-22-helloagents-2/" data-part="2"><b>02</b>发展史</a>
+  <a href="../2026-10-22-helloagents-3/" data-part="3"><b>03</b>LLM 基础</a>
+  <a href="../2026-10-22-helloagents-4/" data-part="4"><b>04</b>经典范式</a>
+  <a href="../2026-10-22-helloagents-5/" data-part="5"><b>05</b>低代码平台</a>
+  <a href="../2026-10-22-helloagents-6/" data-part="6"><b>06</b>框架实践</a>
+  <a href="../2026-10-22-helloagents-7/" data-part="7"><b>07</b>自建框架</a>
+  <a href="../2026-10-22-helloagents-8/" data-part="8"><b>08</b>记忆与检索</a>
+  <a href="../2026-10-22-helloagents-9/" data-part="9"><b>09</b>上下文工程</a>
+  <a href="../2026-10-22-helloagents-10/" data-part="10"><b>10</b>通信协议</a>
+  <a href="../2026-10-22-helloagents-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-22-helloagents-12/" data-part="12"><b>12</b>性能评估</a>
+  <a href="../2026-10-22-helloagents-13/" data-part="13"><b>13</b>综合案例</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">智能体是什么</a><a href="#types">三种分类</a><a href="#peas">任务环境</a><a href="#loop">循环走读</a><a href="#wf">Workflow 与 Agent</a><a href="#iv">面试演练</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>智能体的四个要素是什么？LLM 智能体和传统智能体的根本区别在哪？</li>
+    <li>一个最小的 LLM 智能体由哪几块代码组成？Thought、Action、Observation 分别由谁产生？</li>
+    <li>Workflow 和 Agent 的分界线是什么？什么时候不该用 Agent？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>智能体是什么</h2><span class="meta">原书 1.1.1–1.1.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书沿用经典教科书《Artificial Intelligence: A Modern Approach》的定义：智能体是能通过<strong>传感器</strong>感知<strong>环境</strong>、并<strong>自主</strong>通过<strong>执行器</strong>采取<strong>行动</strong>以达成目标的实体。四个要素里最关键的是“自主”：它不是被动响应刺激、照着指令执行的程序，而是基于感知和内部状态自己做决定。传感器不一定是摄像头，API 返回的数据流也算；执行器不一定是机械臂，执行一段代码、调用一个服务也算。</p>
+    <p>在 LLM 出现之前，智能体已经走过一条清晰的演进路线，每一级都是为了补上一级的缺口：<strong>简单反射</strong>只看当前输入（恒温器）；看不到的东西怎么办？于是有了<strong>基于模型</strong>的反射，内部维护一个世界模型（隧道里看不见前车，但知道它还在）；光理解世界不够，还得知道往哪走，于是有了<strong>基于目标</strong>（GPS 规划路线）；到达目标的路不止一条，选哪条？于是有了<strong>基于效用</strong>（在时间、费用、舒适之间权衡）；最后，<strong>学习</strong>是一种可以加给以上任何一类的元能力。</p>
+    <p>LLM 智能体和它们的根本区别在<strong>能力的来源</strong>：传统智能体的能力来自工程师显式编写的规则和知识，行为确定、有边界；LLM 智能体的能力来自海量数据预训练得到的隐式世界模型，能直接接住“规划一次厦门之旅”这种模糊、高层的自然语言指令，自己拆解任务、发现信息缺口、调用工具、按用户反馈修正。原书的一句话概括了这个转变：<strong>核心不再是编写代码，而是引导一个通用的“大脑”去规划、行动和学习</strong>。</p>
+    <p class="go">点阶梯上的每一级，看它补上了什么；再判断下面几个例子各在哪一级。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">传统智能体的演进阶梯</p>
+    <div class="ladder" id="ladder"></div>
+    <div class="hb-info" id="ladInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="lab"><p class="lab-t">这是哪一级？</p><div id="ladQ"></div></div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="types">
+  <div class="part-head"><h2>三种分类，各看一个侧面</h2><span class="meta">原书 1.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>分类不是为了背名词，而是给设计时的权衡起名字。原书给了三个互补的维度。第一个是<strong>内部决策架构</strong>，就是上面那条阶梯。第二个是<strong>时间与反应性</strong>：<strong>反应式</strong>智能体几乎即时响应，开销低但“短视”，安全气囊和高频交易靠它；<strong>规划式</strong>（审议式）智能体行动前先在世界模型里推演多步后果，像棋手，有远见但慢；<strong>混合式</strong>两者兼得。</p>
+    <p>LLM 智能体恰好是一种灵活的混合：在“思考”阶段分析局面、规划下一步，这是审议；在“行动、观察”阶段与工具交互并立即拿到反馈，这是反应。一个长期目标就被拆成一串“规划—反应”的微循环。</p>
+    <p>第三个维度最根本：<strong>知识以什么形式存在</strong>。<strong>符号主义</strong>把知识写成人可读的规则和知识图谱，透明可追溯，但脆弱，规则覆盖不到的情况就失灵（知识获取瓶颈）；<strong>亚符号主义</strong>（连接主义）把知识隐含在神经网络的权重里，擅长模式识别、对噪声鲁棒，但是黑箱，还会幻觉；<strong>神经符号主义</strong>想两者兼得。原书借卡尼曼的双系统作类比：系统 1 快、凭直觉，对应神经网络；系统 2 慢、讲逻辑，对应符号推理。LLM 智能体是神经符号的一个好例子：内核是神经网络，工作时却会产出思考、计划、API 调用这些明确的<strong>符号</strong>。</p>
+    <p class="go">把每张卡片放进它最贴切的类别。</p>
+  </div>
+  <div class="lab"><div id="typeSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：基于模型的反射 vs 规划式</h4>
+    <p>两者都有“世界模型”。<b>基于模型的反射</b>用世界模型回答“世界<b>现在</b>是什么样”，然后仍按条件—动作规则立即反应，属于反应式；<b>规划式</b>用世界模型推演“如果我这样做，<b>未来</b>会怎样”，在多个行动序列里挑最好的。区别不在有没有模型，而在模型用来补全当下还是预演未来。</p>
+  </div>
+  <div class="notes" id="n-types"></div>
+</section>
+
+<section class="part" id="peas">
+  <div class="part-head"><h2>先描述环境，再设计智能体</h2><span class="meta">原书 1.2.1 节，表 1.2</span></div>
+  <div class="sec-lede">
+    <p>设计智能体之前，先把它要面对的任务环境说清楚。经典做法是 <strong>PEAS</strong>：<strong>P</strong>erformance（性能度量，什么算做得好）、<strong>E</strong>nvironment（环境）、<strong>A</strong>ctuators（执行器，能做什么）、<strong>S</strong>ensors（传感器，能看到什么）。四项写完，“这个 Agent 需要哪些工具、怎么评估”就有了骨架。</p>
+    <p>原书接着点出 LLM 智能体所处的数字环境的四个特性，每个都直接决定一项设计：<strong>部分可观察</strong>（一次 API 只看到一部分航班，所以要记忆和探索）；<strong>随机性</strong>（两次查价结果不同，所以要处理不确定、监控变化）；<strong>多智能体</strong>（别的用户、航司调价系统也在行动，可能抢走最后一张特价票）；<strong>序贯且动态</strong>（现在的动作影响未来，环境在你思考时也在变）。</p>
+    <p class="go">选一个智能体，先自己写出它的 PEAS，再对照；然后看它的环境有哪些特性。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="peasSeg"><button data-v="0" aria-pressed="true">智能旅行助手（原书表 1.2）</button><button data-v="1">智能健身教练（原书习题 2）</button><button data-v="2">基站节能智能体（自拟）</button></div>
+    <div class="peas" id="peasBox"></div>
+    <div class="props" id="peasProps"></div>
+    <p class="note" id="peasNote"></p>
+  </div>
+  <div class="notes" id="n-peas"></div>
+</section>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>五十行代码里的智能体循环</h2><span class="meta">原书 1.2.2–1.3 节</span></div>
+  <div class="sec-lede">
+    <p>智能体不是一次完成任务，而是在<strong>智能体循环（Agent Loop）</strong>里一轮轮推进：<strong>感知</strong>（接收观察：用户指令或上一步行动的结果）→ <strong>思考</strong>（规划下一步、选择工具和参数）→ <strong>行动</strong>（调用工具，改变环境）→ 环境产生新的<strong>观察</strong>，进入下一轮。</p>
+    <p>要让 LLM 驱动这个循环，需要一个<strong>交互协议</strong>：规定模型每次输出的格式。原书用的是最朴素的文本协议，模型每次输出一对 <code>Thought: …</code> 和 <code>Action: …</code>；外部的<strong>解析器</strong>用正则抠出 Action，调用对应 Python 函数；函数结果被包装成一段简短的自然语言 <code>Observation: …</code> 追加回历史。注意分工：<strong>Thought 和 Action 是模型写的，Observation 是你的代码写的</strong>。模型从来没有真正“调用”过任何东西，它只是写出了一行文字。</p>
+    <p>整段程序只有四块：一个<strong>系统提示词</strong>（角色、工具清单、输出格式、何时 Finish）；两个<strong>工具函数</strong>（wttr.in 查天气、Tavily 搜景点）和一个名字到函数的字典；一个兼容 OpenAI 接口的 <strong>LLM 客户端</strong>；一个最多跑 5 轮的<strong>主循环</strong>。原书说这正是 LangChain 等框架的设计精髓，框架只是把这四块做得更健壮。</p>
+    <p class="go">逐步走一遍主循环，右栏是每一步时 prompt_history 和变量的样子（运行结果取自原书 1.3.4 节）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">主循环逐步走读（代码据原书 1.3.3 节精简）</p>
+    <div id="loopTrace"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">合上书，补全系统提示词的关键约束</p>
+    <div id="promptBlank"></div>
+    <p class="note">这几条约束各防一种真实故障：不限定“只输出一对”，模型会一口气把 Observation 也编出来；不要求 Action 在同一行，正则就抠不全；不规定 Finish 格式，循环不知道何时结束。主循环里那段“截断多余 Thought-Action”的正则，就是为第一种情况兜底。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Observation 是谁写的</h4>
+    <p>初学最容易误以为模型“执行了”工具。实际上模型只输出 <b>Thought</b>（推理）和 <b>Action</b>（一行调用意图的文本）；<b>Observation</b> 是宿主程序执行真实函数后拼出来、再塞回 prompt 的。所以模型如果在一次输出里自己写了 “Observation: 晴”，那是幻觉，必须截掉。后面讲的 Function Calling 只是把这行文本换成了结构化 JSON，分工没变。</p>
+  </div>
+  <div class="notes" id="n-loop"></div>
+</section>
+
+<section class="part" id="wf">
+  <div class="part-head"><h2>Workflow 与 Agent：谁来决定下一步</h2><span class="meta">原书 1.4 节</span></div>
+  <div class="sec-lede">
+    <p>原书把智能体的应用分成两种协作模式。一种是<strong>开发者工具</strong>：Copilot、Claude Code、Cursor、Trae 这类，增强人的工作流而不是取代人；另一种是<strong>自主协作者</strong>：把高层目标委托出去，由智能体自己规划、执行、反思直到交付，关系从“命令—执行”变成“目标—委托”。后者的实现大致三类：单智能体自主循环（AutoGPT 一类）、多智能体协作（CAMEL 的角色扮演对话，MetaGPT、CrewAI 的组织化 SOP 流程，AutoGen、AgentScope 的灵活对话网络）、高级控制流（LangGraph 把执行建模成状态图）。这些在第 6 章会一个个上手。</p>
+    <p>另一条更实用的分界线是 <strong>Workflow 与 Agent</strong>。原书一句话：<strong>Workflow 让 AI 按部就班执行指令，Agent 赋予 AI 自由度去自主达成目标。</strong>Workflow 是预先画好的流程图，每个分支条件都写死（报销金额小于 500 元经理批，大于 500 元再转财务总监）；Agent 的下一步由模型根据实时信息决定，没有“如果晴天就推荐颐和园”这种规则，雨天它会自己推荐博物馆。</p>
+    <p>原书习题 3 追问：两者能不能结合？可以，而且常常应该：流程骨架和高风险关口（金额阈值、审批）用 Workflow 固定，需要理解和判断的环节（读用户描述、看商品照片、写回复）交给 Agent。这和《AI Agent Handbook》第 3 篇里的 Hybrid 是一回事。</p>
+    <p class="go">逐个场景判断：Workflow、Agent，还是两者结合？</p>
+  </div>
+  <div class="lab"><div id="wfCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>Workflow / Agent 的选择标准在<a href="../2026-10-22-handbook-3/">《AI Agent Handbook》03 篇</a>的“四个入口”一节讲得更细；“大脑、眼睛、手脚”的拆法见<a href="../2026-10-16-agent-1/">《深入理解 AI Agent》01 篇</a>。</div>
+  <div class="notes" id="n-wf"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01《面试问题总结》</span></div>
+  <div class="sec-lede">
+    <p>能讲出来才算真的会。下面的题目来自原书附带的面试问题清单，要点是我根据本章内容整理的。先合上页面在心里（或者出声）答一遍，再展开对照；给自己打个分，标“有点模糊”和“讲不出”的题会在系列总览页汇总，方便集中复习。</p>
+  </div>
+  <div class="ivs">
+    <div class="iv" data-id="1-1">
+      <p class="iv-q">你如何定义一个基于 LLM 的智能体？它通常由哪些核心组件构成？<small>Extra01 · Agent 第 1 题</small></p>
+      <ul class="iv-a">
+        <li><b>定义</b>：能感知环境、自主决策并通过行动达成目标的系统；LLM 智能体用 LLM 作为决策核心，在“思考—行动—观察”循环里推进任务。</li>
+        <li><b>组件</b>：LLM（推理与规划）、工具（执行器，扩展能力边界）、记忆（短期上下文 + 长期存储）、规划（任务分解、反思）、交互协议与解析器（把文本意图变成真实调用）、控制循环（最大轮数、终止条件）。</li>
+        <li><b>加分</b>：说明 Observation 由宿主程序产生、模型只产出意图；提到与 Workflow 的区别在于下一步由谁决定。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="1-2">
+      <p class="iv-q">在构建一个复杂的 Agent 时，你认为最主要的挑战是什么？<small>Extra01 · Agent 第 7 题</small></p>
+      <ul class="iv-a">
+        <li><b>可靠性</b>：输出格式漂移、解析失败、幻觉出 Observation，需要格式约束、截断、重试和错误回填。</li>
+        <li><b>不终止与成本</b>：没有最大轮数时可能死循环（原书习题 6 的问题），要有步数、预算和终止条件。</li>
+        <li><b>环境特性</b>：部分可观察、随机、动态、多智能体，要求记忆、探索和对变化的监控。</li>
+        <li><b>评估</b>：只看最终准确率不够，还要看过程（步数、成本、工具调用正确性），第 12 篇展开。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="1-3">
+      <p class="iv-q">退款审批该用 Workflow 还是 Agent？有没有方案 C？<small>原书第 1 章习题 3</small></p>
+      <ul class="iv-a">
+        <li><b>Workflow</b>：规则清晰、可审计、成本低、结果可预测；但遇到规则外的情况（描述含糊、证据是图片）只能转人工。</li>
+        <li><b>Agent</b>：能理解非结构化信息、处理例外；但不可预测、难审计，金额决策直接交给模型风险大。</li>
+        <li><b>方案 C</b>：Workflow 骨架 + Agent 节点。金额阈值、特殊商品拒退、超期等硬规则写死；Agent 只负责理解诉求、核对证据、给出建议和理由，高金额或低置信度转人工审批。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="try">
+    <h4>动手练（原书习题 4）</h4>
+    <ol>
+      <li>给旅行助手加“记住用户偏好”：偏好存在哪里？怎么进入下一次的 prompt？<details><summary>思路</summary><p>最简单是在 prompt_history 前面加一段“用户画像”，每次 Finish 后让模型或规则抽取偏好写回一个字典或文件；跨会话就要持久化。第 8 篇会讲记忆系统的正式做法。</p></details></li>
+      <li>门票售罄时自动给备选：要改工具还是改提示词？<details><summary>思路</summary><p>两处都改：工具返回结构化的“售罄”状态而不是一句空话；提示词里告诉模型遇到售罄应换一个景点重新查询。Observation 写得清楚，模型才知道该换路。</p></details></li>
+      <li>用户连续拒绝 3 次后反思策略：计数放在哪？<details><summary>思路</summary><p>计数是确定性状态，放在宿主代码里，不要指望模型自己数；达到 3 次时往 prompt 插入一条反思指令（“前三次推荐都被拒，先总结用户可能的偏好再推荐”）。这就是第 4 篇 Reflection 的雏形。</p></details></li>
+    </ol>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 智能体的四个要素？LLM 智能体和传统智能体的根本区别？</summary><p class="ans">环境、传感器（感知）、执行器（行动）、自主性（基于感知和内部状态独立决策）。根本区别在能力来源：传统智能体靠工程师显式编写的规则与知识，行为确定有边界；LLM 智能体靠预训练得到的隐式世界模型，能直接处理模糊的高层自然语言指令，自己分解任务、调用工具、按反馈修正。</p></details>
+    <details><summary>2. 最小 LLM 智能体由哪几块组成？TAO 分别由谁产生？</summary><p class="ans">系统提示词（角色、工具清单、输出格式、终止约定）、工具函数和名字到函数的映射、LLM 客户端、带最大轮数的主循环（拼 prompt → 调模型 → 截断 → 解析 Action → 执行或 Finish → 追加 Observation）。Thought 和 Action 由模型生成；Observation 由宿主程序执行真实工具后生成并追加回历史。</p></details>
+    <details><summary>3. Workflow 和 Agent 的分界线？什么时候不该用 Agent？</summary><p class="ans">分界线是下一步由谁决定：Workflow 由预先编排的流程决定，Agent 由模型根据实时信息决定。步骤和分支事先能写清、需要可审计和可预测、错误代价高的环节，用 Workflow 或把它们固定在 Workflow 骨架里，Agent 只负责需要理解和判断的节点。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-helloagents/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-22-helloagents-2/"><small>下一篇</small><span>02 · 智能体发展史：从规则到模型</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">datawhalechina/hello-agents</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 演进阶梯 ---------- */
+var LAD = [
+  ['简单反射', 'Simple Reflex', '只看当前感知，按“条件—动作”规则立即反应，没有记忆。', '恒温器：室温高于设定值就开制冷。', '当前状态不足以决策时怎么办？'],
+  ['基于模型的反射', 'Model-Based', '内部维护世界模型，追踪看不到的部分，回答“世界现在是什么样”。', '隧道里摄像头看不到前车，仍记得它在、估计它的位置。', '理解了世界，但不知道该往哪走。'],
+  ['基于目标', 'Goal-Based', '主动选择能导向目标状态的行动，核心是规划。', 'GPS 导航用 A* 在地图上搜一条到公司的路。', '能到达目标的路有很多条，选哪条？'],
+  ['基于效用', 'Utility-Based', '给每个可能状态打效用分，在多个冲突目标间权衡，追求期望效用最大。', '导航在“最快”“最便宜”“少换乘”之间综合打分。', '规则和效用函数都是人写的，环境变了怎么办？'],
+  ['学习型', 'Learning', '一种元能力，可加给以上任何一类：通过经验自我改进。', '强化学习智能体在不断试错中学到策略，AlphaGo 是代表。', '（LLM 智能体：用预训练得到的通用世界模型做大脑）']
+];
+var lb = $('#ladder');
+LAD.forEach(function (x, i) {
+  var b = h('button', { type: 'button', html: '<small>' + (i + 1) + '</small><b>' + x[0] + '</b>' + x[1] }, lb);
+  b.addEventListener('click', function () { pick(i); });
+});
+function pick(i) {
+  S.$$('button', lb).forEach(function (b, k) { b.setAttribute('aria-pressed', k === i ? 'true' : 'false'); });
+  var x = LAD[i];
+  $('#ladInfo').innerHTML = '<b>' + x[0] + '</b><p>' + x[2] + '</p><p>例子：' + x[3] + '</p><p style="color:var(--s2)">留下的缺口：' + x[4] + '</p>';
+}
+pick(0);
+HB.cards($('#ladQ'), {
+  opts: ['简单反射', '基于模型', '基于目标', '基于效用'],
+  items: [
+    { t: '扫地机器人碰到墙就随机转个角度。', a: 0, why: '只依赖当前感知（碰撞），没有记忆也没有目标推演。' },
+    { t: '扫地机器人记得哪些区域已经扫过，被沙发挡住的角落也在地图里。', a: 1, why: '维护了一个内部地图来补全看不到的部分，但还没有规划“怎么走最省”。' },
+    { t: '机器人规划一条能覆盖所有房间、最后回到充电座的路线。', a: 2, why: '以“全部扫完并回座”为目标搜索行动序列。' },
+    { t: '电量只剩 20%，机器人在“先扫客厅”“先回充电”“只扫重点区域”之间权衡。', a: 3, why: '多个目标冲突，需要给不同结果打分再选，属于基于效用。' }
+  ]
+});
+S.notes($('#n-what'), {
+  c: [
+    ['智能体', '通过传感器感知环境、自主地通过执行器采取行动以达成目标的实体。'],
+    ['四要素', '环境、传感器、执行器、自主性。'],
+    ['演进阶梯', '简单反射 → 基于模型 → 基于目标 → 基于效用；学习是可加给任一类的元能力。']
+  ],
+  p: [
+    ['传统 vs LLM 智能体', '能力来自显式规则 vs 来自预训练的隐式世界模型。'],
+    ['LLM 智能体三件事', '规划与推理（拆任务）、工具使用（补信息缺口）、动态修正（用户反馈即新约束）。'],
+    ['原书金句', '核心不再是编写代码，而是引导一个通用的“大脑”去规划、行动和学习。']
+  ]
+});
+
+/* ---------- 三种分类 ---------- */
+S.sortGame($('#typeSort'), {
+  bins: [{ k: 'r', t: '反应式' }, { k: 'd', t: '规划式' }, { k: 's', t: '符号主义' }, { k: 'n', t: '亚符号主义' }, { k: 'ns', t: '神经符号' }],
+  items: [
+    { t: '安全气囊在碰撞毫秒内弹出', k: 'r', why: '必须极低延迟，从感知直接映射到动作。' },
+    { t: 'AlphaGo 推演未来几十步棋', k: 'd', why: '在世界模型里搜索行动序列后再落子。' },
+    { t: '医疗专家系统用 IF-THEN 规则库诊断', k: 's', why: '知识是人可读的规则，可追溯，但覆盖不到的情况会失灵。' },
+    { t: '图像分类网络认出照片里的猫', k: 'n', why: '知识隐含在权重中，擅长模式识别但是黑箱。' },
+    { t: 'LLM 输出一行 get_weather(city="北京") 去调用工具', k: 'ns', why: '神经网络内核产出了明确的符号（API 调用），是神经符号的实践。' },
+    { t: '高频交易机器人捕捉瞬时价差', k: 'r', why: '原书举的反应式例子：速度优先，代价是短视。' },
+    { t: '知识图谱上做多跳逻辑查询', k: 's', why: '在显式符号与关系上推理。' },
+    { t: '模型先列计划，再逐步调用工具并按结果修正', k: 'ns', why: '直觉式生成 + 结构化中间步骤，对应系统 1 与系统 2 协同。' }
+  ]
+});
+S.notes($('#n-types'), {
+  c: [
+    ['反应式', '感知到行动直接映射，快、开销低，但短视。'],
+    ['规划式（审议式）', '先用世界模型推演多步后果再行动，有远见但慢。'],
+    ['混合式', '底层反应 + 高层规划；LLM 智能体在“思考（审议）—行动观察（反应）”微循环里混合。'],
+    ['神经符号', '神经网络的模式识别 + 符号系统的逻辑推理；类比卡尼曼系统 1 与系统 2。']
+  ],
+  p: [
+    ['符号主义的软肋', '脆弱：规则没覆盖的情况就失灵（知识获取瓶颈）。'],
+    ['亚符号主义的软肋', '黑箱、难解释，逻辑推理弱，会幻觉。'],
+    ['LLM 为何算神经符号', '内核是神经网络，工作中却产出思考、计划、API 调用这些符号。']
+  ]
+});
+
+/* ---------- PEAS ---------- */
+var PEAS = [
+  { P: '行程合理、符合预算与偏好、信息准确、用户满意度', E: '航司与酒店预订系统、天气与地图服务、搜索引擎、用户', A: '调用查询与预订 API、生成行程、向用户发消息', S: '用户输入、各 API 返回的数据', pr: [1, 1, 1, 1, 1], n: '旅行助手的环境四项特性全占：查不全（部分可观察）、价格变动（随机）、别人抢票（多智能体）、先订机票再订酒店（序贯）且价格随时在变（动态）。' },
+  { P: '训练目标达成度（减脂 / 增肌 / 耐力）、动作规范、无运动损伤、坚持率', E: '用户身体、可穿戴设备、健身场地、饮食记录', A: '语音指导、调整训练计划、推送饮食建议', S: '心率、运动强度、动作姿态、用户反馈、体重变化', pr: [1, 1, 0, 1, 1], n: '生理状态只能从传感器间接推断（部分可观察），同样的计划在不同天的效果不同（随机），每次训练影响下一次（序贯），运动过程中状态实时变化（动态）。基本不涉及其他智能体。' },
+  { P: '节能量、KPI（掉话率、吞吐）不劣化、告警数', E: '基站与小区、用户业务负载、相邻小区', A: '关断 / 开启载波或符号、调整功率、下发参数', S: '话务量、PRB 利用率、KPI 计数器、告警', pr: [1, 1, 1, 1, 1], n: '这是我自拟的例子，用来练手：负载只能从计数器看到（部分可观察），用户到达随机，邻区也有自己的节能策略（多智能体），关断后要一段时间才能评估影响（序贯），话务潮汐一直在变（动态）。' }
+];
+var PROPS = ['部分可观察', '随机性', '多智能体', '序贯', '动态'];
+function peas(i) {
+  var p = PEAS[i];
+  $('#peasBox').innerHTML = [['P', '性能度量', p.P], ['E', '环境', p.E], ['A', '执行器', p.A], ['S', '传感器', p.S]].map(function (x) { return '<div><b>' + x[0] + '</b>' + x[1] + '：' + x[2] + '</div>'; }).join('');
+  $('#peasProps').innerHTML = PROPS.map(function (t, k) { return '<span class="' + (p.pr[k] ? 'y' : '') + '">' + t + (p.pr[k] ? '' : '（不明显）') + '</span>'; }).join('');
+  $('#peasNote').textContent = p.n;
+}
+S.seg($('#peasSeg'), function (v) { peas(+v); }); peas(0);
+S.notes($('#n-peas'), {
+  c: [
+    ['PEAS', 'Performance 性能度量、Environment 环境、Actuators 执行器、Sensors 传感器。'],
+    ['部分可观察', '一次只能看到环境的一部分，需要记忆与探索。'],
+    ['随机 / 动态 / 序贯', '结果不确定 / 环境在决策时也在变 / 当前动作影响未来。']
+  ],
+  p: [
+    ['用法', '先写 PEAS 再设计：A 和 S 决定要哪些工具，P 决定怎么评估。'],
+    ['多智能体环境', '其他用户、脚本、调价系统都是会改变环境的“其他智能体”。']
+  ]
+});
+
+/* ---------- 循环走读 ---------- */
+var LOOP = String.raw`
+prompt_history = [f"用户请求: {user_prompt}"]
+
+for i in range(5):                      # 最大循环次数
+    full_prompt = "\n".join(prompt_history)
+    llm_output = llm.generate(full_prompt, system_prompt=AGENT_SYSTEM_PROMPT)
+    # 模型可能多输出几对 Thought-Action，只保留第一对
+    m = re.search(r'(Thought:.*?Action:.*?)(?=\n\s*(?:Thought:|Action:|Observation:)|\Z)', llm_output, re.DOTALL)
+    if m: llm_output = m.group(1).strip()
+    prompt_history.append(llm_output)
+
+    action_match = re.search(r"Action: (.*)", llm_output, re.DOTALL)
+    if not action_match:
+        prompt_history.append("Observation: 错误: 未能解析到 Action 字段……")
+        continue
+    action_str = action_match.group(1).strip()
+
+    if action_str.startswith("Finish"):
+        final_answer = re.match(r"Finish\[(.*)\]", action_str).group(1)
+        break
+
+    tool_name = re.search(r"(\w+)\(", action_str).group(1)
+    args_str = re.search(r"\((.*)\)", action_str).group(1)
+    kwargs = dict(re.findall(r'(\w+)="([^"]*)"', args_str))
+    observation = available_tools[tool_name](**kwargs)
+    prompt_history.append(f"Observation: {observation}")
+`;
+function ph(arr, hot) {
+  return arr.map(function (t, k) { return '<span class="box' + (k === hot ? ' hot' : '') + '">' + t + '</span>'; }).join('');
+}
+var U = '用户请求: 你好，请帮我查询一下今天北京的天气，然后根据天气推荐一个合适的旅游景点。';
+var T1 = 'Thought: 首先需要获取北京今天的天气情况，之后再根据天气情况来推荐旅游景点。\nAction: get_weather(city="北京")';
+var O1 = 'Observation: 北京当前天气:Sunny，气温26摄氏度';
+var T2 = 'Thought: 现在已经知道了北京今天的天气是晴朗且温度适中，接下来可以基于这个信息来推荐一个适合的旅游景点了。\nAction: get_attraction(city="北京", weather="Sunny")';
+var O2 = 'Observation: 北京在晴天最值得去的旅游景点是颐和园……另一个推荐是长城……';
+var T3 = 'Thought: 已经获得了两个适合晴天游览的景点建议……\nAction: Finish[今天北京的天气是晴朗的，气温26摄氏度……推荐您去颐和园……或者前往长城……]';
+HA.trace($('#loopTrace'), {
+  code: LOOP,
+  steps: [
+    { l: ['1'], t: '初始化', s: '<p><b>prompt_history</b> 只有一条：</p>' + ph([U], 0) + '<p>这就是智能体的全部“短期记忆”：一个字符串列表。</p>' },
+    { l: ['4-5'], t: '第 1 轮 · 调模型', s: '<p>把历史拼成一个字符串当 user 消息，系统提示词另传。模型返回：</p>' + ph([T1], 0) + '<p>注意模型只是<b>写了一行字</b>，什么都没执行。</p>' },
+    { l: ['6-9'], t: '截断并记账', s: '<p>如果模型顺手编了 <code>Observation: …</code> 或第二对 Thought-Action，正则只保留第一对。然后把模型输出追加进历史：</p>' + ph([U, T1], 1) },
+    { l: ['11', '15'], t: '解析 Action', s: '<p><code>action_str</code> = <span class="mono">get_weather(city="北京")</span></p><p>不是 Finish，继续往下。</p>' },
+    { l: ['21-24'], t: '执行工具', s: '<p>三个正则依次抠出：</p><p><code>tool_name</code> = get_weather<br><code>kwargs</code> = {"city": "北京"}</p><p>查字典调用真实函数，wttr.in 返回 JSON，工具把它<b>压成一句话</b>：</p>' + ph([O1], 0) },
+    { l: ['25'], t: '追加观察', s: '<p>Observation 由<b>我们的代码</b>写进历史：</p>' + ph([U, T1, O1], 2) },
+    { l: ['3-9'], t: '第 2 轮', s: '<p>模型看到了天气，决定下一步：</p>' + ph([T2], 0) + '<p>参数里的 weather="Sunny" 是模型从上一条 Observation 里读出来的，这就是“上下文理解”。</p>' },
+    { l: ['21-25'], t: '第 2 轮 · 观察', s: ph([U, T1, O1, T2, O2], 4) },
+    { l: ['3-9'], t: '第 3 轮', s: '<p>信息够了：</p>' + ph([T3], 0) },
+    { l: ['17-19'], t: '结束', s: '<p>Action 以 Finish 开头，抠出方括号里的答案，<code>break</code>。</p><p>一共 3 次模型调用、2 次工具调用。若模型始终不 Finish，<code>range(5)</code> 会兜底停下，这就是原书习题 6 问的“没有上限会怎样”。</p>' },
+    { l: ['12-14'], t: '另一条路：格式错', s: '<p>如果模型没按格式输出，抠不到 Action，就把<b>错误信息作为 Observation 追加</b>再 continue：让模型在下一轮看到自己错在哪并改正。把错误当观察回填，是后面所有框架都沿用的做法。</p>' }
+  ]
+});
+HA.blank($('#promptBlank'), {
+  code: String.raw`
+AGENT_SYSTEM_PROMPT = """
+你是一个智能旅行助手。你的任务是分析用户的请求，并使用可用工具一步步地解决问题。
+
+# 可用工具:
+- [[get_weather(city: str)]]: 查询指定城市的实时天气。
+- [[get_attraction(city: str, weather: str)]]: 根据城市和天气搜索推荐的旅游景点。
+
+# 输出格式要求:
+你的每次回复必须严格遵循以下格式，包含一对Thought和Action：
+Thought: [你的思考过程和下一步计划]
+Action: [你要执行的具体行动]
+
+Action的格式必须是以下之一：
+1. 调用工具：[[function_name(arg_name="arg_value")]]
+2. 结束任务：[[Finish[最终答案]]]
+
+# 重要提示:
+- 每次只输出[[一对Thought-Action]]
+- Action必须[[在同一行，不要换行]]
+"""`
+});
+S.notes($('#n-loop'), {
+  c: [
+    ['Agent Loop', '感知 → 思考（规划 + 工具选择）→ 行动 → 环境变化产生新观察，循环推进。'],
+    ['交互协议', '规定模型每次输出的结构，如一对 Thought / Action，便于解析器抠出行动。'],
+    ['Observation', '宿主程序执行真实工具后，把原始结果压缩成简短自然语言，追加回历史。'],
+    ['最小智能体四块', '系统提示词、工具函数与映射表、LLM 客户端、带上限的主循环。']
+  ],
+  p: [
+    ['一轮主循环', '拼历史 → 调模型 → 截断多余输出 → 追加 → 解析 Action → Finish 则停，否则调工具 → 追加 Observation。'],
+    ['格式错误怎么办', '把错误信息作为 Observation 回填，让模型下一轮自己改。'],
+    ['为什么要最大轮数', '防止不终止和成本失控；原书示例 range(5)。'],
+    ['兼容接口', 'OpenAI、Azure、Ollama、vLLM 都兼容 chat.completions，只需换 api_key、base_url、model。']
+  ]
+});
+
+/* ---------- Workflow vs Agent ---------- */
+HB.cards($('#wfCards'), {
+  opts: ['Workflow', 'Agent', '两者结合'],
+  items: [
+    { t: '报销单：小于 500 元经理批，大于 500 元再转财务总监，通过后通知打款。', a: 0, why: '原书的 Workflow 例子：每个分支条件事先都能写清，要求可审计。' },
+    { t: '用户说“规划一次厦门之旅”，需要先问偏好、查天气、再排行程。', a: 1, why: '路径取决于中间结果（天气、用户反馈），无法事先写死。' },
+    { t: '售后退款：用户描述五花八门、附带照片，但大额必须人工审批。', a: 2, why: '理解描述、核对照片交给 Agent；金额阈值和审批关口用 Workflow 固定。即原书习题 3 的方案 C。' },
+    { t: '每天 8:30 抓取 RSS、去重、按模板发邮件。', a: 0, why: '步骤固定，没有需要模型临场决定的分支。即使其中用 LLM 写摘要，也是 Workflow 里的一个节点。' },
+    { t: '修复一个只给了报错日志的线上 Bug。', a: 1, why: '要读代码、猜原因、试改、跑测试，下一步取决于上一步的观察。' },
+    { t: '基站告警处理：已知告警走标准处置单，未知告警组合需要分析根因。', a: 2, why: '已知告警的 SOP 是 Workflow；未知组合的根因分析交给 Agent，处置动作仍过审批。' }
+  ]
+});
+S.notes($('#n-wf'), {
+  c: [
+    ['Workflow', '预先定义、结构化编排的任务步骤，像一张静态流程图。'],
+    ['Agent', '具备自主性、以目标为导向，下一步由模型根据实时信息决定。'],
+    ['两种协作模式', '开发者工具（增强人）与自主协作者（目标委托）。']
+  ],
+  p: [
+    ['一句话区分', 'Workflow 让 AI 按部就班执行指令；Agent 赋予 AI 自由度去自主达成目标。'],
+    ['自主协作的三类架构', '单智能体自主循环；多智能体协作（角色扮演 / 组织化 SOP / 对话网络）；状态图控制流。'],
+    ['方案 C', '硬规则与高风险关口用 Workflow 固定，理解与判断节点交给 Agent。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

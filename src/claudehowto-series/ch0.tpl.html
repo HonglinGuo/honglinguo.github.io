@@ -1,0 +1,310 @@
+---
+title: Claude How To：学习笔记总览与速查卡
+desc: 开源教程 Claude How To 的十二篇互动学习笔记总览：Claude Code 七种扩展机制（斜杠命令、Memory、Skills、Subagents、MCP、Hooks、Plugins）与 Checkpoints、权限、后台与远程、CLI；按“我想要……”反查功能、文件路径和关键字段，文件位置速查表，问答闪卡，易混辨析索引，全系列速记。
+kicker: <span>技术学习</span><span>系列 · 共 12 篇</span><span>覆盖原文 10 个模块</span><span>MIT</span>
+h1: Claude Code 的<em>速查卡</em>
+lead: 这是开源教程 Claude How To 的学习笔记。原教程按十个模块讲 Claude Code 的每一项功能，配了大量可复制的模板；笔记重排成十二篇，先讲七种扩展机制的分工，再逐个拆开。这一页是写代码时随手查的速查卡：遇到一个需求，按“我想要……”找到该用哪个功能、文件放在哪、关键字段是什么；后面是文件位置表、问答闪卡、易混辨析和全部速记。
+nav: why|这份教程;want|我想要……;paths|文件放哪;map|全系列地图;cards|问答闪卡;cf|易混辨析;recap|全系列速记;back|记下来
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.wt-ctl { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 10px; }
+.wt { display: flex; flex-direction: column; gap: 8px; }
+.wt details { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); }
+.wt summary { cursor: pointer; padding: 9px 12px; font-size: 16px; color: var(--ink); line-height: 1.55; }
+.wt summary .ch-pill { margin-left: 8px; }
+.wt .bd { padding: 0 12px 12px; font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+.wt .bd dl { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 4px 10px; margin: 0; }
+.wt .bd dt { color: var(--ink-3); }
+.wt .bd dd { margin: 0; min-width: 0; }
+.wt .bd code { font-family: var(--f-num); font-size: 15px; background: var(--dim-soft); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.paths-t { min-width: 780px; }
+.paths-t code { overflow-wrap: normal; }
+.cfl code { font-family: var(--f-num); font-size: 15px; background: var(--dim-soft); padding: 1px 5px; border-radius: 4px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>这一页要回答的 3 个问题</h3>
+  <ol>
+    <li>原教程想解决什么问题？十二篇笔记怎样对应原文的十个模块？</li>
+    <li>遇到一个具体需求（自动格式化、接数据库、限制命令……），该用哪个功能、文件放哪、写哪些字段？</li>
+    <li>全系列有哪些最容易混淆的概念？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这份教程</h2><span class="meta">原文 README、LEARNING-ROADMAP</span></div>
+  <div class="sec-lede">
+    <p>Claude How To 是 luongnv89 发起的开源教程（MIT 协议），口号是“用一个周末掌握 Claude Code”。它认为大多数人只用到了 Claude Code 很小一部分能力，原因是官方文档按功能讲、不讲组合，没有学习路径，示例太基础。所以它把每个功能做成一个模块，配原理图、可复制的模板（命令、CLAUDE.md、hook 脚本、MCP 配置、子代理定义、完整插件）和一条约 11–13 小时的学习路线。</p>
+    <p>两点说明。<strong>版本</strong>：笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302；Claude Code 迭代极快，带版本号的细节以原文和官方文档为准。<strong>语言</strong>：中文版（zh/）是英文原版的缩写译本，很多模块只有英文的五分之一，笔记主要依据英文原版，每节标出对应的原文目录。</p>
+  </div>
+  <p class="parthd">全景 · 原文 README、claude_concepts_guide</p>
+  <div class="chap" id="chA"></div>
+  <p class="parthd">七件套 · 原文 01–07 模块</p>
+  <div class="chap" id="chB"></div>
+  <p class="parthd">配套能力 · 原文 08–10 模块</p>
+  <div class="chap" id="chC"></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="want">
+  <div class="part-head"><h2>我想要……</h2><span class="meta">按需求反查功能、路径和关键字段</span></div>
+  <div class="sec-lede">
+    <p>按“我想要什么”来找，而不是按功能名找。每一条给出该用的功能、文件放在哪、最关键的字段或命令，以及回看哪一篇。可以按功能筛选，也可以直接搜关键词。</p>
+    <p class="go">点开一条。</p>
+  </div>
+  <div class="wt-ctl"><div class="seg" id="wtSeg"></div><input class="field" id="wtQ" type="search" placeholder="关键词，如 格式化、数据库、只读" aria-label="搜索需求" style="max-width:260px"><span class="note" id="wtN" style="margin:0"></span></div>
+  <div class="wt" id="wt"></div>
+</section>
+
+<section class="part" id="paths">
+  <div class="part-head"><h2>文件放哪</h2><span class="meta">各功能的位置与同名优先级</span></div>
+  <div class="sec-lede">
+    <p>七件套各自有个人、项目、本地、组织几层位置，同名时谁生效的规则还不一样（Skills 是个人盖过项目，Subagents 是项目盖过个人）。这张表收在一起。“提交”指放进项目仓库、随 git 共享。</p>
+  </div>
+  <div class="tblw">
+    <table class="cmpt paths-t">
+      <tr><th>功能</th><th>个人（所有项目）</th><th>项目（提交）</th><th>本地 / 其他</th><th>多层关系</th></tr>
+      <tr><td>CLAUDE.md</td><td><code>~/.claude/CLAUDE.md</code></td><td><code>./CLAUDE.md</code> 或 <code>./.claude/CLAUDE.md</code></td><td><code>./CLAUDE.local.md</code>（gitignore）</td><td>拼接，不覆盖</td></tr>
+      <tr><td>规则文件</td><td><code>~/.claude/rules/*.md</code></td><td><code>.claude/rules/*.md</code></td><td>带 <code>paths:</code> 的按需加载</td><td>拼接</td></tr>
+      <tr><td>auto memory</td><td colspan="3"><code>~/.claude/projects/&lt;项目&gt;/memory/MEMORY.md</code>（Claude 自己写）</td><td>独立机制</td></tr>
+      <tr><td>Skills / 命令</td><td><code>~/.claude/skills/名字/SKILL.md</code></td><td><code>.claude/skills/名字/SKILL.md</code></td><td>旧位置 <code>.claude/commands/名字.md</code></td><td>企业 &gt; 个人 &gt; 项目</td></tr>
+      <tr><td>Subagents</td><td><code>~/.claude/agents/名字.md</code></td><td><code>.claude/agents/名字.md</code></td><td><code>--agents '{…}'</code>（本次会话）</td><td>托管 &gt; --agents &gt; 项目 &gt; 用户 &gt; 插件</td></tr>
+      <tr><td>MCP</td><td><code>~/.claude.json</code>（--scope user）</td><td><code>.mcp.json</code>（--scope project）</td><td><code>~/.claude.json</code> 当前项目下（默认 local）</td><td>local 优先</td></tr>
+      <tr><td>Hooks · 权限 · 设置</td><td><code>~/.claude/settings.json</code></td><td><code>.claude/settings.json</code></td><td><code>.claude/settings.local.json</code></td><td>设置覆盖；权限规则合并</td></tr>
+      <tr><td>Plugins</td><td colspan="3">清单 <code>.claude-plugin/plugin.json</code>；开发 <code>--plugin-dir</code>；安装 <code>/plugin install 名字@市场</code></td><td>命令带 <code>插件名:</code> 前缀</td></tr>
+      <tr><td>输出风格</td><td><code>~/.claude/output-styles/</code></td><td><code>.claude/output-styles/</code></td><td>选择存 settings.local.json</td><td>近的赢</td></tr>
+      <tr><td>Checkpoints</td><td colspan="3"><code>~/.claude/file-history/</code>，<code>cleanupPeriodDays</code> 默认 30 天，最多 100 个</td><td>自动</td></tr>
+    </table>
+  </div>
+  <p class="note">settings 覆盖顺序：托管 &gt; 命令行 &gt; settings.local.json &gt; 项目 settings.json &gt; 用户 settings.json。组织级 CLAUDE.md：macOS <code>/Library/Application Support/ClaudeCode/CLAUDE.md</code>，Linux <code>/etc/claude-code/CLAUDE.md</code>。</p>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>全系列地图</h2><span class="meta">按触发方式与配套能力</span></div>
+  <div class="sec-lede">
+    <p>按第 1 篇的判断框架：谁触发它、它住在哪、它花谁的上下文。点一个概念，看一句话的定义和它在哪一篇。</p>
+  </div>
+  <div class="lab"><div id="mapL"></div></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>问答闪卡</h2><span class="meta">每篇开头三问的答案</span></div>
+  <div class="sec-lede">
+    <p>每篇开头都有“读完应该能回答的三个问题”，这里汇总成闪卡。打开自测模式后答案被遮住，先在心里答，再点卡片翻开；答不上来的回到对应那一篇。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以搜关键词，标题链接回原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 Skill、settings、fork" aria-label="搜索易混辨析" style="max-width:280px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="recap" id="recap">
+  <h2>全系列速记</h2>
+  <p>每篇各节末尾“记下来”的汇总，按篇折叠。右上角的自测开关对这里同样有效。</p>
+  <div id="rcL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-22-claudehowto-';
+var chs = __CHS__, CARDS = __CARDS__, CF = __CF__, NOTES = __NOTES__;
+var read = S.readList();
+var GRP = [[1, 1, '#chA'], [2, 8, '#chB'], [9, 12, '#chC']];
+function pad(n) { return (n < 10 ? '0' : '') + n; }
+chs.forEach(function (c) {
+  var n = c[0], g = GRP.filter(function (x) { return n >= x[0] && n <= x[1]; })[0], done = read.indexOf(String(n)) >= 0;
+  var a = h('a', { href: P + n + '/', class: done ? 'done' : '' }, $(g[2]));
+  a.innerHTML = '<b>' + pad(n) + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3][0] + '</p><span class="tag">' + c[5] + ' · ' + c[4] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-why'), {
+  c: [
+    ['原教程定位', '教程而非参考手册：讲功能怎么组合，配可复制模板和学习路线。'],
+    ['七件套', 'Slash Commands、Memory、Skills、Subagents、MCP、Hooks、Plugins。'],
+    ['判断框架', '谁触发、住在哪、花谁的上下文。']
+  ],
+  p: [
+    ['原文学习顺序', 'Slash → Memory → Checkpoints → CLI → Skills → Hooks → MCP → Subagents → 高级 → Plugins。'],
+    ['版本', '依据 commit 188f468（原文标 v2.1.302），版本细节以原文为准。']
+  ]
+});
+
+/* ---------- 我想要 ---------- */
+function L(n, sec) { return '<a href="' + P + n + '/' + (sec ? '#' + sec : '') + '">' + pad(n) + ' ' + chs[n - 1][1] + '</a>'; }
+var WT = [
+  ['Claude 每次都知道项目的命令和约定', 'Memory', '<code>./CLAUDE.md</code>（提交）', '<code>/init</code> 生成；200 行内；<code>@docs/x.md</code> 导入', [3, 'two']],
+  ['加一条只给我自己的偏好', 'Memory', '<code>~/.claude/CLAUDE.md</code> 或 <code>./CLAUDE.local.md</code>', '或直接说“记住……”→ auto memory', [3, 'two']],
+  ['某个目录的规则只在改那里时才加载', 'Memory', '<code>.claude/rules/api.md</code>', 'frontmatter <code>paths: services/api/**</code>', [3, 'rules']],
+  ['把常敲的一段指令变成 /命令', 'Skill', '<code>.claude/skills/名字/SKILL.md</code>', '<code>description</code>、<code>$ARGUMENTS</code>、<code>!`git diff`</code>', [2, 'custom']],
+  ['有副作用的命令只能我手动触发', 'Skill', '同上', '<code>disable-model-invocation: true</code>', [4, 'who']],
+  ['背景知识只给 Claude 用、菜单里隐藏', 'Skill', '同上', '<code>user-invocable: false</code>', [4, 'who']],
+  ['Skill 在独立上下文里跑、不污染主对话', 'Skill', '同上', '<code>context: fork</code> + <code>agent: Explore</code>', [4, 'fork']],
+  ['一个只读的专职审查员', 'Subagent', '<code>.claude/agents/名字.md</code>', '<code>tools: Read, Grep</code>；description 写 use PROACTIVELY', [5, 'cfg']],
+  ['大范围调研别塞满主对话', 'Subagent', '内置 Explore', '“用 Explore 子代理，very thorough”', [5, 'builtin']],
+  ['子代理改代码但不碰我的工作区', 'Subagent', '定义文件', '<code>isolation: worktree</code>', [5, 'run']],
+  ['带着当前上下文让帮手试另一条路', 'Subagent', '会话里', '<code>/subtask 任务</code>（分叉子代理）', [2, 'copy']],
+  ['让 Claude 查 GitHub PR / issue', 'MCP', '<code>.mcp.json</code> 或 <code>claude mcp add</code>', '<code>--transport http</code>；令牌用 <code>${VAR}</code>', [6, 'add']],
+  ['给 Claude 接数据库但不能改数据', 'MCP', '<code>.mcp.json</code>', '只读数据库用户 + 只读模式；别连生产', [6, 'more']],
+  ['MCP 连不上', 'MCP', '终端', '<code>claude mcp list</code> 看状态码：401 重登、404 查路径', [6, 'auth']],
+  ['改完文件自动格式化', 'Hook', '<code>.claude/settings.json</code>', 'PostToolUse，matcher <code>Write|Edit</code>', [7, 'what']],
+  ['拦下危险命令', 'Hook / 权限', '<code>settings.json</code>', 'PreToolUse 退出码 2；或 <code>permissions.deny</code>', [7, 'io']],
+  ['禁止读 .env', 'Hook / 权限', '<code>settings.json</code>', '<code>"if": "Read(.env)"</code> 或 deny <code>Read(./.env*)</code>', [7, 'match']],
+  ['Claude 说完成前先检查是否真做完', 'Hook', '<code>settings.json</code>', 'Stop + <code>type: prompt</code>', [7, 'prompt']],
+  ['把一整套配置发给全组', 'Plugin', '<code>.claude-plugin/plugin.json</code>', '<code>--plugin-dir</code> 测；marketplace 分发', [8, 'life']],
+  ['改坏了退回去', 'Checkpoints', '会话里', '<kbd>Esc</kbd> <kbd>Esc</kbd> 或 <code>/rewind</code>', [9, 'six']],
+  ['只压缩一段冗长的调试过程', 'Checkpoints', '会话里', '/rewind → 从此处总结', [9, 'six']],
+  ['回到昨天的某个会话', '会话', '终端', '<code>/rename</code> 起名；<code>claude -r 名字</code>', [9, 'sess']],
+  ['大改动先出方案再动手', 'Plan Mode', '会话里', '<kbd>Shift+Tab</kbd> 或 <code>/plan</code>；<kbd>Ctrl+G</kbd> 改计划', [10, 'plan']],
+  ['少弹确认框', '权限', '<code>settings.json</code>', '<code>/fewer-permission-prompts</code>；acceptEdits；auto', [10, 'modes']],
+  ['Bash 子进程只能访问内网域名', '沙箱', '<code>~/.claude/settings.json</code>', '<code>sandbox.network.allowedDomains</code>', [10, 'sandbox']],
+  ['想得更深一点', '思考', '会话里', '<code>/effort high</code> 或提示词写 ultrathink', [10, 'think']],
+  ['长任务放后台继续聊', '后台', '会话里', '<kbd>Ctrl+B</kbd>；<code>/tasks</code>', [11, 'bg']],
+  ['等日志里出现 ERROR 再反应', 'Monitor', '会话里', '<code>tail -F log | grep --line-buffered ERROR</code>', [11, 'bg']],
+  ['每 5 分钟检查一次部署', '定时', '会话里', '<code>/loop 5m …</code>（随会话）；长期用 <code>/schedule</code>', [11, 'sched']],
+  ['离开工位用手机接着看', '远程', '终端', '<code>claude remote-control</code> 或 <code>/rc</code>', [11, 'where']],
+  ['在脚本里拿结构化结果', 'CLI', '终端', '<code>claude -p --output-format json --json-schema …</code> → <code>.structured_output</code>', [12, 'out']],
+  ['在 CI 里审 PR', 'CLI', 'CI', '<code>-p --max-turns 3 --output-format json</code>；<code>--max-budget-usd</code>', [12, 'ci']],
+  ['排查是不是自己的配置出问题', 'CLI', '终端', '<code>claude --safe-mode</code>', [12, 'tools']],
+  ['不可信输入下跑 claude', 'CLI', '终端', '<code>claude --restricted -p …</code>', [12, 'tools']]
+];
+var wtCat = '全部', cats = ['全部'];
+WT.forEach(function (w) { var k = w[1].split(' ')[0]; if (cats.indexOf(k) < 0) cats.push(k); });
+cats.forEach(function (c) { h('button', { 'data-v': c, text: c, 'aria-pressed': c === '全部' ? 'true' : 'false' }, $('#wtSeg')); });
+S.seg($('#wtSeg'), function (v) { wtCat = v; wtDraw(); });
+function wtDraw() {
+  var q = ($('#wtQ').value || '').trim().toLowerCase(), box = $('#wt'), n = 0;
+  box.innerHTML = '';
+  WT.forEach(function (w) {
+    if (wtCat !== '全部' && w[1].split(' ')[0] !== wtCat) return;
+    if (q && (w.join(' ')).replace(/<[^>]+>/g, '').toLowerCase().indexOf(q) < 0) return;
+    n++;
+    var d = h('details', null, box);
+    h('summary', { html: w[0] + '<span class="ch-pill s1">' + w[1] + '</span>' }, d);
+    h('div', { class: 'bd', html: '<dl><dt>放在</dt><dd>' + w[2] + '</dd><dt>关键</dt><dd>' + w[3] + '</dd><dt>回看</dt><dd>' + L(w[4][0], w[4][1]) + '</dd></dl>' }, d);
+  });
+  $('#wtN').textContent = n + ' / ' + WT.length + ' 条';
+}
+$('#wtQ').addEventListener('input', wtDraw);
+wtDraw();
+
+/* ---------- 地图 ---------- */
+CH.layers($('#mapL'), {
+  hint: '点任意概念。',
+  layers: [
+    { t: '你手动触发', sub: '敲 /', cls: 'c5', items: [
+      { t: '内置命令', d: '六十多个，/clear、/compact、/context、/rewind、/model……见 ' + L(2, 'builtin') },
+      { t: '/branch /fork /subtask /btw', d: '谁在副本里、结果回不回来。见 ' + L(2, 'copy') }
+    ] },
+    { t: 'Claude 自己判断', sub: '看 description', items: [
+      { t: 'Skill', d: '描述常驻（约 100 tokens）、正文按需、资源用到才读。见 ' + L(4, 'levels') },
+      { t: 'Subagent', d: '独立上下文窗口，结果提炼后交回。见 ' + L(5, 'what') },
+      { t: 'MCP 工具', d: '实时外部数据；默认 Tool Search 按需发现。见 ' + L(6, 'ctx') }
+    ] },
+    { t: '每次都在', sub: '启动即加载', cls: 'c2', items: [
+      { t: 'CLAUDE.md', d: '多层拼接，200 行内；设置则是覆盖。见 ' + L(3, 'over') },
+      { t: 'auto memory', d: 'Claude 写的笔记，MEMORY.md 前 200 行。见 ' + L(3, 'auto') }
+    ] },
+    { t: '事件触发', sub: '确定性', cls: 'c4', items: [
+      { t: 'Hooks', d: '33 个事件、5 种类型；退出码 2 阻断；deny 规则优先于 hook 的 allow。见 ' + L(7, 'io') }
+    ] },
+    { t: '打包分发', sub: '容器', cls: 'c3', items: [
+      { t: 'Plugins', d: 'plugin.json + skills/agents/hooks/.mcp.json；marketplace。见 ' + L(8, 'struct') }
+    ] },
+    { t: '配套能力', sub: '09–12 篇', cls: 'c5', items: [
+      { t: 'Checkpoints', d: '每次提示自动快照，六个回退选项；Bash 改动不追踪。见 ' + L(9, 'six') },
+      { t: '权限模式与沙箱', d: 'manual / acceptEdits / plan / auto / dontAsk / bypass；OS 级沙箱。见 ' + L(10, 'modes') },
+      { t: '后台、定时、远程', d: 'Ctrl+B、Monitor、/loop、/schedule、Remote Control。见 ' + L(11, 'bg') },
+      { t: 'claude -p', d: '输出格式、Schema、预算、工具限制、CI。见 ' + L(12, 'build') }
+    ] }
+  ]
+});
+
+/* ---------- 闪卡 ---------- */
+var order = CARDS.map(function (c, i) { return i; });
+function drawCards() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var c = CARDS[i];
+    var b = h('button', { type: 'button', class: 'mcard', html: '<small>' + pad(c[0]) + ' · ' + chs[c[0] - 1][1] + '</small><span class="q">' + c[1] + '</span><span class="a">' + c[2] + '</span>' }, g);
+    b.addEventListener('click', function () { if (g.classList.contains('test')) b.classList.toggle('open'); });
+  });
+  $('#mgC').textContent = '共 ' + CARDS.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = $('#mgG').classList.toggle('test');
+  this.setAttribute('aria-pressed', String(on)); this.textContent = on ? '显示全部答案' : '自测模式：遮住答案';
+  S.$$('#mgG .mcard').forEach(function (x) { x.classList.remove('open'); });
+});
+$('#mgS').addEventListener('click', function () {
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = order[i]; order[i] = order[j]; order[j] = t; }
+  drawCards();
+});
+drawCards();
+
+/* ---------- 易混辨析 ---------- */
+function drawCf() {
+  var q = ($('#cfQ').value || '').trim().toLowerCase(), n = 0, html = '';
+  CF.forEach(function (c) {
+    var txt = (c[2] + c[3].join('')).replace(/<.*?>/g, '').toLowerCase();
+    if (q && txt.indexOf(q) < 0) return;
+    n++;
+    html += '<h4><a href="' + P + c[0] + '/#' + c[1] + '">' + pad(c[0]) + ' · ' + c[2] + '</a></h4>' + c[3].map(function (p) { return '<p>' + p + '</p>'; }).join('');
+  });
+  $('#cfL').innerHTML = html || '<p class="note">没有匹配的条目。</p>';
+  $('#cfN').textContent = n + ' / ' + CF.length + ' 条';
+}
+$('#cfQ').addEventListener('input', drawCf); drawCf();
+
+/* ---------- 全系列速记 ---------- */
+NOTES.forEach(function (x) {
+  var n = x[0];
+  var d = h('details', null, $('#rcL'));
+  h('summary', { html: pad(n) + ' ' + chs[n - 1][1] + '<small>' + x[1].length + ' 个概念 · ' + x[2].length + ' 条要点</small>' }, d);
+  var box = h('div', null, d);
+  S.notes(box, { c: x[1], p: x[2] });
+});
+
+S.notes($('#n-back'), {
+  c: [
+    ['一句话', '规则写给模型（CLAUDE.md、Skill），强制交给程序（Hook、权限、沙箱）。'],
+    ['三种合并', 'CLAUDE.md 拼接；settings 覆盖；权限规则合并。'],
+    ['上下文账', 'CLAUDE.md 全量常驻；Skill 描述常驻、正文按需；MCP 按需发现；子代理另开窗口。']
+  ],
+  p: [
+    ['同名优先级', 'Skills：个人 &gt; 项目；Subagents：项目 &gt; 用户；MCP：local 优先。'],
+    ['安全底线', 'hook 的 allow 推翻不了 deny；插件子代理不能带 hooks/MCP/permissionMode；外部输入用 --restricted。'],
+    ['复习方法', '先刷闪卡；遇到需求用“我想要……”反查。']
+  ]
+});

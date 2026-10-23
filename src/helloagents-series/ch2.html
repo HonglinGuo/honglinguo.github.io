@@ -1,0 +1,463 @@
+---
+title: 智能体发展史：从规则到模型
+desc: Hello-Agents 学习笔记（二）：问题驱动的范式迭代；物理符号系统假说、专家系统的正向链与反向链、MYCIN 与 SHRDLU；可以对话的迷你 ELIZA 和它的三个局限；明斯基心智社会与多智能体的思想源头；联结主义、强化学习、预训练三次学习范式转变，以及它们如何汇成 LLM 智能体。
+kicker: <span>技术学习</span><span>Hello-Agents · 02</span><span>对应原书第 2 章</span><span>约 30 分钟</span>
+h1: 每一代都在补<em>上一代的窟窿</em>
+lead: 原书讲历史的方式很适合记忆：每个新范式都是为了解决上一代的核心痛点而出现，同时又带来新的局限，为下一代埋下伏笔。符号主义靠手写规则，卡在知识获取；明斯基说智能不该是一个中央大脑；联结主义让知识可以学出来，强化学习让决策可以学出来，预训练让常识可以学出来；最后 LLM 把这些拼成了今天的智能体。这一篇可以亲手跑推理机、和 ELIZA 聊天、拆掉心智社会里的一个零件。
+nav: chain|问题驱动的迭代;symbol|符号主义;eliza|和 ELIZA 聊聊;minsky|心智社会;learn|学习范式;modern|汇成 LLM 智能体;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.chain { display: flex; flex-direction: column; gap: 0; margin-top: 10px; }
+.era { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: stretch; padding: 10px 0; border-top: 1px solid var(--hair); }
+.era:first-child { border-top: 0; }
+.era > b { font-size: 17px; color: var(--ink); }
+.era > b small { display: block; font-weight: 400; font-size: 15px; color: var(--ink-3); }
+.era .gain, .era .pain { border-radius: 6px; padding: 8px 12px; font-size: 15px; line-height: 1.65; }
+.era .gain { background: var(--ok-soft); color: var(--ink); }
+.era .pain { background: var(--s2-soft); color: var(--ink); cursor: pointer; }
+.era .pain.hide { background: var(--dim-soft); color: transparent; }
+.era .pain.hide::before { content: "它留下了什么问题？点开前先想一想"; color: var(--ink-3); }
+.era .pain.hide span { display: none; }
+@media (max-width: 700px) { .era { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.facts label { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; font-size: 15px; background: var(--bg); cursor: pointer; }
+.rules { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.rules div { font-family: var(--f-num); font-size: 15px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); }
+.rules div.fire { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.rules div.ask { border-color: var(--s2); background: var(--s2-soft); color: var(--ink); }
+.ilog { margin: 10px 0 0; padding-left: 1.4em; font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+.eliza-in { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.eliza-in input { flex: 1; min-width: 12em; font: inherit; font-size: 16px; padding: 8px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.chat-log { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.chat-log div { font-size: 16px; padding: 6px 12px; border-radius: 8px; max-width: 85%; line-height: 1.6; }
+.chat-log .u { align-self: flex-end; background: var(--s1-soft); color: var(--ink); }
+.chat-log .e { align-self: flex-start; background: var(--bg); border: 1px solid var(--hair); color: var(--ink); }
+.chat-log .why { align-self: flex-start; font-family: var(--f-num); font-size: 15px; color: var(--ink-3); padding: 0 12px; max-width: 100%; }
+.tree { margin-top: 10px; font-size: 15px; line-height: 1.5; }
+.tree ul { list-style: none; margin: 0; padding-left: 22px; border-left: 1px dashed var(--rule); }
+.tree > ul { padding-left: 0; border-left: 0; }
+.tree li { margin: 5px 0; }
+.tree button { font: inherit; font-family: var(--f-num); font-size: 15px; border: 1px solid var(--ok); background: var(--ok-soft); color: var(--ink); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+.tree button.dead { border-color: var(--alert); background: var(--alert-soft); text-decoration: line-through; }
+.tree button.hurt { border-color: var(--s2); background: var(--s2-soft); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>符号主义的根本困难是什么？为什么说预训练解决了“知识获取瓶颈”？</li>
+    <li>明斯基的心智社会给多智能体系统留下了哪些思想？</li>
+    <li>联结主义、强化学习、预训练各自解决了智能体的什么问题？它们怎样汇成 LLM 智能体？</li>
+  </ol>
+</div>
+
+<section class="part" id="chain">
+  <div class="part-head"><h2>问题驱动的迭代</h2><span class="meta">原书第 2 章导言，图 2.1</span></div>
+  <div class="sec-lede">
+    <p>原书第二章开头的一句话是整章的钥匙：<strong>每一个新范式的出现，都是为了解决上一代范式的核心痛点</strong>；新方案带来能力飞跃的同时，也引入了当时难以克服的新局限，于是又催生下一代。按这条线记历史，比背年代和人名有用得多，而且能解释今天的技术选型：为什么现代智能体要把规则（符号）和模型（神经网络）结合，为什么多智能体的想法早在 1986 年就有了。</p>
+    <p class="go">从上往下读，每一行先想“它留下了什么问题”，再点开右栏。</p>
+  </div>
+  <div class="lab"><div class="chain" id="chain"></div></div>
+  <div class="notes" id="n-chain"></div>
+</section>
+
+<section class="part" id="symbol">
+  <div class="part-head"><h2>符号主义：智能就是符号运算</h2><span class="meta">原书 2.1 节</span></div>
+  <div class="sec-lede">
+    <p>符号主义的理论根基是纽厄尔和西蒙 1976 年提出的<strong>物理符号系统假说（PSSH）</strong>，两个论断：<strong>充分性</strong>，任何物理符号系统都有产生通用智能的充分手段；<strong>必要性</strong>，任何展现通用智能的系统本质上都是物理符号系统。一句话：智能的本质就是符号的计算与处理。它把心智这个哲学问题变成了一个工程问题，只要找到正确的知识表示和推理算法就行。</p>
+    <p>最成功的产物是<strong>专家系统</strong>，核心是<strong>知识与推理分离</strong>：<strong>知识库</strong>存放领域专家的 IF-THEN 产生式规则，<strong>推理机</strong>是通用程序，负责在规则上推导。推理机有两种工作方式：<strong>正向链</strong>从已知事实出发，不断匹配规则的 IF 部分、把结论加入事实库，是数据驱动；<strong>反向链</strong>从要证明的目标出发，找能推出它的规则，把规则的条件当成新的子目标递归下去，缺什么事实就问用户，是目标驱动。斯坦福的 <strong>MYCIN</strong>（约 600 条规则，诊断细菌性血液感染）就用反向链，还引入了 −1 到 1 的<strong>置信因子</strong>处理不确定性，表现超过非专业医生。另一个代表 <strong>SHRDLU</strong> 在积木世界里把语言理解、规划、记忆整合成一个系统，能回答“你为什么拿起红积木？”“因为你让我拿的。”</p>
+    <p>走出微观世界后，符号主义碰上两类根本难题：<strong>知识获取瓶颈</strong>（专家知识难以访谈、提炼成规则，很多是内隐的；Cyc 项目做了几十年常识库，成果有限）和<strong>常识问题</strong>；以及<strong>框架问题</strong>（动作之后哪些东西没变，逐条声明不可行）和<strong>脆弱性</strong>（规则外的一点变化就失灵）。</p>
+    <p class="go">下面是一个玩具推理机（规则为示意）。勾选已知症状，分别用正向链和反向链跑一遍，比较它们的路径。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">迷你专家系统：知识库 + 推理机</p>
+    <div class="facts" id="facts"></div>
+    <div class="rules" id="rules"></div>
+    <div class="btnrow" style="margin-top:10px"><button class="btn pri" type="button" id="fwd">正向链：从事实推</button><button class="btn" type="button" id="bwd">反向链：证明“建议使用抗生素”</button></div>
+    <ol class="ilog" id="ilog"></ol>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：正向链 vs 反向链</h4>
+    <p><b>正向链</b>是数据驱动：手上有什么事实就触发什么规则，会推出很多与当前问题无关的结论，适合监控、告警关联这类“有新数据就看看能推出什么”的场景。<b>反向链</b>是目标驱动：只沿着能证明目标的规则往回找，缺事实才去问，适合诊断这类“有明确假设要验证”的场景，所以 MYCIN 选它。</p>
+  </div>
+  <div class="notes" id="n-symbol"></div>
+</section>
+
+<section class="part" id="eliza">
+  <div class="part-head"><h2>和 ELIZA 聊聊</h2><span class="meta">原书 2.2 节</span></div>
+  <div class="sec-lede">
+    <p>ELIZA 是魏泽鲍姆 1966 年在 MIT 写的聊天程序，最出名的 DOCTOR 脚本模仿罗杰斯学派的心理治疗师：从不正面回答，而是把你的话<strong>改写成一个开放式提问</strong>。机制只有四步：<strong>关键词识别与排序</strong>（多个关键词时取优先级最高的规则）、<strong>分解</strong>（用带通配符的模式捕获句子剩余部分）、<strong>代词转换</strong>（I → you，my → your）、<strong>重组</strong>（从该规则的回复模板里随机选一个，把捕获内容填进去）。</p>
+    <p>魏泽鲍姆本意是证明：靠简单的句式变换，机器可以在完全不理解的情况下营造出“共情”的假象。没想到许多用户（包括他的秘书）真的对它产生了情感依赖，这就是<strong>ELIZA 效应</strong>。原书用 Python 复现了一个迷你版，并总结出三个局限：<strong>没有语义理解</strong>（“I am not happy”照样匹配 <code>I am (.*)</code>）、<strong>没有上下文记忆</strong>（无状态，每句独立处理）、<strong>规则扩展性差</strong>（规则一多，冲突和优先级就难以维护）。</p>
+    <p class="go">下面是按原书规则移植到浏览器的 ELIZA（只懂英文）。试试原书的例子，再故意试试“I am not happy”，看它在哪里露馅；每句回复下面会显示匹配到的规则。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="elizaEx"></div>
+    <div class="chat-log" id="chatLog"></div>
+    <div class="eliza-in"><input id="elizaIn" type="text" placeholder="Type in English, e.g. I need a holiday" aria-label="对 ELIZA 说的话"><button class="btn pri" type="button" id="elizaGo">发送</button></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">合上书，补全 ELIZA 的核心函数（据原书 2.2.3 节）</p>
+    <div id="elizaBlank"></div>
+  </div>
+  <div class="notes" id="n-eliza"></div>
+</section>
+
+<section class="part" id="minsky">
+  <div class="part-head"><h2>心智社会：没有中央大脑</h2><span class="meta">原书 2.3 节</span></div>
+  <div class="sec-lede">
+    <p>专家系统、SHRDLU、ELIZA 有一个共同点：<strong>自上而下</strong>，一个全知的中央处理器按统一规则处理一切。明斯基在 1986 年的《心智社会》里换了个问法：理解一个故事是一种能力，还是几十种心智过程协同的结果？他的回答是：“The trick is that there is no trick. The power of intelligence stems from our vast diversity, not from any single, perfect principle.”</p>
+    <p>在他的理论里，“智能体”是极其简单、专门化、本身<strong>无心</strong>的过程，比如只会找线条的 LINE-FINDER、只会抓握的 GRASP。许多智能体组成<strong>机构（Agency）</strong>，彼此通过去中心化的激活与抑制信号影响。复杂、有目的的行为不是谁预先规划的，而是从大量局部交互中<strong>涌现</strong>出来的：BUILD-TOWER 只会激活 BUILDER，BUILDER 只会循环激活 ADD-BLOCK，ADD-BLOCK 依次激活 FIND、GET、PUT-ON-TOP……GRASP 不知道什么是塔，BUILDER 不知道怎么控制手臂，塔却搭起来了。</p>
+    <p>这为<strong>分布式人工智能</strong>和<strong>多智能体系统（MAS）</strong>奠定了概念基础：如果一个心智内部的智能来自协作，那多台机器之间能不能也协作出群体智能？它留下三条思想：<strong>去中心化控制</strong>、<strong>涌现式计算</strong>（蚁群、粒子群算法）、<strong>智能体的社会性</strong>（通信语言 ACL、契约网协议、协商、信任、组织结构）。今天 CAMEL、MetaGPT、CrewAI 的角色分工，都能在这里找到源头。</p>
+    <p class="go">原书习题 4 问：如果 GRASP 失效了会怎样？点任意一个节点让它失效，看影响沿树怎样传播。</p>
+  </div>
+  <div class="lab">
+    <div class="tree" id="tree"></div>
+    <p class="note" id="treeNote">点一个节点让它失效。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：明斯基的“智能体” vs 今天的 LLM 智能体</h4>
+    <p>明斯基的智能体是<b>无心的简单过程</b>，智能只存在于整体的交互中；今天多智能体系统里的每个成员本身就是一个<b>有推理能力的 LLM 智能体</b>。所以现代 MAS 更像“一群聪明人开会”，而不是“一群神经元放电”。原书习题追问心智社会是否因此过时：它的思想（分工、去中心化、从交互中涌现）仍然适用，只是单元的粒度变大了。</p>
+  </div>
+  <div class="notes" id="n-minsky"></div>
+</section>
+
+<section class="part" id="learn">
+  <div class="part-head"><h2>三次学习范式转变</h2><span class="meta">原书 2.4.1–2.4.3 节</span></div>
+  <div class="sec-lede">
+    <p>符号主义的教训和心智社会的启发指向同一个问题：<strong>如果智能无法被完全设计，能不能被学习出来？</strong>原书把答案分三步讲，每一步解决智能体的一个短板。</p>
+    <p><strong>联结主义</strong>（20 世纪 80 年代复兴）解决<strong>感知</strong>：知识以连接权重的形式分布式存储在大量简单神经元之间，靠反向传播从样本中自动调整；深度学习让智能体能直接从图像、声音、文本里理解世界。但“这张图里有什么”不等于“现在该做什么”。<strong>强化学习</strong>解决<strong>序贯决策</strong>：智能体在状态 S 下按策略 π 选行动 A，环境转移到新状态并给出奖励 R，目标是最大化<strong>累积回报</strong>而不是即时奖励（围棋里的弃子）；AlphaGo 靠数百万局自我对弈学会落子。但 RL 往往要从零开始、需要海量特定任务交互，缺少先验常识。<strong>预训练</strong>解决<strong>常识与先验</strong>：在互联网级文本上用自监督（预测下一个词）训练，再用少量标注数据微调；权重里压缩出一个隐式世界模型，以全新方式绕过了知识获取瓶颈。规模越过阈值后还出现了<strong>涌现能力</strong>：上下文学习（Few-shot / Zero-shot，不改权重就能做新任务）和思维链推理。</p>
+    <p>原书把这段历史归为三大思潮：<strong>符号主义</strong>（西蒙、明斯基；SHRDLU、专家系统、深蓝）、<strong>联结主义</strong>（辛顿；反向传播、CNN、Transformer）、<strong>行为主义</strong>（试错学习；TD-Gammon、AlphaGo）。</p>
+    <p class="go">每张卡片说的是哪个学派？</p>
+  </div>
+  <div class="lab"><div id="schoolSort"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>强化学习的状态、策略、回报在<a href="../2026-10-19-rlmath/">《强化学习的数学原理》</a>系列有完整推导；预训练“猜下一个词”见<a href="../2026-10-15-llm-1/">《LLM 入门》01 篇</a>。</div>
+  <div class="notes" id="n-learn"></div>
+</section>
+
+<section class="part" id="modern">
+  <div class="part-head"><h2>汇成 LLM 智能体</h2><span class="meta">原书 2.4.4–2.4.5 节，图 2.10</span></div>
+  <div class="sec-lede">
+    <p>到这里拼图齐了：符号主义贡献了<strong>逻辑推理和显式表示</strong>的框架，联结主义和强化学习贡献了<strong>学习与决策</strong>，预训练贡献了<strong>世界知识和通用推理</strong>。LLM 本身是联结主义的产物，却在智能体里扮演执行符号推理、工具调用、规划决策的“大脑”，形成神经与符号结合的架构。</p>
+    <p>原书图 2.10 把 LLM 智能体画成几个模块的闭环：<strong>感知模块</strong>把环境输入变成观察；<strong>规划模块</strong>通过反思和自我批判把目标分解成步骤；<strong>LLM</strong> 作为中枢，结合<strong>记忆模块</strong>里的历史做推理，决定下一步的工具调用；<strong>执行模块</strong>解析指令、从工具箱里调用工具；工具结果和新的环境状态构成新观察，同时<strong>更新记忆</strong>，进入下一轮。和第一篇的五十行代码对照：那里的“记忆”就是 prompt_history，“规划”藏在模型的 Thought 里，“执行模块”就是那几行正则加字典查找。</p>
+    <p class="go">点每个模块，看它在第一篇的代码里对应什么、在后面哪一篇会展开。</p>
+  </div>
+  <div class="lab"><div id="mods"></div></div>
+  <div class="notes" id="n-modern"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书第 2 章习题与 Extra01</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="2-1">
+      <p class="iv-q">设计一个“智能代码审查助手”：在 1980 年代、2015 年和今天分别怎么做？<small>原书第 2 章习题 7</small></p>
+      <ul class="iv-a">
+        <li><b>符号主义时代</b>：静态分析规则库（lint 规则、模式匹配危险调用）+ 专家规则；能抓已知模式，但无法概括实现逻辑、理解意图，规则写不完、维护成本高。</li>
+        <li><b>深度学习时代</b>：在标注数据上训练分类器（缺陷预测、代码异味检测）、序列模型生成简单注释；每个子任务单独训练，需要大量标注，泛化差，依旧写不出像样的审查意见。</li>
+        <li><b>LLM 智能体时代</b>：按图 2.10 拆模块。感知（读 diff、相关文件、CI 结果）、规划（先总结改动再逐文件审查）、工具（检索代码库、跑测试和静态分析）、记忆（项目规范、历史审查意见）、执行（在 PR 上评论）。</li>
+        <li><b>演进的关键</b>：知识来源从手写规则到监督学习，再到预训练出的通用代码与语言理解；任务从“几乎不可能”变成“可行”。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="2-2">
+      <p class="iv-q">为什么说预训练解决了“知识获取瓶颈”？两种知识表示有什么本质区别？<small>原书第 2 章习题 6</small></p>
+      <ul class="iv-a">
+        <li><b>瓶颈是什么</b>：专家系统的知识要靠人访谈、提炼、编码成规则，昂贵、慢、无法规模化，且内隐知识说不出来。</li>
+        <li><b>预训练怎么绕过</b>：不再人工编码，而是让模型在海量文本上自监督学习，知识自动压缩进权重。</li>
+        <li><b>表示的区别</b>：符号主义是显式、离散、可读、可追溯的规则；预训练是隐式、分布式、连续的权重，泛化强但不可解释、会幻觉、知识有截止日期。</li>
+        <li><b>带来的新问题</b>：互联网数据有偏见、错误、过时信息；缓解靠数据清洗、对齐训练、检索增强（第 8 篇）。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="2-3">
+      <p class="iv-q">强化学习和监督学习在数据需求上有什么本质区别？在 LLM 训练里 RL 起什么作用？<small>原书第 2 章习题 5；Extra01 · RLHF</small></p>
+      <ul class="iv-a">
+        <li><b>监督学习</b>需要“输入—正确答案”的标注数据，学的是模仿；<b>强化学习</b>只需要环境给的奖励信号，在试错中学的是最大化长期回报，适合序贯决策。</li>
+        <li><b>马里奥例子</b>：监督学习需要人类玩家的“画面—按键”记录，只能学到人类水平；强化学习只需要分数和通关信号，可能超越人类，但需要大量交互。</li>
+        <li><b>在 LLM 里</b>：RLHF 用人类偏好训练奖励模型再优化策略，让模型有用、无害；RLVR / GRPO 用可验证奖励（数学答案、代码测试）提升推理能力（第 11 篇展开）。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 符号主义的根本困难？预训练为何解决了知识获取瓶颈？</summary><p class="ans">两类困难：知识层面是知识获取瓶颈和常识问题（规则要人工提炼，内隐知识说不出，常识无穷无尽）；逻辑层面是框架问题和脆弱性（无法高效表达动作后哪些不变，规则外的情况就失灵）。预训练不再人工编码知识，而是在海量文本上自监督学习，把知识隐式压缩进权重，所以绕过了人工提炼这一步。</p></details>
+    <details><summary>2. 心智社会留下了哪些思想？</summary><p class="ans">智能来自大量简单、无心的智能体组成的机构之间的交互，而不是单一完美的原理；复杂行为从局部交互中涌现。它启发了分布式 AI 与多智能体系统的三条主线：去中心化控制、涌现式计算、智能体的社会性（通信语言、交互协议、协商、信任、组织结构）。</p></details>
+    <details><summary>3. 三次学习范式各解决了什么？怎样汇成 LLM 智能体？</summary><p class="ans">联结主义解决感知（从原始数据中学模式），强化学习解决序贯决策（从交互奖励中学策略），预训练解决常识与先验（从海量文本中学世界知识，并涌现出上下文学习和思维链）。LLM 是联结主义的产物，却在智能体里执行符号推理、规划和工具调用，与记忆、规划、执行模块组成感知—思考—行动闭环。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 迭代链 ---------- */
+var CH = [
+  ['符号主义', '1950s–1980s', '智能可以工程化：规则 + 推理机；专家系统在垂直领域达到专家水平。', '知识要人手工编码，常识写不完；规则外一点变化就失灵。'],
+  ['心智社会', '1986', '不再追求单一完美的中央推理器：智能来自大量简单单元的协作与涌现。', '只是哲学框架，怎么实现、单元从哪来没有答案。'],
+  ['联结主义', '1980s 复兴，2010s 深度学习', '知识可以从数据中学出来，感知能力（图像、语音、文本）大幅提升。', '会感知不等于会决策；需要大量标注；黑箱。'],
+  ['强化学习', 'TD-Gammon → AlphaGo', '在交互中试错，学会序贯决策、最大化长期回报。', '从零开始，需要海量特定任务交互，缺少先验常识。'],
+  ['预训练', 'BERT / GPT', '在海量文本上自监督学习，获得通用世界知识；涌现出上下文学习、思维链。', '只会“说”，不会行动；知识有截止日期；会幻觉。'],
+  ['LLM 智能体', '2023 至今', 'LLM 做大脑，加上记忆、规划、工具，在循环中感知、决策、行动。', '可靠性、成本、评估、安全……就是这本书后面十几章要解决的。']
+];
+var chain = $('#chain');
+CH.forEach(function (c) {
+  var row = h('div', { class: 'era' }, chain);
+  h('b', { html: c[0] + '<small>' + c[1] + '</small>' }, row);
+  h('div', { class: 'gain', html: '<b>解决了：</b>' + c[2] }, row);
+  var p = h('div', { class: 'pain hide', tabindex: '0', html: '<span><b>留下了：</b>' + c[3] + '</span>' }, row);
+  p.addEventListener('click', function () { p.classList.remove('hide'); });
+  p.addEventListener('keydown', function (e) { if (e.key === 'Enter') p.classList.remove('hide'); });
+});
+S.notes($('#n-chain'), {
+  c: [
+    ['问题驱动的迭代', '每个新范式都为解决上一代的痛点而生，又带来新的局限。'],
+    ['三大思潮', '符号主义（逻辑与符号）、联结主义（神经网络）、行为主义（试错与强化）。']
+  ],
+  p: [
+    ['一条链记全章', '符号 → 心智社会 → 联结 → 强化 → 预训练 → LLM 智能体。'],
+    ['为什么要学历史', '解释今天的选型：神经与符号结合、多智能体分工、规则与模型混用。']
+  ]
+});
+
+/* ---------- 推理机 ---------- */
+var FACTS = [['fever', '发烧'], ['cough', '咳嗽'], ['wbc', '白细胞升高'], ['culture', '血培养阳性'], ['allergy', '青霉素过敏']];
+var RULES = [
+  { id: 'R1', if: ['fever', 'cough'], then: 'resp', t: '呼吸道感染' },
+  { id: 'R2', if: ['fever', 'wbc'], then: 'bact', t: '可能细菌感染' },
+  { id: 'R3', if: ['bact', 'culture'], then: 'confirm', t: '确认细菌感染' },
+  { id: 'R4', if: ['confirm'], then: 'abx', t: '建议使用抗生素' },
+  { id: 'R5', if: ['abx', 'allergy'], then: 'alt', t: '改用非青霉素类' }
+];
+var NAME = {}; FACTS.forEach(function (f) { NAME[f[0]] = f[1]; }); RULES.forEach(function (r) { NAME[r.then] = r.t; });
+var known = { fever: true, wbc: true, culture: true };
+var fb = $('#facts');
+FACTS.forEach(function (f) {
+  var lb = h('label', null, fb);
+  var cb = h('input', { type: 'checkbox' }, lb);
+  cb.checked = !!known[f[0]];
+  h('span', { text: f[1] }, lb);
+  cb.addEventListener('change', function () { known[f[0]] = cb.checked; drawRules({}); $('#ilog').innerHTML = ''; });
+});
+function drawRules(st) {
+  $('#rules').innerHTML = RULES.map(function (r) {
+    return '<div class="' + (st[r.id] || '') + '">' + r.id + '：IF ' + r.if.map(function (x) { return NAME[x]; }).join(' AND ') + ' THEN ' + r.t + '</div>';
+  }).join('');
+}
+drawRules({});
+$('#fwd').addEventListener('click', function () {
+  var F = {}, st = {}, log = [];
+  Object.keys(known).forEach(function (k) { if (known[k]) F[k] = 1; });
+  log.push('初始事实：' + Object.keys(F).map(function (k) { return NAME[k]; }).join('、'));
+  var changed = true, round = 0;
+  while (changed && round < 10) {
+    changed = false; round++;
+    RULES.forEach(function (r) {
+      if (!F[r.then] && r.if.every(function (x) { return F[x]; })) { F[r.then] = 1; st[r.id] = 'fire'; changed = true; log.push('第 ' + round + ' 轮触发 ' + r.id + ' → 新事实「' + r.t + '」'); }
+    });
+  }
+  log.push('没有新规则可触发，停止。共得出 ' + Object.keys(st).length + ' 个结论' + (F.resp ? '（其中「呼吸道感染」与要回答的问题无关：正向链会推出所有能推的东西）' : '') + '。');
+  drawRules(st);
+  $('#ilog').innerHTML = log.map(function (x) { return '<li>' + x + '</li>'; }).join('');
+});
+$('#bwd').addEventListener('click', function () {
+  var st = {}, log = [], asked = [];
+  function prove(g, depth) {
+    var pad = new Array(depth + 1).join('　');
+    var rs = RULES.filter(function (r) { return r.then === g; });
+    if (!rs.length) {
+      asked.push(NAME[g]);
+      log.push(pad + '「' + NAME[g] + '」没有规则能推出 → 问用户：' + (known[g] ? '是' : '否'));
+      return !!known[g];
+    }
+    for (var i = 0; i < rs.length; i++) {
+      var r = rs[i];
+      log.push(pad + '要证明「' + NAME[g] + '」，试规则 ' + r.id + '，子目标：' + r.if.map(function (x) { return NAME[x]; }).join('、'));
+      st[r.id] = 'ask';
+      var ok = r.if.every(function (x) { return prove(x, depth + 1); });
+      if (ok) { st[r.id] = 'fire'; log.push(pad + r.id + ' 成立 → 「' + NAME[g] + '」得证'); return true; }
+    }
+    log.push(pad + '「' + NAME[g] + '」无法证明');
+    return false;
+  }
+  var ok = prove('abx', 0);
+  log.push((ok ? '目标成立。' : '目标不成立。') + '只问了 ' + asked.length + ' 个问题（' + asked.join('、') + '），没碰与目标无关的 R1、R5。');
+  drawRules(st);
+  $('#ilog').innerHTML = log.map(function (x) { return '<li>' + x + '</li>'; }).join('');
+});
+S.notes($('#n-symbol'), {
+  c: [
+    ['物理符号系统假说', '充分性：物理符号系统足以产生通用智能；必要性：通用智能系统必然是物理符号系统。'],
+    ['专家系统', '知识库（IF-THEN 产生式规则）+ 推理机，知识与推理分离。'],
+    ['正向链 / 反向链', '从事实推出结论（数据驱动）/ 从目标反推子目标（目标驱动）。'],
+    ['框架问题', '动作之后哪些状态没变，无法逐条声明。']
+  ],
+  p: [
+    ['MYCIN', '约 600 条规则、反向链、置信因子（−1 到 1），诊断血液感染。'],
+    ['SHRDLU', '积木世界里整合语言理解、规划、记忆；微观世界方法的典范。'],
+    ['四个根本难题', '知识获取瓶颈、常识问题、框架问题、脆弱性。']
+  ]
+});
+
+/* ---------- ELIZA ---------- */
+var ER = [
+  [/I need (.*)/i, ['Why do you need {0}?', 'Would it really help you to get {0}?', 'Are you sure you need {0}?']],
+  [/Why don'?t you (.*)\?/i, ["Do you really think I don't {0}?", 'Perhaps eventually I will {0}.', 'Do you really want me to {0}?']],
+  [/Why can'?t I (.*)\?/i, ['Do you think you should be able to {0}?', 'If you could {0}, what would you do?', "I don't know -- why can't you {0}?"]],
+  [/I am (.*)/i, ['Did you come to me because you are {0}?', 'How long have you been {0}?', 'How do you feel about being {0}?']],
+  [/.* mother .*/i, ['Tell me more about your mother.', 'What was your relationship with your mother like?', 'How do you feel about your mother?']],
+  [/.* father .*/i, ['Tell me more about your father.', 'How did your father make you feel?', 'What has your father taught you?']],
+  [/.*/, ['Please tell me more.', "Let's change focus a bit... Tell me about your family.", 'Can you elaborate on that?']]
+];
+var PRON = { i: 'you', you: 'i', me: 'you', my: 'your', am: 'are', are: 'am', was: 'were', "i'd": 'you would', "i've": 'you have', "i'll": 'you will', yours: 'mine', mine: 'yours' };
+function swap(s) { return s.toLowerCase().split(/\s+/).map(function (w) { return PRON[w] || w; }).join(' '); }
+var eRand = S.rng(7);
+function eliza(text) {
+  for (var i = 0; i < ER.length; i++) {
+    var m = text.match(ER[i][0]);
+    if (m) {
+      var tpl = ER[i][1][Math.floor(eRand() * ER[i][1].length)];
+      var cap = m[1] != null ? swap(m[1].replace(/[.!?]+$/, '')) : '';
+      return { r: tpl.replace('{0}', cap), why: '匹配 ' + ER[i][0].source + (m[1] != null ? '，捕获“' + m[1] + '” → 代词转换“' + cap + '”' : '') };
+    }
+  }
+}
+function say(t) {
+  t = t.trim(); if (!t) return;
+  var log = $('#chatLog');
+  h('div', { class: 'u', text: t }, log);
+  var r = eliza(t);
+  h('div', { class: 'e', text: r.r }, log);
+  h('div', { class: 'why', text: r.why }, log);
+  log.scrollTop = log.scrollHeight;
+}
+['I need some help', 'I am unhappy with my job', 'My mother is afraid of me', 'I am not happy', 'Why can\'t I sleep?', 'You are a program, right?'].forEach(function (x) {
+  var b = h('button', { class: 'btn', type: 'button', text: x }, $('#elizaEx'));
+  b.addEventListener('click', function () { say(x); });
+});
+$('#elizaGo').addEventListener('click', function () { say($('#elizaIn').value); $('#elizaIn').value = ''; });
+$('#elizaIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') { say(this.value); this.value = ''; } });
+HA.blank($('#elizaBlank'), {
+  code: String.raw`
+def respond(user_input):
+    for pattern, responses in rules.items():
+        match = [[re.search(pattern, user_input, re.IGNORECASE)]]
+        if match:
+            captured_group = match.group(1) if match.groups() else ''
+            swapped_group = [[swap_pronouns(captured_group)]]
+            response = [[random.choice(responses)]].format(swapped_group)
+            return response
+    return random.choice(rules[r'.*'])
+
+def swap_pronouns(phrase):
+    words = phrase.lower().split()
+    swapped_words = [[[pronoun_swap.get(word, word) for word in words]]]
+    return ' '.join(swapped_words)`,
+  hint: '四步：匹配（分解）→ 代词转换 → 随机选模板（重组）→ 兜底回复。'
+});
+S.notes($('#n-eliza'), {
+  c: [
+    ['ELIZA', '1966 年魏泽鲍姆的规则聊天程序，DOCTOR 脚本模仿心理治疗师，把陈述改写成提问。'],
+    ['ELIZA 效应', '人们把理解和共情投射到其实毫无理解的程序上。'],
+    ['四步机制', '关键词识别与排序 → 带通配符分解 → 代词转换 → 从模板重组回复。']
+  ],
+  p: [
+    ['局限一', '没有语义理解：“I am not happy”照样套 I am (.*)。'],
+    ['局限二', '无状态：不记得上一句。'],
+    ['局限三', '规则爆炸：规则越多，冲突与优先级越难维护。'],
+    ['它证明了什么', '看似智能的表现可以完全来自预设规则，规则驱动无法扩展到开放域。']
+  ]
+});
+
+/* ---------- 心智社会 ---------- */
+var TREE = { n: 'BUILD-TOWER', c: [{ n: 'BUILDER', c: [{ n: 'ADD-BLOCK', c: [
+  { n: 'FIND-BLOCK', c: [{ n: 'SEE-SHAPE' }] },
+  { n: 'GET-BLOCK', c: [{ n: 'SEE-SHAPE ' }, { n: 'REACH' }, { n: 'GRASP' }] },
+  { n: 'PUT-ON-TOP', c: [{ n: 'REACH ' }, { n: 'RELEASE' }] }
+] }] }] };
+var dead = {}, btns = [];
+function render(node, parent, anc) {
+  var li = h('li', null, parent);
+  var b = h('button', { type: 'button', text: node.n.trim() }, li);
+  btns.push({ b: b, n: node.n, anc: anc.slice() });
+  b.addEventListener('click', function () { dead[node.n] = !dead[node.n]; upd(node.n); });
+  if (node.c) { var ul = h('ul', null, li); node.c.forEach(function (x) { render(x, ul, anc.concat(node.n)); }); }
+}
+var root = h('ul', null, $('#tree')); render(TREE, root, []);
+function upd(last) {
+  var hurt = {};
+  btns.forEach(function (x) { if (dead[x.n]) x.anc.forEach(function (a) { hurt[a] = 1; }); });
+  btns.forEach(function (x) { x.b.className = dead[x.n] ? 'dead' : hurt[x.n] ? 'hurt' : ''; });
+  var ds = Object.keys(dead).filter(function (k) { return dead[k]; });
+  var msg = !ds.length ? '点一个节点让它失效。' :
+    ds.map(function (d) { return d.trim(); }).join('、') + ' 失效：它的所有上级（橙色）都无法完成自己的子任务，塔搭不起来；但' +
+    (dead['GRASP'] && ds.length === 1 ? '视觉、找积木这些兄弟节点照常工作，只要换一个能抓的智能体顶上（比如“推”过去），系统就能恢复，这是去中心化的优势。劣势是没有任何一个节点知道“塔没搭成是因为抓不住”，排查要沿着树逐层找。' : '与它无关的分支照常工作。去中心化的好处是局部故障不会让整个心智瘫痪、部件可替换；代价是没有全局视角，出错难以定位，也很难保证整体行为可预测。');
+  $('#treeNote').textContent = msg;
+  void last;
+}
+S.notes($('#n-minsky'), {
+  c: [
+    ['心智社会', '智能来自大量简单、无心的智能体组成的机构之间的交互，而非单一完美原理。'],
+    ['机构（Agency）', '一组协同完成更复杂任务的智能体，可层层嵌套。'],
+    ['涌现', '复杂、有目的的行为从局部交互中自发产生，没有谁做全局规划。']
+  ],
+  p: [
+    ['对 MAS 的三条启发', '去中心化控制、涌现式计算（蚁群、粒子群）、智能体的社会性（ACL、契约网、协商、信任）。'],
+    ['原话', 'The trick is that there is no trick.'],
+    ['今天的对应', 'CAMEL、MetaGPT、CrewAI 的角色分工；但每个成员已是会推理的 LLM 智能体。']
+  ]
+});
+
+/* ---------- 学习范式 ---------- */
+S.sortGame($('#schoolSort'), {
+  bins: [{ k: 's', t: '符号主义' }, { k: 'c', t: '联结主义' }, { k: 'b', t: '行为主义（强化学习）' }],
+  items: [
+    { t: '深蓝击败国际象棋世界冠军', k: 's', why: '原书把深蓝归入符号主义：基于搜索与人工评估函数。' },
+    { t: '反向传播让多层网络可训练', k: 'c', why: '辛顿等人推动的联结主义复兴。' },
+    { t: 'TD-Gammon 自我对弈学下双陆棋', k: 'b', why: '从胜负反馈中试错学习，是强化学习的早期代表。' },
+    { t: 'SHRDLU 在积木世界里理解指令', k: 's', why: '语言解析、规划、记忆都基于符号表示。' },
+    { t: 'Transformer 在海量文本上预训练', k: 'c', why: '神经网络从数据中学习分布式表示。' },
+    { t: 'AlphaGo 通过数百万局自我对弈提升', k: 'b', why: '以胜负为奖励优化策略（它也用了深度网络，原书归在行为主义的现代化身）。' },
+    { t: 'MYCIN 用置信因子做诊断', k: 's', why: '专家规则 + 反向链推理。' },
+    { t: '图像分类网络从标注图片中学习', k: 'c', why: '知识存于连接权重，从样本中学出。' }
+  ]
+});
+S.notes($('#n-learn'), {
+  c: [
+    ['联结主义', '知识分布式存于神经元连接权重，通过学习（反向传播）调整；解决感知。'],
+    ['强化学习', '在状态下按策略选行动，从奖励中学习，最大化累积回报；解决序贯决策。'],
+    ['预训练—微调', '海量文本自监督学通用知识，少量标注数据适配下游任务；解决先验与常识。'],
+    ['涌现能力', '规模过阈值后出现的未被直接训练的能力：上下文学习、思维链。']
+  ],
+  p: [
+    ['RL 五要素', '智能体、环境、状态 S、行动 A、奖励 R；策略 π 是状态到行动的映射。'],
+    ['回报而非即时奖励', '为了未来更大的收益可以牺牲当前奖励（弃子）。'],
+    ['RL 的短板', '从零学起，需要海量特定任务交互，缺先验。']
+  ]
+});
+
+/* ---------- 现代智能体 ---------- */
+HB.layers($('#mods'), {
+  hint: '点一个模块，看它在第一篇代码里对应什么。',
+  layers: [
+    { t: '输入', items: [{ t: '感知模块', d: '把用户指令、API 返回、环境变化变成观察。第一篇里就是 <code>prompt_history</code> 里的用户请求和 Observation 字符串。', tag: '第 1、9 篇' }] },
+    { t: '认知核心', items: [
+      { t: '规划模块', d: '通过反思、自我批判把目标分解成步骤。第一篇里没有独立模块，规划藏在模型输出的 Thought 里；第 4 篇的 Plan-and-Solve 会把它单独拆出来。', tag: '第 4 篇' },
+      { t: 'LLM', d: '中枢：整合观察、计划、记忆做推理，决定下一步工具调用。第一篇的 <code>llm.generate()</code>。', tag: '第 3 篇' },
+      { t: '记忆模块', d: '存历史与知识，并在每轮后更新。第一篇里就是不断 append 的字符串列表，没有长期记忆。', tag: '第 8 篇' }
+    ] },
+    { t: '输出', items: [
+      { t: '执行模块', d: '解析工具调用、从工具箱选工具执行。第一篇里是三行正则加 <code>available_tools[tool_name](**kwargs)</code>。', tag: '第 7、10 篇' },
+      { t: '工具箱', d: '代码执行器、搜索引擎、各种 API。第一篇的 get_weather 和 get_attraction；第 10 篇用 MCP 标准化接入。', tag: '第 10 篇' }
+    ] }
+  ]
+});
+S.notes($('#n-modern'), {
+  c: [
+    ['技术融合', '符号主义的推理框架 + 联结主义与强化学习的学习决策 + 预训练的世界知识。'],
+    ['LLM 智能体模块', '感知、规划、LLM、记忆、执行、工具箱，围绕感知—思考—行动闭环。']
+  ],
+  p: [
+    ['神经符号的现代形态', 'LLM 是神经网络，却在智能体里做符号推理、规划和工具调用。'],
+    ['技术栈参考', 'Letta 2024 年 11 月发布的 AI Agents Stack 把工具、平台、服务分层分类（原书图 2.12）。']
+  ]
+});

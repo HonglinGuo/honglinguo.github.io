@@ -1,0 +1,83 @@
+/* Hello-Agents 学习系列专用样式（只在本系列页面加载） */
+
+/* 代码块与着色 */
+.ha-code { font-family: var(--f-num); font-size: 15px; line-height: 1.65; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 0; margin: 10px 0 0; overflow: auto; color: var(--ink-2); white-space: pre; tab-size: 4; }
+.ha-blank .ha-code { padding: 10px 14px; }
+.ha-code .k { color: var(--s1); font-weight: 600; }
+.ha-code .s { color: var(--ok); }
+.ha-code .c { color: var(--ink-3); font-style: italic; }
+pre.code-plain { font-family: var(--f-num); font-size: 15px; line-height: 1.65; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; margin: 10px 0 0; overflow-x: auto; color: var(--ink-2); white-space: pre; }
+
+/* 代码走读 */
+.ha-tg { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 14px; margin-top: 10px; align-items: start; }
+.ha-trace .ha-code { margin: 0; max-height: 520px; }
+.ha-trace .ln { display: block; padding: 0 12px 0 0; border-left: 3px solid transparent; transition: background .2s; }
+.ha-trace .ln i { display: inline-block; width: 2.6em; padding-right: 10px; text-align: right; color: var(--ink-3); font-style: normal; user-select: none; opacity: .7; }
+.ha-trace .ln.on { background: var(--s1-soft); border-left-color: var(--s1); color: var(--ink); }
+.ha-state { border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; background: var(--panel); padding: 12px 14px; font-size: 15px; line-height: 1.7; color: var(--ink-2); min-height: 8em; }
+.ha-state b { color: var(--ink); }
+.ha-state p { margin: 0 0 8px; }
+.ha-state p:last-child { margin-bottom: 0; }
+.ha-state code, .ha-state .mono { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+.ha-state .box { display: block; font-family: var(--f-num); font-size: 15px; white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; margin: 6px 0; color: var(--ink); }
+.ha-state .box.hot { border-color: var(--s2); }
+@media (max-width: 760px) { .ha-tg { grid-template-columns: minmax(0, 1fr); } .ha-trace .ha-code { max-height: 340px; } }
+
+/* 填空 */
+.ha-b { font: inherit; font-family: var(--f-num); font-size: 15px; display: inline-block; padding: 0 6px; margin: 0 1px; border: 1px dashed var(--s1); border-radius: 4px; background: var(--s1-soft); color: var(--s1); cursor: pointer; line-height: 1.5; text-align: left; vertical-align: baseline; white-space: pre; }
+.ha-b.open { border-style: solid; border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+
+/* 面试题演练 */
+.ivs { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.iv { border: 1px solid var(--hair); border-radius: 8px; background: var(--panel); padding: 14px 16px; }
+.iv[data-mark="ok"] { border-left: 4px solid var(--ok); }
+.iv[data-mark="fuzzy"] { border-left: 4px solid var(--s2); }
+.iv[data-mark="no"] { border-left: 4px solid var(--alert); }
+.iv-q { margin: 0; font-size: 17px; font-weight: 650; color: var(--ink); line-height: 1.6; }
+.iv-q small { display: block; font-size: 15px; font-weight: 400; color: var(--ink-3); margin-top: 2px; }
+.iv-a { margin: 10px 0 0; padding: 10px 14px 10px 30px; background: var(--bg); border-radius: 6px; font-size: 16px; line-height: 1.75; color: var(--ink-2); }
+.iv-a li + li { margin-top: 4px; }
+.iv-a b { color: var(--ink); }
+.iv-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 10px; }
+.iv-rate button { font-size: 15px; }
+
+/* 动手练 */
+.try { margin-top: 22px; border: 1px dashed var(--rule); border-radius: 8px; padding: 14px 18px; }
+.try h4 { margin: 0 0 6px; font-size: 17px; }
+.try ol { margin: 0; padding-left: 1.4em; font-size: 16px; line-height: 1.75; color: var(--ink-2); }
+.try li + li { margin-top: 8px; }
+.try details { margin-top: 4px; font-size: 15px; }
+.try summary { cursor: pointer; color: var(--s1); }
+.try details p { margin: 6px 0 0; color: var(--ink-2); }
+
+/* 已学系列对照 */
+.xlink { margin-top: 18px; border-left: 4px solid var(--s3); background: var(--s3-soft); border-radius: 0 8px 8px 0; padding: 10px 16px; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.xlink b { color: var(--ink); }
+.xlink a { color: var(--ink); }
+
+/* 上下文拼装 */
+.ha-ctx { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ha-m { border: 1px solid var(--hair); border-left: 4px solid var(--dim); border-radius: 0 6px 6px 0; background: var(--bg); padding: 7px 12px; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.ha-m > b { display: flex; justify-content: space-between; gap: 10px; color: var(--ink); font-size: 15px; }
+.ha-m > b small { font-family: var(--f-num); font-weight: 400; color: var(--ink-3); font-size: 15px; }
+.ha-m > div { font-family: var(--f-num); white-space: pre-wrap; word-break: break-word; }
+.ha-m.sys { border-left-color: var(--ink); }
+.ha-m.user { border-left-color: var(--s1); }
+.ha-m.asst { border-left-color: var(--s3); }
+.ha-m.tool { border-left-color: var(--ok); }
+.ha-m.mem { border-left-color: var(--s2); }
+.ha-m.rag { border-left-color: var(--s2); background: var(--s2-soft); }
+.ha-m.off { opacity: .45; text-decoration: line-through; }
+.ha-budget { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 15px; color: var(--ink-3); }
+.ha-budget .track { flex: 1; height: 10px; background: var(--dim-soft); border-radius: 5px; overflow: hidden; display: block; }
+.ha-budget .bar { display: block; height: 100%; background: var(--s1); transition: width .3s; }
+.ha-budget .bar.over { background: var(--alert); }
+.ha-budget .txt { font-family: var(--f-num); }
+
+/* 小图例行 */
+.kvline { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 4px 12px; font-size: 15px; line-height: 1.65; margin-top: 8px; }
+.kvline dt { color: var(--ink-3); }
+.kvline dd { margin: 0; color: var(--ink); }
+
+/* 长的行内代码允许断行，避免手机宽度横向溢出 */
+.sec-lede code, .confuse code, .iv-a code, .ask3 code { overflow-wrap: anywhere; }

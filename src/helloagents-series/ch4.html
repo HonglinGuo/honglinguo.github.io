@@ -1,0 +1,457 @@
+---
+title: 经典范式：ReAct、Plan-and-Solve、Reflection
+desc: Hello-Agents 学习笔记（四）：从零手写三种经典智能体范式。ReAct 的思考—行动—观察循环、工具三要素与 ToolExecutor、解析器的脆弱点与调试；Plan-and-Solve 的规划器与带状态的执行器；Reflection 的执行—反思—优化循环、Memory 与终止条件；三种范式的对比、组合与选型。
+kicker: <span>技术学习</span><span>Hello-Agents · 04</span><span>对应原书第 4 章</span><span>约 45 分钟</span>
+h1: 边想边做、先谋后动、<em>做完再改</em>
+lead: 这是全书最该吃透的一章。原书不用任何框架，从零写了三个智能体：ReAct 边想边做，靠每一步的观察修正方向；Plan-and-Solve 先拿出整张蓝图再按图施工；Reflection 先交初稿，再自己当评审、自己改。三者都跑在同一个 LLM 客户端上，区别只在“思考”和“行动”怎么组织。读完要能做到两件事：合上书写出每个范式的主循环，拿到一个任务能说出该用哪种、或者怎么组合。
+nav: why|为什么手写;react|ReAct;debug|ReAct 调试;ps|Plan-and-Solve;refl|Reflection;choose|对比与选型;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.shape > div { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 12px 14px; }
+.shape h4 { margin: 0 0 8px; font-size: 17px; }
+.shape h4 small { display: block; font-weight: 400; font-size: 15px; color: var(--ink-3); }
+.shape ol { margin: 0; padding-left: 1.3em; font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+.shape .loop { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--s1); }
+@media (max-width: 760px) { .shape { grid-template-columns: minmax(0, 1fr); } }
+.toolcard { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.toolcard div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.toolcard div b { display: block; color: var(--ink); }
+.toolcard div.key { border-color: var(--s2); background: var(--s2-soft); }
+@media (max-width: 700px) { .toolcard { grid-template-columns: minmax(0, 1fr); } }
+.rawout { font-family: var(--f-num); font-size: 15px; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; margin: 6px 0; color: var(--ink); line-height: 1.6; }
+.calls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.calls span { font-family: var(--f-num); font-size: 15px; padding: 2px 8px; border-radius: 4px; background: var(--s1-soft); color: var(--ink); }
+.calls span.r { background: var(--s2-soft); }
+.calls span.x { background: var(--ok-soft); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>ReAct、Plan-and-Solve、Reflection 在“思考”和“行动”的组织上有什么本质区别？各自适合什么任务？</li>
+    <li>ReAct 的主循环有哪几步？哪些地方最容易出错，怎么调试？</li>
+    <li>Plan-and-Solve 的执行器为什么要带状态？Reflection 什么时候停、要花多少次调用？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么要手写，三种形状</h2><span class="meta">原书第 4 章导言、4.1 节</span></div>
+  <div class="sec-lede">
+    <p>已经有 LangChain、LlamaIndex，为什么还要“重复造轮子”？原书给了三个理由：高度抽象的框架不利于理解背后的机制；框架替你处理了输出解析、调用失败重试、防死循环这些工程问题，自己处理一遍才会真正有系统设计能力；最重要的是，懂原理才能从框架的“使用者”变成“创造者”，标准组件不够用时能自己改、自己造。</p>
+    <p>准备工作很简单：把模型 ID、密钥、地址放进 <code>.env</code>，封装一个 <code>HelloAgentsLLM</code> 客户端，只暴露一个 <code>think(messages, temperature=0)</code> 方法，内部用流式调用兼容 OpenAI 的接口。注意默认温度是 0：智能体要稳定地按格式输出，这和上一篇说的“产出 Action 的步骤用低温”是一回事。三个范式都只依赖这一个方法，差别全在<strong>提示词怎么写</strong>和<strong>循环怎么组织</strong>。</p>
+    <p class="go">先把三种形状放在一起看一眼，后面逐个拆开。</p>
+  </div>
+  <div class="shape">
+    <div><h4>ReAct<small>侦探：走一步看一步</small></h4><ol><li>Thought：分析现状</li><li>Action：调用一个工具</li><li>Observation：拿到结果</li><li>回到 1，直到 Finish</li></ol><span class="loop">每一步一次 LLM 调用</span></div>
+    <div><h4>Plan-and-Solve<small>建筑师：先画蓝图</small></h4><ol><li>Planner：一次生成完整计划</li><li>Executor：按顺序执行每一步，带上历史结果</li><li>最后一步的结果即答案</li></ol><span class="loop">1 次规划 + n 次执行</span></div>
+    <div><h4>Reflection<small>作者兼编辑：先交初稿</small></h4><ol><li>执行：生成初稿</li><li>反思：评审员挑问题</li><li>优化：按反馈改稿</li><li>回到 2，直到“无需改进”</li></ol><span class="loop">1 + 每轮 2 次</span></div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="react">
+  <div class="part-head"><h2>ReAct：推理指导行动，行动修正推理</h2><span class="meta">原书 4.2.1–4.2.3 节</span></div>
+  <div class="sec-lede">
+    <p>ReAct 由 Shunyu Yao 在 2022 年提出。在它之前有两类做法：<strong>纯思考</strong>的思维链，推理强但碰不到外部世界，容易事实幻觉；<strong>纯行动</strong>的方法直接输出动作，缺乏规划和纠错。ReAct 的洞察是两者相辅相成：<strong>推理让行动更有目的，行动为推理提供事实依据</strong>。形式化地说，每一步策略 π 根据问题 q 和之前所有的（行动, 观察）对，生成当前的思考和行动：(th<sub>t</sub>, a<sub>t</sub>) = π(q, (a<sub>1</sub>, o<sub>1</sub>), …, (a<sub>t−1</sub>, o<sub>t−1</sub>))，工具执行后返回 o<sub>t</sub> = T(a<sub>t</sub>)。它最适合需要外部知识、精确计算、与 API 交互的任务。</p>
+    <p>工具要有三要素：<strong>名称</strong>（Action 里怎么叫它）、<strong>描述</strong>（什么时候该用它）、<strong>执行逻辑</strong>（真正干活的函数）。原书特别强调<strong>描述是整个机制里最关键的部分</strong>，因为模型只靠这段文字决定用不用、用哪个。搜索工具用的是 SerpApi，并做了“智能解析”：优先返回答案框和知识图谱，其次才是前三条搜索摘要，喂给模型的信息越干净越好。多个工具由 <code>ToolExecutor</code> 统一注册、查找，并用 <code>getAvailableTools()</code> 拼成一段工具清单塞进提示词。</p>
+    <p>和第一篇相比，这一版有三个工程上的改进：提示词模板里的 <code>{tools}</code> 由执行器动态生成；Action 格式改成 <code>工具名[输入]</code>；历史只记录 Action 和 Observation（Thought 不进历史，节省上下文）。<code>max_steps</code> 是防止无限循环的安全阀。</p>
+    <p class="go">逐步走一遍 ReActAgent.run（代码由原书 4.2.3 节的几段拼合精简，运行记录取自原书）。</p>
+  </div>
+  <div class="toolcard">
+    <div><b>名称 Name</b>Search</div>
+    <div class="key"><b>描述 Description（最关键）</b>一个网页搜索引擎。当你需要回答关于时事、事实以及在你的知识库中找不到的信息时，应使用此工具。</div>
+    <div><b>执行逻辑 Function</b>search(query)：调 SerpApi，优先返回答案框 / 知识图谱，否则返回前三条摘要。</div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">ReActAgent.run 逐步走读</p>
+    <div id="reactTrace"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">合上书，补全 ReAct 提示词模板和两个解析函数</p>
+    <div id="reactBlank"></div>
+  </div>
+  <div class="notes" id="n-react"></div>
+</section>
+
+<section class="part" id="debug">
+  <div class="part-head"><h2>ReAct 的长短与调试</h2><span class="meta">原书 4.2.4 节</span></div>
+  <div class="sec-lede">
+    <p>ReAct 的三个优点：<strong>高可解释性</strong>（Thought 链让你看到它为什么选这个工具）、<strong>动态规划与纠错</strong>（搜索结果不理想，下一步换个关键词）、<strong>工具协同</strong>（LLM 运筹帷幄，工具解决具体问题）。四个局限：<strong>强依赖 LLM 能力</strong>（推理、指令遵循、格式输出任何一项不行，流程就断）、<strong>效率低</strong>（每步一次调用，串行累加延迟和费用）、<strong>提示词脆弱</strong>（措辞微调都可能改变行为，并非所有模型都稳定守格式）、<strong>局部最优</strong>（没有全局规划，可能被眼前的观察带偏，甚至原地打转）。</p>
+    <p>原书给的调试顺序很实用：先<strong>打印完整提示词</strong>（追溯决策源头）；解析失败时<strong>打印原始输出</strong>（分清是模型没守格式还是正则写错了）；<strong>检查工具的输入输出</strong>（参数格式对不对，返回的东西模型能不能读懂）；频繁出错就<strong>加一两个完整的 TAO 成功示例</strong>（少样本）；最后才是<strong>换更强的模型或把温度设为 0</strong>。</p>
+    <p class="go">下面是几段真实会遇到的模型原始输出。判断问题出在哪、先用哪一招。</p>
+  </div>
+  <div class="lab"><div id="dbgCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：文本协议解析 vs Function Calling</h4>
+    <p>本章用正则从纯文本里抠 <code>Search[...]</code>，好处是任何模型都能用、过程透明；坏处是格式稍有偏差就失败（多行、嵌套方括号、模型自己写了 Observation）。原书习题 2 问更鲁棒的方案：让模型输出 <b>JSON</b> 并用解析器校验；或者用模型原生的 <b>Function Calling</b>，由 API 返回结构化的工具名和参数。第 7 篇自建框架时会两种都实现。</p>
+  </div>
+  <div class="notes" id="n-debug"></div>
+</section>
+
+<section class="part" id="ps">
+  <div class="part-head"><h2>Plan-and-Solve：先画蓝图再施工</h2><span class="meta">原书 4.3 节</span></div>
+  <div class="sec-lede">
+    <p>Plan-and-Solve 由 Lei Wang 在 2023 年提出，动机是思维链在多步骤复杂问题上容易“偏离轨道”。它把流程解耦成两个阶段：<strong>规划</strong>，P = π<sub>plan</sub>(q)，一次 LLM 调用把问题分解成 n 个步骤；<strong>执行</strong>，s<sub>i</sub> = π<sub>solve</sub>(q, P, (s<sub>1</sub>, …, s<sub>i−1</sub>))，每一步都看得到原始问题、完整计划和之前所有结果，最后一步的结果就是答案。适合结构强、可清晰分解的任务：多步数学题、多信息源报告（先定结构再填内容）、代码生成（先定模块再实现）。原书说，今天许多大模型工具的 Agent 模式都融入了这种设计。</p>
+    <p>规划器的关键是<strong>让计划可被代码解析</strong>：提示词要求输出一个用 <code>```python</code> 包起来的 Python 列表，代码用 split 取出中间部分，再用 <code>ast.literal_eval</code> 安全地转成列表（不用 eval，避免执行任意代码）。解析失败就返回空计划、终止任务。执行器的关键是<strong>状态管理</strong>：用一个 history 字符串累积“步骤 i：… 结果：…”，每次连同问题、完整计划、当前步骤一起交给模型，并要求“仅输出当前步骤的答案”。<code>PlanAndSolveAgent</code> 只是一个协调者，组合 Planner 和 Executor，原书称之为“组合优于继承”。</p>
+    <p class="go">走一遍执行器，看 history 怎样一步步变长，后面的步骤怎样用到前面的结果。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">Executor.execute 逐步走读（水果店问题，运行结果取自原书 4.3.4 节）</p>
+    <div id="psTrace"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Plan-and-Solve vs ReAct</h4>
+    <p>两者都是多步，区别在<b>计划何时确定</b>。ReAct 每一步才决定下一步，适合路径依赖中间结果的探索任务；Plan-and-Solve 一开始就定好全部步骤，目标一致性更好，但计划是<b>静态的</b>，执行中发现某步做不了也不会改（原书习题 4）。补救办法是<b>动态重规划</b>：执行器发现失败或结果不符合预期时，把已完成的步骤和失败原因交回规划器，生成剩余步骤的新计划。</p>
+  </div>
+  <div class="notes" id="n-ps"></div>
+</section>
+
+<section class="part" id="refl">
+  <div class="part-head"><h2>Reflection：执行、反思、优化</h2><span class="meta">原书 4.4 节</span></div>
+  <div class="sec-lede">
+    <p>前两种范式交出答案就结束了，答案可能有错、可能不够好。Reflection 加了一个<strong>事后自我校正循环</strong>，灵感来自人写完初稿会校对、解完题会验算，代表工作是 Shinn 在 2023 年提出的 Reflexion。三步：<strong>执行</strong>（用任何方法产出初稿 O<sub>0</sub>）；<strong>反思</strong>（另一个提示词扮演评审员，从事实错误、逻辑漏洞、效率、遗漏约束等维度给出反馈 F<sub>i</sub> = π<sub>reflect</sub>(Task, O<sub>i</sub>)）；<strong>优化</strong>（结合初稿和反馈产出新版 O<sub>i+1</sub> = π<sub>refine</sub>(Task, O<sub>i</sub>, F<sub>i</sub>)）。循环到评审员说“无需改进”或达到迭代上限。</p>
+    <p>它的价值在于有了<strong>内部纠错回路</strong>，不再只依赖工具反馈，能修正更高层的逻辑和策略错误；并且整个“初稿—反馈—修订”轨迹本身就是一份短期记忆。原书的例子是“写一个找出 1 到 n 所有素数的函数”：评审员提示词被刻意写成“极其严格、专注算法效率、如果已最优才能回答无需改进”，于是它没有满足于能跑的试除法，而是指出 O(n√n) 的瓶颈、建议埃拉托斯特尼筛法；第二轮面对 O(n log log n) 的筛法，提了分段筛等方向后判断“无需改进”，循环收敛。</p>
+    <p>代价同样清楚：每轮至少多 2 次调用、串行导致延迟显著增加、要为三个角色分别设计提示词。所以它是<strong>以成本换质量</strong>，适合对质量要求高、对实时性要求宽松的场景（关键代码、技术报告、决策支持）。</p>
+    <p class="go">先估一下调用次数，再一步步看迭代过程。</p>
+  </div>
+  <div class="lab"><div id="reflGuess"></div></div>
+  <div class="lab">
+    <p class="lab-t">ReflectionAgent 的一次运行（据原书 4.4.4 节）</p>
+    <div id="reflStep"></div>
+    <div class="calls" id="reflCalls"></div>
+    <div class="ha-state" id="reflBox" style="margin-top:10px"></div>
+  </div>
+  <div class="lab">
+    <p class="lab-t">合上书，补全 Reflection 主循环</p>
+    <div id="reflBlank"></div>
+  </div>
+  <div class="notes" id="n-refl"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>对比、组合与选型</h2><span class="meta">原书 4.5 节，表 4.1，习题 1、4、7</span></div>
+  <div class="sec-lede">
+    <p>原书的总结是：ReAct 的核心优势是<strong>环境适应性与动态纠错</strong>，适合探索性、需要外部工具输入的任务；Plan-and-Solve 的优势是<strong>结构性与稳定性</strong>，适合逻辑路径确定、内部推理密集的任务；Reflection 的价值是<strong>显著提升质量</strong>，适合对准确性和可靠性要求极高的场景。</p>
+    <p>它们不是互斥的。原书习题反复追问组合：Plan-and-Solve 的每一步可以用 ReAct 执行（计划定方向，ReAct 应对每步的不确定）；任何一个的输出都可以再过一遍 Reflection；规划也可以分层，先出高层计划，每个高层步骤再细化子计划。习题 7 的客服场景就是组合的好例子：查订单、查物流用 ReAct 调工具，退款判断按固定政策步骤走，置信度低时触发 Reflection 给出更审慎的建议。</p>
+    <p class="go">先翻牌复习三种范式的对比，再给几个场景选范式。</p>
+  </div>
+  <div class="lab"><div id="cmpVs"></div></div>
+  <div class="lab"><div id="pickCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>这三种范式在<a href="../2026-10-16-adp-2/">《Agentic 设计模式》02 篇·反思、规划与推理技术</a>里以模式卡的形式出现过，可以对照着记；ReAct 的工具一侧在<a href="../2026-10-16-agent-4/">《深入理解 AI Agent》04 篇·工具</a>讲得更深。</div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 4 章习题</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="4-1">
+      <p class="iv-q">请详细解释 ReAct 框架。它是如何将思维链和行动结合起来的？<small>Extra01 · Agent 第 2 题</small></p>
+      <ul class="iv-a">
+        <li><b>动机</b>：CoT 只推理不行动，会事实幻觉；纯行动缺规划和纠错。ReAct 让二者交替：推理指导行动，行动结果修正推理。</li>
+        <li><b>机制</b>：提示词规定每步输出 Thought + Action；解析器抠出 Action 调用工具，结果作为 Observation 追加到历史；循环直到 Finish 或达到最大步数。公式 (th<sub>t</sub>, a<sub>t</sub>) = π(q, 历史)，o<sub>t</sub> = T(a<sub>t</sub>)。</li>
+        <li><b>优点</b>：可解释、动态纠错、工具协同。<b>局限</b>：依赖模型能力、串行调用慢且贵、提示词脆弱、易局部最优或打转。</li>
+        <li><b>工程要点</b>：工具描述最关键；最大步数兜底；解析失败把错误作为 Observation 回填；温度设 0。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="4-2">
+      <p class="iv-q">有哪些主流方法可以赋予 LLM 规划能力？（例如 CoT、ToT、GoT）<small>Extra01 · Agent 第 3 题</small></p>
+      <ul class="iv-a">
+        <li><b>CoT</b>：一条线性推理链，“一步一步想”。</li>
+        <li><b>Plan-and-Solve</b>：显式先生成计划再逐步执行，减少 CoT 中途偏航。</li>
+        <li><b>ToT（思维树）</b>：每步生成多个候选思路，评估后用搜索（BFS / DFS）选择和回溯；<b>GoT（思维图）</b>允许思路合并与复用，形成图结构。</li>
+        <li><b>与行动结合</b>：ReAct（边想边做）、分层规划、动态重规划；以及 Reflection 对计划本身做事后修正。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="4-3">
+      <p class="iv-q">本章用正则解析模型输出，有哪些脆弱点？更鲁棒的方案是什么？<small>原书第 4 章习题 2</small></p>
+      <ul class="iv-a">
+        <li><b>脆弱点</b>：模型多输出了几对 Thought-Action；Action 换行或参数里有方括号；模型自己编了 Observation；中英文冒号、大小写不一致；Finish 内容里嵌套括号。</li>
+        <li><b>方案</b>：要求 JSON 输出并用 schema 校验，失败时把错误回填让模型重试；使用模型原生 Function Calling / 结构化输出；约束解码（受限语法）。</li>
+        <li><b>取舍</b>：文本协议通用、透明但脆；JSON 稳定但仍可能格式错；Function Calling 最稳但依赖模型和服务商支持。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="4-4">
+      <p class="iv-q">电商客服智能体（理解退款理由、查订单物流、判断是否退款、发邮件、低置信度时反思）用什么架构？<small>原书第 4 章习题 7</small></p>
+      <ul class="iv-a">
+        <li><b>架构</b>：外层按固定流程走（理解 → 查询 → 判断 → 回复），查询环节用 ReAct 调工具，判断后计算置信度，低于阈值触发 Reflection 复核，仍不确定转人工。</li>
+        <li><b>工具</b>：query_order(订单号)、query_logistics(运单号)、get_refund_policy(品类)、send_email(收件人, 内容)，退款执行动作需审批。</li>
+        <li><b>提示词</b>：把公司政策作为硬约束写清，判断必须引用具体条款；语气要求友好，拒绝时给出理由和替代方案。</li>
+        <li><b>风险</b>：误批退款、被用户话术诱导（提示词注入）、编造政策、邮件发错人。对策：金额阈值和高风险动作走审批，工具层做权限校验，全程日志可审计。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="try">
+    <h4>动手练（原书习题 3、4、5）</h4>
+    <ol>
+      <li>给 ReAct 加一个计算器工具，算 (123 + 456) × 789 / 12。<details><summary>思路</summary><p>注册 Calculator，描述写清“仅用于数学表达式计算”，执行逻辑不要用裸 eval，可以用 ast 解析只允许数字和四则运算。模型会把表达式作为输入，Observation 是精确结果，避免 LLM 自己算错。</p></details></li>
+      <li>工具多到 50 个甚至 100 个时怎么办？<details><summary>思路</summary><p>全塞进提示词会挤占上下文且让模型选错。可以按类别分组、先让模型选类别再展开；或对工具描述做向量检索，每轮只放最相关的几个（第 9 篇上下文工程、第 10 篇 MCP 都会用到这个思路）。</p></details></li>
+      <li>反思用更强的模型、执行用更快的模型，会怎样？终止条件能不能更聪明？<details><summary>思路</summary><p>强模型做评审能发现更深的问题，执行用快模型省成本，但要防止评审提出执行模型做不到的建议。终止条件可以改成结构化评分（如 1–10 分，达到阈值停）、连续两轮无实质改动停、或用测试用例通过率判断，而不是依赖字符串“无需改进”。</p></details></li>
+    </ol>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 三种范式的本质区别与适用任务？</summary><p class="ans">ReAct 把思考和行动交织在每一步，下一步由当前观察决定，适合需要外部信息、路径不确定的探索任务；Plan-and-Solve 先一次性规划全部步骤再按序执行，适合结构清晰、可分解的推理任务；Reflection 在任务完成后加入评审与修订循环，适合对质量要求高、对延迟宽松的任务。三者可以组合：计划定方向、ReAct 执行每步、Reflection 把关结果。</p></details>
+    <details><summary>2. ReAct 主循环几步？哪里容易出错，怎么调？</summary><p class="ans">格式化提示词（工具清单 + 问题 + 历史）→ 调用 LLM → 解析 Thought / Action → Finish 则返回，否则解析工具名与输入并执行 → 把 Action 与 Observation 追加到历史；max_steps 兜底。易错处：输出格式不守、正则写错、工具参数格式不对、工具返回模型读不懂、反复调用同一工具打转。调试顺序：打印完整提示词、打印原始输出、检查工具输入输出、加少样本示例、换模型或温度设 0。</p></details>
+    <details><summary>3. 执行器为何带状态？Reflection 何时停、几次调用？</summary><p class="ans">计划中后面的步骤依赖前面的结果（周三销量依赖周二），执行器用 history 累积每步结果并在每次调用时传入，否则模型不知道之前算出了什么。Reflection 在评审反馈含“无需改进”或达到最大迭代次数时停止；调用次数为 1（初稿）+ 每轮 2（反思 + 优化），若在第 k 轮反思时停止则为 2k 次，最多 1 + 2 × max_iterations 次。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.notes($('#n-why'), {
+  c: [
+    ['为什么手写', '理解机制；亲手处理解析、重试、防死循环等工程问题；从框架使用者变成创造者。'],
+    ['HelloAgentsLLM', '从 .env 读模型 ID、密钥、地址，只暴露 think(messages, temperature=0)，流式调用。']
+  ],
+  p: [
+    ['三种形状', 'ReAct 走一步看一步；Plan-and-Solve 先画蓝图；Reflection 先交初稿再改。'],
+    ['差别在哪', '同一个 LLM 客户端，差别只在提示词和循环的组织方式。']
+  ]
+});
+
+/* ---------- ReAct 走读 ---------- */
+var RC = String.raw`
+class ReActAgent:
+    def __init__(self, llm_client, tool_executor, max_steps=5):
+        self.llm_client, self.tool_executor = llm_client, tool_executor
+        self.max_steps, self.history = max_steps, []
+
+    def run(self, question):
+        self.history, step = [], 0
+        while step < self.max_steps:
+            step += 1
+            prompt = REACT_PROMPT_TEMPLATE.format(
+                tools=self.tool_executor.getAvailableTools(),
+                question=question, history="\n".join(self.history))
+            text = self.llm_client.think([{"role": "user", "content": prompt}])
+            thought, action = self._parse_output(text)
+            if not action:
+                break                                  # 解析失败
+            if action.startswith("Finish"):
+                return re.match(r"Finish\[(.*)\]", action).group(1)
+            tool_name, tool_input = self._parse_action(action)
+            func = self.tool_executor.getTool(tool_name)
+            observation = func(tool_input) if func else f"错误:未找到名为 '{tool_name}' 的工具。"
+            self.history.append(f"Action: {action}")
+            self.history.append(f"Observation: {observation}")
+        return None                                    # 达到最大步数
+`;
+function bx(t, hot) { return '<span class="box' + (hot ? ' hot' : '') + '">' + t + '</span>'; }
+var Q = '华为最新的手机是哪一款？它的主要卖点是什么？';
+HA.trace($('#reactTrace'), {
+  code: RC,
+  steps: [
+    { l: ['7'], t: '重置', s: '<p>每次 run 都清空 <code>history</code>，max_steps = 5。问题：</p>' + bx(Q) },
+    { l: ['10-12'], t: '第 1 步 · 拼提示词', s: '<p><code>{tools}</code> 由 ToolExecutor 生成：</p>' + bx('- Search: 一个网页搜索引擎。当你需要回答关于时事、事实以及在你的知识库中找不到的信息时，应使用此工具。') + '<p><code>{history}</code> 此时为空。注意整个提示词作为<b>一条 user 消息</b>发送。</p>' },
+    { l: ['13-14'], t: '调用并解析', s: '<p>模型输出：</p>' + bx('Thought: 要回答这个问题，我需要查找华为最新发布的手机型号及其主要特点。这些信息可能在我的现有知识库之外，因此需要使用搜索引擎……\nAction: Search[华为最新手机型号及主要卖点]') + '<p><code>_parse_output</code> 分出 thought 和 action。</p>' },
+    { l: ['19-21'], t: '执行工具', s: '<p><code>_parse_action</code> 用 <span class="mono">(\\w+)\\[(.*)\\]</span> 抠出：tool_name = Search，tool_input = 华为最新手机型号及主要卖点。</p><p>SerpApi 没有答案框，于是返回前三条摘要：</p>' + bx('[1] 华为手机- 华为官网 … Mate 系列 · HUAWEI Mate XTs … Pura 系列 · HUAWEI Pura 80 Pro+ …\n[2] 2025年华为手机哪一款性价比高？…\n[3] … Mate 70和Pura 70系列是最新发布的旗舰机型 …') },
+    { l: ['22-23'], t: '记入历史', s: '<p>只有 Action 和 Observation 进历史，Thought 不进：</p>' + bx('Action: Search[华为最新手机型号及主要卖点]') + bx('Observation: [1] 华为手机- 华为官网 …', true) },
+    { l: ['10-14'], t: '第 2 步', s: '<p>这次 <code>{history}</code> 里有了搜索结果。模型输出：</p>' + bx('Thought: 根据搜索结果，华为最新发布的旗舰机型包括Mate 70和Pura 80 Pro+……具体哪一个是“最新”还需要进一步确认……\nAction: Finish[根据最新信息，华为的最新手机可能是HUAWEI Pura 80 Pro+或HUAWEI Mate 70……]') },
+    { l: ['17-18'], t: 'Finish', s: '<p>Action 以 Finish 开头，返回方括号内的答案。两步、两次 LLM 调用、一次搜索。</p><p>留意第 2 步的 Thought：它自己说“还需要进一步确认”，却直接 Finish 了。这正是“强依赖模型能力”的体现：更谨慎的模型或更好的提示词会再搜一次。</p>' },
+    { l: ['15-16', '25'], t: '两个出口', s: '<p>除了 Finish，还有两个出口：解析不到 Action 时 <code>break</code>（原书的处理比较粗暴，第一篇的做法是把错误回填成 Observation 让模型重试），以及循环跑满 max_steps 返回 None。</p>' }
+  ]
+});
+HA.blank($('#reactBlank'), {
+  code: String.raw`
+REACT_PROMPT_TEMPLATE = """
+请注意，你是一个有能力调用外部工具的智能助手。
+可用工具如下:
+[[{tools}]]
+请严格按照以下格式进行回应:
+Thought: 你的思考过程，用于分析问题、拆解任务和规划下一步行动。
+Action: 你决定采取的行动，必须是以下格式之一:
+- [[{{tool_name}}[{{tool_input}}]]]:调用一个可用工具。
+- [[Finish[最终答案]]]:当你认为已经获得最终答案时。
+现在，请开始解决以下问题:
+Question: {question}
+History: [[{history}]]
+"""
+
+def _parse_output(self, text):
+    thought_match = re.search(r"Thought:\s*(.*?)(?=\nAction:|$)", text, re.DOTALL)
+    action_match = re.search(r"[[Action:\s*(.*?)$]]", text, re.DOTALL)
+    ...
+
+def _parse_action(self, action_text):
+    match = re.match(r"[[(\w+)\[(.*)\]]]", action_text, re.DOTALL)
+    return (match.group(1), match.group(2)) if match else (None, None)`,
+  hint: '模板里双花括号是为了让 format 输出字面的 {tool_name}。'
+});
+S.notes($('#n-react'), {
+  c: [
+    ['ReAct', 'Reason + Act：每步输出 Thought 与 Action，执行后得到 Observation，循环至 Finish。'],
+    ['工具三要素', '名称、描述（最关键，模型据此选工具）、执行逻辑。'],
+    ['ToolExecutor', '注册、查找工具，并生成提示词中的工具清单。']
+  ],
+  p: [
+    ['形式化', '(th<sub>t</sub>, a<sub>t</sub>) = π(q, (a<sub>1</sub>, o<sub>1</sub>), …, (a<sub>t−1</sub>, o<sub>t−1</sub>))；o<sub>t</sub> = T(a<sub>t</sub>)'],
+    ['主循环', '拼模板 → think → _parse_output → Finish? → _parse_action → 执行 → 追加 Action 与 Observation；max_steps 兜底。'],
+    ['适用', '需要外部知识、精确计算、与 API 交互的任务。'],
+    ['智能解析', '工具返回先挑最直接的信息（答案框、知识图谱），再退到摘要。']
+  ]
+});
+
+/* ---------- 调试 ---------- */
+HB.cards($('#dbgCards'), {
+  opts: ['打印原始输出', '检查工具输入输出', '加少样本示例', '加限制或换模型'],
+  items: [
+    { t: '<div class="rawout">Thought: 我需要搜索。\nAction: 使用搜索工具查询“华为最新手机”</div>正则没匹配到工具名，流程终止。', a: 2, why: '先打印原始输出确认是模型没守格式（不是正则错）。模型反复用自然语言写 Action，最有效的是给一两个完整的 TAO 示例教它格式。' },
+    { t: '<div class="rawout">Action: Search[华为最新手机]\nObservation: 华为最新手机是 Mate 99。\nThought: 我已经知道答案了……</div>', a: 0, why: '模型自己编了 Observation，是幻觉。打印原始输出能立刻看出来；修复方法是截断 Action 之后的内容（第一篇那段截断正则）。' },
+    { t: '天气工具返回了一大段 JSON（800 行），模型下一步开始胡言乱语。', a: 1, why: 'Observation 要在工具内部压缩成模型容易读的一段话，原书的“智能解析”就是干这个的。' },
+    { t: '模型连续 5 步都在 Search 同一个关键词，结果一样。', a: 3, why: '原地打转是 ReAct 的固有局限。可以在宿主代码里检测重复动作并提示换思路、调整 max_steps，或换推理更强的模型。' },
+    { t: '模型调用了 Calculator[一百二十三加四百五十六]，计算器报错。', a: 1, why: '工具期望的输入格式和模型给的不一致。在描述里写清输入格式（“输入合法的数学表达式，如 123+456”），并把错误信息作为 Observation 返回。' }
+  ]
+});
+S.notes($('#n-debug'), {
+  c: [
+    ['ReAct 三优点', '高可解释性、动态规划与纠错、工具协同。'],
+    ['ReAct 四局限', '强依赖 LLM 能力、多次调用效率低、提示词脆弱、易局部最优或打转。']
+  ],
+  p: [
+    ['调试五步', '打印完整提示词 → 打印原始输出 → 检查工具输入输出 → 加少样本示例 → 换模型或温度设 0。'],
+    ['更稳的输出格式', 'JSON + 校验、原生 Function Calling、约束解码。']
+  ]
+});
+
+/* ---------- Plan-and-Solve ---------- */
+var PSC = String.raw`
+class Planner:
+    def plan(self, question):
+        prompt = PLANNER_PROMPT_TEMPLATE.format(question=question)
+        text = self.llm_client.think([{"role": "user", "content": prompt}]) or ""
+        try:
+            plan_str = text.split("` + '```' + String.raw`python")[1].split("` + '```' + String.raw`")[0].strip()
+            plan = ast.literal_eval(plan_str)
+            return plan if isinstance(plan, list) else []
+        except (ValueError, SyntaxError, IndexError):
+            return []
+
+class Executor:
+    def execute(self, question, plan):
+        history = ""
+        for i, step in enumerate(plan):
+            prompt = EXECUTOR_PROMPT_TEMPLATE.format(
+                question=question, plan=plan,
+                history=history if history else "无", current_step=step)
+            response_text = self.llm_client.think([{"role": "user", "content": prompt}]) or ""
+            history += f"步骤 {i+1}: {step}\n结果: {response_text}\n\n"
+        return response_text                # 最后一步的结果即答案
+`;
+var PLAN = ['计算周一卖出的苹果数量： 15个', '计算周二卖出的苹果数量： 周一数量 × 2 = 15 × 2 = 30个', '计算周三卖出的苹果数量： 周二数量 - 5 = 30 - 5 = 25个', '计算三天总销量： 周一 + 周二 + 周三 = 15 + 30 + 25 = 70个'];
+var RES = ['15', '30', '25', '70'];
+function hist(n) { var s = ''; for (var i = 0; i < n; i++) s += '步骤 ' + (i + 1) + ': ' + PLAN[i] + '\n结果: ' + RES[i] + '\n\n'; return s.trim() || '无'; }
+var psSteps = [
+  { l: ['2-5'], t: '规划', s: '<p>一次调用，模型输出用 ```python 包起来的列表：</p>' + bx('["计算周一卖出的苹果数量： 15个", "计算周二……30个", "计算周三……25个", "计算三天总销量……70个"]') },
+  { l: ['6-11'], t: '解析计划', s: '<p>split 取出两段围栏之间的字符串，<code>ast.literal_eval</code> 安全转换成 Python 列表（只认字面量，不执行代码）。任何一步出错都返回空列表，Agent 据此终止。</p>' }
+];
+PLAN.forEach(function (p, i) {
+  psSteps.push({ l: ['17-21'], t: '执行步骤 ' + (i + 1), s: '<p><b>当前步骤：</b>' + p + '</p><p><b>传入的 history：</b></p>' + bx(hist(i), true) + '<p>模型只输出：<code>' + RES[i] + '</code></p>' });
+});
+psSteps.push({ l: ['22'], t: '返回', s: '<p>最后一步的结果 <b>70</b> 就是答案。共 1 次规划 + 4 次执行 = 5 次调用。</p><p>注意这个例子里规划器其实已经把每步都算完了，执行器只是“照抄”。原书也承认这道题不难，重点是看清结构：真实任务中规划只定方向，具体结果要靠执行（甚至调用工具）才能得到。</p>' });
+HA.trace($('#psTrace'), { code: PSC, steps: psSteps });
+S.notes($('#n-ps'), {
+  c: [
+    ['Plan-and-Solve', '先由规划器一次性生成分步计划，再由执行器按序逐步完成。'],
+    ['规划器', '要求输出 ```python 包裹的列表，用 ast.literal_eval 安全解析；失败返回空计划。'],
+    ['执行器状态管理', '用 history 累积每步结果，每次连同问题、完整计划、当前步骤一起传入。'],
+    ['动态重规划', '执行失败时把已完成步骤与失败原因交回规划器，重新生成剩余计划。']
+  ],
+  p: [
+    ['形式化', 'P = π<sub>plan</sub>(q)；s<sub>i</sub> = π<sub>solve</sub>(q, P, (s<sub>1</sub>, …, s<sub>i−1</sub>))；答案 = s<sub>n</sub>'],
+    ['适用', '多步数学题、多信息源报告、代码生成等结构强、可分解的任务。'],
+    ['组合优于继承', 'PlanAndSolveAgent 只协调 Planner 与 Executor，本身不含复杂逻辑。'],
+    ['局限', '原书实现的计划是静态的，执行中不会调整。']
+  ]
+});
+
+/* ---------- Reflection ---------- */
+S.guess($('#reflGuess'), {
+  q: 'max_iterations = 3，假设评审员<b>从来不说</b>“无需改进”，ReflectionAgent 一共调用 LLM 多少次？',
+  unit: '次', ans: 7,
+  why: '初稿 1 次 + 每轮（反思 1 + 优化 1）× 3 = 7 次。原书的运行在第 2 轮反思时判断“无需改进”就停了，所以是 1 + 2 + 1 = 4 次。迭代越多越贵越慢，这就是“以成本换质量”。'
+});
+var RF = [
+  { t: '初始执行', c: ['x'], s: '<p><b>INITIAL_PROMPT</b>：“你是一位资深的 Python 程序员……直接输出代码。”</p><p>模型交出能跑的初稿：对每个数做试除，时间复杂度 O(n√n)。</p><p>Memory 新增一条 <code>execution</code> 记录。</p>' },
+  { t: '第 1 轮 · 反思', c: ['x', 'r'], s: '<p><b>REFLECT_PROMPT</b>：“你是一位<b>极其严格</b>的代码评审专家……专注于找出<b>算法效率</b>上的主要瓶颈……如果代码在算法层面已经达到最优，<b>才能</b>回答‘无需改进’。”</p><span class="box hot">当前代码的时间复杂度为 O(n * sqrt(n))……主要瓶颈在于每个数都需要进行试除法检查。建议使用埃拉托斯特尼筛法，时间复杂度为 O(n log(log n))。</span><p>反馈里没有“无需改进”，继续。</p>' },
+  { t: '第 1 轮 · 优化', c: ['x', 'r', 'x'], s: '<p><b>REFINE_PROMPT</b> 带上原任务、上一版代码和评审反馈。模型改成筛法：</p><span class="box">is_prime = [True] * (n + 1)\np = 2\nwhile p * p &lt;= n:\n    if is_prime[p]:\n        for i in range(p * p, n + 1, p):\n            is_prime[i] = False\n    p += 1</span>' },
+  { t: '第 2 轮 · 反思', c: ['x', 'r', 'x', 'r'], s: '<span class="box hot">当前代码使用了 Eratosthenes 筛法，时间复杂度为 O(n log log n)……可以考虑分段筛法、奇数筛法……然而这些改进对于大多数应用场景并不是必需的……在一般情况下，<b>无需改进</b>。</span><p>字符串里出现“无需改进”，<code>break</code>。</p>' },
+  { t: '结束', c: ['x', 'r', 'x', 'r'], s: '<p>共 4 次调用：初稿 1、反思 2、优化 1。最终代码是筛法版本。</p><p>原书指出成功的关键在评审提示词：如果只说“请审查代码”，模型很可能夸一句“功能正确”就结束了。<b>有效的批判是优化的前提。</b></p><p>想一想：用字符串“无需改进”当终止条件够不够稳？（原书习题 5）</p>' }
+];
+var CALLN = { x: '执行', r: '反思' };
+S.stepper($('#reflStep'), RF.length, function (i) {
+  $('#reflCalls').innerHTML = RF[i].c.map(function (k, j) { return '<span class="' + (k === 'r' ? 'r' : 'x') + '">' + (j + 1) + ' · ' + (j === 0 ? '初稿' : CALLN[k] === '执行' ? '优化' : '反思') + '</span>'; }).join('');
+  $('#reflBox').innerHTML = RF[i].s;
+}, RF.map(function (x) { return x.t; }));
+HA.blank($('#reflBlank'), {
+  code: String.raw`
+def run(self, task):
+    initial_code = self._get_llm_response(INITIAL_PROMPT_TEMPLATE.format(task=task))
+    self.memory.add_record([["execution"]], initial_code)
+
+    for i in range(self.max_iterations):
+        last_code = [[self.memory.get_last_execution()]]
+        feedback = self._get_llm_response(REFLECT_PROMPT_TEMPLATE.format(task=task, code=last_code))
+        self.memory.add_record([["reflection"]], feedback)
+
+        if [["无需改进" in feedback]]:
+            break
+
+        refined_code = self._get_llm_response(REFINE_PROMPT_TEMPLATE.format(
+            task=task, last_code_attempt=last_code, feedback=[[feedback]]))
+        self.memory.add_record("execution", refined_code)
+
+    return self.memory.get_last_execution()`
+});
+S.notes($('#n-refl'), {
+  c: [
+    ['Reflection', '事后自我校正循环：执行 → 反思（评审反馈）→ 优化（按反馈修订），重复至收敛。'],
+    ['Memory', '按顺序存 execution 与 reflection 记录；get_trajectory 序列化成文本，get_last_execution 取最新稿。'],
+    ['三个提示词', '初始执行、反思（评审员角色，决定改进方向）、优化（带上旧稿与反馈）。']
+  ],
+  p: [
+    ['形式化', 'F<sub>i</sub> = π<sub>reflect</sub>(Task, O<sub>i</sub>)；O<sub>i+1</sub> = π<sub>refine</sub>(Task, O<sub>i</sub>, F<sub>i</sub>)'],
+    ['终止条件', '反馈含“无需改进”或达到 max_iterations。'],
+    ['调用次数', '最多 1 + 2 × max_iterations；第 k 轮反思即停则为 2k。'],
+    ['成本收益', '以成本换质量：调用多、延迟高、提示工程复杂；换来质量跃迁与鲁棒性。']
+  ]
+});
+
+/* ---------- 对比与选型 ---------- */
+HB.vs($('#cmpVs'), {
+  a: 'ReAct', b: 'Plan-and-Solve / Reflection', k: '维度',
+  rows: [
+    ['计划何时确定', '每一步才决定下一步', 'P&amp;S：开始时一次性确定；Reflection：不管计划，管结果'],
+    ['LLM 调用次数', '步数 n 次', 'P&amp;S：1 + n；Reflection：1 + 2 × 轮数'],
+    ['靠什么纠错', '外部工具的 Observation', 'P&amp;S：基本不纠错（静态计划）；Reflection：内部评审反馈'],
+    ['核心优势', '环境适应性、动态纠错', 'P&amp;S：结构性、稳定性、目标一致；Reflection：质量跃迁'],
+    ['典型任务', '查实时信息、调 API、探索', 'P&amp;S：多步推理、报告、代码结构；Reflection：关键代码、报告、决策']
+  ]
+});
+HB.cards($('#pickCards'), {
+  opts: ['ReAct', 'Plan-and-Solve', 'Reflection', '组合'],
+  items: [
+    { t: '“今天上证指数收盘多少？比昨天涨了多少？”', a: 0, why: '需要实时数据，路径简单：搜两次、算一次。' },
+    { t: '“写一份 6G 网络 AI 现状报告，包含背景、标准进展、产业动态、结论四部分。”', a: 1, why: '结构清楚，先定提纲再逐节填写；如果每节需要搜索资料，可以每步用 ReAct 执行，变成组合。' },
+    { t: '“为核心交易系统写一个并发安全的限流函数。”', a: 2, why: '对正确性要求高、对延迟不敏感，值得多花几次调用让评审挑错。' },
+    { t: '“预订北京到上海的商务旅行：机票、酒店、租车。”（原书习题 4）', a: 3, why: '三个子任务结构清楚（Plan），但每个都依赖实时库存和价格（ReAct），航班时间又会约束酒店和租车，执行中可能要重规划。' },
+    { t: '智能家居助手：控制灯光、空调、窗帘，按用户习惯自动调节。（原书习题 1）', a: 0, why: '以感知和即时控制为主，每步看设备状态再决定，ReAct 最自然；“按习惯调节”可以定期用 Reflection 回顾历史调整策略。' }
+  ]
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['ReAct 适用', '探索性、需要外部工具输入的任务。'],
+    ['Plan-and-Solve 适用', '逻辑路径确定、内部推理密集的任务。'],
+    ['Reflection 适用', '对质量、准确性要求极高，对实时性宽松的任务。']
+  ],
+  p: [
+    ['常见组合', 'Plan-and-Solve 定步骤、每步用 ReAct 执行、结果过 Reflection。'],
+    ['分层规划', '先高层抽象计划，再为每个高层步骤生成子计划。'],
+    ['选型一句话', '路径不确定选 ReAct，结构清楚选 Plan，质量优先加 Reflection。']
+  ]
+});

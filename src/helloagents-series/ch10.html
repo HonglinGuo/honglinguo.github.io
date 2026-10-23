@@ -1,0 +1,407 @@
+---
+title: 通信协议：MCP、A2A、ANP
+desc: Hello-Agents 学习笔记（十）：为什么需要通信协议；MCP 的 Host、Client、Server 与 Tools、Resources、Prompts，一次 JSON-RPC 交互走读，五种传输方式，与 Function Calling 的关系；A2A 的点对点协作、Task 与 Artifact、任务生命周期与协商；ANP 的服务注册、发现与路由；自建并发布 MCP 服务器；三种协议怎么选、怎么组合。
+kicker: <span>技术学习</span><span>Hello-Agents · 10</span><span>对应原书第 10 章</span><span>约 40 分钟</span>
+h1: 接工具、找同伴、<em>进网络</em>
+lead: 前九篇的智能体都是“单机版”：每个外部服务都要手写一个 Tool 类，能力被预先定死，几个智能体要协作只能手工编排。第十章引入三个协议来打破这三堵墙：MCP 让智能体用统一的方式接入工具和资源，A2A 让智能体之间点对点地派任务、交结果，ANP 让智能体在一个大网络里被注册、发现和路由。原书提醒，协议都还处在早期，这一章以会用为主，不必自己造轮子；但每个协议解决什么问题、核心对象是什么，值得记清楚。
+nav: why|为什么要协议;mcp|MCP 架构;rpc|一次 MCP 交互;transport|传输与接入;a2a|A2A;anp|ANP;server|自建 MCP 服务器;choose|怎么选;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.three > div { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 12px 14px; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.three h4 { margin: 0 0 4px; font-size: 18px; color: var(--ink); }
+.three h4 small { font-weight: 400; font-size: 15px; color: var(--ink-3); margin-left: 6px; }
+.three .q { display: block; margin-top: 6px; color: var(--s1); font-weight: 600; }
+@media (max-width: 760px) { .three { grid-template-columns: minmax(0, 1fr); } }
+.rpc { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.rpc .m { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 8px 12px; max-width: 88%; }
+.rpc .m.c { align-self: flex-start; border-left: 4px solid var(--s1); }
+.rpc .m.s { align-self: flex-end; border-right: 4px solid var(--ok); }
+.rpc .m.l { align-self: center; border-style: dashed; max-width: 100%; }
+.rpc .m b { display: block; font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+.rpc .m pre { margin: 0; font-family: var(--f-num); font-size: 15px; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); line-height: 1.55; }
+.life { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+.life span { font-family: var(--f-num); font-size: 15px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-3); }
+.life span.on { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); font-weight: 700; }
+.life span.done { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.life span.fail { border-color: var(--alert); background: var(--alert-soft); color: var(--ink); }
+.life i { font-style: normal; color: var(--ink-3); }
+.svc { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.svc div { display: grid; grid-template-columns: 8em minmax(0, 1fr) 4em 4.5em; gap: 8px; align-items: center; font-size: 15px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); }
+.svc div .n { font-family: var(--f-num); text-align: right; }
+.svc div.pick { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.svc div.no { opacity: .4; }
+.svc .hd { background: none; border: 0; color: var(--ink-3); padding-top: 0; padding-bottom: 0; }
+@media (max-width: 560px) { .svc div { grid-template-columns: 6.5em minmax(0, 1fr) 3.4em 3.8em; } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>MCP、A2A、ANP 各解决什么问题？一句话怎么区分？</li>
+    <li>MCP 的 Host、Client、Server 各干什么？Tools、Resources、Prompts 有什么不同？它和 Function Calling 是什么关系？</li>
+    <li>A2A 的核心对象是什么？ANP 的服务发现怎样挑选服务？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么需要通信协议</h2><span class="meta">原书 10.1 节，表 10.1</span></div>
+  <div class="sec-lede">
+    <p>第七篇的 ReActAgent 加上计算器和搜索就能干活，但有三个根本限制：<strong>工具集成困境</strong>（每个外部服务都要手写 Tool 类，不同开发者写的工具互不兼容，HTTP、错误处理、认证代码到处重复）、<strong>能力扩展瓶颈</strong>（能力限定在预先写好的工具里，无法在运行时发现新服务）、<strong>协作缺失</strong>（研究员、撰写员、编辑协作只能手工编排）。协议的价值就像 TCP/IP：给出一套标准接口，任何遵循它的服务都能被统一访问，带来<strong>标准化、互操作、动态发现、可扩展</strong>。</p>
+    <p>原书用三句话区分三个协议：<strong>MCP</strong>（Anthropic 提出）解决“如何访问工具”，设计哲学是<strong>上下文共享</strong>，不只是远程调用，还能提供结构、依赖、历史等上下文；<strong>A2A</strong>（Google 提出）解决“如何与其他智能体对话”，设计哲学是<strong>对等通信</strong>，每个智能体既是服务提供者也是消费者；<strong>ANP</strong>（开源社区维护的概念性框架，生态尚不成熟）解决“如何在大规模网络中发现和连接智能体”，设计哲学是<strong>去中心化服务发现</strong>。HelloAgents 分三层实现：协议实现层（MCP 基于 FastMCP，A2A 基于官方 a2a-sdk，ANP 是自研的概念模拟）、工具封装层（MCPTool、A2ATool、ANPTool 都是 Tool）、智能体集成层，于是协议对智能体来说仍然只是工具。</p>
+  </div>
+  <div class="three">
+    <div><h4>MCP<small>智能体 ↔ 工具</small></h4>Host、Client、Server 三层；Tools、Resources、Prompts 三种能力；JSON-RPC 消息，可走 stdio 或 HTTP。<span class="q">怎么访问工具？</span></div>
+    <div><h4>A2A<small>智能体 ↔ 智能体</small></h4>点对点网状拓扑；核心对象是 Task 和 Artifact；任务有标准生命周期，可以协商。<span class="q">怎么和别的智能体协作？</span></div>
+    <div><h4>ANP<small>智能体 ↔ 网络</small></h4>服务注册、发现、路由；按能力、负载、价格挑选服务。<span class="q">在一大群智能体里怎么找到合适的？</span></div>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="mcp">
+  <div class="part-head"><h2>MCP：智能体的 USB-C</h2><span class="meta">原书 10.2.1 节，表 10.2、10.3</span></div>
+  <div class="sec-lede">
+    <p>原书的比喻是 USB-C：不管用 Claude、GPT 还是别的模型，只要支持 MCP，就能接入同一批工具和资源，不用为每个服务、每家模型的 function call 格式各写一套适配。</p>
+    <p>架构三层，以在 Claude Desktop 里问“我桌面上有哪些文档”为例：<strong>Host</strong>（宿主，Claude Desktop）负责用户界面和与模型的对话流程；模型决定需要文件信息时，Host 里内置的 <strong>Client</strong> 负责连接合适的 Server、收发请求；文件系统 <strong>Server</strong> 执行真正的扫描并返回列表。关注点分离：开发者只需写 Server。Server 提供三种能力：<strong>Tools 是主动的</strong>（执行操作，如读写文件、搜索代码）、<strong>Resources 是被动的</strong>（提供数据，如文件内容、数据库记录，用 URI 标识）、<strong>Prompts 是指导性的</strong>（预定义的提示模板，如代码审查模板）。</p>
+    <p>模型怎么决定用哪个工具？五步：Client 连上 Server 后先 <code>list_tools()</code> 拿到名称、说明和参数 schema（<strong>工具发现</strong>）→ 转成模型能理解的格式放进提示（<strong>上下文构建</strong>）→ 模型判断要不要调、调哪个（<strong>模型推理</strong>）→ Client 经 Server 执行（<strong>工具执行</strong>）→ 结果交回模型生成回答（<strong>结果整合</strong>）。所以工具描述写得好不好仍然是关键。</p>
+    <p>MCP 和 Function Calling 不是竞争关系。原书的类比：<strong>Function Calling 是你学会了“怎么打电话”</strong>（模型知道何时调用、怎么生成参数），<strong>MCP 是全球统一的“电话通信标准”</strong>（工具怎样被描述、发现和连接）。</p>
+    <p class="go">下面这些服务器能力，属于 Tools、Resources 还是 Prompts？</p>
+  </div>
+  <div class="lab"><div id="trpSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：MCP vs Function Calling vs 第七篇的 ToolRegistry</h4>
+    <p><b>Function Calling</b> 是模型能力：看懂工具 schema，输出结构化调用。<b>ToolRegistry</b> 是 HelloAgents 进程内的工具管理：工具代码和智能体在同一个程序里。<b>MCP</b> 是跨进程、跨语言的连接标准：工具住在独立的 Server 里（可能是别人用 Node 写的），任何支持 MCP 的 Host 都能发现和调用它。三者叠在一起用：MCPTool 从 Server 拉来工具清单，注册进 ToolRegistry，再通过 Function Calling 或文本协议交给模型选。</p>
+  </div>
+  <div class="notes" id="n-mcp"></div>
+</section>
+
+<section class="part" id="rpc">
+  <div class="part-head"><h2>一次 MCP 交互长什么样</h2><span class="meta">原书 10.2.2 节、习题 2</span></div>
+  <div class="sec-lede">
+    <p>原书习题 2 点出了 MCP 的底层：消息格式是 <strong>JSON-RPC 2.0</strong>，本地默认通过 <strong>stdio</strong>（标准输入输出）和 Server 子进程通信。HelloAgents 的 <code>MCPClient</code> 提供异步 API：<code>async with client:</code> 建立并保证关闭连接，<code>await client.list_tools()</code> 发现工具，<code>await client.call_tool("read_file", {"path": "my_README.md"})</code> 调用，另有 list_resources、read_resource、list_prompts、get_prompt。</p>
+    <p class="go">逐条看客户端和文件系统服务器之间来回的消息（消息结构按 MCP 规范示意，字段有删减）。</p>
+  </div>
+  <div class="lab">
+    <div id="rpcStep"></div>
+    <div class="rpc" id="rpcBox"></div>
+  </div>
+  <div class="notes" id="n-rpc"></div>
+</section>
+
+<section class="part" id="transport">
+  <div class="part-head"><h2>传输方式与接入智能体</h2><span class="meta">原书 10.2.3–10.2.5 节，表 10.4</span></div>
+  <div class="sec-lede">
+    <p>MCP <strong>与传输层无关</strong>，同一套消息可以跑在不同通道上。HelloAgents 的 MCPClient 支持五种：<strong>Memory</strong>（进程内，<code>MCPTool()</code> 不带参数就用内置演示服务器，适合单元测试和快速原型）；<strong>Stdio</strong>（启动本地子进程，<code>server_command=["python", "my_server.py"]</code> 或 <code>["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]</code>，适合本地开发调试）；<strong>HTTP</strong>（连远程服务，适合生产和微服务）；<strong>SSE</strong>（Server-Sent Events，服务器推送，适合实时流式和长连接）；<strong>StreamableHTTP</strong>（需要双向流式的 HTTP 场景）。MCPTool 主要封装前两种，远程传输建议直接用底层 MCPClient。</p>
+    <p>接入智能体时，MCPTool 有一个<strong>自动展开</strong>特性：把它加给 Agent，它会把 Server 提供的每个工具展开成独立工具，智能体像调普通工具一样调用它们。社区已有大量现成 Server（文件系统、GitHub、数据库、地图等），原书建议优先选大公司背书、持续维护的。</p>
+    <p class="go">每个场景该用哪种传输？</p>
+  </div>
+  <div class="lab"><div id="tpCards"></div></div>
+  <div class="notes" id="n-transport"></div>
+</section>
+
+<section class="part" id="a2a">
+  <div class="part-head"><h2>A2A：智能体之间派任务、交工件</h2><span class="meta">原书 10.3 节，表 10.7，图 10.7–10.8</span></div>
+  <div class="sec-lede">
+    <p>多个智能体协作，最直观的是一个中央协调器（星型拓扑），但它有三个毛病：<strong>单点故障</strong>、<strong>性能瓶颈</strong>（所有通信都过中心）、<strong>扩展困难</strong>（加减智能体要改中心逻辑）。A2A 采用<strong>点对点的网状拓扑</strong>，智能体之间直接通信。它与 MCP 最大的区别在于两个核心抽象：<strong>Task</strong>（一个被委托的工作单元，有状态）和 <strong>Artifact</strong>（任务产出的工件）。任务有标准生命周期：创建、协商、代理、执行中，最终完成或失败；一次请求要经过<strong>代理发现、身份验证、发送消息、流式消息</strong>四步。</p>
+    <p>HelloAgents 里，<code>A2AServer(name, description)</code> 把一个智能体发布成服务，用 <code>@server.skill("research")</code> 装饰器声明技能；<code>A2AClient(url).execute_skill("research", "...")</code> 调用；<code>A2ATool</code> 把远程智能体包装成工具交给协调者 Agent。原书的例子有研究员 + 撰写员的流水线、接待员把问题分给技术专家或销售顾问的客服系统，以及两个 Agent 关于截止期限的<strong>协商</strong>：提案的 deadline 少于 7 天就拒绝并给出反提案。</p>
+    <p class="go">走一遍任务的生命周期，切换“协商”和“失败”两条分支。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>分支</span><div class="seg" id="lfSeg"><button data-v="ok" aria-pressed="true">顺利完成</button><button data-v="neg">先协商再接受</button><button data-v="fail">执行失败</button></div></div>
+    <div id="lfStep"></div>
+    <div class="life" id="life"></div>
+    <div class="ha-state" id="lfInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="confuse">
+    <h4>读代码时注意：别对远端消息用 eval</h4>
+    <p>原书 A2A 示例里，撰写员用 <code>eval(content)</code> 把研究员发来的字符串还原成字典，协商示例也用 <code>eval(proposal_str)</code> 解析提案。在单机演示里无害，但 A2A 的意义恰恰是接收<b>别的智能体、甚至别的组织</b>发来的消息，对它们 eval 等于允许远端执行任意代码。实际使用应传 JSON 并用 <code>json.loads</code> 加 schema 校验。这是我的读码观察；原书习题 5 也在追问协议的安全问题。</p>
+  </div>
+  <div class="notes" id="n-a2a"></div>
+</section>
+
+<section class="part" id="anp">
+  <div class="part-head"><h2>ANP：在一大群智能体里找到合适的</h2><span class="meta">原书 10.4 节，表 10.8</span></div>
+  <div class="sec-lede">
+    <p>网络里有成百上千个能力各异的智能体时，会遇到三个问题：<strong>服务发现</strong>（新任务来了，谁能处理？）、<strong>智能路由</strong>（好几个都能处理，按负载、成本选哪个？）、<strong>动态扩展</strong>（新加入的智能体怎么被别人发现？）。ANP 就是为此准备的一套机制。HelloAgents 的实现是概念模拟：<code>register_service</code> 登记服务（id、名称、类型、能力列表、端点、元数据如负载和价格）；<code>discover_service(discovery, service_type="nlp")</code> 按类型或能力查询；挑选策略由调用方决定，原书示例是 <code>min(..., key=负载)</code>；<code>ANPNetwork</code> 再把服务作为节点连成网络、统计拓扑。原书习题 4 还追问了星型、网状、分层拓扑怎么选，以及关键节点故障时的容错。</p>
+    <p class="go">发一个任务，选一个路由策略，看哪个服务被选中（服务与数值为示意，前两个取自原书示例）。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>需要的能力</span><div class="seg" id="capSeg"><button data-v="sentiment_analysis" aria-pressed="true">sentiment_analysis</button><button data-v="translation">translation</button><button data-v="text_analysis">text_analysis</button></div></div>
+    <div class="selrow"><span>路由策略</span><div class="seg" id="polSeg"><button data-v="load" aria-pressed="true">负载最低</button><button data-v="price">价格最低</button><button data-v="mix">综合（负载 × 0.6 + 归一化价格 × 0.4）</button></div></div>
+    <div class="svc" id="svc"></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn" type="button" id="addSvc">注册一个新服务 nlp_agent_3</button></div>
+    <p class="note" id="svcNote"></p>
+  </div>
+  <div class="notes" id="n-anp"></div>
+</section>
+
+<section class="part" id="server">
+  <div class="part-head"><h2>自建并发布 MCP 服务器</h2><span class="meta">原书 10.5 节</span></div>
+  <div class="sec-lede">
+    <p>为什么要自己写 Server？四个动机：<strong>封装业务逻辑</strong>（把企业内部流程做成标准工具）、<strong>访问私有数据</strong>（给不能暴露到公网的数据库、API 建一个可控代理）、<strong>性能专项优化</strong>、<strong>功能定制</strong>（专有算法、特定硬件）。原书的教学例子是一个天气服务器：用 HelloAgents 的 <code>MCPServer(name="weather-server", ...)</code> 创建，内部调 wttr.in（中文城市名映射成英文），对外提供 get_weather、list_supported_cities、get_server_info 三个工具，返回 JSON 字符串；再用 MCPClient 以 stdio 方式启动它做测试，最后挂给 Agent 使用。</p>
+    <p>发布到 <strong>Smithery</strong>（原书称它是 MCP 服务器的发布平台，类似 PyPI、npm）：项目需要 README、LICENSE、Dockerfile（推荐）、<strong>pyproject.toml（必需）</strong>、requirements.txt、<strong>smithery.yaml（必需，写名称、描述、版本、运行方式 runtime: container、构建与启动命令、工具清单）</strong>和 server.py。</p>
+    <p class="go">发布前的检查单：拿掉一项看会出什么问题。</p>
+  </div>
+  <div class="lab"><div id="pubCheck"></div></div>
+  <div class="notes" id="n-server"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>怎么选，怎么组合</h2><span class="meta">原书 10.1.2 节（4），习题 1</span></div>
+  <div class="sec-lede">
+    <p>原书的选择口诀：<strong>要访问外部服务（文件、数据库、API）用 MCP；要多个智能体相互协作用 A2A；要构建大规模智能体生态考虑 ANP。</strong>三者不是互斥的：一个智能客服系统里，每个智能体用 MCP 访问订单库和知识库，接待员通过 A2A 把复杂问题委托给技术专家或销售顾问，大规模部署时用 ANP 式的注册发现把请求路由到负载最低的实例。</p>
+    <p class="go">原书习题 1 的三项需求，各用哪个协议？</p>
+  </div>
+  <div class="lab"><div id="pcCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>智能体与用户界面之间的协议（AG-UI、A2UI、MCP Apps）见<a href="../2026-10-15-agent-ui-protocols/">《Agent 的界面谁来画》</a>；工具、MCP、A2A 的模式卡见<a href="../2026-10-16-adp-3/">《Agentic 设计模式》03 篇</a>；企业里的异步任务、多 Agent 与分布式通信见<a href="../2026-10-22-handbook-9/">《AI Agent Handbook》09 篇</a>。</div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 10 章习题</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="10-1">
+      <p class="iv-q">了解 A2A 吗？它和普通 Agent 框架的区别在哪？挑一个最关键的不同点说明。<small>Extra01 · Agent 第 11 题</small></p>
+      <ul class="iv-a">
+        <li><b>定位不同</b>：AutoGen、CAMEL 等框架是“怎么在一个程序里编排多个智能体”；A2A 是“不同程序、不同厂商、不同框架的智能体之间怎么通信”的开放协议。</li>
+        <li><b>最关键的不同</b>：跨边界互操作。A2A 智能体通过网络端点暴露技能，有标准的发现、认证、消息与流式接口，以及带生命周期的 Task 和 Artifact；框架内的智能体通常共享进程和内存，换个框架就无法对话。</li>
+        <li><b>关系</b>：互补而非替代，可以用 AutoGen 写一个智能体，再通过 A2A 把它发布给外部调用（原书习题 3 的思路）。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="10-2">
+      <p class="iv-q">MCP 用 JSON-RPC 2.0 + stdio 通信，有什么优势和局限？怎么支持远程服务器？<small>原书第 10 章习题 2</small></p>
+      <ul class="iv-a">
+        <li><b>优势</b>：JSON-RPC 简单、语言无关、请求响应带 id 易于匹配；stdio 无需网络端口，进程隔离，本地部署零配置，Host 能管理 Server 的生命周期。</li>
+        <li><b>局限</b>：只能本机；一个 Host 一个子进程，难以共享和扩容；没有内建的认证与多租户。</li>
+        <li><b>远程</b>：同样的消息换成 HTTP / SSE / StreamableHTTP 传输，补上认证（令牌、OAuth）、TLS、限流和会话管理；HelloAgents 中用 MCPClient(url, transport_type=...) 连接。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="10-3">
+      <p class="iv-q">MCP 服务器提供了删除文件、执行命令这类危险工具，怎么做权限控制？<small>原书第 10 章习题 5</small></p>
+      <ul class="iv-a">
+        <li><b>最小授权</b>：只挂载需要的 Server 和工具，文件系统 Server 限定根目录；按工具名配置允许 / 拒绝 / 需确认三档。</li>
+        <li><b>人在回路</b>：写操作、外部发送、删除等高风险调用前弹出确认，或走审批流。</li>
+        <li><b>隔离与身份</b>：Server 跑在沙箱或容器里，用短时、低权限的凭证；远程 Server 要认证调用方。</li>
+        <li><b>审计</b>：记录每次调用的参数和结果；警惕工具描述或返回内容里夹带的提示注入。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 三个协议一句话区分？</summary><p class="ans">MCP 解决智能体如何以统一方式访问工具与资源（智能体 ↔ 工具，上下文共享）；A2A 解决智能体之间如何点对点地委托任务、交付工件（智能体 ↔ 智能体，对等通信）；ANP 解决大规模网络里如何注册、发现、路由智能体（智能体 ↔ 网络，去中心化服务发现）。</p></details>
+    <details><summary>2. MCP 三层与三能力？与 Function Calling 的关系？</summary><p class="ans">Host 是用户交互和模型对话的宿主（如 Claude Desktop）；Client 内置在 Host 中，负责连接 Server、收发 JSON-RPC 消息；Server 提供具体能力。Tools 主动执行操作，Resources 被动提供数据（URI 标识），Prompts 提供预定义模板。Function Calling 是模型“会打电话”的能力，MCP 是统一的“电话标准”，二者互补：MCP 负责发现和连接工具，模型用 Function Calling 决定何时调用、生成参数。</p></details>
+    <details><summary>3. A2A 核心对象？ANP 怎样选服务？</summary><p class="ans">A2A 的核心是 Task（带生命周期的被委托工作：创建、协商、代理、执行中、完成或失败）和 Artifact（任务产出的工件）；请求经过发现、认证、发送消息、流式消息。ANP 先按服务类型或能力从注册表发现候选，再按路由策略（负载最低、价格最低或综合打分）挑选，新服务注册后即可被发现。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.notes($('#n-why'), {
+  c: [
+    ['三个限制', '工具集成困境、能力扩展瓶颈、协作缺失。'],
+    ['MCP', 'Anthropic 提出，智能体 ↔ 工具，设计哲学：上下文共享。'],
+    ['A2A', 'Google 提出，智能体 ↔ 智能体，设计哲学：对等通信。'],
+    ['ANP', '开源社区维护的概念框架，智能体 ↔ 网络，设计哲学：去中心化服务发现。']
+  ],
+  p: [
+    ['协议带来的四点', '标准化接口、互操作性、动态发现、可扩展性。'],
+    ['HelloAgents 三层', '协议实现层（FastMCP、a2a-sdk、自研 ANP）→ 工具封装层（MCPTool、A2ATool、ANPTool）→ 智能体集成层。']
+  ]
+});
+
+S.sortGame($('#trpSort'), {
+  bins: [{ k: 't', t: 'Tools（主动）' }, { k: 'r', t: 'Resources（被动）' }, { k: 'p', t: 'Prompts（指导）' }],
+  items: [
+    { t: 'write_file：把内容写入指定路径', k: 't', why: '执行操作、改变状态，是工具。' },
+    { t: 'file:///project/README.md 的内容', k: 'r', why: '用 URI 标识、供读取的数据，是资源。' },
+    { t: '“code_review”模板：按语言生成审查清单', k: 'p', why: '预定义的提示模板。' },
+    { t: 'search_code：按关键词在仓库里搜索', k: 't', why: '主动执行查询。' },
+    { t: '数据库某张表的 schema 描述', k: 'r', why: '被动提供的上下文数据。' },
+    { t: '“写周报”模板：带固定小节的提示', k: 'p', why: '指导模型如何组织输出的模板。' }
+  ]
+});
+S.notes($('#n-mcp'), {
+  c: [
+    ['Host / Client / Server', '宿主（界面与对话）/ 内置客户端（连接与收发）/ 服务器（具体能力）。'],
+    ['Tools / Resources / Prompts', '主动执行 / 被动提供数据 / 指导性模板。']
+  ],
+  p: [
+    ['选工具五步', '工具发现 → 上下文构建 → 模型推理 → 工具执行 → 结果整合。'],
+    ['与 Function Calling', 'FC 是“会打电话”，MCP 是“电话标准”，互补。'],
+    ['USB-C 比喻', '一个接口接所有工具，换模型不用重写适配。']
+  ]
+});
+
+/* ---------- RPC ---------- */
+var RPC = [
+  ['l', '启动', '$ npx -y @modelcontextprotocol/server-filesystem .\n（Client 以 stdio 启动 Server 子进程，之后的消息都走它的标准输入输出）'],
+  ['c', 'Client → Server：initialize', '{"jsonrpc": "2.0", "id": 1, "method": "initialize",\n "params": {"protocolVersion": "…", "clientInfo": {"name": "hello-agents"}, "capabilities": {}}}'],
+  ['s', 'Server → Client：声明能力', '{"jsonrpc": "2.0", "id": 1, "result": {\n  "serverInfo": {"name": "filesystem"},\n  "capabilities": {"tools": {}, "resources": {}}}}'],
+  ['c', 'Client → Server：tools/list', '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'],
+  ['s', 'Server → Client：工具清单', '{"jsonrpc": "2.0", "id": 2, "result": {"tools": [\n  {"name": "read_file", "description": "Read the complete contents of a file…",\n   "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},\n  {"name": "list_directory", …}, {"name": "write_file", …} ]}}'],
+  ['l', '交给模型', 'MCPTool 把清单展开成独立工具，描述和 inputSchema 进入提示（或转成 Function Calling 的 tools）。模型回答：要调 read_file，path = "my_README.md"。'],
+  ['c', 'Client → Server：tools/call', '{"jsonrpc": "2.0", "id": 3, "method": "tools/call",\n "params": {"name": "read_file", "arguments": {"path": "my_README.md"}}}'],
+  ['s', 'Server → Client：结果', '{"jsonrpc": "2.0", "id": 3, "result": {\n  "content": [{"type": "text", "text": "# My Project\\n…"}]}}'],
+  ['l', '回到模型', '结果作为 Observation（或 role=tool 消息）交回模型生成最终回答。注意每条请求都带 id，响应用同一个 id 对上，这就是 JSON-RPC 能在同一条管道里并发的原因。']
+];
+S.stepper($('#rpcStep'), RPC.length, function (i) {
+  $('#rpcBox').innerHTML = RPC.slice(0, i + 1).map(function (m, k) {
+    return '<div class="m ' + m[0] + '" style="' + (k === i ? '' : 'opacity:.55') + '"><b>' + m[1] + '</b><pre>' + m[2].replace(/</g, '&lt;') + '</pre></div>';
+  }).join('');
+}, RPC.map(function (x) { return x[1].replace(/^.*：/, ''); }));
+S.notes($('#n-rpc'), {
+  c: [
+    ['JSON-RPC 2.0', 'MCP 的消息格式：method + params 请求，id 匹配的 result 或 error 响应。'],
+    ['三步主线', 'initialize 握手 → tools/list 发现 → tools/call 调用。']
+  ],
+  p: [
+    ['MCPClient 用法', 'async with client: → await list_tools() → await call_tool(name, args)。'],
+    ['其他方法', 'list_resources / read_resource、list_prompts / get_prompt。'],
+    ['调用要容错', 'call_tool 包 try/except，文件不存在等错误转成可读信息。']
+  ]
+});
+
+/* ---------- 传输 ---------- */
+HB.cards($('#tpCards'), {
+  opts: ['Memory', 'Stdio', 'HTTP', 'SSE / StreamableHTTP'],
+  items: [
+    { t: '写单元测试，验证 Agent 能正确调用一个 add 工具。', a: 0, why: '进程内、无需启动任何服务，MCPTool() 不带参数就用内置演示服务器。' },
+    { t: '本地开发时接入社区的文件系统服务器。', a: 1, why: 'npx 启动子进程，经标准输入输出通信，最常用的本地方式。' },
+    { t: '公司把内部知识库封装成 MCP 服务，部署在服务器上给多个团队用。', a: 2, why: '远程、生产环境、微服务化，用 HTTP 传输并加上认证。' },
+    { t: '一个长时间运行的工具需要持续推送进度。', a: 3, why: '服务器推送或双向流式，用 SSE 或 StreamableHTTP。' }
+  ]
+});
+S.notes($('#n-transport'), {
+  c: [
+    ['传输无关', 'MCP 消息与传输方式解耦，同一协议可跑在多种通道上。'],
+    ['五种传输', 'Memory（测试）、Stdio（本地）、HTTP（远程生产）、SSE（实时推送）、StreamableHTTP（双向流式）。'],
+    ['自动展开', 'MCPTool 把 Server 的每个工具展开成 Agent 的独立工具。']
+  ],
+  p: [
+    ['MCPTool 封装', '主要支持 Memory 与 Stdio；远程传输用底层 MCPClient。'],
+    ['选社区 Server', '优先大公司背书、持续维护的。']
+  ]
+});
+
+/* ---------- A2A ---------- */
+var LF = {
+  ok: [['created', '协调者向研究员发起 Task：“research AI 在医疗领域的应用”。先经过代理发现（拿到对方的能力描述）和身份验证。'], ['delegated', '研究员接下任务（代理）。'], ['working', '执行中：研究员调用自己的工具检索资料，可以通过流式消息推送进度。'], ['completed', '完成：返回 Artifact，{"topic": …, "findings": …, "sources": [3 条]}。协调者再把它交给撰写员。']],
+  neg: [['created', 'agent2 向 agent1 发起提案：{"task": "写报告", "deadline": 5}。'], ['negotiating', '协商：agent1 规则是至少 7 天，回复 {"accepted": false, "message": "时间太紧", "counter_proposal": {"deadline": 7}}。'], ['negotiating', 'agent2 接受反提案，重新提交 deadline = 7。'], ['working', 'agent1 接受并开始执行。'], ['completed', '按期交付 Artifact。协商让双方在执行前就把约束对齐，而不是做到一半才失败。']],
+  fail: [['created', '接待员把客户问题委托给技术专家。'], ['working', '技术专家执行中，调用的内部 API 超时。'], ['failed', '任务进入失败状态并返回错误原因。生命周期是显式的，委托方能据此重试、换一个智能体，或转人工，而不是无限等待。']]
+};
+var lmode = 'ok';
+var ALLST = ['created', 'negotiating', 'delegated', 'working', 'completed', 'failed'];
+function mkLife() {
+  $('#lfStep').innerHTML = '';
+  var steps = LF[lmode];
+  S.stepper($('#lfStep'), steps.length, function (i) {
+    var cur = steps[i][0], seen = steps.slice(0, i + 1).map(function (x) { return x[0]; });
+    $('#life').innerHTML = ALLST.map(function (s) {
+      var c = s === cur ? (s === 'completed' ? 'done' : s === 'failed' ? 'fail' : 'on') : seen.indexOf(s) >= 0 ? 'done' : '';
+      return '<span class="' + c + '">' + s + '</span>';
+    }).join('<i>→</i>');
+    $('#lfInfo').innerHTML = '<p>' + steps[i][1] + '</p>';
+  });
+}
+S.seg($('#lfSeg'), function (v) { lmode = v; mkLife(); });
+mkLife();
+S.notes($('#n-a2a'), {
+  c: [
+    ['星型拓扑的三个问题', '单点故障、性能瓶颈、扩展困难。'],
+    ['Task / Artifact', '带生命周期的被委托工作单元 / 任务产出的工件。'],
+    ['任务生命周期', '创建、协商、代理、执行中、完成、失败。']
+  ],
+  p: [
+    ['请求四步', '代理发现 → 身份验证 → 发送消息 → 流式消息。'],
+    ['HelloAgents 用法', 'A2AServer + @skill 发布；A2AClient.execute_skill 调用；A2ATool 交给协调者。'],
+    ['安全提醒', '远端消息用 JSON + 校验解析，不要 eval。']
+  ]
+});
+
+/* ---------- ANP ---------- */
+var SVC = [
+  { id: 'nlp_agent_1', name: 'NLP处理专家A', caps: ['text_analysis', 'sentiment_analysis', 'ner'], load: 0.3, price: 0.01 },
+  { id: 'nlp_agent_2', name: 'NLP处理专家B', caps: ['text_analysis', 'translation'], load: 0.7, price: 0.02 },
+  { id: 'nlp_agent_4', name: 'NLP处理专家D', caps: ['sentiment_analysis', 'translation'], load: 0.15, price: 0.05 }
+];
+var cap = 'sentiment_analysis', pol = 'load';
+function anp() {
+  var cand = SVC.filter(function (s) { return s.caps.indexOf(cap) >= 0; });
+  var maxP = Math.max.apply(null, SVC.map(function (s) { return s.price; }));
+  function sc(s) { return pol === 'load' ? s.load : pol === 'price' ? s.price : s.load * 0.6 + (s.price / maxP) * 0.4; }
+  var best = cand.length ? cand.reduce(function (a, b) { return sc(b) < sc(a) ? b : a; }) : null;
+  $('#svc').innerHTML = '<div class="hd"><span>service_id</span><span>capabilities</span><span class="n">load</span><span class="n">price</span></div>' + SVC.map(function (s) {
+    var ok = s.caps.indexOf(cap) >= 0;
+    return '<div class="' + (s === best ? 'pick' : ok ? '' : 'no') + '"><span>' + s.id + '</span><span>' + s.caps.join(', ') + '</span><span class="n">' + s.load + '</span><span class="n">' + s.price + '</span></div>';
+  }).join('');
+  $('#svcNote').textContent = best ? '发现 ' + cand.length + ' 个具备 ' + cap + ' 的服务，按“' + { load: '负载最低', price: '价格最低', mix: '综合打分' }[pol] + '”选中 ' + best.id + '。' + (pol === 'load' ? ' 原书示例就是 min(services, key=负载)。' : '') + ' 路由策略不属于协议本身，由调用方决定。' : '没有任何服务具备 ' + cap + '，需要等新服务注册。';
+}
+S.seg($('#capSeg'), function (v) { cap = v; anp(); });
+S.seg($('#polSeg'), function (v) { pol = v; anp(); });
+$('#addSvc').addEventListener('click', function () {
+  if (SVC.some(function (s) { return s.id === 'nlp_agent_3'; })) return;
+  SVC.push({ id: 'nlp_agent_3', name: 'NLP处理专家C', caps: ['text_analysis', 'sentiment_analysis', 'translation'], load: 0.1, price: 0.015 });
+  anp();
+  $('#svcNote').textContent += ' 新服务注册后立即可被发现，这就是“动态扩展”。';
+});
+anp();
+S.notes($('#n-anp'), {
+  c: [
+    ['ANP 解决的三件事', '服务发现、智能路由、动态扩展。'],
+    ['register_service', '登记 id、名称、类型、能力、端点、元数据（负载、价格、版本）。'],
+    ['discover_service', '按类型或能力查询候选服务。']
+  ],
+  p: [
+    ['路由策略', '由调用方决定：负载最低、价格最低或综合打分。'],
+    ['ANPNetwork', '把服务作为节点连成网络，统计拓扑。'],
+    ['现状', 'HelloAgents 的 ANP 是概念模拟；官方实现另有 AgentConnect 项目。']
+  ]
+});
+
+/* ---------- 发布 ---------- */
+HB.check($('#pubCheck'), {
+  items: [
+    { t: 'server.py', d: 'MCPServer 定义工具，返回结构化结果', miss: '没有服务本身。' },
+    { t: 'smithery.yaml（必需）', d: '名称、描述、版本、runtime、构建与启动命令、工具清单', miss: 'Smithery 不知道怎么构建和启动你的服务，发布失败。' },
+    { t: 'pyproject.toml（必需）', d: 'Python 项目配置与依赖', miss: '平台无法安装你的包和依赖。' },
+    { t: 'Dockerfile（推荐）', d: '容器化构建', miss: '运行环境不可复现，runtime: container 时无从构建。' },
+    { t: 'README 与 LICENSE', d: '用法说明与开源许可', miss: '别人不知道怎么用、能不能用。' },
+    { t: '工具内的错误处理', d: '网络失败、城市不支持时返回明确的 error 字段', miss: '一次 wttr.in 超时就会让调用方拿到一个异常堆栈，模型无从理解。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>可以发布</b>：别人能在 Smithery 上搜到、一键安装，并在任何支持 MCP 的 Host 里使用。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　缺了这些：</p>'; }
+});
+S.notes($('#n-server'), {
+  c: [
+    ['自建 Server 的四个动机', '封装业务逻辑、访问私有数据、性能优化、功能定制。'],
+    ['Smithery', 'MCP 服务器发布平台，类似 PyPI、npm。']
+  ],
+  p: [
+    ['必需文件', 'pyproject.toml、smithery.yaml；推荐 Dockerfile。'],
+    ['测试方式', 'MCPClient(["python", "server.py"]) 以 stdio 启动并逐个调用工具。']
+  ]
+});
+
+/* ---------- 怎么选 ---------- */
+HB.cards($('#pcCards'), {
+  opts: ['MCP', 'A2A', 'ANP'],
+  items: [
+    { t: '（1）访问客户数据库和订单系统', a: 0, why: '智能体访问外部数据与服务，用 MCP 把它们封装成标准 Server。' },
+    { t: '（2）多个专业客服智能体协作处理复杂问题', a: 1, why: '智能体之间委托任务、交付结果，用 A2A。' },
+    { t: '（3）支持大规模并发用户请求，多个实例动态伸缩', a: 2, why: '大规模下的注册、发现与按负载路由，是 ANP 关心的问题。' },
+    { t: '把公司内部的工单系统开放给各种 AI 助手使用', a: 0, why: '把一个系统变成任何 Host 都能接的工具，正是 MCP 的用途。' }
+  ]
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['选择口诀', '访问外部服务用 MCP；智能体协作用 A2A；大规模生态考虑 ANP。']
+  ],
+  p: [
+    ['组合使用', '每个智能体用 MCP 接工具，智能体之间用 A2A，规模化时用注册发现做路由。'],
+    ['成熟度', 'MCP 生态相对成熟；A2A 有官方 SDK；ANP 仍以概念为主。']
+  ]
+});

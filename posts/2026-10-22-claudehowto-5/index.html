@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subagents：另开一个上下文窗口去干活</title>
+<meta name="description" content="Claude How To 学习笔记（五）：Subagent 解决的问题与委派过程演示；定义文件的字段（tools、model、permissionMode、memory、isolation、hooks）；六个内置子代理；定义的位置优先级与四种调用方式；后台运行、worktree 隔离、分叉子代理；嵌套深度与并发上限；Agent Teams 与 Subagents 的区别；插件子代理的安全限制。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2.5' y='4' width='19' height='16' rx='3' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M6.5 9.5l3 2.5-3 2.5' fill='none' stroke='%232340D6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 15h5' stroke='%2313171C' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.lanes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 640px) { .lanes { grid-template-columns: minmax(0, 1fr); } }
+.lanes > div { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 10px 12px; min-height: 12em; }
+.lanes h5 { margin: 0 0 6px; font-size: 15px; color: var(--ink-3); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.lanes h5 span { font-family: var(--f-num); color: var(--s1); }
+.lanes p { margin: 4px 0; font-size: 15px; line-height: 1.55; color: var(--ink-2); padding: 4px 8px; border-left: 3px solid var(--rule); border-radius: 0 4px 4px 0; }
+.lanes p.n { border-left-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.lanes p.sub { border-left-color: var(--s3); }
+.lanes .idle { color: var(--ink-3); font-size: 15px; }
+</style>
+</head>
+<body data-series="claudehowto-series" data-part="5">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Claude How To · 05</span><span>对应原文 04-subagents</span><span>约 30 分钟</span></p>
+  <h1>派一个人去，<em>只把结论带回来</em></h1>
+  <p class="lead">Subagent 是 Claude 可以委派任务的专职助手：有自己的上下文窗口、自己的系统提示词、自己的一组工具。它最大的价值不是“更专业”，而是隔离：调研时读的几十个文件、跑测试时滚出来的几千行日志，都留在它自己的窗口里，主对话只收到一段提炼过的结果。这一篇讲怎么定义一个子代理、内置的几个各干什么、它什么时候在后台跑，以及它和 Agent Teams 的区别。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/luongnv89/claude-howto" rel="noopener">Claude How To</a>》（luongnv89 与社区贡献者编写，MIT 协议；本笔记依据 2026 年 10 月 20 日的仓库版本（commit 188f468），原文标注对应 Claude Code v2.1.302）的学习笔记。原教程按十个模块（01-slash-commands 到 10-cli）组织，配了大量可复制的模板。这里重排成十二篇：先用一篇讲清七种扩展机制的分工，再逐个拆开，每个功能按“它解决什么问题、最小可用配置放在哪个路径、什么时候不该用”来写，并配上“读配置猜行为”、模拟器和场景判定题。功能与字段取自原文（主要依据英文原版，中文版是它的缩写译本），每节标出对应的原文目录；为演示设的场景和数值标“示意”。Claude Code 更新很快，原文里带版本号的细节以原文和官方文档为准。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-claudehowto/"><b>总览</b>速查卡</a>
+  <a href="../2026-10-22-claudehowto-1/" data-part="1"><b>01</b>全景</a>
+  <a href="../2026-10-22-claudehowto-2/" data-part="2"><b>02</b>斜杠命令</a>
+  <a href="../2026-10-22-claudehowto-3/" data-part="3"><b>03</b>Memory</a>
+  <a href="../2026-10-22-claudehowto-4/" data-part="4"><b>04</b>Skills</a>
+  <a href="../2026-10-22-claudehowto-5/" aria-current="page" data-part="5"><b>05</b>Subagents</a>
+  <a href="../2026-10-22-claudehowto-6/" data-part="6"><b>06</b>MCP</a>
+  <a href="../2026-10-22-claudehowto-7/" data-part="7"><b>07</b>Hooks</a>
+  <a href="../2026-10-22-claudehowto-8/" data-part="8"><b>08</b>Plugins</a>
+  <a href="../2026-10-22-claudehowto-9/" data-part="9"><b>09</b>回退与会话</a>
+  <a href="../2026-10-22-claudehowto-10/" data-part="10"><b>10</b>规划与权限</a>
+  <a href="../2026-10-22-claudehowto-11/" data-part="11"><b>11</b>后台与远程</a>
+  <a href="../2026-10-22-claudehowto-12/" data-part="12"><b>12</b>CLI 与脚本</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">它解决什么</a><a href="#cfg">定义文件</a><a href="#builtin">内置子代理</a><a href="#call">位置与调用</a><a href="#run">后台、隔离与分叉</a><a href="#teams">Agent Teams</a><a href="#mem">持久记忆与安全</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Subagent 和“在主对话里直接让 Claude 干”相比，多了什么、少了什么？什么时候不值得用？</li>
+    <li>定义一个只读安全审查员，最少要写哪几行？<code>tools</code> 不写会怎样？定义放在哪里、同名时谁生效？</li>
+    <li>后台子代理、worktree 隔离、分叉子代理、Agent Teams 各解决什么问题？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>它解决什么</h2><span class="meta">原文 04-subagents「Overview」「Key Benefits」「Context Management」</span></div>
+  <div class="sec-lede">
+    <p>原文列了 Subagent 的五个作用：<strong>隔离上下文</strong>（每个子代理从干净的窗口开始，不带主对话历史，只拿到任务所需的那部分）、<strong>定制系统提示词</strong>（专注某一领域）、<strong>控制工具权限</strong>（安全审查员只给 Read 和 Grep）、<strong>防止上下文污染</strong>、<strong>并行执行</strong>。干完以后结果被“提炼”交回主代理，主对话因此能撑得更久。</p>
+    <p>代价也写得很清楚：子代理从零开始，要自己重新收集上下文，<strong>会增加延迟</strong>。所以原文的判断表是：多步骤的复杂功能、并行任务、需要专门提示词、长时间分析——用；快速代码审查、单一任务——不用，“徒增开销”。</p>
+    <p class="go">先看一张功能卡，再一步步看一次委派是怎么走的（过程为示意）。</p>
+  </div>
+  <div class="fcard">
+    <h3>Subagent<small>.claude/agents/名字.md</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>大量阅读或冗长输出会塞满主对话；某类任务需要固定角色、固定工具边界；几件独立的事想并行做。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcAg"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>简单的单步任务（启动和重新收集上下文的开销不划算）；需要和你来回讨论的工作（子代理只回结果）；角色重叠的多个子代理；给了不必要的工具权限。</dd>
+    </dl>
+  </div>
+  <div class="lab">
+    <p class="lab-t">一次委派：“先摸清鉴权逻辑分布在哪，再回来讨论方案”</p>
+    <div id="dlStep"></div>
+    <div class="lanes"><div><h5>主对话<span id="mainTk"></span></h5><div id="laneM"></div></div><div><h5>Explore 子代理的窗口<span id="subTk"></span></h5><div id="laneS"></div></div></div>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="cfg">
+  <div class="part-head"><h2>定义文件</h2><span class="meta">原文「Configuration」「Configuration Fields」「Tool Configuration Options」</span></div>
+  <div class="sec-lede">
+    <p>子代理是一个 Markdown 文件：YAML frontmatter 写配置，正文就是它的系统提示词。必填只有两项：<code>name</code>（小写字母和连字符；含 <code>:</code> 的名字从 v2.1.218 起会被拒绝，冒号留给插件命名空间）和 <code>description</code>（什么时候该用它，写上 “use PROACTIVELY” 会让 Claude 更积极地委派）。</p>
+    <p>常用的可选字段：<code>tools</code>（不写就<strong>继承全部工具</strong>；可以写成 <code>Bash(npm:*)</code> 这种带条件的形式）、<code>disallowedTools</code>、<code>model</code>（sonnet / opus / haiku / 完整 ID / inherit）、<code>permissionMode</code>、<code>maxTurns</code>、<code>skills</code>（预加载 Skill 正文）、<code>mcpServers</code>（只给这个子代理用的 MCP）、<code>memory</code>、<code>background</code>、<code>effort</code>、<code>isolation: worktree</code>、<code>hooks</code>、<code>color</code>，以及 <code>omitClaudeMd: true</code>（启动时不带用户、项目、本地 CLAUDE.md）。创建方式原文推荐“让 Claude 帮你写”：说一句“创建一个审查安全问题的子代理”，它会生成文件；<code>/agents</code> 的交互向导在 v2.1.198 已移除。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="agq"></div></div>
+  <div class="notes" id="n-cfg"></div>
+</section>
+
+<section class="part" id="builtin">
+  <div class="part-head"><h2>内置子代理</h2><span class="meta">原文「Built-in Subagents」</span></div>
+  <div class="sec-lede">
+    <p>Claude Code 自带六个子代理。<strong>general-purpose</strong>：继承模型、全部工具，做既要探索又要修改的复杂多步任务。<strong>Plan</strong>：plan mode 下用来调研代码库，工具是 Read、Glob、Grep、Bash。<strong>Explore</strong>：严格只读的快速代码搜索，可以指定 quick、medium、very thorough 三档深度，模型继承会话但封顶到 Opus（想快想省可设 haiku）。<strong>claude</strong>：兜底的通用代理，有子代理能用的全部工具，也是派发后台会话时的默认代理。<strong>statusline-setup</strong>：配置状态栏时用。<strong>claude-code-guide</strong>：用 Haiku 回答关于 Claude Code 本身的问题。</p>
+    <p>原文还提到两个开关：<code>CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS=1</code> 去掉内置的 Explore 和 Plan；非交互模式下 <code>--append-subagent-system-prompt</code> 给每个子代理的系统提示词追加同一段文字。</p>
+    <p class="go">每个任务交给哪个内置子代理最合适？</p>
+  </div>
+  <div class="lab"><div id="biq"></div></div>
+  <div class="notes" id="n-builtin"></div>
+</section>
+
+<section class="part" id="call">
+  <div class="part-head"><h2>位置与调用</h2><span class="meta">原文「File Locations」「Using Subagents」「claude agents CLI Command」</span></div>
+  <div class="sec-lede">
+    <p>定义有五个来源，同名时按优先级取第一个：<strong>托管设置</strong>（全组织）&gt; <strong>命令行 <code>--agents</code></strong>（JSON，只在本次会话）&gt; <strong>项目 <code>.claude/agents/</code></strong> &gt; <strong>用户 <code>~/.claude/agents/</code></strong> &gt; <strong>插件的 <code>agents/</code></strong>。monorepo 里多个嵌套 <code>.claude/agents/</code> 有同名定义时，<strong>离当前工作目录最近的</strong>赢（v2.1.178）。注意这里和 Skills 相反：Skills 是个人盖过项目，Subagents 是项目盖过用户。</p>
+    <p>调用有四种方式：<strong>自动委派</strong>（Claude 看任务描述和子代理的 <code>description</code> 决定）；<strong>点名</strong>（“用 test-runner 子代理修失败的测试”，名字大小写和分隔符都不敏感）；<strong>@ 提及</strong>（<code>@"code-reviewer (agent)"</code>，绕过自动判断，保证调用）；<strong>整个会话都用它</strong>（<code>claude --agent code-reviewer</code> 或 settings 里 <code>"agent": "code-reviewer"</code>）。另外一个常见误会：<code>claude agents</code> 打开的是后台会话的 Agent View，<strong>不是</strong>列出子代理定义；要看定义就问 Claude 或看两个 agents 目录。</p>
+    <p class="go">同名冲突时谁生效？</p>
+  </div>
+  <div class="lab"><div id="cq"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：同名优先级，Skills 与 Subagents 方向相反</h4>
+    <p><b>Skills</b>：企业 &gt; <b>个人</b> &gt; 项目，你 <code>~/.claude/skills/</code> 里的同名 Skill 会盖过团队仓库的。</p>
+    <p><b>Subagents</b>：托管 &gt; 命令行 --agents &gt; <b>项目</b> &gt; 用户 &gt; 插件，团队仓库 <code>.claude/agents/</code> 里的同名定义会盖过你个人的。</p>
+  </div>
+  <div class="notes" id="n-call"></div>
+</section>
+
+<section class="part" id="run">
+  <div class="part-head"><h2>后台、隔离与分叉</h2><span class="meta">原文「Background Subagents」「Worktree Isolation」「Forked Subagents」「Key Behaviors」</span></div>
+  <div class="sec-lede">
+    <p><strong>后台</strong>：从 v2.1.198 起子代理默认在后台跑，Claude 继续处理主对话，子代理完成时收到通知；<code>background: true</code> 的意思变成“强制后台、禁止内联”。<kbd>Ctrl+B</kbd> 把正在跑的任务放到后台，<kbd>Ctrl+X</kbd> <kbd>Ctrl+K</kbd> 停掉所有后台子代理（3 秒内按两次确认）。后台子代理需要未预先放行的权限时，确认框会出现在主会话里，并写明是哪个子代理在要。</p>
+    <p><strong>worktree 隔离</strong>：<code>isolation: worktree</code> 让子代理在自己的 git worktree、单独分支上改代码；没改动会自动清理，有改动则把 worktree 路径和分支名交回主代理，供你审阅或合并。<strong>分叉子代理</strong>：不从干净窗口开始，而是继承分叉那一刻的整个对话（系统提示词、工具、模型、历史、prompt cache），用 <code>/subtask</code> 或 Claude 以 <code>subagent_type: "fork"</code> 发起；分叉不能再分叉，用 deny 规则 <code>Agent(fork)</code> 可以禁止。适合“带着现有上下文试另一条路”，不适合“独立的专项任务”。</p>
+    <p>还有几条上限：嵌套深度默认 3 层（<code>CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH</code>，设 1 关闭嵌套），同时运行默认最多 20 个（<code>CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS</code>），会话内总数不再设上限（v2.1.224 取消）；子代理上下文约 95% 时自动压缩；会话的扩展思考配置会被继承。</p>
+    <p class="go">分叉还是干净上下文？</p>
+  </div>
+  <div class="lab"><div id="fq"></div></div>
+  <div class="notes" id="n-run"></div>
+</section>
+
+<section class="part" id="teams">
+  <div class="part-head"><h2>Agent Teams：会互相发消息的一组实例</h2><span class="meta">原文「Agent Teams (Experimental)」</span></div>
+  <div class="sec-lede">
+    <p>Agent Teams 是实验功能，默认关闭，用 <code>CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code> 打开（需要 v2.1.32 以上）。它和 Subagents 是两种协作模型：Subagent 是“父代理委派子任务、等结果”，结果只交回父代理，子代理之间不通信；Team 是一个<strong>队长</strong>拆任务，多个<strong>队员</strong>各自是独立的 Claude Code 实例，有自己持续的上下文，通过<strong>共享任务列表</strong>（自动管理依赖）协调，并能经由<strong>邮箱</strong>直接互发消息。</p>
+    <p>原文的经验：团队 3 到 5 人最合适；任务切成 5 到 15 分钟的粒度；给不同队员分配不同的文件或目录，避免冲突；第一次先用默认的 in-process 显示模式，熟悉后再用 <code>--teammate-mode tmux</code> 分屏。限制也不少：进程内的队员不能恢复会话、一个会话只能有一个团队、队长不能转让。团队还带来两个 Hook 事件：<code>TeammateIdle</code> 和 <code>TaskCompleted</code>。</p>
+    <p class="go">先想右列，再翻开。</p>
+  </div>
+  <div class="lab"><div id="tvs"></div></div>
+  <div class="notes" id="n-teams"></div>
+</section>
+
+<section class="part" id="mem">
+  <div class="part-head"><h2>持久记忆与安全</h2><span class="meta">原文「Persistent Memory for Subagents」「Plugin Subagent Security」「Observability」</span></div>
+  <div class="sec-lede">
+    <p>子代理默认每次从零开始，<code>memory</code> 字段给它一个跨会话保留的目录：<code>user</code> 在 <code>~/.claude/agent-memory/&lt;名字&gt;/</code>（所有项目）、<code>project</code> 在 <code>.claude/agent-memory/&lt;名字&gt;/</code>（可随 git 共享）、<code>local</code> 在 <code>.claude/agent-memory-local/&lt;名字&gt;/</code>（不提交）。启动时自动加载其中 <code>MEMORY.md</code> 的前 200 行，并自动获得 Read、Write、Edit 来维护它；auto memory 被关掉时这个字段不起作用。适合长期跑的调研助手，在笔记里积累发现。</p>
+    <p>安全方面有两条值得记：<strong>插件带来的子代理</strong>里，<code>hooks</code>、<code>mcpServers</code>、<code>permissionMode</code>、<code>initialPrompt</code> 这几个字段会被忽略，防止插件借子代理提权；项目子代理 frontmatter 里的 hooks 需要先接受该目录的工作区信任（v2.1.218）。另外 v2.1.210 起，Claude Code 会扫描子代理的最终报告，把伪装成系统消息、伪造对话轮次、提到绕过权限的那类文本标出来，防止子代理读到的恶意网页借报告注入主会话。可观测性上，子代理发出的 API 请求带 <code>x-claude-code-agent-id</code> 和 <code>x-claude-code-parent-agent-id</code> 头，可以把花费归到具体子代理。</p>
+    <p class="go">这些说法对吗？</p>
+  </div>
+  <div class="lab"><div id="mq"></div></div>
+  <div class="notes" id="n-mem"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Subagent 多了什么、少了什么？什么时候不值得用？</summary><p class="ans">多了：独立上下文窗口（不带主对话历史）、专属系统提示词、可限定的工具、可并行，结果提炼后交回，主对话不被污染。少了：主对话的历史，要自己重新收集上下文，因而增加延迟。快速审查、单一简单任务、需要来回讨论的工作不值得用。</p></details>
+    <details><summary>2. 只读审查员最少写什么？tools 不写会怎样？放哪、同名谁生效？</summary><p class="ans">.claude/agents/secure-reviewer.md 里写 name、description、tools: Read, Grep，正文写角色和输出格式。tools 不写就继承全部工具。来源优先级：托管 &gt; 命令行 --agents &gt; 项目 .claude/agents/ &gt; 用户 ~/.claude/agents/ &gt; 插件；嵌套目录同名时离工作目录最近的赢。和 Skills（个人盖过项目）方向相反。</p></details>
+    <details><summary>3. 后台、worktree 隔离、分叉、Agent Teams 各解决什么？</summary><p class="ans">后台（v2.1.198 起默认）：子代理跑的时候主对话不用等。worktree 隔离：子代理在独立的 worktree 和分支上改代码，不碰你的工作区，有改动才交回路径和分支。分叉子代理（/subtask）：继承完整对话去试另一条路，适合需要现有上下文的探索。Agent Teams（实验）：多个独立实例通过共享任务列表和邮箱互相协调、互发消息，适合需要彼此沟通的并行大任务。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-claudehowto-4/"><small>上一篇</small><span>04 · Skills：按需加载的能力包</span></a><a class="nx" href="../2026-10-22-claudehowto-6/"><small>下一篇</small><span>06 · MCP：把外部系统接进来</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/luongnv89/claude-howto" rel="noopener">luongnv89/claude-howto</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+/* ---------- 它解决什么 ---------- */
+$('#fcAg').innerHTML = CH.file('.claude/agents/secure-reviewer.md', CH.esc('---\nname: secure-reviewer\ndescription: 只读的安全审查。代码改动涉及鉴权、输入处理、\n  密钥时主动使用（use PROACTIVELY）。\ntools: Read, Grep\nmodel: inherit\n---\n你是安全审查员，只读不改。按严重度输出发现：\n严重度 / 位置 / 问题 / 影响 / 修复建议。'), '项目级；个人级放 ~/.claude/agents/') +
+  '<p class="note">示意内容，改写自原文的 secure-reviewer.md。最省事的创建方式：直接对 Claude 说“创建一个只读的安全审查子代理”。</p>';
+var DL = [
+  { m: ['你：先摸清鉴权逻辑分布在哪些文件，再回来讨论方案。'], s: [], mt: 1200, st: 0, l: '你提出任务' },
+  { m: ['Claude：这是大范围只读调研，委派给 Explore 子代理（very thorough）。'], s: ['收到任务说明（不带主对话历史，只有任务所需的上下文）'], mt: 1500, st: 600, l: '委派' },
+  { m: ['（主对话可以继续别的事；子代理默认在后台跑）'], s: ['Grep "auth"、"token"、"session" → 定位 34 个文件', 'Read middleware/auth.py、services/login.py …'], mt: 1500, st: 9000, l: '子代理调研' },
+  { m: [], s: ['继续 Read 剩余文件、对照调用关系', '整理成：入口 3 处、校验 2 处、刷新逻辑 1 处、可疑点 2 个'], mt: 1500, st: 21000, l: '子代理整理' },
+  { m: ['收到子代理报告（约 600 tokens 的摘要），列出 3 个入口和 2 个可疑点。', 'Claude：基于这份摘要，我们讨论两个方案……'], s: ['任务结束，窗口里的 2 万多 tokens 不进入主对话'], mt: 2700, st: 21000, l: '交回结果' }
+];
+S.stepper($('#dlStep'), DL.length, function (i) {
+  var m = '', s = '';
+  for (var k = 0; k <= i; k++) {
+    DL[k].m.forEach(function (x) { m += '<p class="' + (k === i ? 'n' : '') + '">' + x + '</p>'; });
+    DL[k].s.forEach(function (x) { s += '<p class="sub' + (k === i ? ' n' : '') + '">' + x + '</p>'; });
+  }
+  $('#laneM').innerHTML = m || '<span class="idle">—</span>';
+  $('#laneS').innerHTML = s || '<span class="idle">尚未启动</span>';
+  $('#mainTk').textContent = '约 ' + DL[i].mt.toLocaleString() + ' tokens';
+  $('#subTk').textContent = DL[i].st ? '约 ' + DL[i].st.toLocaleString() + ' tokens' : '';
+}, DL.map(function (d) { return d.l; }));
+S.notes($('#n-what'), {
+  c: [
+    ['Subagent', '有独立上下文窗口、自定义系统提示词和工具权限的专职助手，结果提炼后交回。'],
+    ['五个作用', '隔离上下文、专属提示词、控制工具、防止污染、并行执行。'],
+    ['代价', '从零收集上下文，增加延迟。']
+  ],
+  p: [
+    ['用', '多步复杂功能、并行任务、需要专门提示词、长时间分析。'],
+    ['不用', '快速审查、单一简单任务（原文：徒增开销）。'],
+    ['token 数字', '本节演示的数值为示意。']
+  ]
+});
+
+/* ---------- 定义文件 ---------- */
+CH.cfg($('#agq'), [
+  { path: '.claude/agents/full-access.md', code: '---\nname: full-access-agent\ndescription: Agent with all available tools\n---\nYou implement features end to end.',
+    q: '这个子代理能用哪些工具？', opts: ['什么工具都没有', '继承全部工具', '只有 Read'], a: 1,
+    why: '原文：省略 <code>tools</code> 就继承全部工具。安全起见，原文建议从最少的工具开始，按需再加。' },
+  { path: '.claude/agents/test-runner.md', code: '---\nname: test-runner\ndescription: Use proactively to run tests and fix failures\ntools: Read, Edit, Bash(npm:*), Bash(test:*)\n---\nWhen you see code changes, run the tests ...',
+    q: '它能执行 <code>git push</code> 吗？', opts: ['能，有 Bash', '不在放行范围：Bash 只限 npm 和 test 开头的命令', '能，Edit 包含了 git'], a: 1,
+    why: '原文“条件式工具访问”：<code>Bash(npm:*)</code> 这种写法把 Bash 限定在特定命令前缀。' },
+  { path: '.claude/agents/careful.md', code: '---\nname: careful\ndescription: Make small reviewed edits\npermissionMode: default\n---\n...',
+    q: '你的主会话开着 bypassPermissions。这个子代理会按 default 模式逐条确认吗？', opts: ['会，子代理自己的设置优先', '不会，父会话是 bypassPermissions、acceptEdits 或 auto 时，子代理的 permissionMode 被忽略', '会，但只确认 Bash'], a: 1,
+    why: '原文字段说明：父会话处于 bypassPermissions、acceptEdits 或 auto 时，子代理的 <code>permissionMode</code> 被忽略；v2.1.212 起子代理默认继承父会话的权限模式。' },
+  { path: '.claude/agents/review-agent.md', code: '---\nname: code-review-agent\ndescription: Automated code review subagent\nhooks:\n  Stop:\n    - hooks:\n        - type: prompt\n          prompt: "Verify the review is thorough."\n---\n...',
+    q: '这个 Stop hook 什么时候触发？', opts: ['主会话每次回答结束时', '这个子代理完成时（自动转成 SubagentStop）', '永远不触发，子代理不支持 hooks'], a: 1,
+    why: '原文：写在子代理 frontmatter 里的 Stop hook 会自动转成只针对它的 SubagentStop，不影响主会话。' },
+  { path: '.claude/agents/explorer.md', code: '---\nname: explorer\ndescription: Explore alternatives with full context\ncontext: fork\n---\n...',
+    q: '<code>context: fork</code> 会让它继承主对话吗？', opts: ['会', '不会，这是 Skill 的字段，写在子代理定义里被静默忽略', '会，但只继承最近 10 轮'], a: 1,
+    why: '原文专门提醒：<code>context: fork</code> 是 Skill 字段；Claude Code 会静默忽略子代理定义里不认识的字段。分叉子代理要用 /subtask 或 subagent_type: "fork"。' }
+]);
+S.notes($('#n-cfg'), {
+  c: [
+    ['必填', '<code>name</code>（小写+连字符，不能含冒号）、<code>description</code>。'],
+    ['正文', '就是子代理的系统提示词。'],
+    ['tools', '不写则继承全部；可写 <code>Bash(npm:*)</code> 限定前缀。'],
+    ['omitClaudeMd', '<code>true</code> 时不带用户、项目、本地 CLAUDE.md 启动。']
+  ],
+  p: [
+    ['提示词四要素（原文）', '角色具体、优先级明确、输出格式固定、写清启动后的动作步骤。'],
+    ['工具策略', '从少开始、按需扩、分析类只读、Bash 限定前缀。'],
+    ['创建', '让 Claude 写，或直接建文件；/agents 向导已移除。'],
+    ['会话级定义', '<code>claude --agents \'{"名字":{"description":…,"prompt":…}}\'</code>，JSON 无效会直接报错。']
+  ]
+});
+
+/* ---------- 内置子代理 ---------- */
+CH.cards($('#biq'), {
+  opts: ['Explore', 'Plan', 'general-purpose', 'claude-code-guide'],
+  items: [
+    { t: '在整个仓库里找出所有读取 <code>DATABASE_URL</code> 的地方，不要改任何文件。', a: 0, why: 'Explore：严格只读的快速搜索，可指定 very thorough。' },
+    { t: 'plan mode 下，在出方案之前先摸清代码结构。', a: 1, why: 'Plan：plan mode 自动用它调研代码库。' },
+    { t: '把三个模块的日志接口统一改掉，并跑通测试。', a: 2, why: '既要探索又要修改的多步任务，用 general-purpose（全部工具）。' },
+    { t: '“Claude Code 的 PreToolUse hook 能不能改写工具输入？”', a: 3, why: '关于 Claude Code 本身的问题，claude-code-guide（Haiku，只读）。' }
+  ]
+});
+S.notes($('#n-builtin'), {
+  c: [
+    ['general-purpose', '继承模型，全部工具，复杂多步任务。'],
+    ['Plan', 'plan mode 下调研代码库；Read、Glob、Grep、Bash。'],
+    ['Explore', '严格只读搜索；quick / medium / very thorough；模型封顶 Opus。'],
+    ['claude', '兜底通用代理，后台会话的默认代理。']
+  ],
+  p: [
+    ['另两个', 'statusline-setup（配状态栏）、claude-code-guide（答 Claude Code 问题）。'],
+    ['去掉 Explore/Plan', '<code>CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS=1</code>。'],
+    ['统一追加提示词', '<code>-p</code> 模式下 <code>--append-subagent-system-prompt</code>。']
+  ]
+});
+
+/* ---------- 位置与调用 ---------- */
+CH.cards($('#cq'), {
+  opts: ['项目的', '用户的', '命令行的'],
+  items: [
+    { t: '<code>.claude/agents/reviewer.md</code> 和 <code>~/.claude/agents/reviewer.md</code> 同名。', a: 0, why: '项目 &gt; 用户。注意和 Skills 方向相反。' },
+    { t: '项目里有 reviewer，你又用 <code>claude --agents \'{"reviewer": {...}}\'</code> 启动。', a: 2, why: '命令行定义只在本次会话，但优先于项目、用户和插件（托管定义仍然最高）。' }
+  ]
+});
+S.notes($('#n-call'), {
+  c: [
+    ['来源优先级', '托管 &gt; 命令行 --agents &gt; 项目 &gt; 用户 &gt; 插件。'],
+    ['嵌套目录', '同名时离当前工作目录最近的赢（v2.1.178）。'],
+    ['claude agents', '打开后台会话的 Agent View，不是列子代理定义。']
+  ],
+  p: [
+    ['自动委派', '靠 description；写 “use PROACTIVELY” 或 “MUST BE USED” 更积极。'],
+    ['点名', '“用 test-runner 子代理……”，名字大小写、分隔符不敏感。'],
+    ['@ 提及', '<code>@"code-reviewer (agent)"</code> 保证调用。'],
+    ['整会话', '<code>claude --agent 名字</code> 或 settings <code>"agent"</code>。']
+  ]
+});
+
+/* ---------- 后台、隔离与分叉 ---------- */
+CH.cards($('#fq'), {
+  opts: ['分叉（/subtask）', '干净上下文', 'worktree 隔离'],
+  items: [
+    { t: '你们已经讨论了 40 分钟方案 A，想让一个帮手带着这些讨论去评估方案 B 的取舍。', a: 0, why: '探索替代实现、需要现有上下文：分叉。原文表格：Explore alternative implementations → Fork。' },
+    { t: '让一个子代理独立跑一遍依赖安全扫描，和当前讨论无关，别把讨论内容带进去。', a: 1, why: '独立的专项任务、避免上下文污染：干净上下文（默认）。' },
+    { t: '让子代理去实现一个功能，但你自己同时还在当前工作区改别的文件。', a: 2, why: '<code>isolation: worktree</code>：子代理在自己的 worktree 和分支上改，没改动自动清理，有改动交回路径和分支。' }
+  ]
+});
+S.notes($('#n-run'), {
+  c: [
+    ['后台（默认）', 'v2.1.198 起子代理默认后台跑；<code>background: true</code> 表示强制后台。'],
+    ['worktree 隔离', '<code>isolation: worktree</code>，独立分支；无改动自动清理。'],
+    ['分叉子代理', '继承完整对话；<code>/subtask</code> 或 <code>subagent_type: "fork"</code>；不能再分叉。']
+  ],
+  p: [
+    ['快捷键', '<kbd>Ctrl+B</kbd> 放后台；<kbd>Ctrl+X</kbd> <kbd>Ctrl+K</kbd> 停掉全部后台子代理。'],
+    ['禁止分叉', 'deny 规则 <code>Agent(fork)</code>；全局关 <code>CLAUDE_CODE_FORK_SUBAGENT=0</code>。'],
+    ['上限', '嵌套深度默认 3；同时运行默认 20；会话总数不限（v2.1.224）。'],
+    ['转录位置', '<code>~/.claude/projects/{项目}/{会话}/subagents/agent-{id}.jsonl</code>。']
+  ]
+});
+
+/* ---------- Agent Teams ---------- */
+CH.vs($('#tvs'), {
+  k: '维度', a: 'Subagents', b: 'Agent Teams（实验）',
+  rows: [
+    ['委派模型', '父代理委派子任务，等结果', '队长协调，队员各自独立执行'],
+    ['上下文', '每个子任务一个新窗口，结果提炼后交回', '每个队员维护自己持续的上下文窗口'],
+    ['协调', '父代理安排顺序或并行', '共享任务列表，自动管理依赖'],
+    ['通信', '只把结果交回父代理，彼此不通信', '队员通过邮箱直接互发消息'],
+    ['会话恢复', '支持', '进程内队员不支持'],
+    ['最适合', '聚焦、边界清楚的子任务', '需要彼此沟通的复杂并行工作']
+  ]
+});
+S.notes($('#n-teams'), {
+  c: [
+    ['Agent Teams', '多个 Claude Code 实例协作：队长 + 队员 + 共享任务列表 + 邮箱。'],
+    ['开启', '<code>CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code>（或 settings 的 env）。']
+  ],
+  p: [
+    ['规模', '3–5 个队员；任务 5–15 分钟粒度；不同队员分不同目录。'],
+    ['显示', '<code>--teammate-mode in-process | tmux | iterm2 | auto</code>。'],
+    ['限制', '不能恢复进程内队员、一个会话一个团队、队长不能转让。'],
+    ['相关 Hook', '<code>TeammateIdle</code>、<code>TaskCompleted</code>。']
+  ]
+});
+
+/* ---------- 持久记忆与安全 ---------- */
+S.quiz($('#mq'), [
+  { q: '<code>memory: project</code> 的子代理记忆放在哪？', o: ['~/.claude/agent-memory/名字/', '.claude/agent-memory/名字/（可随 git 共享）', '.claude/agent-memory-local/名字/'], a: 1, why: 'user → ~/.claude/agent-memory/；project → .claude/agent-memory/；local → .claude/agent-memory-local/（不提交）。' },
+  { q: '一个插件里的子代理定义写了 <code>permissionMode: bypassPermissions</code>，会生效吗？', o: ['会', '不会，插件子代理的 permissionMode、hooks、mcpServers、initialPrompt 被忽略', '会，但要先确认'], a: 1, why: '原文“插件子代理安全”：这些字段被忽略，防止插件借子代理提权；要带 hooks 或 MCP，放在插件级别。' },
+  { q: '子代理读了一个网页，里面藏着伪造的系统提示标签，它把这段原样写进了报告。主会话会照做吗？', o: ['会，报告就是指令', 'Claude Code 会扫描报告，标出这类“像指令的文本”，主会话应把它当作要转述的发现而不是要执行的指令', '子代理不能读网页'], a: 1, why: 'v2.1.210 起的子代理输出扫描，默认开启；宁可误报也不漏报。' }
+]);
+S.notes($('#n-mem'), {
+  c: [
+    ['子代理记忆', '<code>memory: user | project | local</code>；启动加载 MEMORY.md 前 200 行，自动获得 Read/Write/Edit。'],
+    ['插件子代理限制', 'hooks、mcpServers、permissionMode、initialPrompt 被忽略。'],
+    ['输出扫描', '报告里伪装成系统消息的文本会被标出（v2.1.210）。']
+  ],
+  p: [
+    ['花费归因', '请求头 <code>x-claude-code-agent-id</code>、<code>x-claude-code-parent-agent-id</code>；OTel 属性同名。'],
+    ['项目子代理的 hooks', '需要先接受该目录的工作区信任（v2.1.218）。'],
+    ['子代理模型', '<code>CLAUDE_CODE_SUBAGENT_MODEL</code>；v2.1.251 起 frontmatter 的 model 优先，<code>..._FORCE=1</code> 反过来。']
+  ]
+});
+
+CH.tryNow($('#try'), '5', [
+  { t: '对 Claude 说“创建一个只读的安全审查子代理，只给 Read 和 Grep”', d: '看它生成的 <code>.claude/agents/*.md</code>，把输出格式改成你习惯的样子。' },
+  { t: '下次要做大范围代码调研时，明确说“用 Explore 子代理，very thorough”', d: '完成后用 <code>/context</code> 对比主对话占用。' },
+  { t: '让一个子代理用 <code>isolation: worktree</code> 实现小功能', d: '看它交回的分支和 worktree 路径，审完再合并。' }
+]);
+})();
+</script>
+</body>
+</html>

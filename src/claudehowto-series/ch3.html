@@ -1,0 +1,365 @@
+---
+title: Memory：CLAUDE.md 的层级、规则文件与自动记忆
+desc: Claude How To 学习笔记（三）：两套记忆系统（你写的 CLAUDE.md 与 Claude 写的 auto memory）；CLAUDE.md 是拼接不是覆盖，从哪启动决定加载什么；settings 的覆盖、权限规则的合并；.claude/rules 的 paths 按需加载；AGENTS.md 何时被读；保持 200 行以内与“别写验证提醒”；CLAUDE.md 体检分类游戏。
+kicker: <span>技术学习</span><span>Claude How To · 03</span><span>对应原文 02-memory</span><span>约 30 分钟</span>
+h1: CLAUDE.md 是<em>拼起来的</em>，不是盖掉的
+lead: 每次启动 Claude Code，它都会先读一堆“记忆”：公司下发的策略、你的个人偏好、项目约定、你本机的私人补充，还有 Claude 自己记下的笔记。原教程这一章最值得记住的一句话是：这些 CLAUDE.md 文件是拼接进上下文的，不是谁覆盖谁；而 settings.json 恰恰相反，是按优先级覆盖的。分不清这两套规则，就会出现“我明明在项目里改了，怎么没生效”的困惑。
+nav: two|两套记忆;tree|层级与加载;over|拼接、覆盖、合并;rules|规则文件;agents|AGENTS.md;auto|自动记忆;slim|保持精简;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.ld { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ld div { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; gap: 4px 10px; align-items: baseline; border: 1px solid var(--hair); border-radius: 6px; padding: 7px 10px; background: var(--bg); font-size: 15px; color: var(--ink-2); }
+.ld div b { font-family: var(--f-num); color: var(--ink-3); font-weight: 600; }
+.ld div code { font-family: var(--f-num); font-size: 15px; color: var(--ink); word-break: break-all; }
+.ld div small { grid-column: 2 / -1; color: var(--ink-3); font-size: 15px; }
+.ld div.lazy { border-style: dashed; }
+.ld div.skip { opacity: .5; text-decoration: line-through; }
+.st { width: 100%; border-collapse: collapse; font-size: 15px; }
+.st td, .st th { border-bottom: 1px solid var(--hair); padding: 7px 8px 7px 0; text-align: left; vertical-align: middle; }
+.st th { color: var(--ink-3); font-weight: 600; }
+.st td:first-child { color: var(--ink); white-space: nowrap; }
+.st input[type=text] { font: inherit; font-family: var(--f-num); font-size: 15px; width: 9em; max-width: 100%; padding: 3px 8px; border: 1px solid var(--rule); border-radius: 5px; background: var(--bg); color: var(--ink); }
+.st tr.win td { background: var(--s1-soft); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>你写的 CLAUDE.md 和 Claude 写的 auto memory 各存在哪、什么时候加载？对 Claude 说“记住……”会写进哪一个？</li>
+    <li>CLAUDE.md 多个层级之间是什么关系？settings.json 多个层级之间呢？权限规则又是怎样？</li>
+    <li>CLAUDE.md 变长了，原文建议把哪些内容搬到哪里去？为什么不建议写“完成前务必跑测试”这类提醒？</li>
+  </ol>
+</div>
+
+<section class="part" id="two">
+  <div class="part-head"><h2>两套记忆</h2><span class="meta">原文 02-memory「Memory Architecture」「Memory Commands Quick Reference」</span></div>
+  <div class="sec-lede">
+    <p>Claude Code 里有两套互补的记忆，<strong>每次会话开始时都会加载</strong>，并且在会话中持续更新，不像网页版 Claude 那样按 24 小时周期整理。一套是 <strong>CLAUDE.md 文件</strong>：你写的指令，完整加载；另一套是 <strong>auto memory</strong>：Claude 自己记的笔记，存在 <code>~/.claude/projects/&lt;项目&gt;/memory/</code>，入口文件 <code>MEMORY.md</code> 只加载前 200 行（或前 25KB）。</p>
+    <p>往里写的方式有三种：<code>/init</code> 生成一份初始 CLAUDE.md（设 <code>CLAUDE_CODE_NEW_INIT=1</code> 可走多步交互流程）；<code>/memory</code> 用编辑器打开各层记忆文件，也能开关 auto memory；直接在对话里说。注意说法决定去向：<strong>说“记住……”写进 auto memory</strong>，要写进 CLAUDE.md 得明说“把这条加到 CLAUDE.md”。以前那个以 <code>#</code> 开头快速加记忆的快捷方式<strong>已经取消</strong>。</p>
+    <p class="go">先看一张功能卡，然后判断几句话分别会写到哪里。</p>
+  </div>
+  <div class="fcard">
+    <h3>CLAUDE.md<small>项目级 ./CLAUDE.md，个人级 ~/.claude/CLAUDE.md</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>模型本身不记得上一次会话。每次都要重复的项目背景、命令、约定、个人偏好，写一次，之后每个会话自动带上。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcMd"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>多步骤流程（搬去 Skill）；只和某些目录相关的规则（搬去 <code>.claude/rules/</code> 加 <code>paths:</code>）；会变的实时数据（用 MCP）；密钥和凭据（永远不要写）；“必须执行”的检查（用 Hook）。原文的经验值是<strong>控制在 200 行以内</strong>。</dd>
+    </dl>
+  </div>
+  <div class="lab"><div id="whq"></div></div>
+  <div class="notes" id="n-two"></div>
+</section>
+
+<section class="part" id="tree">
+  <div class="part-head"><h2>层级与加载：从哪启动，就读哪些</h2><span class="meta">原文「Memory Hierarchy in Claude Code」「Memory Locations Table」</span></div>
+  <div class="sec-lede">
+    <p>CLAUDE.md 有四个层级，按“从最宽到最具体”的顺序加载：<strong>组织策略</strong>（macOS 在 <code>/Library/Application Support/ClaudeCode/CLAUDE.md</code>，Linux 在 <code>/etc/claude-code/CLAUDE.md</code>，个人设置排除不掉）→ <strong>用户级</strong> <code>~/.claude/CLAUDE.md</code> → <strong>项目级</strong> <code>./CLAUDE.md</code> 或 <code>./.claude/CLAUDE.md</code> → <strong>本地级</strong> <code>./CLAUDE.local.md</code>（个人对这个项目的补充，记得加进 .gitignore）。中间还穿插着规则文件：用户级 <code>~/.claude/rules/</code> 在用户 CLAUDE.md 之前，项目级 <code>.claude/rules/</code> 在项目 CLAUDE.md 之前。</p>
+    <p>关键在于目录树的走法：Claude Code 从你的<strong>启动目录往上走</strong>，沿途每一层的 CLAUDE.md 都加载，靠近启动目录的<strong>最后读到</strong>——原文特意强调这只是“在上下文里更靠后”，不是“优先级更高、把前面的覆盖掉”。启动目录<strong>下面</strong>子目录里的 CLAUDE.md 不在启动时加载，而是等 Claude 读到那个子目录里的文件时才按需加载。monorepo 里不想要的 CLAUDE.md，可以用 <code>claudeMdExcludes</code> 按绝对路径的 glob 排除（仓库相对的写法要以 <code>**/</code> 开头）。</p>
+    <p class="go">选一个启动目录，看启动时加载了哪些文件、按什么顺序（仓库结构为示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="ch-file"><div class="ch-fp"><span>示意仓库 ~/work/ran-platform</span></div><pre id="treePre"></pre></div>
+    <div class="selrow" style="margin-top:12px"><span>在哪个目录敲 claude</span><div class="seg" id="cwdSeg"><button data-v="root" aria-pressed="true">仓库根</button><button data-v="api">services/api</button><button data-v="legacy">packages/legacy</button></div></div>
+    <div class="selrow"><label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="exLegacy"> settings 里加 <code>"claudeMdExcludes": ["**/packages/legacy/CLAUDE.md"]</code></label></div>
+    <div class="ld" id="ld"></div>
+    <p class="note">实线框：启动时加载，编号是在上下文里的先后。虚线框：Claude 读到该目录下的文件时才加载。auto memory 是另一套机制，不在这个拼接顺序里。</p>
+  </div>
+  <div class="notes" id="n-tree"></div>
+</section>
+
+<section class="part" id="over">
+  <div class="part-head"><h2>拼接、覆盖、合并：三套规则</h2><span class="meta">原文「Settings File Hierarchy」</span></div>
+  <div class="sec-lede">
+    <p>同样是“多层配置”，Claude Code 里其实有三种合并方式。<strong>CLAUDE.md 是拼接</strong>：所有层都进上下文，前后顺序不同而已。<strong>settings.json 是覆盖</strong>：同一个键出现在多层，高层赢；顺序从高到低是 组织托管（managed-settings.json、plist 或注册表）→ 命令行参数 → <code>.claude/settings.local.json</code> → <code>.claude/settings.json</code> → <code>~/.claude/settings.json</code>。<strong>权限规则（allow / ask / deny）是合并</strong>：各层的规则合到一起，不是高层替换低层。</p>
+    <p>还有几个原文点到的细节：<code>/config</code> 里改的设置（v2.1.119 起）会写进 <code>~/.claude/settings.json</code>，参与正常的优先级链；组织可以用 <code>managed-settings.d/</code> 目录放多个策略片段，按字母序合并（标量覆盖、数组拼接去重、对象深合并）；有些安全相关的设置项目级文件<strong>无权</strong>设置（比如 AGENTS.md 的读取方式只认用户和托管设置）。</p>
+    <p class="go">在几层里给同一个键填值，看最后生效的是哪一层；再对比权限规则怎么合。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">键 <code>model</code> 在各层的取值（留空表示没设）</p>
+    <div class="tblw"><table class="st" id="stT"></table></div>
+    <div class="ch-out" id="stOut" aria-live="polite"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：CLAUDE.md 拼接、settings 覆盖、权限规则合并</h4>
+    <p><b>CLAUDE.md</b>：所有层都进上下文，没有谁“赢”；如果两层写了互相矛盾的话，模型两句都看得到，结果不可控——所以别在不同层写冲突的指令。</p>
+    <p><b>settings.json</b>：同名键高层覆盖低层（托管 &gt; 命令行 &gt; 本地 &gt; 项目 &gt; 用户）。<b>权限规则</b>：allow / ask / deny 各层合并在一起。</p>
+  </div>
+  <div class="notes" id="n-over"></div>
+</section>
+
+<section class="part" id="rules">
+  <div class="part-head"><h2>规则文件：只在碰到相关文件时加载</h2><span class="meta">原文「Modular Rules System」「Path-Specific Rules」</span></div>
+  <div class="sec-lede">
+    <p><code>.claude/rules/*.md</code> 是把 CLAUDE.md 拆成主题文件的机制，支持子目录（<code>rules/api/</code>、<code>rules/testing/</code>）和软链接（把一个中心位置的规则软链到多个项目里；从外部软链进来的规则会弹出和 <code>@</code> 外部导入一样的确认）。用户级的 <code>~/.claude/rules/</code> 在项目规则之前加载。</p>
+    <p>真正省上下文的是 <strong><code>paths:</code> frontmatter</strong>。没写 <code>paths</code> 的规则无条件加载，和 <code>.claude/CLAUDE.md</code> 地位一样；写了 <code>paths</code> 的规则<strong>按需加载</strong>：只有当 Claude 读、写或编辑匹配的文件时才进上下文，包括用 <code>cat</code>、<code>head</code>、<code>sed -n</code>、<code>grep</code> 这类单文件 Bash 读取（Write/Edit 从 v2.1.288、Bash 读取从 v2.1.293 起算，以原文为准）。原文特别指出：<code>@</code> 导入只是整理，<strong>导入的内容照样在加载时全部拉进来</strong>，拆成带 <code>paths</code> 的规则才真正减少加载量。</p>
+    <p class="go">读三段规则配置，猜它们什么时候进入上下文。</p>
+  </div>
+  <div class="lab"><div id="rcfg"></div></div>
+  <div class="notes" id="n-rules"></div>
+</section>
+
+<section class="part" id="agents">
+  <div class="part-head"><h2>AGENTS.md：多个编码代理共用一份约定</h2><span class="meta">原文「AGENTS.md」</span></div>
+  <div class="sec-lede">
+    <p><code>AGENTS.md</code> 和 CLAUDE.md 是同一类文件，写给多个编码代理共用。从 v2.1.277 起 Claude Code 直接把它当项目指令读，不用再手动导入。默认行为（<code>claude-md-or-agents-md</code>）是二选一：<strong>只有 AGENTS.md 时读它；两个都有时只读 CLAUDE.md</strong>；CLAUDE.md 里写了 <code>@AGENTS.md</code> 就把它展开进来。</p>
+    <p>判断“有没有 CLAUDE.md”时，Claude Code 检查启动目录及以上各层的 <code>CLAUDE.md</code>、<code>.claude/CLAUDE.md</code>、<code>CLAUDE.local.md</code>；用户级、组织级 CLAUDE.md 和 rules 不算。原文的警告值得记一下：<strong>新建一个 CLAUDE.local.md 会让 AGENTS.md 静默不再被读</strong>，如果“项目指令突然消失了”，多半是这个原因。<code>AGENTS.local.md</code>、<code>AGENTS.override.md</code> 和 <code>.agents/</code> 下的东西永远不读。读取方式可以在 <code>/config</code> 的 Project instructions 里改成四种之一，但只在用户级和托管设置里生效。</p>
+    <p class="go">几种项目布局，判断 Claude Code 读到的是什么（默认行为）。</p>
+  </div>
+  <div class="lab"><div id="agq"></div></div>
+  <div class="notes" id="n-agents"></div>
+</section>
+
+<section class="part" id="auto">
+  <div class="part-head"><h2>自动记忆：Claude 写给自己的笔记</h2><span class="meta">原文「Auto Memory」「Subagent Memory」</span></div>
+  <div class="sec-lede">
+    <p>auto memory 是 Claude 在工作中自己写的、带类型的笔记，类型有四种：<code>user</code>、<code>feedback</code>、<code>project</code>、<code>reference</code>。它<strong>会跳过能从代码里推出来的东西</strong>（架构、文件路径、某个 bug 的修法），只记你的偏好、你给过的纠正、项目背景和外部参考。目录是 <code>~/.claude/projects/&lt;项目&gt;/memory/</code>：<code>MEMORY.md</code> 是入口，启动时加载前 200 行或 25KB；每条记忆可以是单独的主题文件（如 <code>prefers-pnpm.md</code>），<strong>按需加载</strong>。同一个 git 仓库的所有 worktree 和子目录共用同一个 auto memory 目录。</p>
+    <p>它默认开启（需要 v2.1.59 以上）。关掉有三种办法：settings 里 <code>"autoMemoryEnabled": false</code>、会话里 <code>/memory</code> 切换、环境变量 <code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code>（设为 <code>0</code> 反而是强制开启）。目录位置可以用 <code>autoMemoryDirectory</code> 改（绝对路径或 <code>~/</code> 开头）。Subagent 也能有自己的持久记忆，用定义里的 <code>memory: user | project | local</code> 指定放哪，详见第 5 篇。</p>
+    <p class="go">下面这些信息，Claude 应该记进 auto memory，还是不该记？</p>
+  </div>
+  <div class="lab"><div id="amq"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：CLAUDE.md 与 auto memory</h4>
+    <p><b>CLAUDE.md</b>：你写、你维护、完整加载，适合团队约定和你明确要求的规则，可以提交进 git 共享。</p>
+    <p><b>auto memory</b>：Claude 写、存在你的 home 目录下、入口只加载前 200 行，适合“关于你”的东西（偏好、纠正过的做法），不进项目仓库。对 Claude 说“记住”写这里；说“加到 CLAUDE.md”才写那里。</p>
+  </div>
+  <div class="notes" id="n-auto"></div>
+</section>
+
+<section class="part" id="slim">
+  <div class="part-head"><h2>保持精简：200 行与“别写验证提醒”</h2><span class="meta">原文「Keeping CLAUDE.md Small」「Don't Write Verification Reminders」</span></div>
+  <div class="sec-lede">
+    <p>原文说 Anthropic 现在的建议和“什么都往 CLAUDE.md 里放”正好相反：这个文件<strong>每次会话都加载</strong>，你加的每一行都在和与它无关的任务争注意力。经验值是 <strong>200 行以内</strong>，更长的照样完整加载，但遵循度会下降。变长的时候不是删字，而是<strong>搬家</strong>：多步流程搬到 Skill；按目录或文件类型的规则搬到带 <code>paths:</code> 的 rules；参考资料和长示例搬到 Skill 的 <code>references/</code>；关于你个人的东西交给 auto memory。v2.1.206 起 <code>/doctor</code> 也会在 CLAUDE.md 过长时建议精简。</p>
+    <p>另一条更反直觉：<strong>别写验证提醒</strong>。以前常见“说完成之前一定要跑测试”“仔细检查你的工作”这种句子，原文说在 Opus 5 和 Fable 5 上它们会导致<strong>过度验证</strong>——反复检查已经正确的结果，白白消耗轮次和 token；Anthropic 为 Claude 5 一代删掉了 Claude Code 自身系统提示词的八成以上，没有测到退化。要保留的是<strong>真正不显然的项目事实</strong>，比如“集成测试需要先启动 Docker”，这是信息，不是提醒。</p>
+    <p class="go">给一份示意 CLAUDE.md 做体检：每一行该留下，还是搬去别处？</p>
+  </div>
+  <div class="lab"><div id="sg"></div></div>
+  <div class="notes" id="n-slim"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. CLAUDE.md 和 auto memory 各存哪、何时加载？说“记住”写进哪个？</summary><p class="ans">CLAUDE.md 是你写的，分组织、用户（~/.claude/CLAUDE.md）、项目（./CLAUDE.md 或 ./.claude/CLAUDE.md）、本地（./CLAUDE.local.md）四层，启动时完整加载，子目录里的按需加载。auto memory 是 Claude 写的，在 ~/.claude/projects/&lt;项目&gt;/memory/，MEMORY.md 启动时加载前 200 行或 25KB，主题文件按需加载。说“记住……”写进 auto memory；要写 CLAUDE.md 得说“加到 CLAUDE.md”或用 /memory 自己改。# 快捷方式已取消。</p></details>
+    <details><summary>2. CLAUDE.md 各层、settings 各层、权限规则各是什么关系？</summary><p class="ans">CLAUDE.md 是拼接：各层都进上下文，从启动目录往上走，靠近启动目录的后读，后读不等于覆盖。settings.json 是覆盖：托管 &gt; 命令行 &gt; .claude/settings.local.json &gt; .claude/settings.json &gt; ~/.claude/settings.json，同名键高层赢。权限规则 allow/ask/deny 是跨层合并。</p></details>
+    <details><summary>3. CLAUDE.md 变长了怎么办？为什么不写“完成前务必跑测试”？</summary><p class="ans">控制在 200 行内，靠搬家而不是删字：多步流程→Skill；按目录的规则→.claude/rules/ 加 paths:；参考资料→Skill 的 references/；关于你的偏好→auto memory。@ 导入不省上下文。验证提醒在 Opus 5、Fable 5 上会导致过度验证（反复检查已正确的结果），应删掉；只保留不显然的项目事实，如“集成测试需要 Docker 在运行”。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 两套记忆 ---------- */
+$('#fcMd').innerHTML = CH.file('./CLAUDE.md', CH.esc('# ran-platform\n5G 基站调度仿真平台，Python 3.11 + FastAPI。\n\n## 常用命令\n- 安装：uv sync\n- 单测：uv run pytest -q\n- 集成测试需要先启动 Docker（docker compose up -d）\n\n## 约定\n- 提交信息用英文 Conventional Commits\n- 新接口放 services/api/，必须带 Pydantic 校验\n\n## 参考\n@docs/architecture.md'), '提交进 git，团队共享') +
+  '<p class="note">内容为示意。用 <code>/init</code> 生成初稿再改；<code>@路径</code> 可导入其他文档（最多递归 4 层，相对路径相对于写导入的那个文件）。</p>';
+CH.cards($('#whq'), {
+  opts: ['auto memory', '项目 CLAUDE.md', '个人 CLAUDE.md', '都不写'],
+  items: [
+    { t: '你对 Claude 说：“记住，我更喜欢 async/await 而不是 promise 链。”', a: 0, why: '原文明确：让 Claude “记住”某事，会存进 auto memory。' },
+    { t: '你说：“把这条加到 CLAUDE.md：新组件一律用函数式组件加 Hooks。”然后在 Claude 问“哪个文件”时选了项目记忆。', a: 1, why: '明确说加到 CLAUDE.md 才写 CLAUDE.md；选项目记忆就是 ./CLAUDE.md，会随 git 共享。' },
+    { t: '你输入一行以 <code>#</code> 开头的“# 总是用 TypeScript strict 模式”。', a: 3, why: '# 快捷方式已经取消，这一行就是普通的提示词，不会写进任何记忆文件。原文建议改用 /memory 或直接说。' },
+    { t: '你用 <code>/memory</code> 打开 <code>~/.claude/CLAUDE.md</code> 写上“回答时先给结论”。', a: 2, why: '用户级 CLAUDE.md，对你所有项目生效。' }
+  ]
+});
+S.notes($('#n-two'), {
+  c: [
+    ['CLAUDE.md', '你写的指令，启动时完整加载。'],
+    ['auto memory', 'Claude 写的笔记，<code>MEMORY.md</code> 启动时加载前 200 行或 25KB。'],
+    ['/init', '生成初始 CLAUDE.md；<code>CLAUDE_CODE_NEW_INIT=1</code> 走交互流程。'],
+    ['/memory', '编辑器打开各层记忆文件，开关 auto memory。']
+  ],
+  p: [
+    ['“记住……”', '写进 auto memory。'],
+    ['“加到 CLAUDE.md”', '写进 CLAUDE.md（会问哪一层）。'],
+    ['# 快捷方式', '已取消。'],
+    ['@ 导入', '相对路径相对于导入它的文件；最多 4 层；代码块里的 @ 不展开；首次导入外部文件要确认。']
+  ]
+});
+
+/* ---------- 层级与加载 ---------- */
+$('#treePre').textContent = '~/work/ran-platform/\n├── CLAUDE.md\n├── CLAUDE.local.md          (个人补充，已 gitignore)\n├── .claude/rules/testing.md  (无 paths)\n├── .claude/rules/api.md      (paths: services/api/**)\n├── services/api/CLAUDE.md\n└── packages/legacy/CLAUDE.md';
+var cwd = 'root';
+function ld() {
+  var ex = $('#exLegacy').checked, rows = [];
+  rows.push(['托管策略', '/Library/Application Support/ClaudeCode/CLAUDE.md', '组织下发，个人设置排除不掉（若存在）', 0]);
+  rows.push(['用户规则', '~/.claude/rules/*.md', '用户级规则先于用户 CLAUDE.md', 0]);
+  rows.push(['用户', '~/.claude/CLAUDE.md', '个人偏好，所有项目', 0]);
+  rows.push(['项目规则', '.claude/rules/testing.md', '没写 paths，无条件加载', 0]);
+  rows.push(['项目', '~/work/ran-platform/CLAUDE.md', cwd === 'root' ? '启动目录' : '启动目录的上层，往上走时读到', 0]);
+  rows.push(['本地', '~/work/ran-platform/CLAUDE.local.md', '同一目录里 CLAUDE.local.md 接在 CLAUDE.md 后面', 0]);
+  if (cwd === 'api') rows.push(['子目录', 'services/api/CLAUDE.md', '启动目录本身，最后读到（不是“优先级最高”）', 0]);
+  if (cwd === 'legacy') rows.push(['子目录', 'packages/legacy/CLAUDE.md', ex ? '被 claudeMdExcludes 排除' : '启动目录本身，最后读到', ex ? 2 : 0]);
+  rows.push(['按需', '.claude/rules/api.md', 'paths 命中：Claude 读/改 services/api/ 下的文件时才加载', 1]);
+  if (cwd === 'root') { rows.push(['按需', 'services/api/CLAUDE.md', '在启动目录下面：读到该目录的文件时才加载', 1]); rows.push(['按需', 'packages/legacy/CLAUDE.md', ex ? '被 claudeMdExcludes 排除' : '同上，读到该目录的文件时才加载', ex ? 2 : 1]); }
+  if (cwd === 'api') rows.push(['不加载', 'packages/legacy/CLAUDE.md', '既不在启动目录以上，也不在以下', 2]);
+  if (cwd === 'legacy') rows.push(['不加载', 'services/api/CLAUDE.md', '既不在启动目录以上，也不在以下', 2]);
+  var n = 0;
+  $('#ld').innerHTML = rows.map(function (r) {
+    var cls = r[3] === 1 ? 'lazy' : r[3] === 2 ? 'skip' : '';
+    var num = r[3] === 0 ? String(++n) : r[3] === 1 ? '按需' : '—';
+    return '<div class="' + cls + '"><b>' + num + '</b><code>' + r[1] + '</code><span class="ch-pill">' + r[0] + '</span><small>' + r[2] + '</small></div>';
+  }).join('');
+}
+S.seg($('#cwdSeg'), function (v) { cwd = v; ld(); });
+$('#exLegacy').addEventListener('change', ld);
+ld();
+S.notes($('#n-tree'), {
+  c: [
+    ['四个层级', '组织策略 → 用户 → 项目 → 本地（CLAUDE.local.md）。'],
+    ['往上走', '从启动目录往上，每层 CLAUDE.md 都加载；越近越靠后读。'],
+    ['往下按需', '启动目录下面的 CLAUDE.md 在读到该目录文件时才加载。'],
+    ['claudeMdExcludes', '按绝对路径 glob 排除，仓库相对写法以 <code>**/</code> 开头。']
+  ],
+  p: [
+    ['加载顺序（原文）', '托管 → 用户 rules → 用户 CLAUDE.md → 项目 rules → 项目 CLAUDE.md → CLAUDE.local.md。'],
+    ['CLAUDE.local.md', '个人对本项目的补充，加进 .gitignore。'],
+    ['组织策略位置', 'macOS <code>/Library/Application Support/ClaudeCode/CLAUDE.md</code>；Linux <code>/etc/claude-code/CLAUDE.md</code>。'],
+    ['额外目录', '<code>CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1</code> + <code>--add-dir</code> 才会读那里的 CLAUDE.md。']
+  ]
+});
+
+/* ---------- 拼接、覆盖、合并 ---------- */
+var LAY = [['组织托管', 'managed-settings.json', ''], ['命令行', '--model / --settings', ''], ['本地项目', '.claude/settings.local.json', 'opus'], ['项目', '.claude/settings.json', 'sonnet'], ['用户', '~/.claude/settings.json', 'haiku']];
+var st = $('#stT');
+st.innerHTML = '<tr><th>层级</th><th>文件</th><th>model 的值</th></tr>';
+LAY.forEach(function (l, i) {
+  var tr = h('tr', null, st);
+  h('td', { text: (i + 1) + ' ' + l[0] }, tr);
+  h('td', { html: '<code>' + l[1] + '</code>' }, tr);
+  var td = h('td', null, tr);
+  var inp = h('input', { type: 'text', value: l[2], 'aria-label': l[0] + ' 的 model' }, td);
+  inp.addEventListener('input', stUpd);
+});
+function stUpd() {
+  var ins = S.$$('#stT input'), win = -1;
+  ins.forEach(function (x, i) { if (win < 0 && x.value.trim()) win = i; });
+  S.$$('#stT tr').slice(1).forEach(function (tr, i) { tr.classList.toggle('win', i === win); });
+  $('#stOut').innerHTML = win < 0 ? '<p>各层都没设，用 Claude Code 的默认模型。</p>' :
+    '<p>生效的是 <b>' + LAY[win][0] + '</b> 层的 <code>' + CH.esc(ins[win].value.trim()) + '</code>：同名键高层覆盖低层，下面几层的值不起作用。</p>' +
+    '<p>对照：如果这几层写的是 CLAUDE.md，它们会<b>全部</b>进入上下文；如果写的是 <code>permissions.allow</code> 规则，各层规则会<b>合并</b>成一个集合。</p>';
+}
+stUpd();
+S.notes($('#n-over'), {
+  c: [
+    ['CLAUDE.md', '拼接：各层都进上下文。'],
+    ['settings.json', '覆盖：托管 &gt; 命令行 &gt; 本地 &gt; 项目 &gt; 用户。'],
+    ['权限规则', 'allow / ask / deny 跨层合并。']
+  ],
+  p: [
+    ['/config 改的设置', '写进 <code>~/.claude/settings.json</code>，参与优先级链（v2.1.119 起）。'],
+    ['managed-settings.d/', '多个策略片段按字母序合并：标量覆盖、数组拼接去重、对象深合并。'],
+    ['别在不同层写矛盾指令', 'CLAUDE.md 不会“覆盖”，模型两句都看得到。']
+  ]
+});
+
+/* ---------- 规则文件 ---------- */
+CH.cfg($('#rcfg'), [
+  { path: '.claude/rules/api.md', code: '---\npaths: src/api/**/*.ts\n---\n# API Development Rules\n- All endpoints must include input validation\n- Use Zod for schema validation',
+    q: '你让 Claude 改 <code>src/web/App.tsx</code>，这条规则在上下文里吗？', opts: ['在，rules 目录下的都在启动时加载', '不在，只有读写 src/api/ 下的 .ts 文件时才加载', '在，但只加载标题'], a: 1,
+    why: '写了 <code>paths</code> 的规则按需加载：Claude 读、写、编辑匹配的文件（含 cat、grep 这类单文件 Bash 读取）时才进入上下文。' },
+  { path: '.claude/rules/security.md', code: '# Security\n- Never log tokens or passwords\n- Validate all external input',
+    q: '这条规则什么时候进上下文？', opts: ['启动时就加载，和 .claude/CLAUDE.md 一样', '只在涉及安全的任务时', '永远不加载，缺 paths 是无效规则'], a: 0,
+    why: '没有 <code>paths</code> 的规则无条件加载，地位与 <code>.claude/CLAUDE.md</code> 相同。' },
+  { path: './CLAUDE.md', code: '# Project\nSee @docs/architecture.md for system design\nSee @docs/api-standards.md for API rules',
+    q: '用 @ 把两份长文档导入进来，比直接把内容写进 CLAUDE.md 省上下文吗？', opts: ['省，导入的文件按需读取', '不省，导入的内容在加载时一样全部拉进来', '省一半，只导入目录'], a: 1,
+    why: '原文明确说 <code>@</code> 导入只是整理，加载时照样整个拉进来；真正减少加载量的是拆成带 <code>paths</code> 的规则（或搬进 Skill）。' }
+]);
+S.notes($('#n-rules'), {
+  c: [
+    ['.claude/rules/', '主题化的规则文件，可分子目录、可软链共享。'],
+    ['paths:', 'glob 列表；写了就按需加载，没写就无条件加载。']
+  ],
+  p: [
+    ['glob 示例', '<code>**/*.ts</code>、<code>src/**/*.{ts,tsx}</code>、<code>{src,lib}/**/*.ts, tests/**/*.test.ts</code>。'],
+    ['用户级规则', '<code>~/.claude/rules/</code>，先于项目规则加载。'],
+    ['@ 导入不省', '真正省上下文的是 paths 规则或 Skill。']
+  ]
+});
+
+/* ---------- AGENTS.md ---------- */
+CH.cards($('#agq'), {
+  opts: ['只读 AGENTS.md', '只读 CLAUDE.md', '两个都读'],
+  items: [
+    { t: '项目根只有 <code>AGENTS.md</code>，没有任何 CLAUDE.md。', a: 0, why: '默认 claude-md-or-agents-md：没有 CLAUDE.md 时读 AGENTS.md。' },
+    { t: '项目根同时有 <code>CLAUDE.md</code> 和 <code>AGENTS.md</code>，CLAUDE.md 里没有导入。', a: 1, why: '两个都有时只读 CLAUDE.md。' },
+    { t: '项目根有 <code>AGENTS.md</code>，你刚新建了一个 <code>CLAUDE.local.md</code> 写个人补充。', a: 1, why: 'CLAUDE.local.md 也算“找到了 CLAUDE.md 类文件”，AGENTS.md 会静默不再被读——原文的警告。这里读到的是 CLAUDE.local.md。' },
+    { t: '项目根有 <code>CLAUDE.md</code>，第一行写着 <code>@AGENTS.md</code>。', a: 2, why: 'CLAUDE.md 里的 @ 导入会把 AGENTS.md 展开进来。版本较旧、首个升级会话、第三方平台等不能直接读 AGENTS.md 的情况，原文也建议这么写。' }
+  ]
+});
+S.notes($('#n-agents'), {
+  c: [
+    ['AGENTS.md', '多代理共用的项目约定，v2.1.277 起被直接读取。'],
+    ['默认规则', '只有它时读它；和 CLAUDE.md 同在时只读 CLAUDE.md。']
+  ],
+  p: [
+    ['静默失效', '新建 CLAUDE.local.md 会让 AGENTS.md 不再被读。'],
+    ['从不读取', '<code>AGENTS.local.md</code>、<code>AGENTS.override.md</code>、<code>.agents/</code>。'],
+    ['四种读取方式', 'claude-md-or-agents-md（默认）、claude-md-and-agents-md、claude-md、managed-only；只在用户级和托管设置生效。'],
+    ['兜底', 'CLAUDE.md 里写 <code>@AGENTS.md</code>。']
+  ]
+});
+
+/* ---------- 自动记忆 ---------- */
+CH.cards($('#amq'), {
+  opts: ['该记', '不该记'],
+  items: [
+    { t: '用户纠正过：这个项目用 pnpm，不要再用 npm install。', a: 0, why: 'feedback 类：你给过的纠正。' },
+    { t: '调度模块在 <code>src/sched/</code>，入口是 <code>prb.py</code>。', a: 1, why: '架构和文件路径能从代码里推出来，原文说 auto memory 会跳过这类信息。' },
+    { t: '用户是 RAN 方向的专家，解释时可以直接用 3GPP 术语。', a: 0, why: 'user 类：关于你的背景和偏好。' },
+    { t: '上周修过一个 PRB 越界的 bug，改法是加了 clamp。', a: 1, why: '调试过程和修法在代码与提交历史里，原文列为不记的内容。' },
+    { t: '团队的发版检查单放在内部 wiki 的某个页面。', a: 0, why: 'reference 类：外部参考的位置。' }
+  ]
+});
+S.notes($('#n-auto'), {
+  c: [
+    ['auto memory', 'Claude 自己写的带类型笔记：user、feedback、project、reference。'],
+    ['位置', '<code>~/.claude/projects/&lt;项目&gt;/memory/</code>，同仓库所有 worktree 共用。'],
+    ['加载', '<code>MEMORY.md</code> 前 200 行或 25KB；主题文件按需。']
+  ],
+  p: [
+    ['不记什么', '能从代码推出的：架构、路径、调试修法。'],
+    ['关闭', '<code>"autoMemoryEnabled": false</code>、<code>/memory</code>、<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code>。'],
+    ['改目录', '<code>"autoMemoryDirectory": "~/..."</code>（绝对路径或 ~/ 开头）。'],
+    ['Subagent 记忆', '定义里 <code>memory: user | project | local</code>。']
+  ]
+});
+
+/* ---------- 保持精简 ---------- */
+S.sortGame($('#sg'), {
+  bins: [
+    { k: 'keep', t: '留在 CLAUDE.md' },
+    { k: 'skill', t: '搬去 Skill' },
+    { k: 'rules', t: '搬去 rules（paths）' },
+    { k: 'auto', t: '交给 auto memory' },
+    { k: 'del', t: '删掉' }
+  ],
+  items: [
+    { t: '单测命令：uv run pytest -q', k: 'keep', why: '每次都用得上的项目事实。' },
+    { t: '发版 9 步流程（改版本号、生成 changelog、打 tag……）', k: 'skill', why: '多步流程，只在发版时相关，按需加载。' },
+    { t: 'services/api/ 下的接口必须带 Pydantic 校验', k: 'rules', why: '只和某个目录相关：写成带 <code>paths: services/api/**</code> 的规则。' },
+    { t: '说完成之前务必把所有测试都跑一遍', k: 'del', why: '验证提醒：在 Opus 5、Fable 5 上会导致过度验证，原文建议删掉。' },
+    { t: '集成测试需要先 docker compose up -d', k: 'keep', why: '不显然的项目事实，是信息而不是提醒。' },
+    { t: '我习惯先看结论再看推导', k: 'auto', why: '关于你个人的偏好，交给 auto memory（或放用户级 CLAUDE.md），不该进项目文件。' },
+    { t: '遵循最佳实践，写好代码', k: 'del', why: '空泛的话，原文的反例。' },
+    { t: '30 页的 3GPP 接口字段说明', k: 'skill', why: '长参考资料放 Skill 的 references/，用到才读。' },
+    { t: '数据库密码 db_pass=…', k: 'del', why: '永远不要把凭据写进记忆文件。' }
+  ]
+});
+S.notes($('#n-slim'), {
+  c: [
+    ['200 行经验值', '更长也会完整加载，但遵循度下降。'],
+    ['过度验证', '验证提醒在 Opus 5、Fable 5 上导致反复检查已正确的结果。'],
+    ['信息 vs 提醒', '“集成测试需要 Docker”是信息，留；“记得跑测试”是提醒，删。']
+  ],
+  p: [
+    ['搬家表（原文）', '流程→Skill；目录规则→rules+paths；参考资料→Skill references/；个人偏好→auto memory。'],
+    ['不要写', '密钥、个人隐私、空泛口号、重复内容（用 @ 引用已有文档）。'],
+    ['体检工具', '<code>/doctor</code>（v2.1.206+）会建议精简；<code>/doctor prompt-audit</code> 审查为旧模型写的提示词模式。']
+  ]
+});
+
+CH.tryNow($('#try'), '3', [
+  { t: '数一下你项目 CLAUDE.md 的行数，超过 200 行就按本篇的搬家表拆', d: '先搬多步流程和只与某个目录相关的规则。' },
+  { t: '删掉 CLAUDE.md 里所有“务必检查”“完成前一定要跑测试”之类的句子', d: '保留真正不显然的事实（某某测试依赖什么服务）。' },
+  { t: '打开 <code>~/.claude/projects/</code> 下当前项目的 <code>memory/MEMORY.md</code> 看一眼', d: '看看 Claude 记了你什么，过时的直接改；不想要可以 <code>/memory</code> 关掉。' }
+]);

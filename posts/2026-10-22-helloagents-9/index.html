@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上下文工程：给模型看什么</title>
+<meta name="description" content="Hello-Agents 学习笔记（九）：从提示工程到上下文工程，上下文腐蚀与注意力预算；有效上下文的三个组件；即时上下文、渐进式披露与混合策略；长时程任务的压缩整合、结构化笔记、子代理；ContextBuilder 的 GSSC 流水线模拟；NoteTool 的 Markdown + YAML 笔记；TerminalTool 的四层安全；代码库维护助手的三层分工。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 3.5v4M20.5 12h-4M12 20.5v-4M3.5 12h4' stroke='%2313171C' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.cfg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.cfg label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; color: var(--ink-3); }
+.cfg label b { font-family: var(--f-num); color: var(--ink); }
+@media (max-width: 700px) { .cfg { grid-template-columns: minmax(0, 1fr); } }
+.pk { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.pk div { display: grid; grid-template-columns: 4.6em minmax(0, 1fr) 3.6em 3.6em 4.2em 3.6em; gap: 8px; align-items: center; font-size: 15px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--bg); color: var(--ink-2); }
+.pk div .n { font-family: var(--f-num); text-align: right; }
+.pk div.sel { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.pk div.drop { opacity: .45; }
+.pk div.low { opacity: .45; text-decoration: line-through; }
+.pk .hd { background: none; border: 0; color: var(--ink-3); padding-top: 0; padding-bottom: 0; }
+@media (max-width: 640px) { .pk div { grid-template-columns: 4.2em minmax(0, 1fr) 3.4em 4em; } .pk div .n.x { display: none; } }
+.term-in { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.term-in input { flex: 1; min-width: 12em; font: inherit; font-family: var(--f-num); font-size: 15px; padding: 8px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.layers4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.layers4 div { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 15px; background: var(--bg); color: var(--ink-3); line-height: 1.5; }
+.layers4 div b { display: block; color: var(--ink); }
+.layers4 div.pass { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.layers4 div.block { border-color: var(--alert); background: var(--alert-soft); color: var(--ink); }
+@media (max-width: 700px) { .layers4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+</head>
+<body data-series="helloagents-series" data-part="9">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Hello-Agents · 09</span><span>对应原书第 9 章</span><span>约 40 分钟</span></p>
+  <h1>窗口再大，<em>注意力也有预算</em></h1>
+  <p class="lead">记忆和 RAG 解决了“信息从哪来”，这一章解决“每次调用前，到底把哪些 token 放进窗口”。原书的出发点是上下文腐蚀：token 越多，模型从中准确找回信息的能力越差，所以上下文是有边际收益递减的稀缺资源。在此之上，原书给了三样工程工具：一条 Gather—Select—Structure—Compress 流水线（ContextBuilder），一个把关键信息写到窗口之外的笔记工具（NoteTool），一个按需去文件系统里看一眼的终端工具（TerminalTool）。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">Hello-Agents：从零开始构建智能体</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 14 日的仓库版本）的学习笔记。原书十六章，按“概念 → 手写范式 → 平台与框架 → 自研框架 → 记忆、上下文、协议、训练、评估 → 综合案例”展开，代码量很大。这里重排成十三篇，用自己的话重讲：代码只保留能看清机制的骨架，做成可以逐行走读、可以填空回忆的互动；每篇末尾配原书面试题清单里的相关题目做口述演练。每节标出对应的原书章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-helloagents/"><b>总览</b>复习台</a>
+  <a href="../2026-10-22-helloagents-1/" data-part="1"><b>01</b>初识智能体</a>
+  <a href="../2026-10-22-helloagents-2/" data-part="2"><b>02</b>发展史</a>
+  <a href="../2026-10-22-helloagents-3/" data-part="3"><b>03</b>LLM 基础</a>
+  <a href="../2026-10-22-helloagents-4/" data-part="4"><b>04</b>经典范式</a>
+  <a href="../2026-10-22-helloagents-5/" data-part="5"><b>05</b>低代码平台</a>
+  <a href="../2026-10-22-helloagents-6/" data-part="6"><b>06</b>框架实践</a>
+  <a href="../2026-10-22-helloagents-7/" data-part="7"><b>07</b>自建框架</a>
+  <a href="../2026-10-22-helloagents-8/" data-part="8"><b>08</b>记忆与检索</a>
+  <a href="../2026-10-22-helloagents-9/" aria-current="page" data-part="9"><b>09</b>上下文工程</a>
+  <a href="../2026-10-22-helloagents-10/" data-part="10"><b>10</b>通信协议</a>
+  <a href="../2026-10-22-helloagents-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-22-helloagents-12/" data-part="12"><b>12</b>性能评估</a>
+  <a href="../2026-10-22-helloagents-13/" data-part="13"><b>13</b>综合案例</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#what">上下文工程</a><a href="#anatomy">有效上下文</a><a href="#jit">即时上下文</a><a href="#long">长时程任务</a><a href="#gssc">GSSC 流水线</a><a href="#note">NoteTool</a><a href="#term">TerminalTool</a><a href="#iv">面试演练</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>上下文工程和提示工程有什么区别？为什么窗口很大了还要管上下文？</li>
+    <li>长时程任务的三种手段（压缩整合、结构化笔记、子代理）各适合什么情况？</li>
+    <li>GSSC 四个阶段各做什么？Select 阶段怎么打分、怎么在预算内选？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>从提示工程到上下文工程</h2><span class="meta">原书 9.1–9.2 节</span></div>
+  <div class="sec-lede">
+    <p>上下文就是一次采样时模型看到的那组 token。<strong>提示工程</strong>关心怎么写、怎么组织指令（尤其是系统提示）；<strong>上下文工程</strong>是它的自然演进，关心的是推理时<strong>怎样策划与维护最优的信息集合</strong>：除了提示，还有工具定义、MCP、外部数据、消息历史，一切会进入窗口的东西。一个循环运行的智能体每一轮都在制造可能有用的新信息，必须周期性地提炼，决定谁进窗口。</p>
+    <p>为什么窗口大了还要管？原书引用“大海捞针”类评测揭示的<strong>上下文腐蚀（context rot）</strong>：token 越多，模型从上下文中准确回忆的能力越差。这是一个<strong>性能梯度</strong>而非悬崖：长上下文下模型依旧强，但检索和长程推理的精度会下降。原因有二：Transformer 里每个 token 和所有 token 两两关联，关系数随长度平方增长，注意力被“拉薄”；训练数据里短序列远多于长序列，模型对长距离依赖的经验更少。位置编码插值能让模型适配更长序列，代价是位置理解变模糊。结论是：<strong>上下文是有限资源，有边际收益递减，每个 token 都在消耗注意力预算。</strong></p>
+    <p class="go">先估一下注意力“拉薄”的程度。</p>
+  </div>
+  <div class="lab"><div id="n2Guess"></div></div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="anatomy">
+  <div class="part-head"><h2>有效上下文的三个组件</h2><span class="meta">原书 9.2.1 节</span></div>
+  <div class="sec-lede">
+    <p>目标一句话：<strong>用尽可能少、但信号密度高的 token，最大化得到期望结果的概率。</strong>原书拆成三个组件。</p>
+    <p><strong>系统提示</strong>要把握“刚刚好”的高度，避开两个极端：<strong>过度硬编码</strong>（在提示里写复杂、脆弱的 if-else，难维护）和<strong>过于空泛</strong>（只给宏观目标，缺少对期望输出的具体信号，或者假定了不存在的共享背景）。建议用 XML 或 Markdown 分区（背景、指令、工具指引、输出描述），追求“能完整勾勒期望行为的<strong>最小必要信息集</strong>”，最小不等于最短。做法是先用最好的模型跑最小提示，再按失败模式补指令和示例。</p>
+    <p><strong>工具</strong>是智能体与信息、行动空间的契约：职责单一、彼此少重叠、对错误鲁棒、参数描述无歧义，返回 token 友好的结果。常见失败是<strong>臃肿工具集</strong>：边界模糊，“该选哪个”本身就说不清。原书的话很直接：<strong>如果人类工程师都说不准用哪个工具，别指望智能体做得更好</strong>，所以要精选一个<strong>最小可行工具集（MVTS）</strong>。<strong>示例</strong>：始终推荐给，但不要把所有边界情况堆进去，挑一组多样、典型的就够，好示例胜过千言万语。</p>
+    <p class="go">下面几段系统提示片段，各属于哪种情况？</p>
+  </div>
+  <div class="lab"><div id="spCards"></div></div>
+  <div class="notes" id="n-anatomy"></div>
+</section>
+
+<section class="part" id="jit">
+  <div class="part-head"><h2>即时上下文与渐进式披露</h2><span class="meta">原书 9.2.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书对智能体的简洁定义是：<strong>在循环中自主调用工具的 LLM</strong>。模型越强，就越能自己去找需要的信息。于是工程实践正从“推理前一次性检索”转向<strong>即时（Just-in-time, JIT）上下文</strong>：不预先加载所有数据，只维护<strong>轻量引用</strong>（文件路径、查询、URL），运行时用工具按需加载，大文件用 head、tail 看一部分。这和人一样：我们不背下所有东西，而是靠文件系统、收件箱、书签按需提取。</p>
+    <p>引用的<strong>元数据</strong>本身就是信号：目录层级、命名、时间戳都在暗示用途和时效（tests/test_utils.py 和 src/core/test_utils.py 的含义不同）。自主导航带来<strong>渐进式披露</strong>：每一步产生的新上下文指导下一步，文件大小暗示复杂度、命名暗示用途，智能体逐层建立理解，工作记忆里只留当前必要的子集，再靠记笔记做持久化。代价是运行时探索比预计算检索慢，没有好的工具和启发式时可能误用工具、钻死胡同。所以常用<strong>混合策略</strong>：先放少量高价值上下文（比如项目约定的 README），再给 glob、grep 这类原语让它自己找。这正是 Claude Code 一类编码智能体的做法（原书在 1.4 节也提到了它）。</p>
+    <p class="go">原书习题 1、5：每个任务适合一次性加载，还是即时探索，还是混合？</p>
+  </div>
+  <div class="lab"><div id="jitCards"></div></div>
+  <div class="notes" id="n-jit"></div>
+</section>
+
+<section class="part" id="long">
+  <div class="part-head"><h2>长时程任务的三种手段</h2><span class="meta">原书 9.2.3 节</span></div>
+  <div class="sec-lede">
+    <p>大型代码库迁移、持续数小时的研究，行动序列远超窗口。无限加大窗口治不了上下文污染和相关性退化，原书给了三种直接针对约束的手段。</p>
+    <p><strong>压缩整合（Compaction）</strong>：接近上限时对对话做高保真总结，用摘要开一个新窗口。保留架构决策、未解决的缺陷、实现细节，丢弃重复的工具输出；新窗口带上摘要和最近访问的少量文件。调参先保召回（不漏关键信息），再提精度（剔冗余）；最安全的“轻触式”压缩是清理深层历史里的工具调用结果。<strong>结构化笔记</strong>：智能体定期把关键信息写到窗口之外的持久存储（TODO 列表、NOTES.md、结论与阻塞项索引），需要时拉回，用极低的上下文开销跨越几十次工具调用和多次上下文重置。<strong>子代理架构</strong>：主代理负责规划与综合，子代理在各自“干净”的窗口里深挖，只回传 1000 到 2000 token 的凝练摘要，庞杂的搜索过程留在子代理内部。</p>
+    <p>原书的经验法则：需要长对话连续性用<strong>压缩整合</strong>；有里程碑、阶段性成果的迭代式开发与研究用<strong>结构化笔记</strong>；能从并行探索中获益的复杂研究与分析用<strong>子代理</strong>。</p>
+    <p class="go">三种手段各对应什么情况？</p>
+  </div>
+  <div class="lab"><div id="longCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>上下文工程在<a href="../2026-10-16-agent-2/">《深入理解 AI Agent》02 篇·上下文工程：Agent 的眼睛</a>有更系统的讲法；企业场景下的上下文与状态契约见<a href="../2026-10-22-handbook-5/">《AI Agent Handbook》05 篇</a>。</div>
+  <div class="notes" id="n-long"></div>
+</section>
+
+<section class="part" id="gssc">
+  <div class="part-head"><h2>ContextBuilder：GSSC 流水线</h2><span class="meta">原书 9.3 节</span></div>
+  <div class="sec-lede">
+    <p>ContextBuilder 把每次调用前的上下文拼装抽象成四步：<strong>Gather</strong>（汇集候选：系统指令、记忆检索 limit 10 且 min_importance 0.3、RAG 检索 limit 5 且 min_score 0.3、最近 5 条对话历史；每个来源都包 try/except，一个源挂了不影响整体）→ <strong>Select</strong>（打分与预算内选择）→ <strong>Structure</strong>（按固定骨架分区）→ <strong>Compress</strong>（超限兜底压缩）。每条候选是一个 <code>ContextPacket</code>（内容、时间戳、token 数、相关性、元数据）。</p>
+    <p><strong>Select</strong> 是核心：系统指令单独拿出来，直接保留、不参与评分；其他候选的分数 = <strong>relevance_weight × 相关性 + recency_weight × 新近性</strong>（默认 0.7 和 0.3）。相关性用关键词重叠（生产中应换成向量相似度），新近性用 exp(−0.1 × 小时数 / 24) 并限制在 [0.1, 1]；相关性低于 <code>min_relevance</code> 的直接过滤；然后按分数降序<strong>贪心填充</strong>，加不下就停。<strong>Structure</strong> 输出固定骨架：[Role &amp; Policies]、[Task]、[Evidence]（RAG 结果）、[Context]（历史与记忆）、[Output]。固定形态便于调试、A/B 测试和评估。<strong>Compress</strong> 按分区依次保留，超出部分截断并标注“内容已压缩”，剩余预算不足 50 token 就不再保留。Token 数用“中文字数 + 英文词数 × 1.3”估算。</p>
+    <p>原书强调了“最小规则”：不引入来源、优先级等更多分类维度，只用相关性加新近性，大多数场景已经够用。</p>
+    <p class="go">候选信息为示意。调预算和权重，看 Select 选了谁、Structure 拼出什么。</p>
+  </div>
+  <div class="lab">
+    <div class="cfg">
+      <label>max_tokens <b id="mtV">220</b><input type="range" id="mtS" min="80" max="400" step="10" value="220"></label>
+      <label>relevance_weight（recency = 1 − 它）<b id="rwV">0.70</b><input type="range" id="rwS" min="0" max="1" step="0.05" value="0.7"></label>
+      <label>min_relevance <b id="mrV">0.10</b><input type="range" id="mrS" min="0" max="0.6" step="0.05" value="0.1"></label>
+    </div>
+    <div class="pk" id="pk"></div>
+    <p class="note" id="pkNote"></p>
+    <p class="lab-t" style="margin-top:12px">Structure 之后的上下文</p>
+    <div id="ctxOut"></div>
+  </div>
+  <div class="notes" id="n-gssc"></div>
+</section>
+
+<section class="part" id="note">
+  <div class="part-head"><h2>NoteTool：写在窗口之外的笔记</h2><span class="meta">原书 9.4 节</span></div>
+  <div class="sec-lede">
+    <p>MemoryTool 偏<strong>对话式记忆</strong>，NoteTool 则面向<strong>项目式任务</strong>的长期追踪，更轻、更人类友好：每条笔记是一个独立的 <code>.md</code> 文件，开头是 <strong>YAML 元数据</strong>（id、title、type、tags、created_at、updated_at），正文是 <strong>Markdown</strong>。好处是机器可解析、人可读可改、纯文本天然适合 Git 版本管理、不需要数据库。笔记按 type 分类，原书用到了 task_state（任务状态）、conclusion（阶段结论）、blocker（阻塞点）、action（下一步计划）、reference（参考资料）等，再用 tags 做多维检索。</p>
+    <p>和 ContextBuilder 配合的方式：每轮对话前先 <code>list</code> 出最多 2 条 blocker（阻塞点总是值得提醒），再 <code>search</code> 与问题相关的笔记，合并去重后转成 ContextPacket（相关性 0.7）作为 custom_packets 交给 build。也可以把一次重要的回答存成新笔记。这就是 9.2.3 节“结构化笔记”手段的落地。</p>
+  </div>
+  <pre class="code-plain">---
+id: note_20250119_153000_0
+title: 项目进展 - 第一阶段
+type: task_state
+tags: [refactoring, phase1, backend]
+created_at: 2025-01-19T15:30:00
+updated_at: 2025-01-19T15:30:00
+---
+# 项目进展 - 第一阶段
+## 完成情况
+已完成数据模型层的重构……单元测试覆盖率 85%
+## 下一步计划
+1. 重构业务逻辑层
+2. 解决依赖冲突问题</pre>
+  <p class="note">原书 9.4.2 节的笔记文件示例（节选）。</p>
+  <div class="confuse">
+    <h4>易混辨析：NoteTool vs MemoryTool</h4>
+    <p><b>MemoryTool</b> 是给模型用的：向量与图存储、自动打分排序、整合与遗忘，人很难直接读改。<b>NoteTool</b> 是人机共用的：一个笔记一个 Markdown 文件，人可以打开改计划、加约束，智能体下一轮就能读到，Git 能看出每次改了什么。原书的代码库助手把两者都用上：发现的知识进记忆，任务进度和阻塞进笔记。</p>
+  </div>
+  <div class="notes" id="n-note"></div>
+</section>
+
+<section class="part" id="term">
+  <div class="part-head"><h2>TerminalTool：按需看一眼，但要守住边界</h2><span class="meta">原书 9.5–9.6 节</span></div>
+  <div class="sec-lede">
+    <p>TerminalTool 是 JIT 上下文的落地：不预先把整个代码库灌进向量库，而是需要时 <code>find</code>、<code>grep</code>、<code>head</code> 一下；看日志用 <code>tail | grep ERROR</code>，看数据先 <code>head -n 5</code>。原书给了四层安全：<strong>命令白名单</strong>（只允许 ls、cat、head、tail、find、grep、wc、sort、uniq、cut、awk、sed、pwd、cd、file、stat、du、df、echo、which 等）、<strong>工作目录沙箱</strong>（只能访问指定 workspace 及子目录，绝对路径和 .. 逃逸都会被拒）、<strong>超时控制</strong>（默认 30 秒）、<strong>输出大小限制</strong>。</p>
+    <p>9.6 节把三样工具组装成一个<strong>代码库维护助手</strong>（约 50 个文件的 Flask 项目，重构要持续好几天）：TerminalTool 负责<strong>即时</strong>探索（信息量超出窗口），NoteTool 负责<strong>跨会话</strong>的进度、待办和阻塞（任务持续数天），ContextBuilder 负责每次对话的<strong>高信号密度</strong>上下文（回顾历史又不被淹没）。原书概括为分层：即时访问 + 会话记忆 + 持久笔记。</p>
+    <p class="go">输入一条命令，看它在哪一层被拦下（按原书描述的规则模拟）。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="termEx"></div>
+    <div class="term-in"><input id="termIn" value="grep -r 'class UserService' ./src" aria-label="命令"><button class="btn pri" type="button" id="termGo">检查</button></div>
+    <div class="layers4" id="layers4"></div>
+    <p class="note" id="termNote"></p>
+  </div>
+  <div class="confuse">
+    <h4>读码时值得多想一步：白名单里的 sed、awk、find</h4>
+    <p>原书说白名单“只允许安全的只读命令，完全禁止任何可能修改系统的操作”，但列表里的 <b>sed</b> 带 <code>-i</code> 就能原地改文件，<b>awk</b> 可以用 <code>system()</code> 执行任意命令或重定向写文件，<b>find</b> 带 <code>-delete</code> 或 <code>-exec</code> 也能删改。只按命令名做白名单不够，还需要检查参数（或者干脆在只读挂载的容器里执行）。这是我的读码观察，不是原书观点；原书习题 3 也在追问这套机制是否足够。</p>
+  </div>
+  <div class="notes" id="n-term"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书第 9 章习题与 Extra01</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="9-1">
+      <p class="iv-q">什么是上下文腐蚀？模型支持 100K、200K 窗口了，为什么还要管理上下文？<small>原书第 9 章习题 1</small></p>
+      <ul class="iv-a">
+        <li><b>现象</b>：上下文 token 越多，模型从中准确回忆和推理的能力越差，是渐进的性能梯度。</li>
+        <li><b>原因</b>：注意力两两关系随长度平方增长被拉薄；训练中长序列少，长距离依赖经验不足；位置插值牺牲位置精度。</li>
+        <li><b>还有成本</b>：输入 token 计费、首 token 延迟、缓存失效。</li>
+        <li><b>所以</b>：把上下文当作有边际收益递减的预算，追求最少而高信号的 token：精简系统提示与工具集、JIT 按需加载、压缩、笔记、子代理隔离。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="9-2">
+      <p class="iv-q">GSSC 某个阶段失效会怎样？什么时候截断比 LLM 摘要更合适？<small>原书第 9 章习题 2</small></p>
+      <ul class="iv-a">
+        <li><b>Gather 漏源</b>：关键事实根本不在候选里，后面再好也没用。<b>Select 选错</b>：不相关信息占预算，相关的被挤掉，模型被带偏。<b>Structure 混乱</b>：证据和历史混在一起，模型分不清哪些是依据。<b>Compress 过度</b>：截掉关键数字或约束，产生看似合理的错误。</li>
+        <li><b>截断 / 滑窗更合适</b>：信息按时间线性衰减（闲聊历史）、需要逐字保真（代码、日志、法律条文）、对延迟和成本敏感、摘要模型可能引入幻觉时。</li>
+        <li><b>混合</b>：最近 N 轮原文保留 + 更早的摘要；结构化字段（决策、数字、待办）单独抽取不压缩。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="9-3">
+      <p class="iv-q">长任务中断后如何“断点续传”？笔记里要记哪些状态？<small>原书第 9 章习题 4</small></p>
+      <ul class="iv-a">
+        <li><b>记什么</b>：任务目标与完成定义、计划与每步状态（未开始 / 进行中 / 完成 / 阻塞）、已产生的工件位置、关键决策与理由、未解决问题、最后一次成功的检查点。</li>
+        <li><b>怎么恢复</b>：读笔记重建计划 → 用工具核对真实状态（文件是否存在、测试是否通过、git 状态）→ 只有核对一致才从检查点继续，不一致先修正笔记。</li>
+        <li><b>原则</b>：笔记是事实的索引而不是事实本身，恢复前一定要验证，不能盲目重放最后一步。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 上下文工程 vs 提示工程？为何仍要管理？</summary><p class="ans">提示工程关心怎么写指令；上下文工程关心每次推理时进入窗口的全部 token（提示、工具、外部数据、历史）如何策划与维护。即使窗口很大，上下文腐蚀让准确回忆随长度下降，注意力关系随长度平方增长被拉薄，长序列训练经验也少；再加上成本和延迟，上下文必须当作有边际收益递减的预算来管理。</p></details>
+    <details><summary>2. 三种长时程手段各适合什么？</summary><p class="ans">压缩整合：接近上限时高保真总结并开新窗口，适合需要长对话连续性的任务。结构化笔记：把进度、结论、阻塞写到窗口外的持久存储按需拉回，适合有里程碑的迭代开发和研究。子代理：主代理规划综合，子代理在干净窗口里深挖并只回传 1000–2000 token 摘要，适合可并行探索的复杂研究与分析。</p></details>
+    <details><summary>3. GSSC 四阶段？Select 怎么做？</summary><p class="ans">Gather 从系统指令、记忆、RAG、最近对话等多源汇集候选（各自容错）；Select 打分并在预算内选择；Structure 组织成 [Role &amp; Policies] [Task] [Evidence] [Context] [Output] 固定骨架；Compress 超限时按分区保留、截断并标注。Select：系统指令直接保留；其余按 0.7 × 相关性 + 0.3 × 新近性打分，过滤低于 min_relevance 的，按分数降序贪心填充至预算用尽。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-helloagents-8/"><small>上一篇</small><span>08 · 记忆与检索：Memory 与 RAG</span></a><a class="nx" href="../2026-10-22-helloagents-10/"><small>下一篇</small><span>10 · 通信协议：MCP、A2A、ANP</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">datawhalechina/hello-agents</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+S.guess($('#n2Guess'), {
+  q: '上下文从 4K token 增加到 128K token（32 倍），每个 token 要与之建立关系的“两两注意力关系”总数增加多少倍？',
+  unit: '倍', ans: 1024,
+  why: '关系数约为 n²，长度 32 倍，关系数就是 32² = 1024 倍。原书用这个 n² 解释为什么注意力会被“拉薄”：同样的模型容量，要照顾的关系多了三个数量级。'
+});
+S.notes($('#n-what'), {
+  c: [
+    ['上下文工程', '在推理阶段策划与维护进入窗口的最优 token 集合：提示、工具、外部数据、历史。'],
+    ['上下文腐蚀', 'token 越多，从上下文中准确回忆的能力越差；性能梯度而非悬崖。'],
+    ['注意力预算', '每个 token 都消耗预算，上下文是边际收益递减的有限资源。']
+  ],
+  p: [
+    ['腐蚀的两个原因', '两两关系 n² 增长被拉薄；长序列训练数据少。'],
+    ['位置编码插值', '让模型适配更长序列，代价是位置理解精度下降。']
+  ]
+});
+
+HB.cards($('#spCards'), {
+  opts: ['过度硬编码', '过于空泛', '刚刚好'],
+  items: [
+    { t: '“如果用户问价格且是 VIP 且时间在 9 点前且商品是电子类，则回复模板 A；如果……（下面还有 40 条）”', a: 0, why: '把业务分支写进提示词，脆弱难维护；这些规则应该放进代码或工具。' },
+    { t: '“你是一个乐于助人的助手，请尽力帮助用户。”', a: 1, why: '没有任何关于期望输出的具体信号，也没说明背景和边界。' },
+    { t: '“&lt;background&gt;你是公司内部 IT 支持助手，用户是员工。&lt;/background&gt;&lt;instructions&gt;先确认问题属于账号、网络还是设备；涉及密码重置必须调用 reset_password 工具，不要在回复中给出任何密码。&lt;/instructions&gt;&lt;output&gt;先一句话结论，再列步骤。&lt;/output&gt;”', a: 2, why: '分区清晰，给了具体的行为信号和硬约束，又没把所有边界情况塞进来。' },
+    { t: '“回答要专业、准确、全面、简洁、友好、有深度。”', a: 1, why: '一串互相拉扯的形容词，模型不知道遇到冲突时取舍什么，等于没说。' }
+  ]
+});
+S.notes($('#n-anatomy'), {
+  c: [
+    ['系统提示两极', '过度硬编码（脆弱的 if-else）与过于空泛（缺具体信号、假定共享背景）。'],
+    ['最小必要信息集', '能完整勾勒期望行为的最少信息；最小不等于最短。'],
+    ['MVTS', '最小可行工具集：职责单一、少重叠、鲁棒、参数无歧义、返回 token 友好。']
+  ],
+  p: [
+    ['写提示的流程', '用最好的模型跑最小提示 → 看失败模式 → 补指令与示例。'],
+    ['工具判断法', '人类工程师都说不准用哪个工具时，智能体也做不好。'],
+    ['示例', '少而典型、多样，好示例胜过千言万语。']
+  ]
+});
+
+HB.cards($('#jitCards'), {
+  opts: ['一次性加载', '即时探索（JIT）', '混合'],
+  items: [
+    { t: '回答一份 3 页合同里的问题。', a: 0, why: '内容小、全部相关，直接放进上下文最简单可靠。' },
+    { t: '在一个 50 个文件的代码库里找出 UserService 的所有调用点。（原书习题 1）', a: 1, why: '一次性加载 50 个文件既贵又会腐蚀注意力；grep 一下就能定位。' },
+    { t: '加入一个陌生项目，帮忙修一个 Bug。', a: 2, why: '先加载 README 和项目约定（高价值、量小），再按需 find / grep / head 查具体文件。' },
+    { t: '排查线上服务今天凌晨的报错。', a: 1, why: '日志巨大且实时变化，用 tail、grep 按需取，预先索引必然过时。' }
+  ]
+});
+S.notes($('#n-jit'), {
+  c: [
+    ['智能体（原书 9.2.2 定义）', '在循环中自主调用工具的 LLM。'],
+    ['JIT 上下文', '只维护轻量引用（路径、查询、URL），运行时按需加载。'],
+    ['渐进式披露', '每步新上下文指导下一步，逐层建立理解，工作记忆只留必要子集。']
+  ],
+  p: [
+    ['元数据即信号', '目录、命名、时间戳暗示用途与时效。'],
+    ['JIT 的代价', '比预计算检索慢；缺少工具和启发式时会钻死胡同。'],
+    ['混合策略', '预放少量高价值上下文 + 提供 glob、grep 等原语。']
+  ]
+});
+
+HB.cards($('#longCards'), {
+  opts: ['压缩整合', '结构化笔记', '子代理'],
+  items: [
+    { t: '和用户连续两小时结对编程，对话快撑满窗口了。', a: 0, why: '需要对话的连续性：总结保留决策与未解决问题，开新窗口接力。' },
+    { t: '一个持续两周的重构，每天做一部分，要记得做到哪了、卡在哪。', a: 1, why: '有里程碑的迭代任务，用 TODO、NOTES.md 跨会话追踪。' },
+    { t: '调研 6G 网络 AI 的五个方向，每个方向都要读一批论文。', a: 2, why: '可以并行探索：每个子代理在干净窗口里读论文，只回传精炼摘要给主代理综合。' },
+    { t: '深层历史里有 40 次工具调用的原始返回，后面早就用不上了。', a: 0, why: '原书说最安全的“轻触式”压缩就是清理深层历史中的工具调用与结果。' }
+  ]
+});
+S.notes($('#n-long'), {
+  c: [
+    ['压缩整合', '接近上限时高保真总结，用摘要 + 最近少量工件开新窗口。'],
+    ['结构化笔记', '定期把关键信息写到窗口外的持久存储，按需拉回。'],
+    ['子代理', '子代理在干净窗口中深挖，只回传 1000–2000 token 摘要。']
+  ],
+  p: [
+    ['压缩调参', '先保召回，再提精度；轻触式压缩先清旧工具结果。'],
+    ['选择法则', '对话连续性→压缩；里程碑迭代→笔记；并行研究→子代理。']
+  ]
+});
+
+/* ---------- GSSC ---------- */
+var PK = [
+  { ty: 'system', c: '你是一位资深的 Python 数据工程顾问。回答需提供具体建议、解释原理、给出代码示例。', tok: 40, rel: 1, h: 0 },
+  { ty: 'memory', c: '用户正在开发数据分析工具，使用 Python 和 Pandas。', tok: 24, rel: 0.62, h: 30 },
+  { ty: 'memory', c: '已完成 CSV 读取模块的开发。', tok: 14, rel: 0.35, h: 30 },
+  { ty: 'memory', c: '用户上个月问过 Flask 部署问题。', tok: 16, rel: 0.05, h: 720 },
+  { ty: 'rag', c: 'Pandas 内存优化：用 category 类型存低基数字符串列，数值列 downcast 到更小的 int / float。', tok: 46, rel: 0.85, h: 2000 },
+  { ty: 'rag', c: 'read_csv 可以用 usecols 只读需要的列，用 chunksize 分块读取大文件。', tok: 38, rel: 0.7, h: 2000 },
+  { ty: 'rag', c: 'NumPy 广播机制的基本规则……', tok: 30, rel: 0.12, h: 2000 },
+  { ty: 'history', c: '用户：我打算用 Python 和 Pandas，已经完成了 CSV 读取模块。', tok: 28, rel: 0.4, h: 0.1 },
+  { ty: 'history', c: '助手：接下来您可能需要考虑数据清洗和转换。', tok: 22, rel: 0.2, h: 0.1 }
+];
+var Q = '如何优化 Pandas 的内存占用？';
+function recency(h) { return Math.max(0.1, Math.min(1, Math.exp(-0.1 * h / 24))); }
+function gssc() {
+  var MT = +$('#mtS').value, RW = +$('#rwS').value, MR = +$('#mrS').value;
+  $('#mtV').textContent = MT; $('#rwV').textContent = S.f(RW, 2); $('#mrV').textContent = S.f(MR, 2);
+  var sys = PK.filter(function (p) { return p.ty === 'system'; });
+  var used = sys.reduce(function (s, p) { return s + p.tok; }, 0);
+  var scored = PK.filter(function (p) { return p.ty !== 'system'; }).map(function (p) {
+    return { p: p, r: recency(p.h), s: RW * p.rel + (1 - RW) * recency(p.h), low: p.rel < MR };
+  });
+  var cand = scored.filter(function (x) { return !x.low; }).sort(function (a, b) { return b.s - a.s; });
+  var stopped = false, firstDrop = null;
+  cand.forEach(function (x) {
+    if (stopped) { x.drop = true; return; }
+    if (used + x.p.tok <= MT) { x.sel = true; used += x.p.tok; }
+    else { stopped = true; x.drop = true; firstDrop = x; }
+  });
+  var rows = sys.map(function (p) { return '<div class="sel"><span>系统指令</span><span>' + p.c.slice(0, 26) + '…</span><span class="n">' + p.tok + '</span><span class="n x">—</span><span class="n">直接保留</span><span class="n x">—</span></div>'; });
+  var TN = { memory: '记忆', rag: 'RAG', history: '历史' };
+  scored.slice().sort(function (a, b) { return b.s - a.s; }).forEach(function (x) {
+    rows.push('<div class="' + (x.low ? 'low' : x.sel ? 'sel' : 'drop') + '"><span>' + TN[x.p.ty] + '</span><span>' + x.p.c.slice(0, 30) + (x.p.c.length > 30 ? '…' : '') + '</span><span class="n">' + x.p.tok + '</span><span class="n x">' + S.f(x.p.rel, 2) + '</span><span class="n">' + S.f(x.s, 3) + '</span><span class="n x">' + S.f(x.r, 2) + '</span></div>');
+  });
+  $('#pk').innerHTML = '<div class="hd"><span>来源</span><span>内容</span><span class="n">tok</span><span class="n x">相关</span><span class="n">综合分</span><span class="n x">新近</span></div>' + rows.join('');
+  var skipped = cand.filter(function (x) { return x.drop && x !== firstDrop && used + x.p.tok <= MT; });
+  $('#pkNote').innerHTML = '已用 ' + used + ' / ' + MT + ' tok。绿色入选，灰色被预算挡住，删除线是相关性低于 min_relevance 被过滤。' +
+    (firstDrop ? ' 贪心在第一条放不下的“' + firstDrop.p.c.slice(0, 12) + '…”处直接 <code>break</code>' + (skipped.length ? '，所以后面本来放得下的 ' + skipped.length + ' 条小包也没机会进来。用 continue 代替 break 能多利用预算，这是读原书代码时值得注意的一个细节。' : '。') : '');
+  var sel = [];
+  sys.forEach(function (p) { sel.push(p); });
+  cand.forEach(function (x) { if (x.sel) sel.push(x.p); });
+  var ev = sel.filter(function (p) { return p.ty === 'rag'; }), cx = sel.filter(function (p) { return p.ty === 'memory' || p.ty === 'history'; });
+  var items = [{ r: 'sys', b: '[Role &amp; Policies]', t: sys.map(function (p) { return p.c; }).join('\n'), tok: sys[0].tok }, { r: 'user', b: '[Task]', t: Q, tok: 12 }];
+  if (ev.length) items.push({ r: 'rag', b: '[Evidence]', t: ev.map(function (p) { return p.c; }).join('\n---\n'), tok: ev.reduce(function (s, p) { return s + p.tok; }, 0) });
+  if (cx.length) items.push({ r: 'mem', b: '[Context]', t: cx.map(function (p) { return p.c; }).join('\n'), tok: cx.reduce(function (s, p) { return s + p.tok; }, 0) });
+  items.push({ r: 'asst', b: '[Output]', t: '请基于以上信息，提供准确、有据的回答。', tok: 14 });
+  HA.ctx($('#ctxOut'), items, { budget: MT });
+}
+['#mtS', '#rwS', '#mrS'].forEach(function (x) { $(x).addEventListener('input', gssc); });
+gssc();
+S.notes($('#n-gssc'), {
+  c: [
+    ['GSSC', 'Gather 汇集 → Select 选择 → Structure 结构化 → Compress 兜底压缩。'],
+    ['ContextPacket', '候选信息单元：内容、时间戳、token 数、相关性、元数据。'],
+    ['固定骨架', '[Role &amp; Policies] [Task] [Evidence] [Context] [Output]，便于调试与 A/B 测试。']
+  ],
+  p: [
+    ['Select 打分', '0.7 × 相关性 + 0.3 × 新近性；新近性 = clip(exp(−0.1 × h / 24), 0.1, 1)。'],
+    ['Select 流程', '系统指令直接保留 → 过滤低于 min_relevance → 降序贪心填充至预算。'],
+    ['Gather 默认', '记忆 limit 10、min_importance 0.3；RAG limit 5、min_score 0.3；最近 5 条历史；各源 try/except。'],
+    ['Compress', '按分区保留，超出截断并标注；剩余不足 50 token 不再保留。Token ≈ 中文字数 + 英文词数 × 1.3。']
+  ]
+});
+
+S.notes($('#n-note'), {
+  c: [
+    ['NoteTool', '一条笔记一个 Markdown 文件，YAML 头记录 id、title、type、tags、时间。'],
+    ['笔记类型', 'task_state、conclusion、blocker、action、reference 等，配合 tags 检索。']
+  ],
+  p: [
+    ['优点', '机器可解析、人可读可改、Git 友好、无需数据库。'],
+    ['与 ContextBuilder 集成', '每轮先 list 最多 2 条 blocker + search 相关笔记 → 转 ContextPacket（相关性 0.7）→ custom_packets。']
+  ]
+});
+
+/* ---------- Terminal ---------- */
+var ALLOW = ['ls', 'dir', 'tree', 'cat', 'head', 'tail', 'less', 'more', 'find', 'grep', 'egrep', 'fgrep', 'wc', 'sort', 'uniq', 'cut', 'awk', 'sed', 'pwd', 'cd', 'file', 'stat', 'du', 'df', 'echo', 'which', 'whereis'];
+var TEX = ["grep -r 'class UserService' ./src", 'rm -rf ./build', 'cat /etc/passwd', 'cd ../../../etc', "find / -name '*.log'", "sed -i 's/DEBUG = False/DEBUG = True/' config.py", 'tail -n 100 logs/app.log | grep ERROR'];
+TEX.forEach(function (t) { var b = h('button', { class: 'btn', type: 'button', text: t }, $('#termEx')); b.addEventListener('click', function () { $('#termIn').value = t; term(); }); });
+function term() {
+  var cmd = $('#termIn').value.trim();
+  var parts = cmd.split('|').map(function (x) { return x.trim().split(/\s+/)[0]; });
+  var bad = parts.filter(function (c) { return ALLOW.indexOf(c) < 0; });
+  var L = [['命令白名单', ''], ['工作目录沙箱', ''], ['超时 30 秒', ''], ['输出大小限制', '']], note = '';
+  if (bad.length) { L[0][1] = 'block'; note = '不允许的命令：' + bad.join('、') + '。白名单之外的命令一律拒绝。'; }
+  else {
+    L[0][1] = 'pass';
+    var args = cmd.split(/\s+/).filter(function (w) { return w && w !== '|'; });
+    var abs = args.filter(function (w) { var x = w.replace(/^['"]|['"]$/g, ''); return x.charAt(0) === '/' || x.indexOf('..') >= 0; });
+    if (abs.length) { L[1][1] = 'block'; note = '路径 ' + abs.join('、') + ' 在工作目录之外（绝对路径或 .. 逃逸），沙箱拒绝。' + (/^\s*find\s+\//.test(cmd) ? '原书正是用 find / 演示 30 秒超时的，但在沙箱一层就该先被拦下。' : ''); }
+    else {
+      L[1][1] = 'pass'; L[2][1] = 'pass'; L[3][1] = 'pass';
+      note = /sed\s+-i|awk.*system|-delete|-exec/.test(cmd) ? '四层都放行了。但这条命令会原地修改 config.py：sed 在白名单里，只看命令名拦不住 -i 参数。（读码观察）' : '只读命令、路径在工作目录内，放行；输出过长时会被截断。';
+    }
+  }
+  $('#layers4').innerHTML = L.map(function (l) { return '<div class="' + l[1] + '"><b>' + l[0] + '</b>' + (l[1] === 'pass' ? '通过' : l[1] === 'block' ? '拦截' : '未到达') + '</div>'; }).join('');
+  $('#termNote').textContent = note;
+}
+$('#termGo').addEventListener('click', term);
+$('#termIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') term(); });
+term();
+S.notes($('#n-term'), {
+  c: [
+    ['TerminalTool', '在受限工作目录内执行只读类命令，实现按需的文件系统访问。'],
+    ['四层安全', '命令白名单、工作目录沙箱、超时控制（默认 30 秒）、输出大小限制。'],
+    ['三层分工', 'TerminalTool 即时访问 + MemoryTool 会话记忆 + NoteTool 持久笔记，ContextBuilder 负责拼装。']
+  ],
+  p: [
+    ['典型用法', 'find / grep 定位代码，tail | grep ERROR 看日志，head -n 5 预览数据。'],
+    ['白名单的盲点', '只看命令名不看参数：sed -i、awk system()、find -delete 仍可写。'],
+    ['更稳的做法', '参数级校验，或在只读挂载的容器中执行，危险操作走人工审批。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

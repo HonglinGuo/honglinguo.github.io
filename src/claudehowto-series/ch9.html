@@ -1,0 +1,298 @@
+---
+title: Checkpoints 与会话管理：回退、压缩与续接
+desc: Claude How To 学习笔记（九）：每次提示自动打快照；/rewind 的六个选项模拟器（恢复代码、对话、两者、从此处总结、总结到此处）；Bash 改动、外部修改、子代理改动不被追踪；checkpoint 与 git 的分工；保留设置；会话的继续、恢复、改名、分叉，会话间互发消息。
+kicker: <span>技术学习</span><span>Claude How To · 09</span><span>对应原文 08-checkpoints 与 09 的会话管理</span><span>约 25 分钟</span>
+h1: 敢让它大改，<em>是因为能退回去</em>
+lead: 原教程把 Checkpoints 排在学习路线的第三位，理由很实在：有了随时可退的快照，你才敢让 Claude 去试一个激进的重构。Claude Code 在你每次提交提示词时自动打一个快照，按两下 Esc 或敲 /rewind 就能选择回到哪一步、恢复代码还是对话。但它有清楚的边界：Bash 命令造成的文件变化、你在编辑器里的修改、子代理改的文件，都不在快照里。这一篇用模拟器把六个回退选项和这些边界走一遍，再讲会话怎么继续、恢复和分叉。
+nav: what|它解决什么;six|六个回退选项;limit|边界与 git;cfg|保留设置;sess|会话管理;msg|会话间消息;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.tl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px 0 12px; }
+@media (max-width: 640px) { .tl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tl button { font: inherit; text-align: left; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); padding: 8px 10px; cursor: pointer; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+.tl button b { display: block; color: var(--ink); font-family: var(--f-num); }
+.tl button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.st2 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+@media (max-width: 760px) { .st2 { grid-template-columns: minmax(0, 1fr); } }
+.st2 > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); font-size: 15px; color: var(--ink-2); line-height: 1.6; min-width: 0; }
+.st2 h5 { margin: 0 0 6px; font-size: 15px; color: var(--ink-3); }
+.st2 ul { margin: 0; padding-left: 18px; }
+.st2 li.gone { text-decoration: line-through; color: var(--ink-3); }
+.st2 li.warn { color: var(--alert); }
+.st2 li.sum { color: var(--s3); }
+.st2 code { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>checkpoint 什么时候自动创建、里面有什么？<code>/rewind</code> 的六个选项各改变了什么？</li>
+    <li>哪些文件变化 checkpoint 追踪不到？它和 git 怎么分工？</li>
+    <li><code>claude -c</code>、<code>claude -r</code>、<code>--fork-session</code>、<code>/rename</code> 各在什么时候用？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>它解决什么</h2><span class="meta">原文 08-checkpoints「Overview」「Accessing Checkpoints」「Automatic Checkpoints」</span></div>
+  <div class="sec-lede">
+    <p>Checkpoint 是会话状态的快照，原文列的内容包括：交换过的消息、做过的文件修改、工具使用记录、会话上下文。它是<strong>自动</strong>的：<strong>你每提交一次提示词就创建一个</strong>，随会话保存，所以恢复会话以后 <code>/rewind</code> 依然可用；默认 30 天后自动清理。打开方式两种：连按两下 <kbd>Esc</kbd>，或者 <code>/rewind</code>（别名 <code>/checkpoint</code>、<code>/undo</code>），会列出所有快照，每个显示时间、改了哪些文件、消息数、用过的工具。</p>
+    <p>原文给的典型用法有四种：<strong>探索不同方案</strong>（做完方案 A，退回起点再做方案 B，比较）、<strong>安全重构</strong>（重构、跑测试，挂了就退）、<strong>A/B 设计对比</strong>、<strong>从错误中恢复</strong>（发现改坏了，退到最后一个好的状态）。v2.1.191 起 <code>/clear</code> 也不再是硬边界，可以回退到 clear 之前的快照。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>Checkpoints 与 Rewind<small>Esc Esc 或 /rewind</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>让 Claude 试一个方向、改坏了能马上退回，不用自己手工 <code>git stash</code>，也能只退对话保留代码，或者只退代码保留对话。</dd>
+      <dt>最小可用配置</dt><dd>不用配置，默认开启。相关设置：<div id="fcCp"></div></dd>
+      <dt class="no">什么时候不该依赖它</dt><dd>原文的三条“不要”：不要只靠 checkpoint 保存代码；不要指望它追踪外部的文件系统变化；不要用它代替 git 提交。Bash 命令（rm、mv、cp）造成的改动、编辑器里的修改、子代理改的文件都不会被恢复。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="six">
+  <div class="part-head"><h2>六个回退选项</h2><span class="meta">原文「Rewind Options」</span></div>
+  <div class="sec-lede">
+    <p>选中一个快照后有六个选项。前三个是“恢复”：<strong>恢复代码和对话</strong>（文件和消息都回到那一刻）、<strong>恢复对话</strong>（只退消息，代码保持现状）、<strong>恢复代码</strong>（只退文件，完整对话保留）。后两个是“总结”，<strong>不改动磁盘上的任何文件</strong>，原始消息仍保留在会话记录里：<strong>从此处总结</strong>把选中点之后的对话压成一段 AI 摘要（之前的保持原样，可以附带“重点总结什么”的指令）；<strong>总结到此处</strong>反过来，把选中点之前的压成摘要，之后的保持原样。最后一个是<strong>算了</strong>。</p>
+    <p>两个“总结”合起来就是<strong>双向、有针对性的压缩</strong>：比 <code>/compact</code> 一把压全部更精细。还有个交互细节：恢复对话或“从此处总结”之后，选中那条消息的原始提示词会放回输入框，方便你改一改再发；“总结到此处”则留在对话末尾、输入框为空。</p>
+    <p class="go">选一个快照和一个选项，看代码、对话和输入框各变成什么样（会话内容为示意）。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">会话里的四次提示，每次都自动打了快照：点哪一条，就回到提交它之前</p>
+    <div class="tl" id="tl"></div>
+    <div class="selrow"><span>回退选项</span><div class="seg" id="opSeg"><button data-v="both" aria-pressed="true">恢复代码和对话</button><button data-v="conv">恢复对话</button><button data-v="code">恢复代码</button><button data-v="sfrom">从此处总结</button><button data-v="supto">总结到此处</button><button data-v="never">算了</button></div></div>
+    <div class="selrow"><label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="bashRm"> 第 3 步里 Claude 还用 Bash 执行了 <code>rm old_cache.py</code></label></div>
+    <div class="st2"><div><h5>磁盘上的代码</h5><ul id="sCode"></ul></div><div><h5>对话里的消息</h5><ul id="sConv"></ul></div><div><h5>输入框</h5><ul id="sIn"></ul></div></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：/rewind、/compact、/clear 与两个“总结”</h4>
+    <p><b>/rewind 恢复类</b>：真的回到过去，可以撤销文件改动。<b>/compact</b>：把整个对话压成摘要，不动文件，可以附带重点指令。<b>/clear</b>：清空对话重新开始，不动文件（v2.1.191 起还能回退到 clear 之前）。</p>
+    <p><b>从此处总结 / 总结到此处</b>：只压选中点之后或之前的那一段，另一段原样保留，不动文件，原始消息仍在会话记录里。想精细地腾出上下文，用它们；想撤销代码，用恢复类。</p>
+  </div>
+  <div class="notes" id="n-six"></div>
+</section>
+
+<section class="part" id="limit">
+  <div class="part-head"><h2>边界与 git</h2><span class="meta">原文「Limitations」「Integration with Git」</span></div>
+  <div class="sec-lede">
+    <p>checkpoint 追踪的是 Claude 用<strong>文件编辑工具</strong>做的修改。原文列出的追踪不到的情况：<strong>Bash 命令造成的变化</strong>（rm、mv、cp 这类操作）、<strong>Claude Code 之外的修改</strong>（你在编辑器或终端里改的）、<strong>子代理编辑的文件</strong>（rewind 时保持原样；例外是前台运行的 <code>context: fork</code> Skill，它的改动和主会话一样会被恢复）。v2.1.216 起 rewind 遇到经由软链接或硬链接的路径会跳过，并报告跳过了几个。</p>
+    <p>所以原文的结论是两者配合：<strong>checkpoint 用来快速试验，git 用来保存定稿</strong>。checkpoint 作用于“对话加文件”、任意一步都能退、即时、基本不能分享；git 作用于文件系统、按提交、永久、可分享。原文推荐的做法：做 git 操作之前先有个快照；试验成功的状态及时提交到 git。</p>
+    <p class="go">这几种情况，rewind 能把文件恢复吗？</p>
+  </div>
+  <div class="lab"><div id="lq"></div></div>
+  <div class="tblw" style="margin-top:22px"><table class="cmpt">
+    <tr><th>维度（原文表）</th><th>git</th><th>Checkpoints</th></tr>
+    <tr><td>范围</td><td>文件系统</td><td>对话 + 文件</td></tr>
+    <tr><td>持久性</td><td>永久</td><td>随会话，默认保留 30 天</td></tr>
+    <tr><td>粒度</td><td>提交</td><td>任意一次提示</td></tr>
+    <tr><td>速度</td><td>较慢</td><td>即时</td></tr>
+    <tr><td>分享</td><td>可以</td><td>有限</td></tr>
+  </table></div>
+  <div class="notes" id="n-limit"></div>
+</section>
+
+<section class="part" id="cfg">
+  <div class="part-head"><h2>保留设置</h2><span class="meta">原文「Configuration」「Checkpoint Retention」</span></div>
+  <div class="sec-lede">
+    <p>checkpoint 默认开启，不需要配置。两个相关设置：<code>fileCheckpointingEnabled</code>（默认 <code>true</code>，每次编辑前给文件打快照，<code>/rewind</code> 才能恢复代码；在 <code>/config</code> 里叫 Rewind code，环境变量 <code>CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING</code>）和 <code>cleanupPeriodDays</code>（默认 30 天）。另外只保留<strong>最近 100 个</strong>快照，更早的即使在保留期内也会被丢掉。</p>
+    <p><code>cleanupPeriodDays</code> 管的不只是 checkpoint：v2.1.117 起会话记录、<code>file-history/</code>（快照实际存放处）、<code>plans/</code>、<code>tasks/</code>、<code>shell-snapshots/</code>、<code>backups/</code> 等 <code>~/.claude/</code> 下的数据都按同一个天数在启动时清理。原文特意说明：<strong>没有</strong> <code>~/.claude/checkpoints/</code> 这个目录。</p>
+    <p class="go">两道小题。</p>
+  </div>
+  <div class="lab"><div id="cq"></div></div>
+  <div class="notes" id="n-cfg"></div>
+</section>
+
+<section class="part" id="sess">
+  <div class="part-head"><h2>会话管理：继续、恢复、改名、分叉</h2><span class="meta">原文 09-advanced-features「Session Management」，10-cli「Session Management」</span></div>
+  <div class="sec-lede">
+    <p>会话自动保存，可以随时接着做。<code>claude -c</code> 继续<strong>最近一次</strong>对话；<code>claude -r "名字或ID" "接着做什么"</code> 恢复<strong>指定</strong>会话，并把后面的提示词作为下一轮发出去；会话里 <code>/resume</code> 打开选择器（包括从列表里移除的会话）。要让 <code>-r</code> 好用，先用 <code>/rename auth-refactor</code> 给会话起个名字，或者启动时 <code>claude -n "auth-refactor"</code>。</p>
+    <p>想保留原会话、另起一条线试别的方案，用 <code>claude --resume auth-refactor --fork-session "试 OAuth"</code>：原会话不变，分叉出一个新的独立会话。会话里还有 <code>/branch</code>、<code>/fork</code>、<code>/subtask</code> 三种复制方式（见第 2 篇）。离开一阵子再回来，Claude 会自动给一段前情摘要（<code>/recap</code> 手动触发，<code>/config</code> 里可关）；被 claude.ai 用量上限卡住的会话，v2.1.234 起会在额度重置后自动继续。原文的最佳实践：不同任务用不同会话，不要把无关的工作混在一个会话里。</p>
+    <p class="go">每个场景该用哪条命令？</p>
+  </div>
+  <div class="lab"><div id="sq"></div></div>
+  <div class="notes" id="n-sess"></div>
+</section>
+
+<section class="part" id="msg">
+  <div class="part-head"><h2>会话间消息</h2><span class="meta">原文 09-advanced-features「Cross-Session Messaging」</span></div>
+  <div class="sec-lede">
+    <p>v2.1.224 起会话之间可以互发消息，不用再在新会话里把背景重讲一遍：把问题交给<strong>已经装着相关上下文的那个会话</strong>。<code>ListAgents</code> 列出所有能联系到的对象：你派出的子代理、本机其他会话、你的云端会话，以及（连着 Remote Control 时）你其他机器上的会话；每一行的<strong>名字就是地址</strong>。<code>SendMessage</code> 发消息，加 <code>notify_when_idle: true</code> 可以让对方下次空闲时通知你一次（一次性，不轮询）。更简单的写法是在提示词里直接 <code>@auth-refactor 迁移测试过了吗？</code>。</p>
+    <p>收不收由 <code>crossSessionInbound</code> 控制：<code>accept</code>（投递）、<code>hold</code>（只提示有消息，不投递）、<code>refuse</code>（丢弃）。三档从松到严，<strong>项目和本地设置只能比用户设置更严</strong>，仓库不能替你放宽。限制：云端会话能收你的消息，但还不能回消息给本地会话，要去它自己的记录里看回答。</p>
+    <p class="go">这些说法对不对？</p>
+  </div>
+  <div class="lab"><div id="mq"></div></div>
+  <div class="notes" id="n-msg"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. checkpoint 何时创建、有什么？六个选项各改变什么？</summary><p class="ans">每次提交提示词自动创建，包含消息、文件修改、工具记录、会话上下文，随会话保存，默认保留 30 天、最多 100 个。Esc 两下或 /rewind 打开。恢复代码和对话：两者都回去；恢复对话：只退消息，代码不动；恢复代码：只退文件，对话保留；从此处总结：选中点之后压成摘要；总结到此处：之前压成摘要；两个总结都不动文件、原始消息仍在记录里；算了：取消。</p></details>
+    <details><summary>2. 哪些变化追踪不到？和 git 怎么分工？</summary><p class="ans">Bash 命令造成的变化（rm、mv、cp）、Claude Code 之外的修改、子代理编辑的文件（前台 context: fork Skill 除外），以及经软链/硬链的路径。checkpoint 用于快速试验（对话+文件、任意一步、即时），git 用于保存定稿（永久、可分享）；git 操作前先有快照，成功的状态及时提交。</p></details>
+    <details><summary>3. -c、-r、--fork-session、/rename 各在何时用？</summary><p class="ans">claude -c：继续最近一次对话。claude -r "名字" "提示"：恢复指定会话并发出下一轮。/rename 或 claude -n：给会话起名，方便以后 -r。claude --resume 名字 --fork-session "提示"：从某会话分叉出新的独立会话，原会话不变。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 它解决什么 ---------- */
+$('#fcCp').innerHTML = CH.file('~/.claude/settings.json', CH.esc('{\n  "fileCheckpointingEnabled": true,\n  "cleanupPeriodDays": 30\n}'), '均为默认值');
+S.notes($('#n-what'), {
+  c: [
+    ['Checkpoint', '会话状态快照：消息、文件修改、工具记录、上下文。'],
+    ['自动创建', '每次提交提示词一个，随会话保存。'],
+    ['Rewind', '<kbd>Esc</kbd> <kbd>Esc</kbd> 或 <code>/rewind</code>（/checkpoint、/undo）。']
+  ],
+  p: [
+    ['四种用法', '探索方案、安全重构、A/B 对比、从错误恢复。'],
+    ['/clear 之后', 'v2.1.191 起还能回退到 clear 之前的快照。'],
+    ['三条不要', '不只靠它存代码；不指望它追踪外部变化；不代替 git。']
+  ]
+});
+
+/* ---------- 六个选项模拟 ---------- */
+var P = [
+  { p: '给 API 加一层缓存', c: 'api.py：加了 Redis 缓存', a: '已用 Redis 实现缓存' },
+  { p: '缓存键加上用户 ID', c: 'api.py：缓存键含 user_id', a: '已修改缓存键' },
+  { p: '改成内存缓存，删掉 Redis 依赖', c: 'api.py：换成 LRU 内存缓存；requirements.txt 删 redis', a: '已改为内存缓存' },
+  { p: '给缓存写单元测试', c: 'test_api.py：新增 6 个测试', a: '已添加测试，全部通过' }
+];
+var cpSel = 1, cpOp = 'both';
+P.forEach(function (x, i) {
+  var b = h('button', { type: 'button', html: '<b>提示 ' + (i + 1) + '</b>' + x.p, 'aria-pressed': i === cpSel ? 'true' : 'false' }, $('#tl'));
+  b.addEventListener('click', function () { cpSel = i; S.$$('#tl button').forEach(function (y, k) { y.setAttribute('aria-pressed', k === i ? 'true' : 'false'); }); cp(); });
+});
+function li(t, cls) { return '<li' + (cls ? ' class="' + cls + '"' : '') + '>' + t + '</li>'; }
+function cp() {
+  var k = cpSel, op = cpOp, rm = $('#bashRm').checked, code = '', conv = '', inp = '';
+  // 快照 k 表示“提交第 k+1 条提示之前”的状态
+  var codeBack = op === 'both' || op === 'code', convBack = op === 'both' || op === 'conv';
+  P.forEach(function (x, i) {
+    var undone = codeBack && i >= k;
+    code += li(x.c, undone ? 'gone' : '');
+  });
+  if (rm) code += li('old_cache.py 被 Bash rm 删除' + (codeBack && k <= 2 ? '：<b>不会恢复</b>（Bash 改动不被追踪）' : ''), codeBack && k <= 2 ? 'warn' : '');
+  if (op === 'never') { code = ''; P.forEach(function (x) { code += li(x.c); }); if (rm) code += li('old_cache.py 被 Bash rm 删除'); }
+  if (op === 'sfrom') {
+    P.forEach(function (x, i) { if (i < k) conv += li('你：' + x.p) + li('Claude：' + x.a); });
+    conv += li('【摘要】提示 ' + (k + 1) + ' 到 4 的过程', 'sum');
+  } else if (op === 'supto') {
+    conv += k ? li('【摘要】提示 1 到 ' + k + ' 的过程', 'sum') : '';
+    P.forEach(function (x, i) { if (i >= k) conv += li('你：' + x.p) + li('Claude：' + x.a); });
+  } else {
+    P.forEach(function (x, i) { var g = convBack && i >= k; conv += li('你：' + x.p, g ? 'gone' : '') + li('Claude：' + x.a, g ? 'gone' : ''); });
+  }
+  if (op === 'conv' || op === 'both' || op === 'sfrom') inp = li('“' + P[k].p + '”（原提示放回输入框，可改了再发）');
+  else inp = li('空');
+  $('#sCode').innerHTML = code + (op === 'sfrom' || op === 'supto' ? li('总结不改动磁盘上的任何文件', 'sum') : '');
+  $('#sConv').innerHTML = conv;
+  $('#sIn').innerHTML = inp;
+}
+S.seg($('#opSeg'), function (v) { cpOp = v; cp(); });
+$('#bashRm').addEventListener('change', cp);
+cp();
+S.notes($('#n-six'), {
+  c: [
+    ['恢复代码和对话', '文件和消息都回到那一刻。'],
+    ['恢复对话', '只退消息，代码保持现状。'],
+    ['恢复代码', '只退文件，对话完整保留。'],
+    ['从此处 / 总结到此处', '把选中点之后 / 之前压成摘要；不动文件，原消息仍在记录里。']
+  ],
+  p: [
+    ['输入框', '恢复对话、从此处总结后，原提示放回输入框；总结到此处则为空。'],
+    ['精细压缩', '两个总结合起来是双向、有针对性的压缩，比 /compact 更细。'],
+    ['总结可带指令', '“从此处总结”可以附上重点关注的主题。']
+  ]
+});
+
+/* ---------- 边界 ---------- */
+CH.cards($('#lq'), {
+  opts: ['能恢复', '不能恢复'],
+  items: [
+    { t: 'Claude 用编辑工具改了 <code>auth.py</code>。', a: 0, why: '文件编辑工具的修改会被快照。' },
+    { t: 'Claude 用 Bash 执行 <code>mv config.yaml config.old.yaml</code>。', a: 1, why: 'Bash 命令造成的文件变化不被追踪。' },
+    { t: '你在 VS Code 里手动改了 <code>README.md</code>。', a: 1, why: 'Claude Code 之外的修改不被追踪。' },
+    { t: '一个后台子代理（isolation 未开）改了 <code>utils.py</code>。', a: 1, why: '子代理编辑的文件 rewind 时保持原样。' },
+    { t: '一个前台运行的 <code>context: fork</code> Skill 改了 <code>utils.py</code>。', a: 0, why: '原文例外：前台 context: fork Skill 的改动和主会话一样会被恢复。' }
+  ]
+});
+S.notes($('#n-limit'), {
+  c: [
+    ['追踪范围', 'Claude 文件编辑工具的修改。'],
+    ['追踪不到', 'Bash 改动、外部修改、子代理改动、软链/硬链路径。']
+  ],
+  p: [
+    ['分工', 'checkpoint 试验，git 定稿。'],
+    ['原文做法', 'git 操作前先有快照；成功状态及时提交。'],
+    ['什么时候该退', '上下文快满、输出质量变差时（原文推荐 cc-context-stats 在状态栏显示上下文区间）。']
+  ]
+});
+
+/* ---------- 保留设置 ---------- */
+S.quiz($('#cq'), [
+  { q: '一个会话里你提交了 140 次提示，还能退回第 10 次之前吗？', o: ['能，30 天内都在', '不一定：只保留最近 100 个快照', '不能，超过 50 个就清空'], a: 1, why: '原文：只保留最近 100 个 checkpoint，更早的即使在保留期内也会被丢弃。' },
+  { q: '把 <code>cleanupPeriodDays</code> 改成 7，影响的只有 checkpoint 吗？', o: ['是', '不是：会话记录、file-history、plans、tasks、shell-snapshots、backups 等都按它清理', '只影响 MCP 缓存'], a: 1, why: 'v2.1.117 起它统一管 ~/.claude/ 下多种数据的保留期，启动时清理。' }
+]);
+S.notes($('#n-cfg'), {
+  c: [
+    ['fileCheckpointingEnabled', '默认 true；编辑前给文件打快照。'],
+    ['cleanupPeriodDays', '默认 30；统一管 ~/.claude/ 下多种数据的保留期。']
+  ],
+  p: [
+    ['数量上限', '最近 100 个快照。'],
+    ['快照存哪', '<code>~/.claude/file-history/</code>；没有 checkpoints/ 目录。'],
+    ['关闭代码快照', '<code>CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING</code> 或 /config 的 Rewind code。']
+  ]
+});
+
+/* ---------- 会话管理 ---------- */
+CH.cards($('#sq'), {
+  opts: ['claude -c', 'claude -r "名字"', '--fork-session', '/rename'],
+  items: [
+    { t: '昨晚关掉终端前在做的那件事，今天一开机就想接着做。', a: 0, why: '继续最近一次对话。' },
+    { t: '你同时有三条线（auth、payments、docs），现在要回到 payments 那条。', a: 1, why: '按名字或 ID 恢复指定会话：<code>claude -r "payments" "继续接入 Stripe"</code>。' },
+    { t: 'auth 会话做到一半，想另开一条线试 OAuth，又不想弄乱原会话。', a: 2, why: '<code>claude --resume auth --fork-session "试 OAuth"</code>：原会话不变，分出一个新会话。' },
+    { t: '刚开了一个会话做 RAN 切片调度，想让以后好找。', a: 3, why: '<code>/rename ran-slicing</code>，以后 <code>claude -r ran-slicing</code>。启动时也可以 <code>claude -n ran-slicing</code>。' }
+  ]
+});
+S.notes($('#n-sess'), {
+  c: [
+    ['claude -c', '继续最近一次对话。'],
+    ['claude -r', '按名字或 ID 恢复，可带下一轮提示。'],
+    ['--fork-session', '从某会话分叉出独立的新会话。'],
+    ['/rename · -n', '给会话起名。']
+  ],
+  p: [
+    ['会话里', '<code>/resume</code> 选择器；<code>/branch</code>、<code>/fork</code>、<code>/subtask</code> 见第 2 篇。'],
+    ['回来时', '自动前情摘要，<code>/recap</code> 手动；<code>CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0</code> 关闭。'],
+    ['额度卡住', 'v2.1.234 起额度重置后自动继续。'],
+    ['好习惯', '一件事一个会话，别混。']
+  ]
+});
+
+/* ---------- 会话间消息 ---------- */
+S.quiz($('#mq'), [
+  { q: '要给一个叫 auth-refactor 的会话发消息，最简单的写法是？', o: ['重新 claude -r auth-refactor 再问', '在提示词里写 <code>@auth-refactor 迁移测试过了吗？</code>', '只能通过 Remote Control'], a: 1, why: 'v2.1.232 起的 @ 提及简写；也可以用 SendMessage 工具。' },
+  { q: '项目的 .claude/settings.json 写了 <code>"crossSessionInbound": "accept"</code>，你的用户设置是 <code>"hold"</code>。生效的是？', o: ['accept，项目优先', 'hold：项目和本地设置只有更严时才生效', '两者都不生效'], a: 1, why: 'accept &lt; hold &lt; refuse，项目只能收紧不能放宽。' },
+  { q: '你给一个云端会话发了问题，它的回答在哪看？', o: ['会发回你的本地会话', '去那个云端会话自己的记录里看', '会发邮件'], a: 1, why: '原文限制：云端会话能收消息，但还不能回消息给本地会话。' }
+]);
+S.notes($('#n-msg'), {
+  c: [
+    ['ListAgents', '列出可联系的子代理、本机会话、云端会话、其他机器的会话；名字即地址。'],
+    ['SendMessage', '发消息；<code>notify_when_idle: true</code> 对方空闲时通知一次。'],
+    ['crossSessionInbound', 'accept / hold / refuse；项目只能更严。']
+  ],
+  p: [
+    ['@ 简写', '<code>@会话名 问题</code>。'],
+    ['平台', 'macOS、Linux（v2.1.224），Windows（v2.1.239）。'],
+    ['用处', '把问题交给已经装着相关上下文的会话，省得重讲背景。']
+  ]
+});
+
+CH.tryNow($('#try'), '9', [
+  { t: '下次让 Claude 做一个有风险的重构前，什么都不用做，改坏了直接 Esc Esc', d: '试一次“恢复代码”（保留讨论）和一次“恢复代码和对话”，感受区别。' },
+  { t: '上下文快满时，试一次“从此处总结”代替 /compact', d: '只压最近那段冗长的调试过程，前面的需求讨论原样保留。' },
+  { t: '给手头的几个长期会话 /rename 起名', d: '以后用 <code>claude -r 名字</code> 直接回去。' }
+]);

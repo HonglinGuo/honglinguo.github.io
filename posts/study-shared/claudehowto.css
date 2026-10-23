@@ -1,0 +1,184 @@
+/* Claude How To 学习系列专用样式（只在本系列页面加载） */
+
+/* 分层架构图 */
+.ch-layers { display: flex; flex-direction: column; gap: 8px; }
+.ch-layer { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 12px; align-items: start; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 10px 12px; background: var(--bg); }
+.ch-layer.c2 { border-left-color: var(--s2); }
+.ch-layer.c3 { border-left-color: var(--s3); }
+.ch-layer.c4 { border-left-color: var(--ok); }
+.ch-layer.c5 { border-left-color: var(--ink-3); }
+.ch-lh b { display: block; font-size: 16px; color: var(--ink); line-height: 1.4; }
+.ch-lh small { display: block; font-size: 15px; color: var(--ink-3); line-height: 1.5; margin-top: 2px; }
+.ch-li { display: flex; flex-wrap: wrap; gap: 6px; }
+.ch-chip { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); border-radius: 6px; padding: 4px 10px; cursor: pointer; line-height: 1.45; }
+.ch-chip:hover { border-color: var(--s1); color: var(--ink); }
+.ch-chip[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.ch-info { border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); min-height: 4.5em; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.ch-info > b { font-size: 17px; color: var(--ink); margin-right: 8px; }
+.ch-info p { margin: 6px 0 0; }
+.ch-tag { display: inline-block; font-size: 15px; color: var(--s1); border: 1px solid var(--s1); border-radius: 999px; padding: 0 9px; margin-right: 6px; line-height: 1.6; }
+.ch-tag.alt { color: var(--s2); border-color: var(--s2); }
+@media (max-width: 620px) { .ch-layer { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+
+/* 对照翻牌 */
+.ch-vs td.ch-hide { cursor: pointer; position: relative; }
+.ch-vs td.ch-hide span { filter: blur(6px); opacity: .5; user-select: none; }
+.ch-vs td.ch-hide::after { content: "点开"; position: absolute; left: 0; top: 9px; font-size: 15px; color: var(--s1); }
+.ch-vs td.ch-hide:hover { background: var(--dim-soft); }
+.ch-vs td { min-width: 9em; }
+
+/* 缺失检查表 */
+.ch-check { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.ch-ci { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--hair); border-radius: 8px; padding: 9px 12px; background: var(--bg); cursor: pointer; font-size: 15px; line-height: 1.55; }
+.ch-ci input { margin-top: 4px; accent-color: var(--s1); flex: none; width: 16px; height: 16px; }
+.ch-ci b { display: block; color: var(--ink); font-size: 16px; }
+.ch-ci small { display: block; color: var(--ink-3); font-size: 15px; }
+.ch-ci.off { border-style: dashed; opacity: .75; }
+.ch-ci.off b { text-decoration: line-through; color: var(--ink-3); }
+.ch-out { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 3em; }
+.ch-out p { margin: 0 0 8px; }
+.ch-out b { color: var(--ink); }
+.ch-out .big { font-size: 20px; font-weight: 700; color: var(--s1); }
+.ch-out .bad { color: var(--alert); }
+.ch-out .ok { color: var(--ok); }
+.ch-miss { margin: 6px 0 0; padding-left: 20px; }
+.ch-miss li { margin: 4px 0; }
+.ch-miss li b { color: var(--alert); }
+
+/* 问答式选型 */
+.ch-qs { display: flex; flex-direction: column; gap: 10px; }
+.ch-q p { margin: 0 0 6px; font-size: 16px; color: var(--ink); }
+.ch-res { border-left: 4px solid var(--s1); background: var(--s1-soft); border-radius: 0 8px 8px 0; padding: 10px 14px; }
+.ch-res.warn { border-left-color: var(--alert); background: var(--alert-soft); }
+.ch-res.okc { border-left-color: var(--ok); background: var(--ok-soft); }
+.ch-res h4 { margin: 0 0 4px; font-size: 18px; color: var(--ink); }
+.ch-res p { margin: 4px 0; }
+
+/* 流程走查 */
+.ch-pipe { list-style: none; margin: 0; padding: 0; counter-reset: hp; }
+.ch-pipe li { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px 8px 44px; margin-bottom: 6px; background: var(--bg); position: relative; }
+.ch-pipe li::before { counter-increment: hp; content: counter(hp); position: absolute; left: 12px; top: 50%; margin-top: -12px; width: 24px; height: 24px; border-radius: 50%; background: var(--s1); color: #fff; font-size: 13px; text-align: center; line-height: 24px; font-family: var(--f-num); }
+.ch-pipe li.off { border-style: dashed; }
+.ch-pipe li.off::before { background: var(--alert); }
+.ch-pipe li.off .ch-pt b { text-decoration: line-through; color: var(--ink-3); }
+.ch-pt b { display: block; font-size: 16px; color: var(--ink); }
+.ch-pt small { display: block; font-size: 15px; color: var(--ink-3); line-height: 1.55; }
+.ch-pipe .btn { flex: none; }
+
+/* 场景判定卡 */
+.ch-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.ch-card { border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; background: var(--bg); }
+.ch-ct { margin: 0 0 8px; font-size: 16px; color: var(--ink); line-height: 1.6; }
+.ch-fb { margin: 8px 0 0; font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.ch-fb b.ok { color: var(--ok); }
+.ch-fb b.bad { color: var(--alert); }
+
+/* 生命周期环 / 通用 SVG 节点 */
+.ch-svg svg { display: block; margin: 0 auto; }
+.ch-svg .nd { cursor: pointer; }
+.ch-svg .nd rect, .ch-svg .nd circle { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.ch-svg .nd.on rect, .ch-svg .nd.on circle { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2.5; }
+.ch-svg .nd:focus-visible rect, .ch-svg .nd:focus-visible circle { stroke: var(--s1); stroke-width: 3; }
+.ch-svg .nd text { fill: var(--ink); font-size: 15px; }
+.ch-svg .eg { fill: none; stroke: var(--rule); stroke-width: 1.6; }
+.ch-svg .eg.dash { stroke-dasharray: 5 4; }
+.ch-svg .ah { fill: var(--rule); }
+
+/* 小表格：两列定义 */
+.ch-def { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
+.ch-def > div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 14px; background: var(--panel); }
+.ch-def b { display: block; color: var(--ink); font-size: 17px; }
+.ch-def em { display: block; font-style: normal; font-size: 15px; color: var(--s1); margin: 2px 0 4px; }
+.ch-def p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+
+/* 厂商方案标注 */
+.vendor { margin-top: 18px; border: 1px solid var(--hair); border-left: 4px solid var(--s2); border-radius: 0 8px 8px 0; padding: 10px 14px; background: var(--panel); font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+.vendor > b:first-child { color: var(--s2); margin-right: 6px; }
+
+/* ---------- 以下为 Claude How To 系列新增样式 ---------- */
+
+/* 带路径的配置文件块 */
+.ch-file { margin: 10px 0 0; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--bg); min-width: 0; }
+.ch-fp { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 6px 12px; background: var(--dim-soft); font-family: var(--f-num); font-size: 15px; color: var(--ink); border-bottom: 1px solid var(--hair); }
+.ch-fp em { font-style: normal; font-family: var(--f-sans); color: var(--ink-3); }
+.ch-file pre { margin: 0; padding: 10px 14px; font-family: var(--f-num); font-size: 15px; line-height: 1.65; color: var(--ink-2); overflow-x: auto; white-space: pre; }
+.ch-file pre b { color: var(--s1); font-weight: 600; }
+.ch-file pre i { font-style: normal; color: var(--ink-3); }
+
+/* 功能卡：解决什么 / 最小配置 / 不该用 */
+.fcard { margin-top: 22px; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 10px 10px 0; background: var(--panel); padding: 14px 18px 16px; min-width: 0; }
+.fcard > h3 { margin: 0 0 8px; font-size: 19px; }
+.fcard > h3 small { font-weight: 400; font-size: 15px; color: var(--ink-3); margin-left: 8px; }
+.fcard dl { margin: 0; display: grid; grid-template-columns: 7.5em minmax(0, 1fr); }
+.fcard dt { font-weight: 650; font-size: 15px; color: var(--s1); padding: 9px 0; border-top: 1px solid var(--hair); }
+.fcard dd { margin: 0; padding: 9px 0; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-width: 0; }
+.fcard dd > .ch-file:first-child { margin-top: 0; }
+.fcard dd strong { color: var(--ink); }
+.fcard dt.no { color: var(--alert); }
+.fcard code, .ch-q code, .ch-fb2 code, .ch-try code, .ch-info code, .ch-card code, .ch-out code, .confuse code, .cmpt code { font-family: var(--f-num); font-size: 15px; background: var(--dim-soft); padding: 1px 5px; border-radius: 4px; color: var(--ink); word-break: break-word; }
+@media (max-width: 600px) { .fcard dl { grid-template-columns: minmax(0, 1fr); } .fcard dd { border-top: 0; padding-top: 0; } }
+
+/* 读配置猜行为 */
+.ch-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.ch-tab { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.ch-tab[aria-pressed="true"] { border-color: var(--s1); color: var(--ink); box-shadow: 0 0 0 2px var(--s1-soft); }
+.ch-tab.ok { border-color: var(--ok); color: var(--ok); }
+.ch-tab.bad { border-color: var(--alert); color: var(--alert); }
+.ch-q { margin: 12px 0 8px; font-size: 16px; color: var(--ink); line-height: 1.7; }
+.ch-fb2 { margin-top: 10px; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.ch-fb2 p { margin: 0 0 8px; }
+.ch-fb2 b.ok { color: var(--ok); } .ch-fb2 b.bad { color: var(--alert); }
+
+/* 终端回放 */
+.ch-term { margin: 10px 0 0; background: #0F1418; color: #C9D2DA; border-radius: 8px; padding: 12px 14px; font-family: var(--f-num); font-size: 15px; line-height: 1.65; min-height: 9em; max-height: 26em; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.ch-term span { opacity: .55; }
+.ch-term span.cur { opacity: 1; }
+.ch-term .pr { font-style: normal; color: #7FB0FF; }
+.ch-term .o { color: #A9B4BE; }
+.ch-term .o.cur { color: #E2E8EE; }
+
+/* 今天就能试 */
+.ch-try { margin-top: 56px; border: 1px solid var(--hair); border-top: 3px solid var(--ok); border-radius: 0 0 10px 10px; background: var(--panel); padding: 14px 18px 16px; }
+.ch-try h3 { margin: 0 0 4px; font-size: 20px; }
+.ch-try ol { list-style: none; margin: 8px 0 0; padding: 0; }
+.ch-try li { border-top: 1px solid var(--hair); padding: 8px 0; }
+.ch-try label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 16px; line-height: 1.65; }
+.ch-try input { margin-top: 5px; width: 16px; height: 16px; flex: none; accent-color: var(--ok); }
+.ch-try b { display: block; color: var(--ink); }
+.ch-try small { display: block; font-size: 15px; color: var(--ink-2); }
+.ch-try li.done b { text-decoration: line-through; color: var(--ink-3); }
+
+/* 上下文账本 */
+.ch-lbar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: var(--dim-soft); border: 1px solid var(--hair); }
+.ch-lbar .seg { display: block; height: 100%; transition: width .3s ease; border-right: 1px solid var(--panel); }
+.ch-lbar .seg.always { background: var(--s1); }
+.ch-lbar .seg.demand { background: var(--s2); }
+.ch-llist { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; margin-top: 8px; }
+.ch-llist .it { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline; font-size: 15px; padding: 6px 0; border-top: 1px solid var(--hair); }
+.ch-llist .it i { width: 12px; height: 12px; border-radius: 3px; background: var(--s1); align-self: center; }
+.ch-llist .it.demand i { background: var(--s2); }
+.ch-llist .it.iso i { background: var(--s3); }
+.ch-llist .it.off { opacity: .5; }
+.ch-llist .it b { color: var(--ink); font-weight: 600; }
+.ch-llist .it .n { font-family: var(--f-num); color: var(--ink-2); white-space: nowrap; }
+.ch-llist .it small { grid-column: 2 / 4; color: var(--ink-3); font-size: 15px; line-height: 1.55; }
+@media (prefers-reduced-motion: reduce) { .ch-lbar .seg { transition: none; } }
+
+/* 通用：键盘键帽 / 小标签 / 结果行 */
+kbd { font-family: var(--f-num); font-size: 15px; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--bg); color: var(--ink); }
+.ch-pill { display: inline-block; font-size: 15px; border-radius: 999px; padding: 0 9px; line-height: 1.6; border: 1px solid var(--rule); color: var(--ink-2); }
+.ch-pill.ok { border-color: var(--ok); color: var(--ok); }
+.ch-pill.bad { border-color: var(--alert); color: var(--alert); }
+.ch-pill.ask { border-color: var(--s2); color: var(--s2); }
+.ch-pill.s1 { border-color: var(--s1); color: var(--s1); }
+.ch-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ch-rows > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; border: 1px solid var(--hair); border-radius: 6px; padding: 7px 10px; background: var(--bg); font-size: 15px; color: var(--ink-2); }
+.ch-rows > div code { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+.ch-rows > div small { grid-column: 1 / -1; color: var(--ink-3); font-size: 15px; line-height: 1.55; }
+.ch-src { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+.ch-src b { color: var(--s2); font-weight: 600; }
+/* 标题里有长串英文命令时允许断行（只影响本系列） */
+.part-head h2, .hero h1, .fcard > h3 { overflow-wrap: anywhere; }
+main code { overflow-wrap: anywhere; }
+.selrow label { flex-wrap: wrap; min-width: 0; }
+main { overflow-wrap: break-word; }

@@ -1,0 +1,320 @@
+---
+title: 综合案例与毕业设计
+desc: Hello-Agents 学习笔记（十三）：三个综合案例的共同骨架；智能旅行助手的四智能体分工、共享 MCP 实例与串行还是并行；深度研究助手的 TODO 驱动三阶段、工具调用监听与 SSE 事件流；赛博小镇的 NPC 智能体、批量生成加即时响应、五级好感度；毕业设计的提交方式与一个把全书串起来的选型助手。
+kicker: <span>技术学习</span><span>Hello-Agents · 13</span><span>对应原书第 13–16 章</span><span>约 35 分钟</span>
+h1: 把前面学的，<em>拼成能用的东西</em>
+lead: 原书第四部分用三个完整项目收尾：智能旅行助手、深度研究助手、赛博小镇；第五部分是毕业设计，要求读者自己做一个智能体应用提交到共创仓库。三个项目都用 Vue 或 Godot 做前端、FastAPI 做后端、HelloAgents 做智能体，界面和部署细节占了大半篇幅。这一篇略过前端，只看每个项目里智能体部分的设计决策：为什么拆成几个智能体、它们怎么串起来、成本和延迟怎么压、哪些地方还能改得更好。最后用一个选型助手把前十二篇串起来。
+nav: common|共同骨架;trip|旅行助手;research|深度研究;town|赛博小镇;grad|毕业设计;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.gantt { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.gantt .row { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 8px; align-items: center; font-size: 15px; color: var(--ink-2); }
+.gantt .track { position: relative; height: 22px; background: var(--dim-soft); border-radius: 4px; }
+.gantt .bar { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--s1); color: #fff; font-size: 15px; font-family: var(--f-num); display: flex; align-items: center; padding-left: 6px; white-space: nowrap; overflow: hidden; }
+.gantt .bar.p { background: var(--s3); }
+.gantt .total { font-size: 16px; color: var(--ink); margin-top: 4px; }
+.gantt .total b { font-family: var(--f-num); }
+.sse { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; font-family: var(--f-num); font-size: 15px; }
+.sse div { padding: 5px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--hair); color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.sse div b { color: var(--s1); }
+.sse div.new { border-color: var(--s1); }
+.aff { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+.aff div { border: 1px solid var(--rule); border-radius: 8px; padding: 8px; text-align: center; font-size: 15px; background: var(--bg); color: var(--ink-3); }
+.aff div b { display: block; color: var(--ink); }
+.aff div.on { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.meter { margin-top: 10px; height: 14px; border-radius: 7px; background: var(--dim-soft); overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--s1); transition: width .3s; }
+@media (max-width: 640px) { .aff { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>三个综合案例共用了什么骨架？各自的智能体是怎么分工和串联的？</li>
+    <li>旅行助手、深度研究、赛博小镇里各有哪个降低成本或延迟的设计？还有哪里可以改进？</li>
+    <li>自己做一个智能体应用时，应该按什么顺序做选型决策？</li>
+  </ol>
+</div>
+
+<section class="part" id="common">
+  <div class="part-head"><h2>三个案例的共同骨架</h2><span class="meta">原书第 13–15 章各自的 1 节</span></div>
+  <div class="sec-lede">
+    <p>三个项目长得很不一样，骨架却相同：<strong>前端层</strong>（旅行助手和深度研究用 Vue3 + TypeScript，赛博小镇用 Godot 4.5 游戏引擎）负责交互与展示；<strong>后端层</strong>（FastAPI）负责路由、数据校验与状态；<strong>智能体层</strong>（HelloAgents）负责任务分解、工具调用、结果整合；<strong>外部服务层</strong>提供 LLM、地图、搜索、向量库等能力。智能体只是其中一层，这和《AI Agent Handbook》里“模型之外还需要一整套系统”的说法一致。</p>
+    <p>智能体层的设计各有侧重，正好分别用到了前面几篇的知识：旅行助手是<strong>多智能体 + MCP</strong>（第 6、10 篇），深度研究是<strong>Plan-and-Solve + 笔记 + 搜索</strong>（第 4、9 篇），赛博小镇是<strong>角色扮演 + 记忆 + 状态驱动的提示词</strong>（第 3、8 篇）。</p>
+    <p class="go">先翻牌对照三个案例。</p>
+  </div>
+  <div class="lab"><div id="caseVs"></div></div>
+  <div class="notes" id="n-common"></div>
+</section>
+
+<section class="part" id="trip">
+  <div class="part-head"><h2>智能旅行助手：四个专家，一个 MCP</h2><span class="meta">原书第 13 章</span></div>
+  <div class="sec-lede">
+    <p>为什么不让一个智能体包办？原书给了三条理由：<strong>工具调用受限</strong>（SimpleAgent 每次 run 只执行一个工具，多次调用之间要手动传中间结果；换 ReAct 又要多轮串行思考，至少三次 LLM 调用）、<strong>提示词复杂</strong>（一份提示要写清景点、天气、酒店、整合四套规则，难维护、易混淆）、<strong>难调试</strong>（计划不对时说不清是哪一环出错）。于是像旅行社一样分工：<strong>AttractionSearchAgent</strong>（按偏好搜景点）、<strong>WeatherQueryAgent</strong>（查天气）、<strong>HotelAgent</strong>（按住宿类型搜酒店）、<strong>PlannerAgent</strong>（不调工具，只整合前三者的输出加上日期、预算，按 JSON 格式生成行程）。每个专家的提示词都很短，核心就是一行 <code>[TOOL_CALL:amap_maps_text_search:keywords=景点,city=北京]</code> 示例加一句“必须使用工具，不要编造”。</p>
+    <p>工具接入走 MCP：用一个 <code>MCPTool(command="npx", args=[amap-mcp-server], env={AMAP_API_KEY}, auto_expand=True)</code> 自动展开出 16 个高德地图工具，而不是手写 HTTP 调用（手写的话 Agent 无法自主选择、十几个参数难描述、响应难解析、新 API 要改多处）。关键细节是<strong>三个专家共享同一个 MCPTool 实例</strong>：只起一个 Server 进程，省资源，也便于控制 API 调用频率。数据结构用 <strong>Pydantic</strong> 模型（TripPlanRequest、TripPlan 等），前后端和智能体之间都按同一套类型传递和校验。</p>
+    <p class="go">原书的 plan_trip 按顺序调用四个智能体。但景点、天气、酒店三者互不依赖，能不能并行？拖动耗时看看差别（耗时为示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="ganttSeg"><button data-v="seq" aria-pressed="true">原书写法：顺序执行</button><button data-v="par">三个信息专家并行，再交给 Planner</button></div>
+    <div class="sliders" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:15px;color:var(--ink-3)">每个信息专家耗时 <b id="tiV" style="font-family:var(--f-num);color:var(--ink)">6 秒</b><input type="range" id="tiS" min="2" max="15" step="1" value="6"></label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:15px;color:var(--ink-3)">Planner 耗时 <b id="tpV" style="font-family:var(--f-num);color:var(--ink)">12 秒</b><input type="range" id="tpS" min="4" max="30" step="1" value="12"></label>
+    </div>
+    <div class="gantt" id="gantt"></div>
+    <p class="note" id="ganttNote"></p>
+  </div>
+  <div class="notes" id="n-trip"></div>
+</section>
+
+<section class="part" id="research">
+  <div class="part-head"><h2>深度研究助手：TODO 驱动的三阶段</h2><span class="meta">原书第 14 章</span></div>
+  <div class="sec-lede">
+    <p>搜索引擎只回答单个问题，研究要回答一串相关问题。原书的范式叫 <strong>TODO 驱动</strong>：把“研究”变成<strong>规划 → 执行 → 整合</strong>。三个智能体各管一段：<strong>TODO Planner</strong> 把主题拆成 3 到 5 个子任务，每个带 title、intent、query，提示词里放当前日期以便搜到新信息，要求 JSON 输出；<strong>Task Summarizer</strong> 对每个子任务的搜索结果提炼核心观点和关键数据，每个观点标 [1]、[2] 来源；<strong>Report Writer</strong> 把所有子任务总结按逻辑整合成最终报告。每个子任务的总结和来源都用 NoteTool 存成笔记，可追溯。</p>
+    <p>两个工程设计值得记。一是 <strong>SearchService 中间层</strong>：不让智能体自己决定调不调搜索，而是由服务层确定地执行搜索（选引擎、去重、限制 Token、处理失败），再把结果交给总结智能体，让它专心处理信息，这就是第 7 篇说的“确定性的步骤放进固定流程”。二是 <strong>ToolAwareSimpleAgent</strong>：继承 SimpleAgent，重写 <code>_execute_tool_call</code>，每次工具调用都回调一个 <code>tool_call_listener</code>；后端把这些事件连同状态、任务列表、每步总结一起通过 <strong>SSE</strong>（<code>/research/stream</code>）推给前端，用户能实时看到研究进行到哪一步。三个智能体是顺序协作：线性流程、输入输出明确、同一时间只有一个在工作。</p>
+    <p class="go">看一次研究请求在 SSE 通道里推出的事件（事件内容为示意，结构据原书 14.3.3 节）。</p>
+  </div>
+  <div class="lab">
+    <div id="sseStep"></div>
+    <div class="sse" id="sse"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：深度研究的 TODO 驱动 vs 第 4 篇的 Plan-and-Solve</h4>
+    <p>骨架相同：先规划出步骤列表，再逐步执行。区别有三：每个子任务的执行不是一次 LLM 调用，而是“确定性搜索 + 总结智能体”；中间结果写进外部笔记而不是只放在 history 字符串里；最后多了一个专门的报告整合阶段。可以把它看作 Plan-and-Solve 加上第 9 篇的结构化笔记、第 8 篇的检索增强。</p>
+  </div>
+  <div class="notes" id="n-research"></div>
+</section>
+
+<section class="part" id="town">
+  <div class="part-head"><h2>赛博小镇：会记事、会变熟的 NPC</h2><span class="meta">原书第 15 章</span></div>
+  <div class="sec-lede">
+    <p>传统 NPC 只会说固定台词或走对话树。赛博小镇里每个 NPC 都是一个 <strong>SimpleAgent</strong>：系统提示词写身份、职业和性格（Python 工程师张三严谨直接，产品经理李四外向爱问“为什么”，UI 设计师王五温和有审美），配两层记忆：<strong>WorkingMemory</strong>（最近 10 条、保留 120 分钟，保持对话连贯，比如理解“它是什么颜色”里的“它”）和 <strong>EpisodicMemory</strong>（SQLite + Qdrant，检索“上次讨论的那个项目”）。每轮对话先取最近 5 条短期记忆、再检索 3 条相关长期记忆，一起交给模型。</p>
+    <p>降成本的关键是<strong>批量生成 + 即时响应</strong>的混合模式。后台定期用<strong>一次</strong> LLM 调用、以 JSON 格式生成所有 NPC 的“背景对话”（正在调试代码、在看产品文档），原书说成本降到约三分之一，而且同一上下文里生成的台词彼此呼应；玩家按 E 键发起对话时，才调用该 NPC 自己的智能体，结合记忆和好感度生成个性化回复。</p>
+    <p><strong>好感度</strong>分五级：陌生 0–20、熟悉 21–40、友好 41–60、亲密 61–80、挚友 81–100。每轮对话后用 LLM 判断玩家态度：友好 +5、中立 +2、不友好 −3，分数截断在 0 到 100；当前等级对应一句提示词片段注入系统提示（陌生时“保持礼貌但不要过于热情，回复简短专业”，挚友时“无话不谈，回复亲切真诚”），于是 NPC 的语气会随关系变化。</p>
+    <p class="go">和张三聊几句，看好感度和提示词怎么变。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="affBtn"></div>
+    <div class="meter"><span id="affBar"></span></div>
+    <div class="aff" id="aff"></div>
+    <div class="ha-state" id="affInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="confuse">
+    <h4>读设计时值得多想一步：中立也加分</h4>
+    <p>按原书的规则，中立对话也 +2，所以只要不冒犯，好感度就会一直涨：大约 40 轮普通对话就能从陌生聊到挚友，“友好”和“中立”之间只差 3 分的节奏。另外，每轮额外调用一次 LLM 做情感判断也是成本。可以考虑中立记 0、按天衰减、或者把情感判断合并进 NPC 回复的同一次调用里（让模型同时输出回复和态度标签）。这是我的读后想法，不是原书观点。</p>
+  </div>
+  <div class="notes" id="n-town"></div>
+</section>
+
+<section class="part" id="grad">
+  <div class="part-head"><h2>毕业设计：做一个自己的</h2><span class="meta">原书第 16 章</span></div>
+  <div class="sec-lede">
+    <p>原书最后一章不讲新技术，而是要求读者做一个完整的智能体应用，以开源项目形式提交到仓库的 <code>Co-creation-projects</code> 目录：目录名用“GitHub 用户名-项目名”（如 jjyaoao-CodeReviewAgent），内容包括可运行的 Jupyter Notebook 或 Python 脚本、<code>requirements.txt</code>、<code>README.md</code>（项目简介、核心功能、技术栈、快速开始），可选演示视频、截图、数据集（大文件放外部链接）；通过 Fork、提交、Pull Request 提交，社区评审通过后合并。选题原则三条：<strong>解决真实问题</strong>而不是为技术而技术、<strong>有限时间内能完成</strong>、<strong>能清楚展示能力</strong>；推荐方向有生产力工具、学习辅助、创意娱乐、数据分析、生活服务五类，原书示例是智能代码审查助手。</p>
+    <p>做之前，按全书的顺序过一遍决策会很有帮助：先判断要不要 Agent（第 1 篇），选范式（第 4 篇），决定平台、框架还是自研（第 5–7 篇），再定记忆与检索（第 8 篇）、上下文策略（第 9 篇）、协议（第 10 篇），最后是要不要训练（第 11 篇）和怎么评估（第 12 篇）。</p>
+    <p class="go">回答几个问题，生成一份对应全系列的设计清单。</p>
+  </div>
+  <div class="lab"><div id="gradPick"></div></div>
+  <div class="lab"><p class="lab-t">提交前检查</p><div id="gradCheck"></div></div>
+  <div class="notes" id="n-grad"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 13–15 章内容</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="13-1">
+      <p class="iv-q">当 Agent 要在真实或模拟环境（机器人、游戏）中执行任务时，它和纯软件工具型 Agent 有什么本质区别？<small>Extra01 · Agent 第 9 题</small></p>
+      <ul class="iv-a">
+        <li><b>状态与时间</b>：环境持续变化，有实时性要求；游戏 NPC 要在几百毫秒到几秒内回应，机器人还要满足控制周期。</li>
+        <li><b>观察</b>：来自传感器或游戏状态，部分可观察、有噪声，需要感知模块转换成模型能用的描述。</li>
+        <li><b>行动后果</b>：行动不可撤销甚至有安全风险，需要底层控制器和安全约束兜底，LLM 只做高层决策。</li>
+        <li><b>成本结构</b>：交互频繁，必须像赛博小镇那样批量生成、缓存、分级响应，或用小模型、本地模型。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="13-2">
+      <p class="iv-q">设计一个多智能体旅行规划系统，你会怎么拆分？有哪些性能优化？</p>
+      <ul class="iv-a">
+        <li><b>拆分</b>：按信息来源拆成景点、天气、酒店等检索专家，加一个只做整合的规划专家；每个专家提示词短、工具少。</li>
+        <li><b>串联</b>：检索专家互不依赖可并行，规划专家等它们完成后执行；中间结果用结构化模型（Pydantic）传递并校验。</li>
+        <li><b>优化</b>：共享 MCP Server 实例控制并发与限流；检索结果缓存；规划输出要求 JSON 并做校验与重试；预算等确定性计算放在代码里而不是交给模型。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="13-3">
+      <p class="iv-q">你认为目前限制 Agent 能力和普及的最大瓶颈是什么？<small>Extra01 · 其它第 1 题</small></p>
+      <ul class="iv-a">
+        <li><b>可靠性</b>：多步任务的错误会累积，格式漂移、幻觉、工具误用；需要验证、反思和评估闭环（第 4、12 篇）。</li>
+        <li><b>成本与延迟</b>：多次调用串行累加（第 4 篇 ReAct、第 13 篇的串行规划），需要并行、缓存、小模型分工。</li>
+        <li><b>上下文与记忆</b>：长任务的信息管理仍然困难（第 8、9 篇）。</li>
+        <li><b>安全与信任</b>：权限、提示注入、可审计性（第 9 篇沙箱、第 10 篇协议安全）。答题时选一个展开，结合自己的实践例子。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 共同骨架？各自如何分工串联？</summary><p class="ans">四层：前端（Vue 或 Godot）、后端（FastAPI）、智能体层（HelloAgents）、外部服务（LLM、地图、搜索、向量库）。旅行助手：景点、天气、酒店三个检索专家 + 规划专家，原书按顺序调用，共享一个高德 MCP 实例。深度研究：TODO Planner 拆 3–5 个子任务 → 每个子任务由服务层搜索、Summarizer 总结并写笔记 → Report Writer 整合，顺序协作，经 SSE 推送进度。赛博小镇：每个 NPC 一个 SimpleAgent，带短期与长期记忆，背景台词批量生成，玩家交互时即时响应。</p></details>
+    <details><summary>2. 降成本或延迟的设计？可改进处？</summary><p class="ans">旅行助手共享 MCP 实例、提示词拆小；深度研究用 SearchService 确定性执行搜索、限制 Token；赛博小镇用一次调用批量生成全部 NPC 背景对话，交互时才单独调用。可改进：旅行助手的三个检索专家互不依赖，可以并行；深度研究的子任务也可并行检索；赛博小镇中立也加分会让好感度单调上涨，情感判断可以合并进回复调用。</p></details>
+    <details><summary>3. 自己做应用的决策顺序？</summary><p class="ans">先判断是否需要 Agent（Workflow 还是 Agent）；选范式（ReAct、Plan-and-Solve、Reflection 或组合）；选实现方式（低代码平台、框架或自研）；定记忆与检索；定上下文策略（JIT、压缩、笔记、子代理）；定协议（MCP、A2A）；判断是否需要训练（SFT、GRPO）；最后设计评估（基准、过程指标、LLM Judge、持续监控）。提交时备齐 Notebook 或脚本、requirements.txt、README，通过 PR 提交。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.vs($('#caseVs'), {
+  a: '智能旅行助手', b: '深度研究助手 / 赛博小镇', k: '维度',
+  rows: [
+    ['智能体分工', '景点、天气、酒店三个检索专家 + 规划专家', '研究：Planner、Summarizer、Report Writer；小镇：每个 NPC 一个 SimpleAgent'],
+    ['协作方式', '顺序调用，前三者输出拼进规划查询', '研究：顺序的规划—执行—整合；小镇：彼此独立，背景台词批量生成'],
+    ['工具与外部服务', '高德地图 MCP（16 个工具）、Unsplash 图片', '研究：Tavily 等搜索 + NoteTool；小镇：记忆（SQLite + Qdrant）'],
+    ['前端', 'Vue3 + TypeScript，地图、预算、行程编辑、导出', '研究：Vue3 全屏对话框 + 实时进度；小镇：Godot 4.5 像素办公室'],
+    ['最值得记的设计', '共享一个 MCP 实例；PlannerAgent 不调工具只整合', '研究：SearchService 中间层 + 工具调用监听推 SSE；小镇：批量 + 即时混合、好感度驱动提示词']
+  ]
+});
+S.notes($('#n-common'), {
+  c: [
+    ['四层骨架', '前端、后端（FastAPI）、智能体层（HelloAgents）、外部服务层。'],
+    ['三个案例的侧重', '旅行：多智能体 + MCP；研究：规划 + 笔记 + 搜索；小镇：角色扮演 + 记忆 + 状态驱动提示。']
+  ],
+  p: [
+    ['智能体只是一层', '数据校验、状态管理、前端展示同样决定产品体验。']
+  ]
+});
+
+/* ---------- 旅行助手 ---------- */
+var gmode = 'seq';
+function gantt() {
+  var ti = +$('#tiS').value, tp = +$('#tpS').value;
+  $('#tiV').textContent = ti + ' 秒'; $('#tpV').textContent = tp + ' 秒';
+  var rows, total;
+  if (gmode === 'seq') { rows = [['景点专家', 0, ti], ['天气专家', ti, ti], ['酒店专家', 2 * ti, ti], ['规划专家', 3 * ti, tp]]; total = 3 * ti + tp; }
+  else { rows = [['景点专家', 0, ti], ['天气专家', 0, ti], ['酒店专家', 0, ti], ['规划专家', ti, tp]]; total = ti + tp; }
+  var seqT = 3 * ti + tp, max = seqT;
+  $('#gantt').innerHTML = rows.map(function (r, i) {
+    return '<div class="row"><span>' + r[0] + '</span><div class="track"><span class="bar' + (i === 3 ? ' p' : '') + '" style="left:' + (r[1] / max * 100) + '%;width:' + (r[2] / max * 100) + '%">' + r[2] + 's</span></div></div>';
+  }).join('') + '<div class="total">总耗时 <b>' + total + ' 秒</b>' + (gmode === 'par' ? '，比顺序执行少 ' + (seqT - total) + ' 秒（' + S.pct((seqT - total) / seqT, 0) + '）' : '') + '</div>';
+  $('#ganttNote').textContent = gmode === 'seq' ? '原书的 plan_trip 依次调用四个智能体。原书在 13.3.1 节批评 ReAct 时说过“这些调用是串行的，总时间会很长”，同样的问题在这里也存在。' : '三个信息专家互不依赖，用 asyncio.gather 或线程池并行即可。注意它们共享同一个 MCP Server，并行时要留意高德 API 的限流。这是我的改进建议，不是原书做法。';
+}
+S.seg($('#ganttSeg'), function (v) { gmode = v; gantt(); });
+['#tiS', '#tpS'].forEach(function (x) { $(x).addEventListener('input', gantt); });
+gantt();
+S.notes($('#n-trip'), {
+  c: [
+    ['为何拆成多智能体', '单智能体工具调用受限且串行慢、提示词复杂难维护、出错难定位。'],
+    ['四个智能体', 'AttractionSearch、WeatherQuery、Hotel 三个检索专家 + 只整合不调工具的 Planner。'],
+    ['共享 MCP 实例', '三个专家共用一个 MCPTool（auto_expand 出 16 个高德工具），只起一个 Server 进程。']
+  ],
+  p: [
+    ['为何用 MCP 而非直调 API', '智能体可自主选择工具；参数与响应格式由 Server 封装；新增 API 不改多处。'],
+    ['数据模型', 'Pydantic：TripPlanRequest、TripPlan，前后端与智能体共用一套类型。'],
+    ['可改进', '三个检索专家互不依赖，可以并行。']
+  ]
+});
+
+/* ---------- 深度研究 SSE ---------- */
+var EV = [
+  ['status', '{"type": "status", "message": "正在规划研究任务..."}'],
+  ['tasks', '{"type": "tasks", "tasks": [\n  {"title": "Datawhale的基本信息", "intent": "组织定位、成立时间", "query": "Datawhale organization introduction history 2024"},\n  {"title": "Datawhale的主要项目", …}, {"title": "Datawhale的社区文化", …} ]}'],
+  ['task_status', '{"type": "task_status", "task": "Datawhale的基本信息", "status": "searching"}'],
+  ['tool_call', '{"type": "tool_call", "agent": "Task Summarizer", "tool": "note", "args": {"action": "create", "title": "Datawhale的基本信息"}}'],
+  ['task_summary', '{"type": "task_summary", "task": "Datawhale的基本信息",\n "summary": "Datawhale是一个专注于数据科学与AI领域的开源组织，成立于2018年[1]……"}'],
+  ['…', '（后面两个子任务重复 searching → tool_call → task_summary）'],
+  ['report', '{"type": "report", "markdown": "# Datawhale 是一个什么样的组织\\n## 概述 …\\n## 参考文献 [1] … [2] …"}']
+];
+S.stepper($('#sseStep'), EV.length, function (i) {
+  $('#sse').innerHTML = EV.slice(0, i + 1).map(function (e, k) { return '<div class="' + (k === i ? 'new' : '') + '"><b>event: ' + e[0] + '</b>\n' + e[1].replace(/</g, '&lt;') + '</div>'; }).join('');
+}, EV.map(function (e) { return e[0]; }));
+S.notes($('#n-research'), {
+  c: [
+    ['TODO 驱动', '规划（3–5 个子任务，含 title、intent、query）→ 执行（搜索 + 总结 + 记笔记）→ 整合成报告。'],
+    ['三个智能体', 'TODO Planner、Task Summarizer、Report Writer，顺序协作。'],
+    ['SearchService', '服务层确定性地执行搜索（选引擎、去重、限 Token、处理失败），结果交给总结智能体。'],
+    ['ToolAwareSimpleAgent', '重写 _execute_tool_call，每次工具调用回调 tool_call_listener。']
+  ],
+  p: [
+    ['规划提示要点', '带当前日期、要求 JSON、给示例、限定 3–5 个子任务。'],
+    ['总结提示要点', '核心观点 + 关键数据 + 每个观点的 [n] 来源。'],
+    ['进度推送', '事件经 SSE（/research/stream）实时推到前端。']
+  ]
+});
+
+/* ---------- 好感度 ---------- */
+var LV = [['陌生', 0, 20, '你刚认识这位玩家,保持礼貌但不要过于热情。回复简短专业。'], ['熟悉', 21, 40, '你已经认识这位玩家,可以进行正常的交流。回复自然友好。'], ['友好', 41, 60, '你把这位玩家当作朋友,愿意分享更多信息。回复详细热情。'], ['亲密', 61, 80, '你非常信任这位玩家,可以分享私人话题。回复充满关心。'], ['挚友', 81, 100, '你把这位玩家当作最好的朋友,无话不谈。回复亲切真诚。']];
+var score = 10, turns = 0, last = '';
+function lvOf(s) { for (var i = 0; i < LV.length; i++) if (s <= LV[i][2]) return i; return 4; }
+function drawAff() {
+  var l = lvOf(score);
+  $('#affBar').style.width = score + '%';
+  $('#aff').innerHTML = LV.map(function (x, i) { return '<div class="' + (i === l ? 'on' : '') + '"><b>' + x[0] + '</b>' + x[1] + '–' + x[2] + '</div>'; }).join('');
+  $('#affInfo').innerHTML = '<p>好感度 <b>' + score + '</b>，第 ' + turns + ' 轮' + (last ? '，' + last : '') + '。</p><p>注入张三系统提示词的片段：</p><span class="box">你是张三,一位Python工程师。\n你的性格特点:严谨、专业、喜欢分享技术知识。说话直接,注重代码质量。\n' + LV[l][3] + '</span>';
+}
+[['友好：“谢谢你分享的调试技巧，太有用了！”', 5], ['中立：“HelloAgents 用的是哪个 Python 版本？”', 2], ['不友好：“你写的代码也太烂了吧。”', -3]].forEach(function (b) {
+  var btn = h('button', { class: 'btn', type: 'button', text: b[0] }, $('#affBtn'));
+  btn.addEventListener('click', function () { score = Math.max(0, Math.min(100, score + b[1])); turns++; last = 'LLM 判定为' + b[0].slice(0, b[0].indexOf('：')) + '，' + (b[1] > 0 ? '+' : '') + b[1]; drawAff(); });
+});
+var r10 = h('button', { class: 'btn', type: 'button', text: '连续 10 轮中立对话' }, $('#affBtn'));
+r10.addEventListener('click', function () { score = Math.min(100, score + 20); turns += 10; last = '10 轮中立对话 +20'; drawAff(); });
+var rs = h('button', { class: 'btn pri', type: 'button', text: '重置' }, $('#affBtn'));
+rs.addEventListener('click', function () { score = 10; turns = 0; last = ''; drawAff(); });
+drawAff();
+S.notes($('#n-town'), {
+  c: [
+    ['NPC 智能体', '每个 NPC 一个 SimpleAgent：身份、职业、性格写进系统提示。'],
+    ['两层记忆', 'WorkingMemory（10 条、120 分钟）保连贯；EpisodicMemory（SQLite + Qdrant）检索历史。'],
+    ['批量 + 即时', '后台一次调用以 JSON 生成全部 NPC 背景台词；玩家交互时调用该 NPC 自己的智能体。'],
+    ['五级好感度', '陌生 0–20、熟悉 21–40、友好 41–60、亲密 61–80、挚友 81–100。']
+  ],
+  p: [
+    ['好感度规则', 'LLM 判态度：友好 +5、中立 +2、不友好 −3，截断到 [0, 100]。'],
+    ['好感度生效方式', '当前等级的提示词片段注入系统提示，改变语气与分享程度。'],
+    ['每轮上下文', '最近 5 条短期记忆 + 检索 3 条长期记忆。'],
+    ['批量生成收益', '原书称成本降到约 1/3，台词彼此呼应；只适合背景对话。']
+  ]
+});
+
+/* ---------- 毕业设计 ---------- */
+HB.decide($('#gradPick'), {
+  qs: [
+    { id: 'path', q: '1. 流程的步骤和分支能事先写清吗？（第 1 篇）', opts: [['wf', '大部分能'], ['ag', '要按中间结果临场决定'], ['mix', '骨架固定，局部要判断']], def: 'mix' },
+    { id: 'ext', q: '2. 需要实时外部信息或操作外部系统吗？（第 4、10 篇）', opts: [['y', '需要'], ['n', '主要靠模型推理']], def: 'y' },
+    { id: 'qual', q: '3. 质量要求很高、能接受多花时间吗？（第 4 篇）', opts: [['y', '是'], ['n', '要快']], def: 'n' },
+    { id: 'mem', q: '4. 要记住用户或查私有文档吗？（第 8 篇）', opts: [['none', '都不要'], ['mem', '记住用户'], ['rag', '查文档'], ['both', '都要']], def: 'rag' },
+    { id: 'long', q: '5. 单次任务会很长、跨多次会话吗？（第 9 篇）', opts: [['y', '会'], ['n', '不会']], def: 'n' },
+    { id: 'team', q: '6. 想怎么实现？（第 5–7 篇）', opts: [['lc', '低代码平台快速做'], ['fw', '用现成框架'], ['own', '在 HelloAgents 上自己写']], def: 'own' }
+  ],
+  decide: function (a) {
+    var L = [];
+    L.push(a.path === 'wf' ? '<b>形态</b>：以 Workflow 为主，LLM 作为其中的节点（第 1 篇）。' : a.path === 'ag' ? '<b>形态</b>：Agent，下一步由模型决定（第 1 篇）。' : '<b>形态</b>：Workflow 骨架 + Agent 节点，高风险关口固定（第 1 篇方案 C）。');
+    L.push('<b>范式</b>：' + (a.ext === 'y' ? 'ReAct 调工具' : 'Plan-and-Solve 分步推理') + (a.qual === 'y' ? '，结果再过一轮 Reflection' : '') + '（第 4 篇）。');
+    L.push('<b>实现</b>：' + { lc: 'Dify / Coze 等平台，复杂逻辑写成插件（第 5 篇）', fw: '按“涌现 vs 显式控制”选框架，流程严格选 LangGraph（第 6 篇）', own: 'HelloAgents 的 Agent 基类 + ToolRegistry，必要时用 FunctionCallAgent（第 7 篇）' }[a.team] + '。');
+    if (a.mem !== 'none') L.push('<b>记忆与检索</b>：' + { mem: 'MemoryTool，偏好进语义记忆', rag: 'RAGTool，MarkItDown + 结构感知分块，专业领域开 MQE/HyDE', both: 'MemoryTool + RAGTool，并做“查记忆还是查文档”的路由' }[a.mem] + '（第 8 篇）。');
+    L.push('<b>上下文</b>：' + (a.long === 'y' ? 'ContextBuilder + NoteTool 记进度，必要时压缩或子代理' : '精简系统提示和工具集（MVTS），用 JIT 按需加载') + '（第 9 篇）。');
+    if (a.ext === 'y') L.push('<b>协议</b>：外部服务优先找现成 MCP Server，多个智能体协作再考虑 A2A（第 10 篇）。');
+    L.push('<b>训练</b>：先不训练；提示与工具做到头、且有可验证的成功标准时，再考虑 SFT + GRPO（第 11 篇）。');
+    L.push('<b>评估</b>：准备 20–50 条固定测试用例，记录成功率、步数、成本，开放式输出用 LLM Judge 并人工抽查（第 12 篇）。');
+    return '<ol style="margin:0;padding-left:1.4em;line-height:1.8"><li>' + L.join('</li><li>') + '</li></ol>';
+  }
+});
+HB.check($('#gradCheck'), {
+  items: [
+    { t: '目录名“GitHub 用户名-项目名”', d: '放在 Co-creation-projects 下', miss: '与他人项目冲突，评审者不知道是谁的作品。' },
+    { t: '可运行的 Notebook 或 Python 脚本', d: '从头到尾能跑通', miss: '别人无法复现你的结果。' },
+    { t: 'requirements.txt', d: '列全依赖与版本', miss: '换一台机器就装不起来。' },
+    { t: 'README.md', d: '简介、核心功能、技术栈、快速开始、API 密钥配置方式', miss: '读者不知道这个项目解决什么问题、怎么跑。' },
+    { t: '不提交密钥与大文件', d: '.env 不入库，大数据集放外部链接', miss: '密钥泄露；仓库体积暴涨，PR 被拒。' },
+    { t: '测试过再提交', d: '在干净环境里跑一遍', miss: '评审时才发现跑不通，来回修改。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>可以提交 PR</b>：Fork → 新分支 → 提交 → 发起 Pull Request，等社区评审。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　还差：</p>'; }
+});
+S.notes($('#n-grad'), {
+  c: [
+    ['毕业设计形式', '开源项目提交到 Co-creation-projects，目录名“用户名-项目名”，经 PR 与社区评审合并。'],
+    ['选题三原则', '解决真实问题、有限时间可完成、能清楚展示能力。']
+  ],
+  p: [
+    ['必备文件', 'Notebook 或脚本、requirements.txt、README.md；可选演示视频、截图、数据集。'],
+    ['推荐方向', '生产力工具、学习辅助、创意娱乐、数据分析、生活服务。'],
+    ['决策顺序', '要不要 Agent → 范式 → 实现方式 → 记忆检索 → 上下文 → 协议 → 训练 → 评估。']
+  ]
+});

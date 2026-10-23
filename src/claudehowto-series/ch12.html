@@ -1,0 +1,324 @@
+---
+title: CLI、Headless 与脚本化
+desc: Claude How To 学习笔记（十二）：交互模式与 -p 打印模式；命令拼装器（输出格式、JSON Schema、轮数与花费上限、权限与工具）；.result 与 .structured_output 的 jq 取法；--tools、--allowedTools、--disallowedTools、--bare、--safe-mode、--restricted 的区别；系统提示词与 --agents；在 CI 里跑审查；安装、模型别名与关键环境变量。
+kicker: <span>技术学习</span><span>Claude How To · 12</span><span>对应原文 10-cli，及 09「Headless Mode」</span><span>约 30 分钟</span>
+h1: 一条 <em>claude -p</em>，就是一个可编程的接口
+lead: 交互式会话之外，Claude Code 还是一个标准的命令行程序：claude -p 接一段提示词，跑完就退出，能读管道、能输出 JSON、能按 Schema 返回结构化结果、能限制轮数和花费。这让它可以塞进 shell 脚本、Makefile 和 CI 流水线。这一篇用一个命令拼装器把常用参数串起来，再把几组最容易混的开关（限制工具的三个参数、三种“精简启动”）讲清楚。
+nav: modes|两种模式;build|命令拼装器;out|输出与 jq;tools|工具与精简启动;sys|系统提示词与代理;ci|放进 CI;env|安装、模型与环境变量;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.cb { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 6px 18px; }
+.cb label { display: flex; gap: 8px; align-items: flex-start; font-size: 15px; color: var(--ink-2); cursor: pointer; padding: 5px 0; border-top: 1px solid var(--hair); }
+.cb input { margin-top: 4px; accent-color: var(--s1); width: 16px; height: 16px; flex: none; }
+.cb code { font-family: var(--f-num); font-size: 15px; color: var(--ink); }
+.cb small { display: block; color: var(--ink-3); font-size: 15px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>交互模式和 <code>-p</code> 打印模式有什么区别？怎样把文件或日志通过管道交给 Claude？</li>
+    <li>要让脚本拿到结构化结果，用哪两个参数？结果在 JSON 的哪个字段？</li>
+    <li><code>--tools</code>、<code>--allowedTools</code>、<code>--disallowedTools</code> 各控制什么？<code>--bare</code>、<code>--safe-mode</code>、<code>--restricted</code> 分别用在什么时候？</li>
+  </ol>
+</div>
+
+<section class="part" id="modes">
+  <div class="part-head"><h2>两种模式</h2><span class="meta">原文 10-cli「CLI Commands」「Interactive vs Print Mode」</span></div>
+  <div class="sec-lede">
+    <p><strong>交互模式</strong>是默认的：<code>claude</code> 进入 REPL，<code>claude "解释一下这个项目"</code> 带一个初始提示进入。<strong>打印模式</strong> <code>claude -p "…"</code> 是非交互的：执行完就退出，输出打印到 stdout，适合脚本、批处理、CI。它取代了更早的 <code>--headless</code> 参数。打印模式能读管道：<code>cat error.log | claude -p "解释这个错误"</code>、<code>git log --oneline -50 | claude -p "总结最近的开发活动"</code>；也能把输出接给别的命令：<code>claude -p "列出 todo" | grep URGENT</code>。</p>
+    <p>两种模式都能续接会话：<code>claude -c</code> 继续最近一次，<code>claude -c -p "检查类型错误"</code> 在打印模式里续接，<code>claude -r "名字" "提示"</code> 恢复指定会话。几个管理子命令也值得知道：<code>claude update</code>（升级）、<code>claude install 版本</code>（装指定版本）、<code>claude auth login / status</code>、<code>claude mcp …</code>、<code>claude plugin …</code>、<code>claude agents</code>（后台会话的 Agent View）、<code>claude purge 路径</code>（删除某项目的全部本地状态，先加 <code>--dry-run</code> 预览）。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>打印模式<small>claude -p</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>把 Claude 当成一个命令行工具，放进脚本、定时任务、CI：读管道输入，返回文本或 JSON，可限轮数、限花费、限工具。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcP"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>需要来回讨论、边看边改的工作（用交互模式）；没有任何限制就在共享机器或外部触发的 CI 里跑（至少加 <code>--max-turns</code>、<code>--max-budget-usd</code> 和工具限制，外部输入用 <code>--restricted</code>）；靠在提示词里“请输出 JSON”来拿结构化结果（用 <code>--output-format json</code> 和 <code>--json-schema</code>）。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-modes"></div>
+</section>
+
+<section class="part" id="build">
+  <div class="part-head"><h2>命令拼装器</h2><span class="meta">原文「Core Flags」「Output &amp; Format」「Tool &amp; Permission Management」「Flag Combinations」</span></div>
+  <div class="sec-lede">
+    <p>打印模式的参数按用途分几组。<strong>输出</strong>：<code>--output-format text | json | stream-json</code>（流式还可加 <code>--include-partial-messages</code>、<code>--verbose</code>），<code>--json-schema '{…}'</code> 返回经校验的结构化结果。<strong>预算</strong>：<code>--max-turns N</code> 限制自主轮数，<code>--max-budget-usd 2.00</code> 限制花费（v2.1.217 起到上限时连后台子代理也停）。<strong>权限与工具</strong>：<code>--permission-mode</code>、<code>--tools</code>、<code>--allowedTools</code>、<code>--disallowedTools</code>。<strong>模型</strong>：<code>--model</code>、<code>--fallback-model</code>、<code>--effort</code>。<strong>其他</strong>：<code>--no-session-persistence</code>（不保存会话）、<code>--append-system-prompt</code>、<code>--mcp-config</code>。</p>
+    <p>原文末尾的“参数组合”表给了几种常用搭配：快速审查 <code>cat 文件 | claude -p "review"</code>；结构化输出 <code>-p --output-format json</code>；安全探索 <code>--permission-mode plan</code>；CI 集成 <code>-p --max-turns 3 --output-format json</code>；限额运行 <code>-p --max-budget-usd 2.00</code>。</p>
+    <p class="go">勾选需要的能力，看拼出来的命令和取结果的方式。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>输入方式</span><div class="seg" id="inSeg"><button data-v="arg" aria-pressed="true">提示词参数</button><button data-v="pipe">管道输入 git diff</button></div></div>
+    <div class="cb" id="cb"></div>
+    <div id="cbOut"></div>
+  </div>
+  <div class="notes" id="n-build"></div>
+</section>
+
+<section class="part" id="out">
+  <div class="part-head"><h2>输出与 jq</h2><span class="meta">原文「JSON API Integration」「jq Parsing Examples」</span></div>
+  <div class="sec-lede">
+    <p><code>--output-format json</code> 输出的是一个 JSON 对象，<strong>回答文本在 <code>.result</code></strong>；加了 <code>--json-schema</code> 之后，经过校验的结构化对象在 <strong><code>.structured_output</code></strong>。所以 jq 的写法分两种：<code>jq -r '.result'</code> 取文本，<code>jq '.structured_output.issues[]'</code> 取结构化字段。原文的排障建议也是这一条：JSON 格式不对时，用 <code>--json-schema</code> 约束结构、用 <code>--output-format json</code>，不要只在提示词里要求“输出 JSON”。</p>
+    <p><code>stream-json</code> 一行一个事件，适合实时处理长报告；配合 <code>--verbose</code> 时，init 事件里还有 <code>mcp_server_errors</code>，能看出哪些 MCP 服务器因配置校验失败被跳过了（第 6 篇）。原文给的脚本模式：把结果存进变量，用 <code>jq -e</code> 判断某个布尔字段，决定脚本走哪条分支。</p>
+    <p class="go">判断这几条 jq 取得到吗。</p>
+  </div>
+  <div class="lab"><div id="oq"></div></div>
+  <div class="lab"><p class="lab-t">读命令猜行为</p><div id="cq2"></div></div>
+  <div class="notes" id="n-out"></div>
+</section>
+
+<section class="part" id="tools">
+  <div class="part-head"><h2>工具限制与三种精简启动</h2><span class="meta">原文「Tool &amp; Permission Management」「Core Flags」「Restricted Mode」</span></div>
+  <div class="sec-lede">
+    <p>限制工具的三个参数作用不同：<strong><code>--tools</code></strong> 限定<strong>有哪些</strong>内置工具可用（不在列表里的不存在）；<strong><code>--allowedTools</code></strong> 是<strong>不用确认</strong>就能执行的工具，支持 <code>"Bash(git log:*)"</code> 这样的前缀写法；<strong><code>--disallowedTools</code></strong> 把工具从上下文里<strong>拿掉</strong>，如 <code>"Bash(rm:*)"</code>。<code>--dangerously-skip-permissions</code> 跳过所有确认（原文：只在一次性沙箱里用）。</p>
+    <p>还有三个“精简启动”容易混：<strong><code>--bare</code></strong> 是最小模式，跳过 hooks、skills、plugins、MCP、auto memory、CLAUDE.md，适合快速的一次性查询；<strong><code>--safe-mode</code></strong>（或 <code>CLAUDE_CODE_SAFE_MODE=1</code>）关掉所有自定义，用来<strong>排查</strong>是你的配置有问题还是 Claude Code 本身有问题；<strong><code>--restricted</code></strong>（v2.1.248+）是给<strong>不可信输入</strong>用的锁定模式：去掉 Bash、PowerShell、REPL 和 WebFetch（除非 <code>--tools</code> 点名）、忽略用户/项目/本地设置文件（托管设置和显式 <code>--settings</code> 仍生效）、文件工具限制在工作目录内、拒绝 bypassPermissions 和创建云端会话。原文说它比 <code>--permission-mode</code> 更粗：直接拿掉工具而不是询问，会话里无法放宽。</p>
+    <p class="go">先想右列，再翻开。</p>
+  </div>
+  <div class="lab"><div id="tvs"></div></div>
+  <div class="lab"><div id="tq"></div></div>
+  <div class="notes" id="n-tools"></div>
+</section>
+
+<section class="part" id="sys">
+  <div class="part-head"><h2>系统提示词与代理</h2><span class="meta">原文「System Prompt Customization」「Agents Configuration」</span></div>
+  <div class="sec-lede">
+    <p>系统提示词有两类参数：<strong>替换</strong> <code>--system-prompt "…"</code> / <code>--system-prompt-file 文件</code>，把默认的系统提示词整个换掉；<strong>追加</strong> <code>--append-system-prompt "…"</code>，在默认提示词后面加一段。两类都在交互和打印模式下可用。只想加一条规则（比如“回答都附单元测试”）就用追加，替换会丢掉 Claude Code 默认的软件工程指令。打印模式下还有 <code>--append-subagent-system-prompt</code>（及 <code>-file</code> 版），给每个子代理追加同一段话。</p>
+    <p><code>--agents '{…}'</code> 用 JSON 为本次会话定义子代理，每个必须有 <code>description</code> 和 <code>prompt</code>，可选 <code>tools</code>、<code>model</code>；可以 <code>--agents "$(cat ~/.claude/agents.json)"</code> 从文件读。它的优先级高于项目、用户和插件里的同名定义；JSON 无效时直接报错退出（v2.1.243）。<code>--agent 名字</code> 则是让整个会话以某个子代理作为主代理运行。</p>
+    <p class="go">判断这几种说法。</p>
+  </div>
+  <div class="lab"><div id="sq"></div></div>
+  <div class="notes" id="n-sys"></div>
+</section>
+
+<section class="part" id="ci">
+  <div class="part-head"><h2>放进 CI</h2><span class="meta">原文「High-Value Use Cases」「CI/CD Integration」，09「Headless Mode」</span></div>
+  <div class="sec-lede">
+    <p>原文给了 GitHub Actions 和 Jenkins 的例子：在 PR 触发的流水线里装好 Claude Code，用 <code>ANTHROPIC_API_KEY</code>（存在仓库 secrets 里），跑 <code>claude -p --output-format json --max-turns 3 "审查这个 PR 的……按 JSON 输出"</code> 写进文件，再用下一步把结果发成 PR 评论。如果要把审查当作 PR 的门禁，可以用 <code>claude ultrareview PR号 --json --no-post</code>（v2.1.227+）：干净时退出码 0，有发现时 1，默认 45 分钟超时。</p>
+    <p>原文还列了几类批处理用法：逐个文件 <code>for f in src/*.ts; do claude -p --model haiku "总结：$(cat $f)" &gt;&gt; summaries.md; done</code>；安全审计 <code>claude --permission-mode plan --tools "Read,Grep,Glob" "审计安全漏洞"</code>；限制命令 <code>--disallowedTools "Bash(rm:*)" "Bash(curl:*)"</code>。对于外部贡献者触发的 CI，原文的 restricted 模式说明里专门举了这个场景。</p>
+    <p class="go">回放一遍 CI 里的一次审查（输出为示意）。</p>
+  </div>
+  <div class="lab"><div id="term"></div></div>
+  <div class="notes" id="n-ci"></div>
+</section>
+
+<section class="part" id="env">
+  <div class="part-head"><h2>安装、模型与环境变量</h2><span class="meta">原文「Runtime &amp; Packaging」「Models」「Key Environment Variables」「Troubleshooting」</span></div>
+  <div class="sec-lede">
+    <p>安装：原文说 npm 安装在官方 README 里已标为弃用，推荐原生安装脚本（<code>curl -fsSL https://claude.ai/install.sh | bash</code>）、Homebrew 或 WinGet；v2.1.113 起 CLI 是按平台分发的原生二进制。公司网络要放行 <code>downloads.claude.ai</code>，否则安装和 <code>claude update</code> 会失败。命令找不到时检查 PATH 里有没有 <code>~/.local/bin</code>，再跑 <code>claude doctor</code>（只读诊断）或会话里的 <code>/doctor</code>（会提出修复）。</p>
+    <p>模型用别名最省事：<code>--model opus</code>、<code>sonnet</code>、<code>haiku</code>，<code>opusplan</code>（Opus 规划、Sonnet 执行）；<code>--fallback-model</code> 在主模型过载时自动换（settings 里 <code>fallbackModel</code> 最多配三个）。具体型号、上下文窗口、默认强度原文有一张随版本变化的表，以原文和 <code>/model</code> 为准。常用环境变量：<code>ANTHROPIC_MODEL</code>（固定模型）与 <code>ANTHROPIC_DEFAULT_MODEL</code>（新会话的起始模型，<code>/model</code> 仍可改）、<code>CLAUDE_CODE_EFFORT_LEVEL</code>、<code>MAX_THINKING_TOKENS</code>、<code>CLAUDE_CODE_SUBAGENT_MODEL</code>、<code>MAX_MCP_OUTPUT_TOKENS</code>、<code>CLAUDE_AUTOCOMPACT_PCT_OVERRIDE</code>、<code>DISABLE_AUTOUPDATER</code>。</p>
+    <p class="go">按症状选第一步。</p>
+  </div>
+  <div class="lab"><div id="eq"></div></div>
+  <div class="notes" id="n-env"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 交互模式与 -p 的区别？怎样用管道？</summary><p class="ans">交互模式（claude、claude "提示"）进入 REPL 来回对话；-p 打印模式执行完就退出，输出到 stdout，适合脚本和 CI，取代了旧的 --headless。管道：cat error.log | claude -p "解释"；输出也能接给 grep 等。-c、-r 在两种模式下都能续接会话。</p></details>
+    <details><summary>2. 结构化结果用哪两个参数？在哪个字段？</summary><p class="ans">--output-format json 加 --json-schema '{…}'。回答文本在 .result，经过 Schema 校验的结构化对象在 .structured_output，用 jq '.structured_output.字段' 取。不要只在提示词里要求输出 JSON。</p></details>
+    <details><summary>3. --tools、--allowedTools、--disallowedTools 区别？--bare、--safe-mode、--restricted 何时用？</summary><p class="ans">--tools 限定有哪些内置工具；--allowedTools 是免确认执行的工具（可写 Bash(git log:*)）；--disallowedTools 把工具从上下文拿掉。--bare 是最小模式，做快速一次性查询；--safe-mode 关掉所有自定义，用于排查配置问题；--restricted 是给不可信输入的锁定模式：去掉执行命令的工具和 WebFetch、忽略用户/项目/本地设置、文件工具限于工作目录、拒绝 bypassPermissions 和云端会话。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 两种模式 ---------- */
+$('#fcP').innerHTML = CH.file('终端或脚本', CH.esc('git diff main...HEAD | claude -p \\\n  --output-format json --max-turns 3 --max-budget-usd 1.00 \\\n  --tools "Read,Grep,Glob" \\\n  "审查这些改动的安全和性能问题，按严重度列出" \\\n  | jq -r \'.result\''), '示意组合，参数均来自原文');
+S.notes($('#n-modes'), {
+  c: [
+    ['交互模式', '<code>claude</code> / <code>claude "提示"</code>：进入 REPL。'],
+    ['打印模式', '<code>claude -p "提示"</code>：执行完退出，输出到 stdout；取代 --headless。'],
+    ['管道', '<code>cat 文件 | claude -p "…"</code>；输出也能接给其他命令。']
+  ],
+  p: [
+    ['续接', '<code>claude -c</code>、<code>claude -c -p "…"</code>、<code>claude -r "名字" "…"</code>。'],
+    ['管理子命令', 'update、install、auth、mcp、plugin、agents、purge、auto-mode、remote-control。'],
+    ['清理项目状态', '<code>claude purge 路径 --dry-run</code> 先预览。']
+  ]
+});
+
+/* ---------- 命令拼装器 ---------- */
+var CB = [
+  ['json', '--output-format json', '输出 JSON，回答在 .result'],
+  ['schema', '--json-schema \'{"type":"object","properties":{"issues":{"type":"array"}}}\'', '经校验的结构化结果，在 .structured_output'],
+  ['turns', '--max-turns 3', '限制自主轮数'],
+  ['budget', '--max-budget-usd 1.00', '花费上限，到了连后台子代理也停'],
+  ['ro', '--tools "Read,Grep,Glob"', '只给只读工具'],
+  ['plan', '--permission-mode plan', '只读调研，不改文件'],
+  ['model', '--model sonnet --fallback-model haiku', '指定模型和过载时的备选'],
+  ['nopersist', '--no-session-persistence', '不保存这次会话'],
+  ['restricted', '--restricted', '不可信输入：去掉执行命令的工具和 WebFetch，忽略设置文件']
+];
+var cbOn = { json: true, turns: true }, cbIn = 'arg';
+CB.forEach(function (c) {
+  var lb = h('label', null, $('#cb'));
+  var x = h('input', { type: 'checkbox' }, lb); x.checked = !!cbOn[c[0]];
+  h('span', { html: '<code>' + CH.esc(c[1].split(' \'')[0].split(' "')[0]) + '</code><small>' + c[2] + '</small>' }, lb);
+  x.addEventListener('change', function () { cbOn[c[0]] = x.checked; cbDraw(); });
+});
+S.seg($('#inSeg'), function (v) { cbIn = v; cbDraw(); });
+function cbDraw() {
+  var parts = [], notes = [];
+  CB.forEach(function (c) { if (cbOn[c[0]]) parts.push(c[1]); });
+  if (cbOn.schema && !cbOn.json) { parts.unshift('--output-format json'); notes.push('用了 --json-schema 时配合 --output-format json 才能用 jq 取 .structured_output，已自动加上。'); }
+  if (cbOn.ro && cbOn.restricted) notes.push('--restricted 本身就去掉了执行命令的工具；--tools 可以显式加回需要的工具。');
+  var prompt = cbIn === 'pipe' ? '"审查这些改动"' : '"找出 src/ 里的潜在 bug"';
+  var cmd = (cbIn === 'pipe' ? 'git diff main...HEAD | ' : '') + 'claude -p ' + parts.join(' \\\n  ') + (parts.length ? ' \\\n  ' : '') + prompt;
+  var jq = (cbOn.json || cbOn.schema) ? (cbOn.schema ? " | jq '.structured_output.issues[]'" : " | jq -r '.result'") : '';
+  if (jq) cmd += ' \\\n ' + jq;
+  if (!cbOn.turns && !cbOn.budget) notes.push('没有设轮数或花费上限：放进 CI 前至少加一个。');
+  $('#cbOut').innerHTML = CH.file('拼出的命令', CH.esc(cmd)) + (notes.length ? '<p class="note">' + notes.join('<br>') + '</p>' : '');
+}
+cbDraw();
+S.notes($('#n-build'), {
+  c: [
+    ['输出', '<code>--output-format text|json|stream-json</code>、<code>--json-schema</code>。'],
+    ['预算', '<code>--max-turns</code>、<code>--max-budget-usd</code>。'],
+    ['权限与工具', '<code>--permission-mode</code>、<code>--tools</code>、<code>--allowedTools</code>、<code>--disallowedTools</code>。']
+  ],
+  p: [
+    ['CI 组合（原文）', '<code>claude -p --max-turns 3 --output-format json</code>。'],
+    ['限额运行', '<code>claude -p --max-budget-usd 2.00 "…"</code>。'],
+    ['安全探索', '<code>claude --permission-mode plan</code>。'],
+    ['不留痕', '<code>--no-session-persistence</code>。']
+  ]
+});
+
+/* ---------- 输出与 jq ---------- */
+S.quiz($('#oq'), [
+  { q: '<code>claude -p --output-format json "分析这段代码" | jq -r \'.result\'</code> 取到的是？', o: ['回答文本', '空，result 字段不存在', 'Schema 结果'], a: 0, why: '回答文本在 .result。' },
+  { q: '<code>claude -p --output-format json --json-schema "$S" "列出接口" | jq \'.endpoints[]\'</code> 能取到吗？', o: ['能', '取不到，结构化结果在 .structured_output 下，应写 .structured_output.endpoints[]', '要加 --verbose'], a: 1, why: '原文 jq 示例统一写 .structured_output.字段。' },
+  { q: '脚本里怎样根据结果分支？', o: ['grep 文本里的 “false”', '<code>echo "$R" | jq -e \'.structured_output.secure == false\'</code> 看退出码', '看 Claude 的退出码'], a: 1, why: 'jq -e 根据表达式真假设置退出码，原文示例用它判断是否发现安全问题。' }
+]);
+CH.cfg($('#cq2'), [
+  { path: '终端', code: 'claude -p --tools "Read,Grep,Glob" "把 TODO 都改成 FIXME"',
+    q: '会改文件吗？', opts: ['会', '不会，只有只读工具可用，Edit/Write 根本不存在', '会先问你'], a: 1,
+    why: '<code>--tools</code> 限定可用的内置工具集合；不在列表里的工具不存在，Claude 只能告诉你该怎么改。' },
+  { path: '终端', code: 'claude -p --max-budget-usd 0.50 "用工作流审查整个仓库"',
+    q: '花费到 0.5 美元时，已经派出去的后台子代理怎样？', opts: ['继续跑完', '也被停下，不再派新的', '转成前台'], a: 1,
+    why: 'v2.1.217 起到达上限会停掉运行中的后台子代理并拒绝新的派发。' },
+  { path: '终端', code: 'claude --resume auth-refactor --fork-session "试 OAuth"',
+    q: '原来的 auth-refactor 会话会被改动吗？', opts: ['会，接着往下写', '不会，分出一个新的独立会话', '会被删除'], a: 1,
+    why: '原文：原会话保持不变，分叉成为一个新的独立会话。' }
+]);
+S.notes($('#n-out'), {
+  c: [
+    ['.result', '<code>--output-format json</code> 时的回答文本。'],
+    ['.structured_output', '<code>--json-schema</code> 校验后的结构化对象。'],
+    ['stream-json', '一行一个事件；配 <code>--verbose</code> 可看 init 事件。']
+  ],
+  p: [
+    ['取文本', '<code>jq -r \'.result\'</code>。'],
+    ['取字段', '<code>jq \'.structured_output.issues[] | select(.severity=="high")\'</code>。'],
+    ['JSON 不稳定', '用 <code>--json-schema</code>，别只靠提示词。'],
+    ['MCP 被跳过', 'init 事件的 <code>mcp_server_errors</code>。']
+  ]
+});
+
+/* ---------- 工具与精简启动 ---------- */
+CH.vs($('#tvs'), {
+  k: '参数', a: '作用', b: '典型用途',
+  rows: [
+    ['<code>--tools</code>', '限定有哪些内置工具可用', '只读分析：<code>--tools "Read,Grep,Glob"</code>'],
+    ['<code>--allowedTools</code>', '免确认执行的工具（可带前缀）', '放行常用只读命令：<code>"Bash(git log:*)" "Read"</code>'],
+    ['<code>--disallowedTools</code>', '从上下文里拿掉工具', '禁止危险命令：<code>"Bash(rm:*)" "Bash(git push --force:*)"</code>'],
+    ['<code>--bare</code>', '跳过 hooks、skills、plugins、MCP、auto memory、CLAUDE.md', '快速一次性查询'],
+    ['<code>--safe-mode</code>', '关掉所有自定义（CLAUDE.md、插件、skills、hooks、MCP）', '排查到底是不是自己的配置出了问题'],
+    ['<code>--restricted</code>', '去掉执行命令的工具和 WebFetch、忽略设置文件、限定目录、拒绝 bypass 与云端会话', '共享机器上的评测、外部贡献者触发的 CI、演示机']
+  ]
+});
+CH.cards($('#tq'), {
+  opts: ['--bare', '--safe-mode', '--restricted', '--disallowedTools'],
+  items: [
+    { t: '装了一个插件后 Claude Code 行为很怪，想确认是不是自定义配置惹的祸。', a: 1, why: '原文：safe mode 是排障工具，关掉所有自定义来隔离问题。' },
+    { t: '开源仓库的 CI，外部贡献者的 PR 会触发 claude -p 做总结。', a: 2, why: '不可信输入：restricted 去掉执行命令的工具、忽略仓库里的设置文件。' },
+    { t: '只想问一句“这个正则什么意思”，不想加载任何 hooks 和 MCP。', a: 0, why: '最小模式，快速一次性查询。' },
+    { t: '日常会话里永远不想让它跑 <code>git push --force</code>。', a: 3, why: '把这条命令从可用工具里拿掉（或在 settings 里写 deny 规则）。' }
+  ]
+});
+S.notes($('#n-tools'), {
+  c: [
+    ['--tools', '有哪些工具。'],
+    ['--allowedTools', '哪些免确认。'],
+    ['--disallowedTools', '哪些拿掉。']
+  ],
+  p: [
+    ['--bare', '最小模式，快查。'],
+    ['--safe-mode', '关闭全部自定义，排障；<code>CLAUDE_CODE_SAFE_MODE=1</code>。'],
+    ['--restricted', '不可信输入的锁定模式；<code>CLAUDE_CODE_RESTRICTED=1</code>；可用 --tools 点名加回工具。'],
+    ['--dangerously-skip-permissions', '跳过所有确认，只在一次性沙箱里用。']
+  ]
+});
+
+/* ---------- 系统提示词与代理 ---------- */
+S.quiz($('#sq'), [
+  { q: '只想让这次运行“每个代码示例都附单元测试”，用哪个？', o: ['--system-prompt', '--append-system-prompt', '写进 CLAUDE.md'], a: 1, why: '追加不删除默认指令；--system-prompt 会整个替换，丢掉默认的软件工程指令。临时需求也不必改 CLAUDE.md。' },
+  { q: '<code>--agents</code> 定义的 reviewer 和项目 <code>.claude/agents/reviewer.md</code> 同名，本次会话用哪个？', o: ['项目的', '--agents 的', '报错'], a: 1, why: '命令行定义优先于项目、用户、插件（托管定义仍最高）。' },
+  { q: '<code>--agents</code> 的 JSON 写错了一个括号，会怎样（v2.1.243 起）？', o: ['静默忽略这个定义', '直接报错退出', '用默认代理'], a: 1, why: '和 --mcp-config 一致，无效 JSON 直接报错。' }
+]);
+S.notes($('#n-sys'), {
+  c: [
+    ['替换', '<code>--system-prompt</code>、<code>--system-prompt-file</code>。'],
+    ['追加', '<code>--append-system-prompt</code>；打印模式下 <code>--append-subagent-system-prompt</code>。'],
+    ['--agents', 'JSON 定义本次会话的子代理：description、prompt 必填，tools、model 可选。']
+  ],
+  p: [
+    ['从文件读', '<code>--agents "$(cat ~/.claude/agents.json)"</code>。'],
+    ['整会话用一个代理', '<code>--agent 名字</code>。'],
+    ['优先级', '托管 &gt; --agents &gt; 项目 &gt; 用户 &gt; 插件。']
+  ]
+});
+
+/* ---------- 放进 CI ---------- */
+CH.term($('#term'), [
+  { cmd: 'npm install -g @anthropic-ai/claude-code', out: 'added 1 package', note: '<b>安装。</b>原文 Actions 示例用 npm 安装；本机推荐原生安装脚本。<code>ANTHROPIC_API_KEY</code> 从仓库 secrets 注入。' },
+  { cmd: 'claude -p --output-format json --max-turns 3 "Review this PR for security, performance, code quality. Output JSON with an issues array" > review.json', out: '', note: '<b>审查。</b>限制轮数，输出 JSON 写进文件。' },
+  { cmd: "jq -r '.result' review.json | head -5", out: '1. [high] SQL query built by string concat in api/orders.py\n2. [medium] N+1 query in reports/summary.py\n...', note: '<b>取结果。</b>下一步用 actions/github-script 发成 PR 评论（原文示例）。输出为示意。' },
+  { cmd: 'claude ultrareview 1234 --json --no-post > ultra.json; echo $?', out: '1', note: '<b>作为门禁。</b>干净时退出码 0、有发现时 1；<code>--no-post</code> 只输出不发 PR，<code>--timeout 分钟</code> 改 45 分钟默认值（v2.1.227+）。' }
+], ['安装', '审查', '取结果', '门禁']);
+S.notes($('#n-ci'), {
+  c: [
+    ['CI 里的 claude', '<code>claude -p --output-format json --max-turns N</code> + 仓库 secrets 里的 API key。'],
+    ['ultrareview', '<code>claude ultrareview PR号 --json --no-post</code>：退出码 0 干净、1 有发现。']
+  ],
+  p: [
+    ['批处理', '<code>for f in …; do claude -p --model haiku "…$(cat $f)"; done</code>。'],
+    ['安全审计', '<code>--permission-mode plan --tools "Read,Grep,Glob"</code>。'],
+    ['外部触发', '<code>--restricted</code>。'],
+    ['花费', '<code>--max-budget-usd</code>。']
+  ]
+});
+
+/* ---------- 安装、模型与环境变量 ---------- */
+CH.cards($('#eq'), {
+  opts: ['检查 PATH 再 claude doctor', '放行 downloads.claude.ai', '用 --fallback-model', '检查 ANTHROPIC_MODEL'],
+  items: [
+    { t: '终端里 <code>claude: command not found</code>。', a: 0, why: '原生安装在 ~/.local/bin，确认在 PATH 里；再跑 claude doctor 诊断。' },
+    { t: '公司网络下 <code>claude update</code> 一直失败。', a: 1, why: 'v2.1.116 起原生二进制从 downloads.claude.ai 分发，代理要放行这个域名。' },
+    { t: '高峰期主模型经常过载，脚本跟着失败。', a: 2, why: '<code>--fallback-model</code> 或 settings 的 <code>fallbackModel</code>（最多三个）。' },
+    { t: '在 /model 里换了模型，重开会话又变回去了。', a: 3, why: '<code>ANTHROPIC_MODEL</code> 会固定模型；想设起始模型又允许 /model 改，用 <code>ANTHROPIC_DEFAULT_MODEL</code>（v2.1.236）。' }
+  ]
+});
+S.notes($('#n-env'), {
+  c: [
+    ['安装', '原生安装脚本、Homebrew、WinGet；npm 安装已标弃用。'],
+    ['模型别名', 'opus、sonnet、haiku、opusplan；<code>--fallback-model</code>。'],
+    ['诊断', '<code>claude doctor</code>（只读）、<code>/doctor</code>（提出修复）。']
+  ],
+  p: [
+    ['ANTHROPIC_MODEL vs DEFAULT_MODEL', '前者固定，后者只是起始值、/model 可改且会记住。'],
+    ['常用变量', 'CLAUDE_CODE_EFFORT_LEVEL、MAX_THINKING_TOKENS、CLAUDE_CODE_SUBAGENT_MODEL、MAX_MCP_OUTPUT_TOKENS、CLAUDE_AUTOCOMPACT_PCT_OVERRIDE。'],
+    ['更新', '<code>DISABLE_AUTOUPDATER=1</code> 关自动更新；<code>DISABLE_UPDATES</code> 连手动也禁。'],
+    ['型号细节', '上下文窗口、默认强度随版本变，以原文和 /model 为准。']
+  ]
+});
+
+CH.tryNow($('#try'), '12', [
+  { t: '写一个 shell 函数：<code>git diff --staged | claude -p "按 Conventional Commits 写一条英文提交信息，只输出这一行"</code>', d: '提交前跑一下，看结果再决定用不用。' },
+  { t: '用 <code>--output-format json --json-schema</code> 让它从日志里抽取错误列表', d: '用 <code>jq \'.structured_output\'</code> 接进你现有的脚本。' },
+  { t: '配置出问题时，先 <code>claude --safe-mode</code> 对照一下', d: '正常了，就说明问题在你的 CLAUDE.md、插件、hooks 或 MCP 里。' }
+]);

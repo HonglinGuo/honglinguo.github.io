@@ -1,0 +1,417 @@
+---
+title: 框架实践：AutoGen、AgentScope、CAMEL、LangGraph
+desc: Hello-Agents 学习笔记（六）：框架的四个价值；AutoGen 的对话驱动群聊与终止条件；AgentScope 的消息驱动、MsgHub、并行收集与结构化输出（三国狼人杀）；CAMEL 的角色扮演与引导性提示；LangGraph 的状态、节点、条件边与循环；涌现式协作与显式控制的权衡，以及按场景选框架。
+kicker: <span>技术学习</span><span>Hello-Agents · 06</span><span>对应原书第 6 章</span><span>约 40 分钟</span>
+h1: 让它们自己聊，<em>还是画好路线图</em>
+lead: 第四篇手写的是单个智能体，这一篇的四个框架主要解决多个智能体怎么协作、复杂流程怎么控制。AutoGen 把协作变成群聊，AgentScope 把一切交互变成消息，CAMEL 只给两个角色和一段开场指令就让它们自己推进，LangGraph 则要求你把每一步和每一个跳转都画成图。原书最后提炼出一条主线：涌现式协作和显式控制之间的取舍，再加上一条工程化的维度。记住这两条轴，四个框架就不会混。
+nav: why|为什么用框架;autogen|AutoGen;agentscope|AgentScope;camel|CAMEL;langgraph|LangGraph;choose|两条轴与选型;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.gc { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 360px; overflow-y: auto; }
+.gc div { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 10px; padding: 7px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--hair); font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+.gc div b { color: var(--ink); }
+.gc div.now { border-color: var(--s1); background: var(--s1-soft); }
+.gc div.end { border-color: var(--ok); background: var(--ok-soft); }
+@media (max-width: 560px) { .gc div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+.players { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.players div { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 6px; text-align: center; font-size: 15px; background: var(--bg); color: var(--ink-3); }
+.players div b { display: block; color: var(--ink); font-size: 16px; }
+.players div.recv { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.players div.send { border-color: var(--s2); background: var(--s2-soft); color: var(--ink); }
+@media (max-width: 640px) { .players { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.quad { position: relative; margin-top: 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); height: 340px; }
+.quad .ax { position: absolute; font-size: 15px; color: var(--ink-3); }
+.quad .hl { position: absolute; left: 50%; top: 0; bottom: 0; border-left: 1px dashed var(--rule); }
+.quad .vl { position: absolute; top: 50%; left: 0; right: 0; border-top: 1px dashed var(--rule); }
+.quad button { position: absolute; transform: translate(-50%, -50%); font: inherit; font-size: 15px; font-weight: 600; border: 2px solid var(--s1); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
+.quad button[aria-pressed="true"] { background: var(--s1); color: var(--bg); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>四个框架各自用什么抽象来组织多智能体协作？一句话分别怎么说？</li>
+    <li>“涌现式协作”和“显式控制”各指什么？AgentScope 代表的第二条轴是什么？</li>
+    <li>给一个场景（高并发客服、双专家写论文、严格审批流程），该选哪个框架？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>从脚本到框架</h2><span class="meta">原书 6.1 节，表 6.1</span></div>
+  <div class="sec-lede">
+    <p>框架的本质是一套经过验证的“规范”：把所有智能体共有的重复工作（主循环、状态管理、工具调用、日志）抽象封装，让你只写独特的业务逻辑。原书列了四个价值：<strong>复用与效率</strong>（通用 Agent 基类封装了 Agent Loop）；<strong>解耦与扩展</strong>（模型层、工具层、记忆层分开，换模型、加工具、改记忆策略互不影响）；<strong>标准化的状态管理</strong>（上下文窗口限制、历史持久化、多轮状态跟踪，第四篇的 Memory 类只是起点）；<strong>可观测与调试</strong>（在 on_llm_start、on_tool_end、on_agent_finish 这类生命周期节点挂回调，比到处 print 系统得多）。</p>
+    <p>如果说 LangChain、LlamaIndex 定义了第一代通用 LLM 应用框架，原书选的四个新框架则各自专攻一个难题：<strong>多智能体协作</strong>和<strong>复杂流程控制</strong>。一句话记住它们：<strong>AutoGen 以对话驱动协作</strong>；<strong>AgentScope 工程化优先、消息驱动</strong>；<strong>CAMEL 角色扮演加引导性提示</strong>；<strong>LangGraph 把流程建模为带循环的图</strong>。</p>
+  </div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="autogen">
+  <div class="part-head"><h2>AutoGen：一场自动进行的圆桌会议</h2><span class="meta">原书 6.2 节</span></div>
+  <div class="sec-lede">
+    <p>原书以 0.7.4 版为例，这一版做了架构重构：拆成底层的 <code>autogen-core</code>（模型交互、消息传递）和上层的 <code>autogen-agentchat</code>（对话式应用接口），并且<strong>全面异步</strong>（async/await），等一个智能体回复时可以处理别的事。</p>
+    <p>两个核心组件：<strong>AssistantAgent</strong> 封装一个 LLM，是任务的主要解决者，用 System Message 赋予专家角色；<strong>UserProxyAgent</strong> 身兼二职，既是人类用户的代言人（发起任务、验收），又可以配置为执行代码或调用工具的执行器，把“思考”和“行动”分开，也是天然的人类在环接口。多智能体用 <strong>Team</strong> 组织，原书用的是 <strong>RoundRobinGroupChat</strong>：参与者按列表顺序轮流发言，每条回复加入共享历史再激活下一位，直到满足<strong>终止条件</strong>（<code>TextMentionTermination("TERMINATE")</code>，有人说出 TERMINATE 就停）或到达 <code>max_turns</code> 安全阀。</p>
+    <p>案例是一个四人软件团队开发“实时显示比特币价格”的 Streamlit 应用：产品经理拆需求、工程师写代码、审查员查质量、用户代理执行验证并在最后说 TERMINATE。接非 OpenAI 模型时，要在 <code>OpenAIChatCompletionClient</code> 里多传一个 <code>model_info</code> 字典，告诉框架模型是否支持函数调用、JSON 输出、上下文长度等能力边界。优点：把流程映射成角色对话，开发者只需定义“谁”和“做什么”；角色可复用；轮询提供可预测的流程。局限：对话本质上不确定，可能跑偏甚至循环；出了问题没有错误堆栈，只有一长串聊天记录，原书称之为<strong>对话式调试</strong>难题。</p>
+    <p class="go">按轮询走一遍这个团队（发言内容为示意）。打开“审查不通过”，看固定顺序的轮询怎样应对需要回退的情况（原书习题 2）。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>审查结果</span><div class="seg" id="rvSeg"><button data-v="0" aria-pressed="true">一次通过</button><button data-v="1">审查不通过，要改</button></div></div>
+    <div id="gcStep"></div>
+    <div class="gc" id="gcLog"></div>
+    <p class="note" id="gcNote"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">合上书，补全团队定义</p>
+    <div id="agBlank"></div>
+  </div>
+  <div class="notes" id="n-autogen"></div>
+</section>
+
+<section class="part" id="agentscope">
+  <div class="part-head"><h2>AgentScope：一切交互都是消息</h2><span class="meta">原书 6.3 节</span></div>
+  <div class="sec-lede">
+    <p>AgentScope 由阿里巴巴达摩院开发，原书称它像一个“智能体操作系统”，主打<strong>工程化优先</strong>：分层架构（底层 Message、Memory、Model API、Tool；中层预置智能体和 ReAct 实现；协作层 MsgHub 与 Pipeline；顶层 Runtime 和可视化 Studio），组合式而非继承式设计。</p>
+    <p>它的核心是<strong>消息驱动</strong>：智能体之间不互相调用函数，而是收发 <code>Msg</code>（name、content、role、metadata）。好处有四：<strong>异步解耦</strong>（收发双方不必互等）、<strong>位置透明</strong>（对方在本机还是远程服务器无所谓，MsgHub 用 RPC 自动路由）、<strong>可观测</strong>（每条消息都能记录追踪）、<strong>可靠</strong>（消息可持久化、重试）。每个智能体继承 <code>AgentBase</code>，只需实现 <code>reply(x) → Msg</code>（思考与回应），可选 <code>observe(x)</code>（把听到的存进记忆）。</p>
+    <p>“三国狼人杀”把这些用得很充分：狼人夜聊时用 <code>async with MsgHub(狼人列表, enable_auto_broadcast=True)</code> 临时开一个只有狼人的频道，发言自动广播给频道内成员；投票时用 <code>fanout_pipeline</code> <strong>并行</strong>向所有人发同一条消息并收集结果，模拟“同时投票”；每种行为用 Pydantic 模型做<strong>结构化输出</strong>（讨论要给出 1–10 的信心值，女巫要说明用不用解药、毒药、毒谁），把游戏规则变成代码层面的约束；单个智能体出错时 try/except 给一个默认响应，游戏继续。原书由此得出：游戏流程被表达为“在什么上下文里、以什么模式交换消息”，而不是一台僵硬的状态机。代价是要懂异步和分布式，简单场景有过度工程化之嫌。</p>
+    <p class="go">切换游戏阶段，看消息发给了谁（玩家与身份取自原书日志）。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="phSeg"><button data-v="wolf" aria-pressed="true">狼人夜聊（MsgHub 私密频道）</button><button data-v="seer">预言家查验（点对点）</button><button data-v="day">白天讨论（全员广播）</button><button data-v="vote">投票（fanout 并行收集）</button></div>
+    <div class="players" id="players"></div>
+    <div class="ha-state" id="phInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="confuse">
+    <h4>读日志时顺手挑个错</h4>
+    <p>原书展示的夜晚日志里，狼人<b>孙权</b>的第一句话是“今晚我们应该除掉<b>周瑜</b>”，而周瑜正是他的狼人队友；周瑜还顺着接了一句“周瑜虽智，却未必是今晚的最大威胁”。这是“游戏身份”和“三国人格”双重角色设定下模型混淆了身份。原书没有点出这一点，但它恰好说明了两件事：结构化输出能约束格式，约束不了推理正确性；复杂角色设定需要在提示里显式列出“你的队友是谁”。这是我的读后观察，不是原书观点。</p>
+  </div>
+  <div class="notes" id="n-agentscope"></div>
+</section>
+
+<section class="part" id="camel">
+  <div class="part-head"><h2>CAMEL：两个专家，一段开场白</h2><span class="meta">原书 6.4 节</span></div>
+  <div class="sec-lede">
+    <p>CAMEL 最初想探索的是：<strong>最少的人类干预下</strong>，两个智能体能不能自主协作完成复杂任务。它的两个基石：<strong>角色扮演</strong>，一个扮演“AI 用户”（懂领域、提需求、拆步骤，比如资深股票交易员），一个扮演“AI 助理”（懂实现、执行并给方案，比如 Python 程序员），任务变成两位跨领域专家的对话；<strong>引导性提示（Inception Prompting）</strong>，对话开始前分别注入的结构化初始指令，包含四部分：明确自身角色、告知协作者角色、定义共同目标、设定行为约束与沟通协议（AI 用户一次只提一个具体步骤，AI 助理完成前不追问更多，用特定标记表示完成）。</p>
+    <p>原书案例是心理学家和作家合写一本拖延症心理学科普电子书：作家作为 user 提结构和要求，心理学家作为 assistant 提供专业内容，用 <code>RolePlaying</code> 会话驱动，检测到 <code>&lt;CAMEL_TASK_DONE&gt;</code> 就结束。优势是<strong>轻架构、重提示</strong>，协作行为自然涌现；CAMEL 现在也已扩展到多模态、工具和多智能体（Workforce 模块）。局限是高度依赖提示设计、效果不好时难定位是哪部分提示的问题、不同模型对同一提示理解不一；规模化时缺复杂对话路由、分布式状态和冲突仲裁。</p>
+    <p class="go">引导性提示的四个部分，拿掉任意一个看会发生什么。</p>
+  </div>
+  <div class="lab"><div id="camelCheck"></div></div>
+  <div class="notes" id="n-camel"></div>
+</section>
+
+<section class="part" id="langgraph">
+  <div class="part-head"><h2>LangGraph：把流程画成带循环的图</h2><span class="meta">原书 6.5 节</span></div>
+  <div class="sec-lede">
+    <p>LangGraph 是 LangChain 生态的扩展，和前三个基于对话的框架不同，它把智能体的执行建模为<strong>状态机</strong>，表示成<strong>有向图</strong>。三个要素：<strong>State</strong>，一个 TypedDict，所有节点共享读写（对话历史、中间结果、迭代次数）；<strong>Node</strong>，接收状态、返回更新后状态的普通 Python 函数；<strong>Edge</strong>，常规边固定地从 A 到 B，<strong>条件边</strong>则由一个函数看当前状态返回一个键，再按映射表决定跳到哪个节点或 END。条件边让<strong>循环</strong>变得自然，Reflection 那种“改到满意为止”只需一条指回去的边。</p>
+    <p>原书的实战是“三步问答助手”：理解问题 → 用 Tavily 搜索 → 生成回答，并在搜索失败时走备用路径。优势：<strong>高度可控、可预测、可审计</strong>，原生支持循环，节点高度模块化，插入一个人工审核节点很直接。局限：样板代码多，要思考“怎么控制”而不只是“做什么”；流程预先定义，缺少对话式那种涌现；出错可能在节点内部、状态传递或条件判断，需要对整张图有全局理解。</p>
+    <p class="go">逐步执行原书 6.5.1 节的最小图：planner 和 executor 之间靠条件边循环，消息满 3 条才结束。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">StateGraph 逐步执行</p>
+    <div id="lgTrace"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：LangGraph 的图 vs 低代码平台的工作流</h4>
+    <p>两者长得像，都是节点加连线。区别在于 LangGraph 的图是<b>代码</b>，节点是 Python 函数，状态有类型定义，可以单元测试、git diff、和其他代码一起部署；平台工作流是<b>配置</b>，靠画布编辑，导出 JSON。另外，LangGraph 天生围绕“共享状态 + 条件循环”设计，很多平台工作流对循环的支持则比较受限。</p>
+  </div>
+  <div class="notes" id="n-langgraph"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>两条轴与选型</h2><span class="meta">原书 6.6 节，习题 1、6</span></div>
+  <div class="sec-lede">
+    <p>原书小结里最值得记的是两条轴。第一条：<strong>涌现式协作 ↔ 显式控制</strong>。AutoGen 和 CAMEL 定义角色和目标，让协作从对话中“涌现”，贴近人类交互但难预测、难调试；LangGraph 要求你写明每一步和每个跳转，牺牲涌现的惊喜，换来可靠、可控、可观测。第二条：<strong>工程化</strong>。无论选哪种协作范式，从原型走向生产都要面对并发、容错、分布式，AgentScope 代表了从“能运行”到“能稳定服务”的跨越。</p>
+    <p class="go">点四个框架看它们在两条轴上的位置（位置是我按原书描述摆的示意），再用原书习题 6 的三个应用练选型。</p>
+  </div>
+  <div class="lab">
+    <div class="quad" id="quad">
+      <div class="hl"></div><div class="vl"></div>
+      <span class="ax" style="left:10px;top:50%;transform:translateY(-130%)">涌现式协作</span>
+      <span class="ax" style="right:10px;top:50%;transform:translateY(-130%)">显式控制</span>
+      <span class="ax" style="left:50%;top:6px;transform:translateX(8px)">生产级工程化</span>
+      <span class="ax" style="left:50%;bottom:6px;transform:translateX(8px)">轻量 / 原型</span>
+    </div>
+    <div class="hb-info" id="quadInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="lab"><div id="fwCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>多智能体的协作拓扑、群体能否高于个体，见<a href="../2026-10-16-agent-10/">《深入理解 AI Agent》10 篇</a>与<a href="../2026-10-16-adp-6/">《Agentic 设计模式》06 篇</a>；AgentScope 在<a href="../2026-10-22-handbook-3/">《AI Agent Handbook》03 篇</a>里被当作“高代码框架自主构建”的代表。</div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 与第 6 章习题</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="6-1">
+      <p class="iv-q">什么是多智能体系统？相比单个 Agent 有什么优势？会引入哪些新的复杂性？<small>Extra01 · Agent 第 8 题</small></p>
+      <ul class="iv-a">
+        <li><b>定义</b>：多个具有不同角色、能力或视角的智能体，通过通信与协作共同完成任务。</li>
+        <li><b>优势</b>：分工专精（每个角色提示词更聚焦）、并行加速、互相审查纠错（审查员、反方）、模块化可复用、易于扩展新角色。</li>
+        <li><b>复杂性</b>：对话跑偏与循环、终止条件难定、成本与延迟成倍、上下文在成员间如何共享与隔离、冲突仲裁、调试只剩聊天记录、分布式下的消息顺序与一致性。</li>
+        <li><b>框架对应</b>：AutoGen 用群聊和终止条件，AgentScope 用 MsgHub 和结构化输出，LangGraph 用显式图控制，CAMEL 用角色约束。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="6-2">
+      <p class="iv-q">如何理解“涌现式协作”与“显式控制”这两种设计哲学？<small>原书第 6 章习题 1</small></p>
+      <ul class="iv-a">
+        <li><b>涌现式</b>：只定义角色、目标和交流规则，具体流程由对话自然形成；灵活、贴近人类协作，适合开放、创造性任务；代价是不可预测、难调试。</li>
+        <li><b>显式控制</b>：把每个步骤和跳转条件写成代码（状态机 / 图）；可控、可审计、易测试，适合流程明确的业务；代价是样板代码多、缺少灵活性。</li>
+        <li><b>实践</b>：常常混用，例如 LangGraph 的某个节点内部放一个 AutoGen 群聊，外层用图保证流程和审批。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="6-3">
+      <p class="iv-q">消息驱动架构相比传统函数调用有什么优势？分布式部署会带来什么挑战？<small>原书第 6 章习题 3</small></p>
+      <ul class="iv-a">
+        <li><b>优势</b>：异步解耦、位置透明、每条消息可观测、可持久化与重试；适合高并发、长时运行、跨机器部署的多智能体系统。</li>
+        <li><b>挑战</b>：消息顺序（夜聊发言要按序）、一致性（投票结果全员看到一致）、网络延迟与超时、部分节点故障时的游戏状态恢复。</li>
+        <li><b>手段</b>：按会话分区保证顺序、主持人作为单一状态权威、消息带序号与幂等处理、超时给默认响应（原书的 try/except 兜底）。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="try">
+    <h4>动手练（原书习题 2、5）</h4>
+    <ol>
+      <li>RoundRobinGroupChat 顺序固定，审查不通过要回到工程师，怎么改？<details><summary>思路</summary><p>换成由模型或规则选择下一位发言者的群聊（如 AutoGen 的 SelectorGroupChat），或在审查员的输出里约定“APPROVED / REJECTED”标记，用自定义发言者选择函数据此跳转；也可以把外层流程改用 LangGraph，用条件边实现回退。</p></details></li>
+      <li>给三步问答助手加一个“反思”节点。<details><summary>思路</summary><p>在 answer 之后加 reflect 节点给答案打分写入 state；条件边：分数达标到 END，不达标且重试次数小于上限回到 search（并在 state 里记录换一个搜索词），否则带着说明结束。重试计数一定要放在 state 里。</p></details></li>
+    </ol>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 四个框架各用什么抽象？</summary><p class="ans">AutoGen：可对话的智能体组成群聊（Team），按轮询等规则发言，靠终止条件结束，以对话驱动协作。AgentScope：一切交互是消息（Msg），由 MsgHub 路由，Pipeline 编排顺序与并行，工程化与分布式优先。CAMEL：AI 用户与 AI 助理两个角色加引导性提示，自主多轮对话推进任务。LangGraph：共享 State、函数节点、常规边与条件边构成的状态图，原生支持循环。</p></details>
+    <details><summary>2. 两条轴分别是什么？</summary><p class="ans">第一条是涌现式协作与显式控制：前者只定义角色和目标，让流程从对话中涌现（AutoGen、CAMEL），灵活但难预测；后者显式写出每步和跳转（LangGraph），可控可审计但样板多。第二条是工程化：并发、容错、分布式、持久化，决定能否从原型走到稳定服务，AgentScope 是代表。</p></details>
+    <details><summary>3. 三个场景怎么选？</summary><p class="ans">每秒上千请求、7×24 小时、水平扩展的客服：工程化优先，选 AgentScope 或自研服务。研究员与写作者多轮深度讨论、自主推进：选 CAMEL 角色扮演（或 AutoGen 群聊）。资料审核到最终决策的严格审批流程、要求可追溯可审计：选 LangGraph，每个环节一个节点，人工复核作为中断节点。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.notes($('#n-why'), {
+  c: [
+    ['框架', '把主循环、状态管理、工具调用、日志等共性工作封装成规范，开发者只写业务逻辑。'],
+    ['三层解耦', '模型层、工具层、记忆层分离，各自可替换。']
+  ],
+  p: [
+    ['四个价值', '复用与效率、解耦与扩展、标准化状态管理、可观测（生命周期回调）。'],
+    ['一句话四框架', 'AutoGen 对话驱动；AgentScope 消息驱动、工程化；CAMEL 角色扮演；LangGraph 状态图。']
+  ]
+});
+
+/* ---------- AutoGen 群聊 ---------- */
+var TEAM = ['ProductManager', 'Engineer', 'CodeReviewer', 'UserProxy'];
+var SAY = {
+  ok: [
+    ['ProductManager', '需求拆解：显示 BTC 美元价格、24 小时涨跌额与涨跌幅、刷新按钮；用 Streamlit；需要加载状态和错误处理。'],
+    ['Engineer', '提交 app.py：调用行情 API 取价格，st.metric 显示涨跌，st.button 刷新，try/except 包住网络请求。'],
+    ['CodeReviewer', '审查通过：结构清晰，异常处理到位；建议把 API 地址抽成常量。'],
+    ['UserProxy', '本地运行验证功能正常，满足需求。TERMINATE']
+  ],
+  bad: [
+    ['ProductManager', '需求拆解：显示 BTC 美元价格、24 小时涨跌额与涨跌幅、刷新按钮；用 Streamlit；需要加载状态和错误处理。'],
+    ['Engineer', '提交 app.py：调用行情 API 取价格并显示。'],
+    ['CodeReviewer', '审查不通过：没有处理网络异常，没有加载状态，缺少 24 小时涨跌。请工程师修改。'],
+    ['UserProxy', '（轮到我了，但代码还没改好……）我先等工程师修改。'],
+    ['ProductManager', '（又轮到产品经理：需求没变，只能重复一遍需求。）'],
+    ['Engineer', '已修改：加入 try/except、st.spinner 和 24 小时涨跌。'],
+    ['CodeReviewer', '这次通过。'],
+    ['UserProxy', '运行验证通过。TERMINATE']
+  ]
+};
+var mode = 'ok', goGc;
+function drawGc(i) {
+  var arr = SAY[mode];
+  $('#gcLog').innerHTML = arr.slice(0, i + 1).map(function (m, k) {
+    var end = /TERMINATE/.test(m[1]);
+    return '<div class="' + (k === i ? (end ? 'end' : 'now') : '') + '"><b>' + m[0] + '</b><span>' + m[1] + '</span></div>';
+  }).join('');
+  var last = arr[i];
+  $('#gcNote').textContent = /TERMINATE/.test(last[1]) ? '消息里出现 TERMINATE，TextMentionTermination 触发，对话结束。共 ' + (i + 1) + ' 轮（max_turns = 20 是安全阀）。' + (mode === 'bad' ? ' 注意第 4、5 轮是“空转”：轮询只认顺序，不认谁该发言，这就是习题 2 要你设计动态回退的原因。' : '') : '第 ' + (i + 1) + ' 轮：轮到 ' + last[0] + '，它看到的是前面所有人的完整对话。';
+}
+function mkGc() {
+  $('#gcStep').innerHTML = '';
+  goGc = S.stepper($('#gcStep'), SAY[mode].length, drawGc);
+}
+S.seg($('#rvSeg'), function (v) { mode = v === '1' ? 'bad' : 'ok'; mkGc(); });
+mkGc();
+HA.blank($('#agBlank'), {
+  code: String.raw`
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import TextMentionTermination
+
+team_chat = [[RoundRobinGroupChat]](
+    participants=[product_manager, engineer, code_reviewer, user_proxy],   # 顺序 = 发言顺序
+    termination_condition=[[TextMentionTermination("TERMINATE")]],
+    max_turns=[[20]],                                                      # 安全阀
+)
+
+async def main():
+    result = await Console(team_chat.[[run_stream]](task=task))
+
+asyncio.run(main())`
+});
+S.notes($('#n-autogen'), {
+  c: [
+    ['AssistantAgent', '封装 LLM 的任务解决者，用 System Message 赋予专家角色。'],
+    ['UserProxyAgent', '人类用户的代言人 + 代码 / 工具执行器；区分思考与行动，也是人类在环接口。'],
+    ['RoundRobinGroupChat', '参与者按列表顺序轮流发言，共享对话历史。'],
+    ['对话式调试', '出错时没有堆栈，只有一长串对话记录。']
+  ],
+  p: [
+    ['0.7.4 架构', 'autogen-core（底层）+ autogen-agentchat（高层），全面异步。'],
+    ['终止', 'TextMentionTermination("TERMINATE") + max_turns 安全阀。'],
+    ['非 OpenAI 模型', 'OpenAIChatCompletionClient 里传 model_info（function_calling、json_output、context_length 等）。'],
+    ['轮询的软肋', '只认顺序不认需要，回退场景会空转。']
+  ]
+});
+
+/* ---------- AgentScope 狼人杀 ---------- */
+var PL = [['孙权', '狼人'], ['周瑜', '狼人'], ['曹操', '好人'], ['张飞', '好人'], ['司马懿', '预言家（示意）'], ['赵云', '好人']];
+var PH = {
+  wolf: { s: [0, 1], r: [0, 1], t: '<p><code>async with MsgHub(self.werewolves, enable_auto_broadcast=True, announcement=…)</code></p><p>临时创建一个<b>只有狼人</b>的频道。孙权说的话自动广播给周瑜，反之亦然，其他四人收不到。讨论用 DiscussionModelCN 结构化输出（是否达成一致、信心 1–10、关键证据）。离开 with 块，频道自动解散。</p>' },
+  seer: { s: [4], r: [4], t: '<p>预言家查验是<b>点对点</b>请求：主持人只问司马懿一人“你要查验谁”，结果也只告诉他。原书说白天讨论、预言家查验“都遵循同样的设计范式”：区别只在消息发给谁。身份分配为示意，原书日志只给出了两名狼人。</p>' },
+  day: { s: [0, 1, 2, 3, 4, 5], r: [0, 1, 2, 3, 4, 5], t: '<p>白天讨论是<b>全员广播</b>：每个存活玩家的发言所有人都能看到。狼人要在这里隐藏身份、误导好人，各自还要“以三国人物的性格说话”。</p>' },
+  vote: { s: [], r: [0, 1, 2, 3, 4, 5], t: '<p><code>vote_msgs = await fanout_pipeline(self.alive_players, announce("请投票…"), structured_model=get_vote_model_cn(self.alive_players), enable_gather=False)</code></p><p>同一条消息<b>并行</b>发给所有人，异步收集，既快又模拟了“同时投票”，谁也看不到别人的票再改主意。投票模型的选项由存活玩家动态生成，投给死人在格式层面就不合法。</p>' }
+};
+function phase(k) {
+  var p = PH[k];
+  $('#players').innerHTML = PL.map(function (x, i) {
+    var c = p.r.indexOf(i) >= 0 ? 'recv' : '';
+    return '<div class="' + c + '"><b>' + x[0] + '</b>' + x[1] + '</div>';
+  }).join('');
+  $('#phInfo').innerHTML = p.t;
+}
+S.seg($('#phSeg'), phase); phase('wolf');
+S.notes($('#n-agentscope'), {
+  c: [
+    ['消息驱动', '智能体间不互调函数，而是收发 Msg（name、content、role、metadata）。'],
+    ['AgentBase', '实现 reply(x) → Msg（思考与回应），可选 observe(x)（存入记忆）。'],
+    ['MsgHub', '消息中心：点对点、广播、组播路由，持久化，跨节点 RPC。'],
+    ['fanout_pipeline', '并行向多个智能体发同一消息并异步收集响应。']
+  ],
+  p: [
+    ['消息驱动四优势', '异步解耦、位置透明、可观测、可靠（持久化与重试）。'],
+    ['结构化输出', '用 Pydantic 模型把游戏规则变成格式约束（信心 1–10、女巫用药字段）。'],
+    ['容错', '单个智能体异常时给默认响应，流程继续。'],
+    ['代价', '要懂异步与分布式；简单场景有过度工程化之嫌。']
+  ]
+});
+
+/* ---------- CAMEL ---------- */
+HB.check($('#camelCheck'), {
+  items: [
+    { t: '明确自身角色', d: '“你是一位研究拖延症的心理学家……”', miss: '模型回到通用助手的口吻，专业深度和视角都没了。' },
+    { t: '告知协作者角色', d: '“你正在与一位擅长科普写作的作家合作……”', miss: '心理学家不知道对方要什么，可能直接把整本书写完，或者满篇术语。' },
+    { t: '定义共同目标', d: '“共同完成一本面向大众的拖延症科普电子书”', miss: '对话漫无目的，聊着聊着就转去讨论别的心理学话题。' },
+    { t: '行为约束与沟通协议', d: '一次只提一个具体步骤；完成前不追问；用 &lt;CAMEL_TASK_DONE&gt; 标记完成', miss: '双方抢着下指令、互相反问，或者谁都不说结束，对话在客套中循环。原书说这是最关键的一环。' }
+  ],
+  verdict: function (on, n) { return on === n ? '<p class="ok"><b>四部分齐全</b>：两个角色守住各自位置，按一次一步的节奏推进，直到出现完成标记。</p>' : '<p><span class="big">' + on + ' / ' + n + '</span>　缺了这些会怎样：</p>'; }
+});
+S.notes($('#n-camel'), {
+  c: [
+    ['角色扮演', 'AI 用户（懂领域、提需求、拆步骤）与 AI 助理（懂实现、执行给方案）互补协作。'],
+    ['引导性提示', '对话前分别注入的结构化初始指令：自身角色、协作者角色、共同目标、行为约束与沟通协议。']
+  ],
+  p: [
+    ['设计哲学', '轻架构、重提示，协作从对话中涌现。'],
+    ['终止', '检测到 &lt;CAMEL_TASK_DONE&gt; 标记即结束。'],
+    ['局限', '依赖提示质量、难定位问题、跨模型不一致；缺复杂路由、分布式状态和冲突仲裁。']
+  ]
+});
+
+/* ---------- LangGraph ---------- */
+var LG = String.raw`
+class AgentState(TypedDict):
+    messages: List[str]
+    current_task: str
+    final_answer: str
+
+def planner_node(state):
+    state["messages"].append(f"为任务 '{state['current_task']}' 生成的计划...")
+    return state
+
+def executor_node(state):
+    latest_plan = state["messages"][-1]
+    state["messages"].append(f"执行计划 '{latest_plan}' 的结果...")
+    return state
+
+def should_continue(state):
+    if len(state["messages"]) < 3:
+        return "continue_to_planner"
+    state["final_answer"] = state["messages"][-1]
+    return "end_workflow"
+
+workflow = StateGraph(AgentState)
+workflow.add_node("planner", planner_node)
+workflow.add_node("executor", executor_node)
+workflow.set_entry_point("planner")
+workflow.add_edge("planner", "executor")
+workflow.add_conditional_edges("executor", should_continue,
+    {"continue_to_planner": "planner", "end_workflow": END})
+app = workflow.compile()
+`;
+function st(m, fa) { return '<span class="box">messages = [' + m.map(function (x) { return '\n  "' + x + '"'; }).join(',') + (m.length ? '\n' : '') + ']\nfinal_answer = ' + (fa ? '"' + fa + '"' : '""') + '</span>'; }
+var P1 = "为任务 'T' 生成的计划...", E1 = "执行计划 '" + P1 + "' 的结果...", P2 = P1, E2 = "执行计划 '" + P2 + "' 的结果...";
+HA.trace($('#lgTrace'), {
+  code: LG,
+  steps: [
+    { l: ['1-4', '21-28'], t: '建图', s: '<p>定义状态结构，加两个节点、入口、一条常规边、一条条件边，<code>compile()</code> 得到可执行的 app。初始状态：</p>' + st([]) },
+    { l: ['24', '6-8'], t: '入口 → planner', s: '<p>从入口进入 planner，追加一条计划：</p>' + st([P1]) },
+    { l: ['25', '10-13'], t: '常规边 → executor', s: '<p>常规边固定跳到 executor：</p>' + st([P1, E1]) },
+    { l: ['26-27', '15-17'], t: '条件边判断', s: '<p><code>should_continue</code>：messages 只有 2 条 &lt; 3，返回 <b>"continue_to_planner"</b>，按映射表跳回 planner。<b>这条往回指的边就是循环。</b></p>' },
+    { l: ['6-8'], t: '再进 planner', s: st([P1, E1, P2]) },
+    { l: ['10-13'], t: '再进 executor', s: st([P1, E1, P2, E2]) },
+    { l: ['15-19'], t: '结束', s: '<p>4 条 ≥ 3，写入 final_answer，返回 <b>"end_workflow"</b> → END。</p>' + st([P1, E1, P2, E2], E2.slice(0, 18) + '…') + '<p>真实应用里，条件函数通常看的是“答案质量分”“重试次数”“是否需要人工审批”。</p>' }
+  ]
+});
+S.notes($('#n-langgraph'), {
+  c: [
+    ['State', 'TypedDict 定义的共享状态，所有节点读写。'],
+    ['Node', '接收状态、返回更新后状态的 Python 函数。'],
+    ['条件边', '条件函数根据状态返回一个键，按映射跳到目标节点或 END；实现分支与循环。']
+  ],
+  p: [
+    ['建图五步', 'StateGraph(State) → add_node → set_entry_point → add_edge / add_conditional_edges → compile。'],
+    ['优势', '可控、可预测、可审计；原生循环；节点模块化；易插人工审核节点。'],
+    ['局限', '样板代码多；少涌现；需全局理解图才能调试。']
+  ]
+});
+
+/* ---------- 两条轴 ---------- */
+var FW = [
+  ['CAMEL', 18, 72, '涌现最强、最轻量：两个角色 + 一段开场白。适合开放式、创造性的双专家协作；规模化和流程控制弱。'],
+  ['AutoGen', 35, 48, '对话驱动，靠角色定义和群聊规则让协作涌现；轮询等模式提供一定的流程可预测性；有人类在环接口。'],
+  ['AgentScope', 58, 18, '工程化最强：消息驱动、分布式、持久化、容错；协作方式可以是对话，也可以用 Pipeline 显式编排。'],
+  ['LangGraph', 82, 40, '显式控制最强：每一步和每个跳转都写成图，原生循环，可审计；样板多、少涌现。']
+];
+var quad = $('#quad'), qb = [];
+FW.forEach(function (f, i) {
+  var b = h('button', { type: 'button', text: f[0], style: 'left:' + f[1] + '%;top:' + f[2] + '%' }, quad);
+  qb.push(b);
+  b.addEventListener('click', function () {
+    qb.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    $('#quadInfo').innerHTML = '<b>' + f[0] + '</b><p>' + f[3] + '</p>';
+  });
+  void i;
+});
+qb[0].click();
+HB.cards($('#fwCards'), {
+  opts: ['AutoGen', 'AgentScope', 'CAMEL', 'LangGraph'],
+  items: [
+    { t: '应用 A：智能客服，每秒 1000+ 并发，响应低于 2 秒，7×24 小时，需水平扩展。（原书习题 6）', a: 1, why: '核心挑战是工程化：并发、容错、分布式。也可以不用多智能体框架，自研服务更简单。' },
+    { t: '应用 B：研究员智能体与写作智能体多轮深度讨论，自主推进文献综述到论文撰写。', a: 2, why: '典型的双专家角色扮演，CAMEL 的引导性提示正对这类任务；需要更多角色时可以考虑 AutoGen 群聊。' },
+    { t: '应用 C：贷款审批，资料审核 → 风险评估 → 额度计算 → 合规检查 → 人工复核 → 决策，要求可追溯可审计。', a: 3, why: '每个环节一个节点，判断标准写进条件边，人工复核是中断节点，全程状态可记录。' },
+    { t: '产品经理、工程师、审查员、测试四个角色按固定顺序协作写一个小工具。', a: 0, why: '原书的 AutoGen 案例本身：流程固定、角色明确，RoundRobinGroupChat 最省事。' }
+  ]
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['涌现式协作', '只定义角色与目标，流程从对话中自然形成；灵活但难预测、难调试。'],
+    ['显式控制', '显式写出每一步与跳转条件；可靠、可控、可观测，但样板多。'],
+    ['工程化维度', '并发、容错、分布式、持久化：从“能运行”到“能稳定服务”。']
+  ],
+  p: [
+    ['选型口诀', '高并发生产选 AgentScope；双专家共创选 CAMEL；严格流程选 LangGraph；固定角色团队选 AutoGen。'],
+    ['可以混用', '外层用图保证流程，节点内部放群聊或角色扮演。']
+  ]
+});

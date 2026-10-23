@@ -1,0 +1,468 @@
+---
+title: 大语言模型基础：Agent 的大脑
+desc: Hello-Agents 学习笔记（三）：从 N-gram、词嵌入、RNN/LSTM 到 Transformer 与 Decoder-Only；自注意力与因果掩码；Temperature、Top-k、Top-p 采样实验台；零样本、少样本、指令调优、思维链；BPE 分词逐步合并；模型选型、缩放法则、Chinchilla 与幻觉。站在智能体开发者的角度看 LLM。
+kicker: <span>技术学习</span><span>Hello-Agents · 03</span><span>对应原书第 3 章</span><span>约 35 分钟</span>
+h1: 用好大脑之前，<em>先知道它怎么想</em>
+lead: 这一章是给智能体开发者的 LLM 速成：语言模型怎么从数数走到 Transformer，为什么今天的大模型都只用解码器，采样参数到底改了什么，分词为什么会影响成本和怪异行为，选模型看哪几条，幻觉从哪来、怎么压。原书写了完整的 Transformer 骨架代码，这里只保留对搭 Agent 有用的部分，更深的数学在《LLM 入门》和《神经网络与深度学习》两个系列里。
+nav: lm|语言模型演进;tf|Transformer;sample|采样参数;prompt|提示工程;token|分词;choose|选型与局限;iv|面试演练;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.bg-in { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 8px; }
+.bg-in label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; color: var(--ink-3); }
+.bg-in input { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 7px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+@media (max-width: 640px) { .bg-in { grid-template-columns: minmax(0, 1fr); } }
+.calc-out { margin-top: 10px; font-family: var(--f-num); font-size: 15px; line-height: 1.8; color: var(--ink-2); }
+.calc-out b { color: var(--ink); }
+.calc-out .zero { color: var(--alert); font-weight: 700; }
+.toks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.toks button { font: inherit; font-family: var(--f-num); font-size: 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); padding: 4px 10px; cursor: pointer; }
+.toks button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.attn { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.attn span { font-family: var(--f-num); font-size: 15px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--hair); color: var(--ink); min-width: 4.5em; text-align: center; }
+.attn span small { display: block; font-size: 15px; color: var(--ink-3); }
+.attn span.masked { opacity: .35; text-decoration: line-through; }
+.sliders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.sliders label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; color: var(--ink-3); }
+.sliders label b { font-family: var(--f-num); color: var(--ink); }
+.sliders input { width: 100%; }
+@media (max-width: 640px) { .sliders { grid-template-columns: minmax(0, 1fr); } }
+.bpe-v { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bpe-v span { font-family: var(--f-num); font-size: 15px; padding: 3px 9px; border-radius: 4px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); }
+.bpe-v span.new { border-color: var(--ok); background: var(--ok-soft); }
+.bpe-w { font-family: var(--f-num); font-size: 15px; line-height: 1.9; margin-top: 8px; color: var(--ink-2); }
+.bpe-w i { font-style: normal; display: inline-block; border: 1px solid var(--hair); border-radius: 4px; padding: 0 6px; margin-right: 3px; background: var(--bg); color: var(--ink); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>从 N-gram 到 Transformer，每一步解决了上一步的什么问题？为什么主流 LLM 是 Decoder-Only？</li>
+    <li>Temperature、Top-k、Top-p 分别怎样改变下一个词的分布？做 Agent 时该怎么设？</li>
+    <li>分词、上下文窗口、幻觉这三件事，分别会在 Agent 的哪里出问题？</li>
+  </ol>
+</div>
+
+<section class="part" id="lm">
+  <div class="part-head"><h2>语言模型：从数数到神经网络</h2><span class="meta">原书 3.1.1 节</span></div>
+  <div class="sec-lede">
+    <p>语言模型的任务是给一个词序列算概率。按链式法则，句子概率等于每个词在前文条件下的概率连乘，但“前面所有词”这个条件太长，语料里根本数不到。<strong>N-gram</strong> 用<strong>马尔可夫假设</strong>砍掉历史：只看前 N−1 个词。Bigram 只看前一个词，概率用<strong>最大似然估计</strong>，也就是数数：P(w<sub>i</sub>|w<sub>i−1</sub>) = Count(w<sub>i−1</sub>, w<sub>i</sub>) / Count(w<sub>i−1</sub>)。</p>
+    <p>N-gram 有两个致命缺陷：<strong>数据稀疏</strong>（没见过的组合概率为 0，平滑只能缓解）和<strong>泛化差</strong>（见过一万次 agent learns，也推不出 robot learns，因为它不知道 agent 和 robot 意思相近）。2003 年 Bengio 的<strong>神经网络语言模型</strong>用<strong>词嵌入</strong>解决泛化：每个词是高维空间里的一个点，语义相近的词位置相近，用余弦相似度衡量，甚至能做 king − man + woman ≈ queen 这样的类比。但它和 N-gram 一样只看固定窗口。<strong>RNN</strong> 用一个不断更新的<strong>隐藏状态</strong>当短期记忆，理论上能看无限长的历史；可序列长度就是网络深度，梯度反向传播时连乘会<strong>消失或爆炸</strong>，学不到长距离依赖。<strong>LSTM</strong> 加了一条<strong>细胞状态</strong>通路和遗忘门、输入门、输出门，有选择地保留和丢弃信息，缓解了这个问题。</p>
+    <p class="go">先用原书的迷你语料算一道习题，再改语料和句子，看稀疏性怎样让概率变成 0。</p>
+  </div>
+  <div class="lab">
+    <div id="bgGuess"></div>
+    <div class="bg-in">
+      <label>语料（空格分词，原书把两句直接拼接）<input id="bgCorpus" value="datawhale agent learns datawhale agent works"></label>
+      <label>要算概率的句子<input id="bgSent" value="datawhale agent learns"></label>
+    </div>
+    <div class="calc-out" id="bgOut"></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn" type="button" data-s="agent works">agent works（习题 1）</button><button class="btn" type="button" data-s="robot learns">robot learns（没见过的词）</button><button class="btn" type="button" data-s="agent learns works">agent learns works（没见过的组合）</button></div>
+  </div>
+  <div class="notes" id="n-lm"></div>
+</section>
+
+<section class="part" id="tf">
+  <div class="part-head"><h2>Transformer 与 Decoder-Only</h2><span class="meta">原书 3.1.2–3.1.3 节</span></div>
+  <div class="sec-lede">
+    <p>RNN 必须一步步算：第 t 步要等第 t−1 步，无法并行，模型和数据都撑不大。2017 年的 <strong>Transformer</strong> 彻底扔掉循环，只用<strong>注意力</strong>捕捉依赖，所有位置可以同时计算。原始设计是机器翻译用的<strong>编码器—解码器</strong>：编码器“理解”整个输入，解码器参考前文和编码器的理解逐词“生成”。</p>
+    <p><strong>自注意力</strong>给每个词元三个角色：<strong>Q</strong>（我在找什么）、<strong>K</strong>（我能被怎样找到）、<strong>V</strong>（我携带的内容），都由词向量乘可学习矩阵得到。读到 “it” 时，用 it 的 Q 和所有词的 K 点积打分，除以 √d<sub>k</sub> 防止数值过大，softmax 成权重，再对 V 加权求和：Attention(Q, K, V) = softmax(QK<sup>T</sup>/√d<sub>k</sub>)V。<strong>多头</strong>是把这件事切成 h 份并行做，每个头关注一种关系（指代、时态、从属），最后拼接。每层还有<strong>逐位置前馈网络</strong>（先扩到约 4 倍维度再缩回，所有位置共享权重）、<strong>残差连接</strong>（梯度可以绕过子层）和<strong>层归一化</strong>。注意力本身不分先后，“agent learns”和“learns agent”对它一样，所以要加<strong>位置编码</strong>（原论文用正余弦公式）。</p>
+    <p>GPT 的想法更简单：<strong>语言的核心任务不就是预测下一个词吗？</strong>于是扔掉编码器，只留解码器，<strong>自回归</strong>地生成：预测一个词，接到输入末尾，再预测下一个。训练时整段文本并行送入，靠<strong>因果掩码</strong>防止偷看：softmax 之前把当前位置之后的分数设为极大负数，权重就变成 0。Decoder-Only 的优势：训练目标统一（只有下一个词，适合海量无标注数据），结构简单易扩展，天然适合生成。这也是它能当智能体大脑的原因：Agent 每一轮的 Thought 和 Action，都是这样一个词一个词“接龙”出来的。</p>
+    <p class="go">点一个词当 Query，看它把注意力分给谁（权重为示意）；再打开因果掩码，看解码器里它还能看到谁。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>因果掩码</span><div class="seg" id="maskSeg"><button data-v="0" aria-pressed="true">关（编码器式，双向）</button><button data-v="1">开（解码器式，只看前文）</button></div></div>
+    <div class="toks" id="attTok"></div>
+    <div class="attn" id="attOut"></div>
+    <p class="note" id="attNote"></p>
+  </div>
+  <div class="xlink"><b>和已学系列对照：</b>Q、K、V 与多头的矩阵细节见<a href="../2026-10-15-llm-5/">《LLM 入门》05 篇·Transformer 拆开看</a>；RNN 梯度消失、LSTM 门控的推导见<a href="../2026-10-18-nndl/">《神经网络与深度学习》</a>系列。</div>
+  <div class="notes" id="n-tf"></div>
+</section>
+
+<section class="part" id="sample">
+  <div class="part-head"><h2>采样参数：改的是分布，不是模型</h2><span class="meta">原书 3.2.1 节（1）</span></div>
+  <div class="sec-lede">
+    <p>模型每一步输出的是词表上每个词元的分数（logits），softmax 之后得到概率分布，再从中<strong>采样</strong>一个。采样参数不改模型，只“重新调整”或“截断”这个分布。<strong>Temperature</strong> 把 logits 除以 T：T 小于 1 让分布变陡、更确定，大于 1 变平、更发散，T → 0 等于总是选最高的（贪心）。<strong>Top-k</strong> 只保留概率最高的 k 个候选再归一化，k = 1 就是贪心。<strong>Top-p（核采样）</strong>从高到低累加概率，到达 p 为止，候选数随分布形状自动变化：分布尖时只剩一两个，分布平时保留很多，比固定 k 更能适应长尾。</p>
+    <p>原书给的执行顺序是<strong>温度 → Top-k → Top-p</strong>，同时设置时候选集是两者的交集，一般二选一即可。温度为 0 时 Top-k、Top-p 都无关紧要；Top-k 为 1 时温度和 Top-p 也无关紧要。经验范围：0 到 0.3 用于事实问答、计算、代码；0.3 到 0.7 用于日常对话和常规写作；0.7 以上用于创意发散。<strong>做 Agent 时</strong>，负责输出 Action、JSON、工具参数的那一步通常用低温，格式更稳；负责头脑风暴或生成多个候选方案的步骤可以调高。</p>
+    <p class="go">“今天天气真＿”的下一个词（logits 为示意）。拖动三个参数，灰色条是被截掉的候选。</p>
+  </div>
+  <div class="lab">
+    <div class="sliders">
+      <label>Temperature <b id="tV">1.0</b><input type="range" id="tS" min="0.05" max="2" step="0.05" value="1"></label>
+      <label>Top-k <b id="kV">8</b><input type="range" id="kS" min="1" max="8" step="1" value="8"></label>
+      <label>Top-p <b id="pV">1.00</b><input type="range" id="pS" min="0.1" max="1" step="0.05" value="1"></label>
+    </div>
+    <div id="sampBars" style="margin-top:12px"></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn" type="button" id="sampGo">按当前分布采样 20 次</button><span class="note" id="sampOut" style="margin:0"></span></div>
+  </div>
+  <div class="notes" id="n-sample"></div>
+</section>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>提示工程：和大脑沟通的语言</h2><span class="meta">原书 3.2.1 节（2）–（5）</span></div>
+  <div class="sec-lede">
+    <p>按给模型的示例数量，提示分<strong>零样本</strong>（只给指令）、<strong>单样本</strong>（给一个完整示例）、<strong>少样本</strong>（给多个覆盖不同情况的示例，让模型看清任务的边界）。这几种能工作，靠的是第 2 篇说的<strong>上下文学习</strong>：不改权重，只靠输入里的示例。</p>
+    <p>还要分清模型类型。早期 GPT-3 是<strong>文本补全</strong>模型，只会续写，你得用少样本把任务“演”出来（“英文：Hello / 中文：你好 / 英文：How are you? / 中文：”）。<strong>指令调优</strong>用大量“指令—回答”数据继续微调，今天日常用的 ChatGPT、DeepSeek、Qwen 都是这类模型，可以直接下指令。基础技巧：<strong>角色扮演</strong>（“你是一位资深 Python 专家”）约束风格和知识范围；<strong>上下文示例</strong>规定复杂输出格式（比如严格的 JSON）；<strong>思维链</strong>在复杂推理题后加一句“请一步一步地思考”，先写推理再给答案，准确率更高，也便于检查。</p>
+    <p>对 Agent 来说，这些不是孤立技巧：第一篇的系统提示词就同时用了角色扮演（旅行助手）、格式示例（Thought / Action 模板）和思维链（Thought 本身就是让模型先想再动）。下一篇的 ReAct、Plan-and-Solve、Reflection，本质上都是更有结构的提示模板。</p>
+    <p class="go">每段提示用的是哪种技巧？</p>
+  </div>
+  <div class="lab"><div id="promptCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：少样本提示 vs 指令调优 vs 微调</h4>
+    <p><b>少样本提示</b>只改输入，不改权重，每次调用都要带上示例（占 Token）；<b>指令调优</b>是模型厂商做的一次性微调，让模型学会“听指令”这件通用的事；<b>任务微调</b>是你用自己的领域数据改权重，让模型擅长某个具体任务。顺序上先试提示，提示做不到再考虑微调（第 11 篇讲 SFT）。</p>
+  </div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="token">
+  <div class="part-head"><h2>分词：模型看到的不是字</h2><span class="meta">原书 3.2.2 节</span></div>
+  <div class="sec-lede">
+    <p>模型只认数字，文本要先切成<strong>词元（Token）</strong>再转成 ID。按词切，词表爆炸，还有未登录词（OOV），look / looks / looking 互不相干；按字符切，词表小、无 OOV，但单个字符没什么意义，学习效率低。现代 LLM 用<strong>子词分词</strong>折中：常见词整个保留，罕见词拆成有意义的片段（Tokenization → Token + ization）。</p>
+    <p>最主流的是 <strong>BPE（字节对编码）</strong>，GPT 系列在用：从字符开始，反复统计相邻词元对的频率，把<strong>最高频的一对合并</strong>成新词元，直到词表达到预设大小。衍生算法有 <strong>WordPiece</strong>（BERT 用，合并标准改成“最能提升语料似然”的一对）和 <strong>SentencePiece</strong>（Llama 用，把空格当普通字符，分词可逆、与语言无关）。</p>
+    <p>原书强调，对 Agent 开发者重要的不是算法细节，而是三个后果：<strong>上下文窗口</strong>按 Token 算，同一段话中英文、不同分词器下 Token 数差很多；<strong>API 按 Token 计费</strong>；以及<strong>怪异行为</strong>：<code>2 + 2</code> 算得对，<code>2+2</code> 可能出错，大小写不同会切成完全不同的序列。</p>
+    <p class="go">用原书的迷你语料一步步跑 BPE（与原书 Python 代码的合并顺序一致），然后用学到的规则切一个没见过的词。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>语料</span><div class="seg" id="bpeSeg"><button data-v="0" aria-pressed="true">hug pug pun bun（原书）</button><button data-v="1">low×5 lower×2 newest×6 widest×3（经典例子）</button></div></div>
+    <div id="bpeStep"></div>
+    <div class="bpe-w" id="bpeWords"></div>
+    <p class="lab-t" style="margin-top:12px">词表</p>
+    <div class="bpe-v" id="bpeVocab"></div>
+    <div class="bg-in" style="grid-template-columns:minmax(0,1fr)"><label>用当前已学到的合并规则切分<input id="bpeTry" value="bug"></label></div>
+    <div class="calc-out" id="bpeTryOut"></div>
+  </div>
+  <div class="notes" id="n-token"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>选模型，认局限</h2><span class="meta">原书 3.2.3–3.3 节</span></div>
+  <div class="sec-lede">
+    <p>原书用 Hugging Face Transformers 在本地跑了一个 0.5B 的 Qwen 对话模型：<code>AutoTokenizer</code> 加载分词器，<code>apply_chat_template</code> 把 messages 套成模型认识的对话模板，<code>generate</code> 产出 Token ID，截掉输入部分后 <code>decode</code> 回文本。这条链路值得记住，因为它说明了 API 背后发生的事：messages 先被模板化成一个长字符串，再分词、生成、解码。</p>
+    <p>选模型不是越大越好，而是权衡：<strong>性能与能力</strong>（推理、代码、多语言各有所长，可参考公开排行榜）、<strong>成本</strong>（闭源按 Token 计费，开源是硬件和运维）、<strong>延迟</strong>、<strong>上下文窗口</strong>、<strong>部署方式</strong>（API 便捷但数据出境，本地可控但门槛高）、<strong>生态与工具链</strong>、<strong>可微调性</strong>、<strong>安全与伦理</strong>。原书还列了当时主流的闭源与开源模型，版本更新太快，这里不抄，只记选型维度。</p>
+    <p><strong>缩放法则</strong>：损失与参数量、数据量、计算量在对数坐标下呈平滑幂律，持续按比例投入就能可预测地变好。<strong>Chinchilla 定律</strong>（DeepMind 2022）修正了“越大越好”：给定算力下参数量和数据量有最优配比，最优模型更小但要用多得多的数据。规模过阈值后出现<strong>涌现能力</strong>（思维链、指令遵循、多步推理），所以复杂的自主规划需要足够大的模型。</p>
+    <p><strong>幻觉</strong>是生成内容与事实、输入或上下文矛盾，分<strong>事实性</strong>（与现实不符）、<strong>忠实性</strong>（摘要、翻译没忠实于原文）、<strong>内在</strong>（与输入直接矛盾）。成因：训练数据有错、自回归只预测下一个最可能的词而没有事实核查、复杂推理中途出错。另有知识截止和偏见。缓解分三层：<strong>数据</strong>（清洗、RLHF）、<strong>模型</strong>（让模型表达不确定性）、<strong>推理</strong>（RAG、多步推理与验证、调用外部工具）。推理层的三招，恰好就是 Agent 的记忆、反思和工具。</p>
+    <p class="go">先估一个数，再做两道判断。</p>
+  </div>
+  <div class="lab"><div id="chGuess"></div></div>
+  <div class="lab"><p class="lab-t">这是哪种幻觉？</p><div id="halCards"></div></div>
+  <div class="lab"><p class="lab-t">给你的 Agent 选模型（原书习题 4 的企业客服场景可以拿来试）</p><div id="pickModel"></div></div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01《面试问题总结》</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="3-1">
+      <p class="iv-q">解释自注意力机制。它为什么比 RNN 更适合处理长序列？<small>Extra01 · LLM 八股第 1 题</small></p>
+      <ul class="iv-a">
+        <li><b>机制</b>：每个词元经线性变换得到 Q、K、V；用 Q 与所有 K 点积、除以 √d<sub>k</sub>、softmax 得权重，对 V 加权求和得到融合全局上下文的新表示。</li>
+        <li><b>为何更好</b>：任意两个位置一步直达，路径长度为 1，不会像 RNN 那样经过多步连乘导致梯度消失；所有位置并行计算，能充分利用 GPU。</li>
+        <li><b>代价</b>：注意力矩阵是序列长度的平方，长上下文的显存和计算开销大；本身不含位置信息，需要位置编码。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="3-2">
+      <p class="iv-q">解释 Greedy、Beam Search、Top-K、Top-P 解码策略的原理和优缺点。<small>Extra01 · LLM 八股第 7 题</small></p>
+      <ul class="iv-a">
+        <li><b>Greedy</b>：每步取最高概率词，确定、快，但容易重复、陷入局部最优。</li>
+        <li><b>Beam Search</b>：每步保留 b 条得分最高的部分序列，适合翻译等有标准答案的任务；开放生成中容易平淡、重复。</li>
+        <li><b>Top-K</b>：只在前 k 个候选里按概率采样；k 固定，分布尖时可能混入低质量词，分布平时又可能截掉好词。</li>
+        <li><b>Top-P</b>：在累积概率达到 p 的最小集合里采样，候选数自适应，更适合长尾分布。温度在它们之前调整分布的陡峭程度。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="3-3">
+      <p class="iv-q">为什么不直接用字符或单词做输入单元？BPE 解决了什么？<small>原书第 3 章习题 3；Extra01 · LLM 八股第 8 题</small></p>
+      <ul class="iv-a">
+        <li><b>按词</b>：词表爆炸、OOV、词形变化之间没有关联、低频词学不好。</li>
+        <li><b>按字符</b>：序列变长、单个字符语义弱、学习效率低。</li>
+        <li><b>BPE</b>：从字符起步，反复合并最高频的相邻对，常见词成整体、罕见词拆成子词，既控制词表大小又没有 OOV。</li>
+        <li><b>和 WordPiece 的区别</b>：BPE 按频率合并，WordPiece 按“合并后语料似然提升最大”合并。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="3-4">
+      <p class="iv-q">论文辅助阅读智能体：论文超过上下文窗口怎么办？怎样保证忠于原文？<small>原书第 3 章习题 6</small></p>
+      <ul class="iv-a">
+        <li><b>超长</b>：按章节切块，先生成各节摘要再汇总（Map-Reduce）；问答时用 RAG 只检索相关段落；或选长上下文模型，但仍要控制成本。</li>
+        <li><b>忠实</b>：要求回答附原文引用（页码、段落），生成后做引用核对；低温度；不确定时允许说“原文未提及”；数字、公式直接从原文抽取而非生成。</li>
+        <li><b>多篇比较</b>：先对每篇抽取统一结构的字段（问题、方法、数据、结论），再在结构化结果上比较。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 每一步演进解决了什么？为什么是 Decoder-Only？</summary><p class="ans">N-gram 用马尔可夫假设和计数估概率，但稀疏、不泛化；神经网络语言模型用词嵌入解决泛化，但窗口固定；RNN 用隐藏状态记任意长历史，但梯度消失；LSTM 用细胞状态和门控缓解；Transformer 用注意力让任意位置一步直达并且可以并行。Decoder-Only 只做“预测下一个词”：训练目标统一、适合海量无标注数据，结构简单易扩展，自回归方式天然适合生成，因果掩码保证训练与生成一致。</p></details>
+    <details><summary>2. 三个采样参数怎样改分布？Agent 怎么设？</summary><p class="ans">Temperature 把 logits 除以 T，调整分布陡峭程度；Top-k 只保留前 k 个候选；Top-p 保留累积概率达到 p 的最小集合，候选数自适应。顺序是温度、Top-k、Top-p。Agent 中输出 Action、JSON、工具参数的步骤用低温求稳定，需要发散、生成多个候选的步骤可以调高。</p></details>
+    <details><summary>3. 分词、上下文窗口、幻觉分别在哪里出问题？</summary><p class="ans">分词：窗口和计费都按 Token 算，中文、代码、数字的 Token 数可能远超预期；空格、大小写差异会导致异常行为，影响输出解析。上下文窗口：长对话、长文档、工具返回会撑爆窗口，需要截断、摘要、检索（第 8、9 篇）。幻觉：模型可能编造工具参数、不存在的实体或 Observation，需要 RAG、工具调用、验证与反思来压制。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- Bigram ---------- */
+S.guess($('#bgGuess'), {
+  q: '用原书语料 “datawhale agent learns datawhale agent works”，Bigram 模型下句子 <code>agent works</code> 的概率是多少？（原书习题 1，填小数）',
+  ans: 1 / 6,
+  fmt: function (x) { return S.f(x, 3); },
+  why: 'P(agent) = 2/6，P(works | agent) = Count(agent works) / Count(agent) = 1/2，相乘约 0.167。和 “datawhale agent learns” 恰好相等：后者多乘了一个 P(agent | datawhale) = 1。'
+});
+function bigram() {
+  var toks = $('#bgCorpus').value.trim().split(/\s+/).filter(Boolean);
+  var s = $('#bgSent').value.trim().split(/\s+/).filter(Boolean);
+  if (!toks.length || !s.length) { $('#bgOut').innerHTML = ''; return; }
+  var cnt = {}, bi = {};
+  toks.forEach(function (t, i) { cnt[t] = (cnt[t] || 0) + 1; if (i) { var k = toks[i - 1] + ' ' + t; bi[k] = (bi[k] || 0) + 1; } });
+  var lines = [], p = (cnt[s[0]] || 0) / toks.length;
+  lines.push('P(' + s[0] + ') = ' + (cnt[s[0]] || 0) + ' / ' + toks.length + ' = ' + (p ? S.f(p, 3) : '<span class="zero">0</span>'));
+  for (var i = 1; i < s.length; i++) {
+    var c1 = bi[s[i - 1] + ' ' + s[i]] || 0, c0 = cnt[s[i - 1]] || 0;
+    var q = c0 ? c1 / c0 : 0;
+    lines.push('P(' + s[i] + ' | ' + s[i - 1] + ') = Count(' + s[i - 1] + ' ' + s[i] + ') / Count(' + s[i - 1] + ') = ' + c1 + ' / ' + c0 + ' = ' + (q ? S.f(q, 3) : '<span class="zero">0</span>'));
+    p *= q;
+  }
+  lines.push('<b>P(“' + s.join(' ') + '”) ≈ ' + (p ? S.f(p, 4) : '<span class="zero">0</span>') + '</b>' + (p ? '' : '　只要有一项没见过，整句就是 0：这就是数据稀疏。即使 robot 和 agent 意思相近，N-gram 也不知道。'));
+  $('#bgOut').innerHTML = lines.join('<br>');
+}
+['#bgCorpus', '#bgSent'].forEach(function (x) { $(x).addEventListener('input', bigram); });
+S.$$('[data-s]').forEach(function (b) { b.addEventListener('click', function () { $('#bgSent').value = b.getAttribute('data-s'); bigram(); }); });
+bigram();
+S.notes($('#n-lm'), {
+  c: [
+    ['语言模型', '计算词序列出现的概率；链式法则把句子概率拆成条件概率连乘。'],
+    ['马尔可夫假设 / N-gram', '一个词只依赖前 N−1 个词；概率用计数（最大似然）估计。'],
+    ['词嵌入', '词映射为连续向量，语义相近则距离近，用余弦相似度度量。'],
+    ['LSTM', '细胞状态 + 遗忘门、输入门、输出门，缓解 RNN 长期依赖问题。']
+  ],
+  p: [
+    ['Bigram 公式', 'P(w<sub>i</sub>|w<sub>i−1</sub>) = Count(w<sub>i−1</sub>, w<sub>i</sub>) / Count(w<sub>i−1</sub>)'],
+    ['N-gram 两缺陷', '数据稀疏（未见组合为 0）、泛化差（不懂语义相似）。'],
+    ['演进链', 'N-gram → 神经网络 LM（解决泛化）→ RNN（解决固定窗口）→ LSTM（缓解梯度消失）→ Transformer（并行 + 长距离）。']
+  ]
+});
+
+/* ---------- 注意力 ---------- */
+var W = ['The', 'agent', 'learns', 'because', 'it', 'is', 'intelligent'];
+var A = {
+  The: [3, 2, 0.5, 0.2, 0.2, 0.2, 0.3], agent: [1.2, 3, 1.6, 0.4, 1.4, 0.4, 1.2], learns: [0.4, 2.2, 3, 1.2, 0.6, 0.6, 0.8],
+  because: [0.2, 0.6, 2.2, 3, 1, 0.8, 0.8], it: [0.4, 3.4, 0.6, 0.4, 1.6, 0.6, 1.2], is: [0.2, 1, 0.4, 0.4, 2.2, 2, 2.4], intelligent: [0.2, 2.4, 0.6, 0.4, 2, 1.6, 2.6]
+};
+var qi = 4, mask = false;
+var tb = $('#attTok');
+W.forEach(function (w, i) {
+  var b = h('button', { type: 'button', text: w }, tb);
+  b.addEventListener('click', function () { qi = i; att(); });
+});
+function att() {
+  S.$$('button', tb).forEach(function (b, i) { b.setAttribute('aria-pressed', i === qi ? 'true' : 'false'); });
+  var sc = A[W[qi]].map(function (s, j) { return mask && j > qi ? -1e9 : s; });
+  var pr = S.softmax(sc, 1);
+  var s1 = S.css('--s1');
+  $('#attOut').innerHTML = W.map(function (w, j) {
+    var m = mask && j > qi;
+    return '<span class="' + (m ? 'masked' : '') + '" style="background:' + (m ? 'transparent' : 'color-mix(in srgb, ' + s1 + ' ' + Math.round(pr[j] * 100) + '%, transparent)') + '">' + w + '<small>' + (m ? '—' : S.f(pr[j] * 100, 0) + '%') + '</small></span>';
+  }).join('');
+  var top = pr.indexOf(Math.max.apply(null, pr));
+  $('#attNote').textContent = mask && qi < 2 ? '开了掩码，“' + W[qi] + '”几乎只能看自己和更前面的词：这正是生成时的处境，后面的词还没写出来。' :
+    '“' + W[qi] + '”把最多注意力给了“' + W[top] + '”。' + (W[qi] === 'it' ? '这就是指代消解：it 指 agent。' : '') + (mask ? ' 后面的词被掩码挡住，softmax 后权重为 0。' : '');
+}
+S.seg($('#maskSeg'), function (v) { mask = v === '1'; att(); });
+att();
+S.notes($('#n-tf'), {
+  c: [
+    ['自注意力', '每个词用自己的 Q 与所有词的 K 打分，softmax 后对 V 加权求和，得到融合全局上下文的表示。'],
+    ['多头注意力', '把 Q、K、V 切成 h 份并行计算，各自关注一种关系，再拼接整合。'],
+    ['位置编码', '注意力本身不分先后，给每个位置加上正余弦生成的位置向量。'],
+    ['Decoder-Only / 自回归', '只保留解码器，逐词预测并把输出接回输入。'],
+    ['因果掩码', 'softmax 前把未来位置的分数设为极大负数，训练时防止偷看。']
+  ],
+  p: [
+    ['注意力公式', 'Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d<sub>k</sub>) V'],
+    ['FFN', 'FFN(x) = max(0, xW<sub>1</sub> + b<sub>1</sub>)W<sub>2</sub> + b<sub>2</sub>，d_ff 约为 4 × d_model，逐位置共享权重。'],
+    ['Add & Norm', '残差让梯度绕过子层；层归一化稳定每层输入分布。'],
+    ['Decoder-Only 三优势', '训练目标统一、结构简单易扩展、天然适合生成。']
+  ]
+});
+
+/* ---------- 采样 ---------- */
+var CAND = [['好', 3.0], ['不错', 2.6], ['热', 2.0], ['冷', 1.5], ['晴朗', 1.2], ['糟糕', 0.6], ['蓝', -0.6], ['香蕉', -2.5]];
+function dist() {
+  var T = +$('#tS').value, k = +$('#kS').value, p = +$('#pS').value;
+  $('#tV').textContent = S.f(T, 2); $('#kV').textContent = k; $('#pV').textContent = S.f(p, 2);
+  var pr = S.softmax(CAND.map(function (c) { return c[1]; }), T);
+  var idx = pr.map(function (x, i) { return i; }).sort(function (a, b) { return pr[b] - pr[a]; });
+  var keep = {};
+  idx.slice(0, k).forEach(function (i) { keep[i] = 1; });
+  var acc = 0, z0 = idx.filter(function (i) { return keep[i]; }).reduce(function (s, i) { return s + pr[i]; }, 0);
+  idx.forEach(function (i) { if (!keep[i]) return; if (acc >= p - 1e-9) { delete keep[i]; return; } acc += pr[i] / z0; });
+  var z = Object.keys(keep).reduce(function (s, i) { return s + pr[i]; }, 0);
+  return CAND.map(function (c, i) { return { t: c[0], raw: pr[i], fin: keep[i] ? pr[i] / z : 0, keep: !!keep[i] }; });
+}
+function drawSamp() {
+  var d = dist();
+  S.bars($('#sampBars'), d.map(function (x) { return { label: x.t, value: x.keep ? x.fin : x.raw, text: x.keep ? S.pct(x.fin) : '截掉（原 ' + S.pct(x.raw) + '）', cls: x.keep ? '' : 'cut', cut: !x.keep }; }));
+  var n = d.filter(function (x) { return x.keep; }).length;
+  $('#sampOut').textContent = '当前候选集 ' + n + ' 个。';
+}
+['#tS', '#kS', '#pS'].forEach(function (x) { $(x).addEventListener('input', drawSamp); });
+var sr = S.rng(11);
+$('#sampGo').addEventListener('click', function () {
+  var d = dist(), out = [];
+  for (var t = 0; t < 20; t++) { var r = sr(), a = 0; for (var i = 0; i < d.length; i++) { a += d[i].fin; if (r <= a) { out.push(d[i].t); break; } } }
+  var c = {}; out.forEach(function (x) { c[x] = (c[x] || 0) + 1; });
+  $('#sampOut').textContent = '20 次结果：' + Object.keys(c).map(function (x) { return x + '×' + c[x]; }).join('，') + '。';
+});
+drawSamp();
+S.notes($('#n-sample'), {
+  c: [
+    ['Temperature', 'logits 除以 T 再 softmax：T 小更确定，T 大更发散，T→0 即贪心。'],
+    ['Top-k', '只保留概率最高的 k 个候选再归一化；k=1 即贪心。'],
+    ['Top-p（核采样）', '保留累积概率首次达到 p 的最小候选集，候选数随分布自适应。']
+  ],
+  p: [
+    ['执行顺序', '温度 → Top-k → Top-p；同时设置时取交集，通常二选一。'],
+    ['经验区间', '0–0.3 事实、计算、代码；0.3–0.7 对话、常规写作；0.7 以上创意发散。'],
+    ['Agent 中', '产出 Action / JSON / 工具参数的步骤用低温；生成候选方案的步骤可调高。']
+  ]
+});
+
+/* ---------- 提示工程 ---------- */
+HB.cards($('#promptCards'), {
+  opts: ['零样本', '少样本', '角色扮演', '思维链'],
+  items: [
+    { t: '“判断下面这段话的情感：Datawhale 的 AI Agent 课程非常棒！”', a: 0, why: '只给指令，不给示例。' },
+    { t: '“评论：屏幕惊艳但键盘一般 → {&quot;product&quot;: &quot;星尘笔记本&quot;, &quot;sentiment&quot;: &quot;混合&quot;}　评论：音质很棒续航超预期 → ”', a: 1, why: '用输入输出示例规定格式，原书叫上下文示例，与少样本同一思想。' },
+    { t: '“你现在是一位资深的 Python 编程专家，请给初学者解释 GIL。”', a: 2, why: '赋予角色来约束风格、语气和知识范围。' },
+    { t: '“两个赛季的总胜率是多少？请一步一步地思考并解答。”', a: 3, why: '引导模型先输出推理过程再给答案。' },
+    { t: '第一篇的系统提示词里要求每次先写 Thought 再写 Action。', a: 3, why: 'Thought 就是让模型在行动前显式推理，ReAct 把思维链嵌进了行动循环。' }
+  ]
+});
+S.notes($('#n-prompt'), {
+  c: [
+    ['零 / 单 / 少样本', '按提示中示例数量区分；靠上下文学习，不改权重。'],
+    ['指令调优', '用“指令—回答”数据微调，让补全模型学会听指令；今天的对话模型都经过它。'],
+    ['思维链（CoT）', '引导模型逐步推理后再作答，提升复杂推理准确率，也便于检查。']
+  ],
+  p: [
+    ['补全模型怎么用', '用少样本把任务“演”出来让它续写。'],
+    ['基础技巧', '角色扮演、上下文示例（规定输出格式）、思维链。'],
+    ['与 Agent 的关系', '系统提示词 = 角色 + 格式示例 + 思维链；经典范式是更有结构的提示模板。']
+  ]
+});
+
+/* ---------- BPE ---------- */
+var CORP = [
+  [['hug', 1], ['pug', 1], ['pun', 1], ['bun', 1]],
+  [['low', 5], ['lower', 2], ['newest', 6], ['widest', 3]]
+];
+var bpe, merges, words, vocab, newTok;
+function bpeInit(ci) {
+  words = CORP[ci].map(function (w) { return { s: w[0].split('').concat('</w>'), f: w[1] }; });
+  vocab = []; merges = []; newTok = null;
+  words.forEach(function (w) { w.s.forEach(function (c) { if (vocab.indexOf(c) < 0) vocab.push(c); }); });
+  bpe = { hist: [] };
+  drawBpe('初始化：把每个词拆成字符，末尾加 &lt;/w&gt; 表示词尾。');
+}
+function bpeStep() {
+  var pairs = new Map();
+  words.forEach(function (w) { for (var i = 0; i < w.s.length - 1; i++) { var k = w.s[i] + '\u0001' + w.s[i + 1]; pairs.set(k, (pairs.get(k) || 0) + w.f); } });
+  if (!pairs.size) return drawBpe('已经没有可以合并的相邻对了。');
+  var best = null, bv = -1;
+  pairs.forEach(function (v, k) { if (v > bv) { bv = v; best = k; } });
+  var ab = best.split('\u0001'), m = ab[0] + ab[1];
+  words.forEach(function (w) {
+    var o = [];
+    for (var i = 0; i < w.s.length; i++) { if (i < w.s.length - 1 && w.s[i] === ab[0] && w.s[i + 1] === ab[1]) { o.push(m); i++; } else o.push(w.s[i]); }
+    w.s = o;
+  });
+  merges.push(ab); vocab.push(m); newTok = m;
+  var stat = []; pairs.forEach(function (v, k) { stat.push(k.replace('\u0001', ' ') + ':' + v); });
+  drawBpe('第 ' + merges.length + ' 次合并：(' + ab[0] + ', ' + ab[1] + ') 出现 ' + bv + ' 次，频率最高，合并为 <b>' + m.replace('</w>', '&lt;/w&gt;') + '</b>。<br><span style="color:var(--ink-3)">本轮相邻对计数：' + stat.join('　').replace(/<\/w>/g, '&lt;/w&gt;') + '</span>');
+}
+function esc2(s) { return s.replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function drawBpe(msg) {
+  $('#bpeStep').innerHTML = '<div class="btnrow"><button class="btn pri" type="button" id="bpeNext">合并一次</button><button class="btn" type="button" id="bpeReset">重来</button></div><p class="note">' + msg + '</p>';
+  $('#bpeNext').addEventListener('click', bpeStep);
+  $('#bpeReset').addEventListener('click', function () { bpeInit(curC); });
+  $('#bpeWords').innerHTML = words.map(function (w) { return w.s.map(function (t) { return '<i>' + esc2(t) + '</i>'; }).join('') + ' ×' + w.f; }).join('<br>');
+  $('#bpeVocab').innerHTML = vocab.map(function (t) { return '<span class="' + (t === newTok ? 'new' : '') + '">' + esc2(t) + '</span>'; }).join('') + '<span style="border:0;background:none;color:var(--ink-3)">共 ' + vocab.length + ' 个</span>';
+  bpeTry();
+}
+function bpeTry() {
+  var w = $('#bpeTry').value.trim();
+  if (!w) { $('#bpeTryOut').innerHTML = ''; return; }
+  var s = w.split('').concat('</w>');
+  merges.forEach(function (ab) {
+    var o = [];
+    for (var i = 0; i < s.length; i++) { if (i < s.length - 1 && s[i] === ab[0] && s[i + 1] === ab[1]) { o.push(ab[0] + ab[1]); i++; } else o.push(s[i]); }
+    s = o;
+  });
+  var unk = s.filter(function (t) { return vocab.indexOf(t) < 0; });
+  $('#bpeTryOut').innerHTML = '按已学到的 ' + merges.length + ' 条合并规则依次应用：[' + s.map(function (t) { return '“' + esc2(t) + '”'; }).join(', ') + ']' + (unk.length ? '<br><span class="zero">词表里没有 ' + unk.map(esc2).join('、') + '</span>：真实分词器从字节起步，不会出现未登录字符。' : '');
+}
+$('#bpeTry').addEventListener('input', bpeTry);
+var curC = 0;
+S.seg($('#bpeSeg'), function (v) { curC = +v; $('#bpeTry').value = curC ? 'lowest' : 'bug'; bpeInit(curC); });
+bpeInit(0);
+S.notes($('#n-token'), {
+  c: [
+    ['Token', '分词器切出的最小单元，再映射为整数 ID 送入模型。'],
+    ['子词分词', '常见词整体保留、罕见词拆成片段，兼顾词表大小与语义。'],
+    ['BPE', '从字符开始，反复合并最高频的相邻对，直到词表达到预设大小。'],
+    ['WordPiece / SentencePiece', '按似然提升合并（BERT）/ 空格当普通字符、可逆、与语言无关（Llama）。']
+  ],
+  p: [
+    ['窗口按 Token 算', '同样内容在不同语言、不同分词器下 Token 数差异很大。'],
+    ['计费按 Token 算', '估成本先估 Token。'],
+    ['怪异行为', '2 + 2 与 2+2、大小写不同会被切成不同序列。']
+  ]
+});
+
+/* ---------- 选型与局限 ---------- */
+S.guess($('#chGuess'), {
+  q: 'Chinchilla（700 亿参数）性能超过了 GPT-3（1750 亿参数）。按原书的说法，它用的训练数据是 GPT-3 的多少倍？',
+  unit: '倍', ans: 4,
+  why: '原书：Chinchilla 用了比 GPT-3 多 4 倍的数据。结论是给定算力下参数量与数据量有最优配比，最优模型更小、数据更多，这纠正了“越大越好”，也影响了 Llama 等后续模型的设计。'
+});
+HB.cards($('#halCards'), {
+  opts: ['事实性', '忠实性', '内在'],
+  items: [
+    { t: '旅行 Agent 推荐了一个现实中不存在的景点。', a: 0, why: '与现实世界事实不符。' },
+    { t: '让模型总结一篇论文，摘要里出现了原文没有的结论。', a: 1, why: '摘要类任务未忠实反映源文本。' },
+    { t: '用户说预算 3000 元，模型的方案却写“按您 5000 元的预算”。', a: 2, why: '与用户输入直接矛盾。' },
+    { t: '模型声称某个 Python 库有一个其实不存在的函数。', a: 0, why: '编造了不存在的实体，属于事实性幻觉，是 Coding Agent 最常见的一类。' }
+  ]
+});
+HB.decide($('#pickModel'), {
+  qs: [
+    { id: 'data', q: '1. 数据能发给第三方 API 吗？', opts: [['y', '可以'], ['n', '不行，必须内网']], def: 'y' },
+    { id: 'hard', q: '2. 任务需要多步推理、复杂规划或长代码吗？', opts: [['y', '需要'], ['n', '主要是分类、抽取、简单问答']], def: 'y' },
+    { id: 'lat', q: '3. 对延迟敏感吗（实时对话、游戏 NPC）？', opts: [['y', '敏感'], ['n', '不太敏感']], def: 'n' },
+    { id: 'ft', q: '4. 需要用自己的数据微调吗？', opts: [['y', '需要'], ['n', '不需要']], def: 'n' }
+  ],
+  decide: function (a) {
+    var r = [];
+    if (a.data === 'n') r.push('<b>本地部署开源模型</b>：数据不出内网、完全可控；代价是硬件、运维和推理优化都要自己做。');
+    else if (a.ft === 'y') r.push('<b>开源模型（自部署或托管微调）</b>：微调灵活性更大；也可以先用闭源 API 验证效果，再把高频任务迁到微调后的小模型。');
+    else r.push('<b>闭源 API 起步</b>：开箱即用、能力前沿；按 Token 计费，留意成本和服务条款。');
+    if (a.hard === 'y') r.push('复杂推理需要足够大的模型（涌现能力），规划、决策这一步不要省。');
+    else r.push('简单任务用小模型就够：更便宜、更快，可以和大模型分工（大模型规划，小模型执行）。');
+    if (a.lat === 'y') r.push('延迟敏感：优先轻量模型、流式输出，减少每轮上下文。');
+    return '<p>' + r.join('</p><p>') + '</p><p class="note">原书维度：性能、成本、延迟、上下文窗口、部署方式、生态、可微调性、安全与伦理。具体型号更新太快，以当时的公开评测为准。</p>';
+  }
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['缩放法则', '损失与参数量、数据量、计算量在对数坐标下呈平滑幂律关系。'],
+    ['Chinchilla 定律', '给定算力下参数量与数据量有最优配比：模型更小、数据更多。'],
+    ['幻觉三类', '事实性（违背现实）、忠实性（不忠于源文本）、内在（与输入矛盾）。']
+  ],
+  p: [
+    ['本地推理链路', 'messages → apply_chat_template → 分词 → generate → 截掉输入 → decode。'],
+    ['选型八维', '性能、成本、延迟、上下文、部署、生态、可微调、安全伦理。'],
+    ['幻觉成因', '数据有错、自回归无事实核查、推理链出错；另有知识截止与偏见。'],
+    ['缓解三层', '数据（清洗、RLHF）、模型（表达不确定性）、推理（RAG、多步验证、外部工具）。']
+  ]
+});

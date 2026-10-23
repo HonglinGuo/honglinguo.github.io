@@ -1,0 +1,295 @@
+---
+title: MCP：把外部系统接进来
+desc: Claude How To 学习笔记（六）：MCP 解决什么、和 Memory 的边界；http、stdio、sse、ws 四种传输与 claude mcp add 命令拼装器；local、project、user 三种作用域与 .mcp.json；环境变量展开；Tool Search、输出上限与“用代码调用 MCP”的上下文账；看状态码排障；只读数据库、托管策略、插件与子代理里的 MCP。
+kicker: <span>技术学习</span><span>Claude How To · 06</span><span>对应原文 05-mcp</span><span>约 30 分钟</span>
+h1: 实时数据<em>不进记忆</em>，走 MCP
+lead: MCP（Model Context Protocol）是让 Claude 访问外部工具、API 和实时数据的标准接口。接上 GitHub、数据库、Jira 之后，Claude 的工具列表里就多了一批 mcp__ 开头的工具。原教程这一章的重点有三个：怎么加一个服务器、配置写在哪一层、以及接得越多越要注意的上下文开销。最后一部分讲排障，原文的建议很实用：先看状态码，再动配置。
+nav: what|它解决什么;add|添加服务器;scope|作用域与 .mcp.json;ctx|上下文开销;auth|认证与排障;more|更多接入点;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.bd { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; }
+.bd label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; color: var(--ink-3); }
+.bd input { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 5px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); min-width: 0; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>MCP 和 Memory 的边界在哪？推荐用哪种传输，各种传输怎么加？</li>
+    <li><code>claude mcp add</code> 不带 <code>--scope</code> 时写到哪里？想让团队共享该用哪个作用域，密钥怎么处理？</li>
+    <li>接了很多 MCP 服务器以后，上下文会被什么占掉？Claude Code 和原文分别给了什么办法？</li>
+  </ol>
+</div>
+
+<section class="part" id="what">
+  <div class="part-head"><h2>它解决什么</h2><span class="meta">原文 05-mcp「Overview」「MCP vs Memory」</span></div>
+  <div class="sec-lede">
+    <p>原文一句话：MCP 是 Claude 访问外部工具、API 和<strong>实时数据源</strong>的标准方式；和 Memory 不同，它提供的是<strong>对变化中数据的实时访问</strong>。Memory 存偏好、规范、历史这类不怎么变的东西；MCP 去取当前的 GitHub issue、实时的数据库查询、在线服务的状态。</p>
+    <p>接好以后，服务器暴露的东西以三种形态出现：<strong>工具</strong>（名字形如 <code>mcp__github__get_pr</code>，Claude 在任务里调用）、<strong>prompt</strong>（变成斜杠命令 <code>/mcp__github__review</code>，见第 2 篇）、<strong>资源</strong>（在提示词里用 <code>@服务器:协议://路径</code> 引用，比如 <code>@database:postgres://mydb/users</code>）。服务器还可以在运行中动态增删工具（list_changed 通知，不用重连），可以中途弹对话框向你要输入（Elicitation），也可以返回交互式界面（MCP Apps）。</p>
+    <p class="go">一张功能卡。</p>
+  </div>
+  <div class="fcard">
+    <h3>MCP 服务器<small>项目级 .mcp.json；或 claude mcp add</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>Claude 需要读写你代码仓库以外、而且会变化的东西：PR 与 issue、数据库、工单系统、监控、内部服务。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcMcp"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>不变的约定和背景（写 Memory）；只是想跑个命令行工具，Bash 已经够用；拿不到最小权限的连接（原文反复强调只读令牌、最小权限、别用生产库）；不可信来源的服务器。</dd>
+    </dl>
+  </div>
+  <div class="notes" id="n-what"></div>
+</section>
+
+<section class="part" id="add">
+  <div class="part-head"><h2>添加服务器：四种传输</h2><span class="meta">原文「MCP Installation Methods」「MCP Configuration Management」</span></div>
+  <div class="sec-lede">
+    <p><strong>HTTP</strong> 是原文推荐的方式，连远程服务器，支持 OAuth：<code>claude mcp add --transport http 名字 URL</code>，需要固定令牌就加 <code>--header "Authorization: Bearer …"</code>。<strong>stdio</strong> 在本机起一个进程：<code>claude mcp add --transport stdio 名字 -- npx 包名</code>，注意 <code>--</code> 之后是要执行的命令，环境变量用 <code>--env KEY=value</code>；原生 Windows 上 npx 要套一层 <code>cmd /c</code>。<strong>SSE</strong> 已弃用但还能用。<strong>WebSocket</strong>（<code>ws</code>）适合服务器主动推事件，但 <code>--transport</code> 不接受它，只能写进 <code>.mcp.json</code> 或用 <code>claude mcp add-json</code>，而且只支持请求头认证、没有 OAuth。</p>
+    <p>管理命令是一组 <code>claude mcp</code> 子命令：<code>list</code>、<code>get 名字</code>、<code>remove 名字</code>、<code>add-json 名字 '{…}'</code>、<code>add-from-claude-desktop</code>、<code>reset-project-choices</code>、<code>login</code>/<code>logout</code>（v2.1.186+，加 <code>--no-browser</code> 可在 SSH 里完成 OAuth）。会话里用 <code>/mcp</code> 看连接状态、每个服务器的工具数（0 个工具会被标出来）、触发 OAuth。stdio 服务器启动时环境里已经有 <code>CLAUDE_PROJECT_DIR</code>；在项目、本地、用户配置里引用它要写成 <code>${CLAUDE_PROJECT_DIR:-.}</code> 带默认值。</p>
+    <p class="go">拼一条 <code>claude mcp add</code> 命令，看它写到哪里。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>传输</span><div class="seg" id="tpSeg"><button data-v="http" aria-pressed="true">http</button><button data-v="stdio">stdio</button><button data-v="sse">sse</button><button data-v="ws">ws</button></div></div>
+    <div class="selrow"><span>作用域</span><div class="seg" id="scSeg"><button data-v="local" aria-pressed="true">local（默认）</button><button data-v="project">project</button><button data-v="user">user</button></div></div>
+    <div class="bd">
+      <label>名字<input id="bdName" value="github"></label>
+      <label id="bdTL">URL<input id="bdTarget" value="https://api.githubcopilot.com/mcp/"></label>
+      <label id="bdXL">请求头<input id="bdX" value="Authorization: Bearer ${GITHUB_PAT}"></label>
+    </div>
+    <div id="bdOut"></div>
+  </div>
+  <div class="notes" id="n-add"></div>
+</section>
+
+<section class="part" id="scope">
+  <div class="part-head"><h2>作用域与 .mcp.json</h2><span class="meta">原文「MCP Scopes」「Environment Variable Expansion」「Server Deduplication」</span></div>
+  <div class="sec-lede">
+    <p>三种作用域：<strong>local</strong>（默认）写在 <code>~/.claude.json</code> 里、挂在当前项目路径下，只有你、只在这个项目；<strong>project</strong> 写进项目根的 <code>.mcp.json</code>，提交进 git 给团队共享，队友<strong>第一次用时要确认</strong>；<strong>user</strong> 也写在 <code>~/.claude.json</code>，你的所有项目都能用。老版本里 local 叫 project、user 叫 global，看老文章时注意。同一个服务器在多层都有定义时，<strong>local 优先</strong>，方便你在本机覆盖团队配置。</p>
+    <p><code>.mcp.json</code> 可以提交，但密钥不能：配置里的 <code>command</code>、<code>args</code>、<code>env</code>、<code>url</code>、<code>headers</code> 都支持 <code>${VAR}</code> 和 <code>${VAR:-默认值}</code> 展开，令牌放在你 shell 的环境变量里。变量没设又没默认值时，服务器照样加载但带着字面量 <code>${VAR}</code>，<code>claude mcp list</code> 和 <code>/mcp</code> 会提示。安全上还有一条：在不受信任的目录里，仓库自带配置“自己批准”的服务器不会被自动启动，要先接受信任对话框（v2.1.196）。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="scq"></div></div>
+  <div class="notes" id="n-scope"></div>
+</section>
+
+<section class="part" id="ctx">
+  <div class="part-head"><h2>上下文开销：工具定义、输出与“写代码调用”</h2><span class="meta">原文「MCP Tool Search」「MCP Output Limits」「Solving Context Bloat with Code Execution」</span></div>
+  <div class="sec-lede">
+    <p>MCP 接多了，上下文会被两样东西吃掉：<strong>工具定义</strong>和<strong>中间结果</strong>。对前者，Claude Code 默认开着 <strong>Tool Search</strong>：所有 MCP 工具延后加载、按需发现，定义不先塞进上下文（<code>ENABLE_TOOL_SEARCH</code> 可设 <code>auto</code> / <code>auto:N</code> 按阈值切换、<code>false</code> 关闭；用非官方的 <code>ANTHROPIC_BASE_URL</code> 时会自动关掉）。某个服务器每轮都要用，可以设 <code>"alwaysLoad": true</code>，但原文提醒要省着用。工具描述和服务器说明也有截断上限（以原文为准），重要信息写在描述开头。</p>
+    <p>对后者，Claude Code 给输出设了阈值：<strong>超过 10,000 tokens 警告，默认上限 25,000 tokens</strong>，更大的结果存成文件、对话里只放路径（<code>MAX_MCP_OUTPUT_TOKENS</code> 可调）；跑超过 2 分钟的 MCP 调用自动转后台。原文还专门介绍了 Anthropic 工程博客的思路：<strong>让代理写代码去调用 MCP</strong>，把工具当成带类型的函数，数据在执行环境里流转、过滤，只把最终结果交给模型。博客里的例子是把一份会议纪要从 Google Drive 搬到 Salesforce，直接调工具时纪要要经过上下文两次。</p>
+    <p class="go">先估一下这个例子能省多少，再看原文的取舍。</p>
+  </div>
+  <div class="lab">
+    <div id="gsMcp"></div>
+    <div class="tblw"><table class="cmpt">
+      <tr><th>阈值（原文）</th><th>行为</th></tr>
+      <tr><td>10,000 tokens</td><td>警告输出过大</td></tr>
+      <tr><td>25,000 tokens（默认上限）</td><td>结果存为文件，对话里放路径；<code>MAX_MCP_OUTPUT_TOKENS</code> 可调</td></tr>
+      <tr><td>50,000 字符</td><td>工具结果持久化到磁盘</td></tr>
+      <tr><td>运行超过 2 分钟</td><td>自动转到后台；<code>CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS</code> 可调</td></tr>
+    </table></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Tool Search 与“写代码调用 MCP”</h4>
+    <p><b>Tool Search</b> 是 Claude Code 内置的，解决“工具定义太多”：定义按需发现，默认开启。</p>
+    <p><b>写代码调用 MCP</b> 是原文引用的 Anthropic 工程博客里的架构思路，解决“中间结果来回经过模型”：数据在沙箱执行环境里流转，只交回结果。它需要安全的沙箱、监控和额外基础设施；原文的判断是服务器少时直接调用更简单，几十个服务器、几百个工具时才明显划算。</p>
+  </div>
+  <div class="notes" id="n-ctx"></div>
+</section>
+
+<section class="part" id="auth">
+  <div class="part-head"><h2>认证与排障：先看状态码</h2><span class="meta">原文「OAuth 2.0 Authentication」「Troubleshooting」</span></div>
+  <div class="sec-lede">
+    <p>支持 OAuth 的服务器，加的时候不用带令牌，Claude Code 会走完整个流程：会话里 <code>/mcp</code> 触发浏览器授权，令牌存进系统钥匙串；需要无人值守的场景可以预先给 <code>--client-id</code>、<code>--client-secret</code>、<code>--callback-port</code>。用自定义 <code>headersHelper</code> 动态生成请求头时，服务器返回 401 或 403 会自动重新调用它刷新凭据（v2.1.193）；项目 <code>.mcp.json</code> 里的 headersHelper 需要先接受目录信任，并且运行时不继承你的凭据环境变量（v2.1.238）。在 claude.ai 账号里配好的 MCP 连接器会自动出现在 Claude Code 里，不想要就设 <code>ENABLE_CLAUDEAI_MCP_SERVERS=false</code>。</p>
+    <p>排障原文的第一条建议是：<strong>改任何东西之前先跑 <code>claude mcp list</code></strong>（或会话里 <code>/mcp</code>），v2.1.219 起它会在失败的服务器旁边打印 HTTP 状态码和服务器给的错误文本。401/403 是凭据坏了或过期，用 <code>claude mcp login</code> 重新认证；404 是 URL 错了，最常见是漏了 <code>/mcp</code> 或 <code>/sse</code> 路径后缀；5xx 或超时是远端挂了。另一个隐蔽的坑是从浏览器或聊天里复制的令牌带了首尾空白，Claude Code 会提示，用 <code>printf '[%s]\n' "$TOKEN"</code> 就能看出来。headless 跑时 <code>--mcp-config</code> 里校验失败的服务器会被<strong>跳过</strong>而不是报错，要看 stream-json 的 init 事件里的 <code>mcp_server_errors</code>。</p>
+    <p class="go">看报错，选第一步该做什么。</p>
+  </div>
+  <div class="lab"><div id="tsq"></div></div>
+  <div class="notes" id="n-auth"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>更多接入点与安全</h2><span class="meta">原文「Database MCP Setup」「Managed MCP」「Plugin-Provided」「Subagent-Scoped MCP」「claude mcp serve」</span></div>
+  <div class="sec-lede">
+    <p><strong>数据库要只读</strong>。原文的 DBHub 例子特意加了警告：它的 <code>execute_sql</code> 会执行收到的任何 SQL，包括 UPDATE、DELETE、DROP。原文给的做法有两层：建一个只有 SELECT 权限的数据库用户（这才是真正的保护），再在 DBHub 的配置里打开只读模式（只读模式靠过滤 SQL 文本，历史上被绕过过）。永远别连生产库。</p>
+    <p>MCP 还可以从几个别的地方进来：<strong>插件</strong>（插件根目录的 <code>.mcp.json</code> 或 <code>plugin.json</code> 内联，用 <code>${CLAUDE_PLUGIN_ROOT}</code> 引用插件内的路径）；<strong>子代理</strong>（定义的 <code>mcpServers:</code> 字段，只在该子代理里可用，不与父代理和兄弟共享）；<strong>组织托管</strong>（<code>managed-mcp.json</code> 下发一组固定服务器；<code>allowedMcpServers</code> / <code>deniedMcpServers</code> 是 settings 的键，按 URL、启动命令或名字过滤，deny 优先）。反过来，<code>claude mcp serve</code> 能让 Claude Code 本身作为 MCP 服务器被别的应用调用。</p>
+    <p class="go">这些说法对不对？</p>
+  </div>
+  <div class="lab"><div id="mq"></div></div>
+  <div class="notes" id="n-more"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. MCP 和 Memory 的边界？推荐哪种传输、怎么加？</summary><p class="ans">Memory 存不怎么变的偏好、规范、历史；MCP 访问实时变化的外部数据和服务。推荐 HTTP：claude mcp add --transport http 名字 URL [--header ...]，支持 OAuth；本地进程用 stdio：claude mcp add --transport stdio 名字 -- 命令；SSE 已弃用；ws 只能写进 .mcp.json 或 add-json，只支持请求头认证。</p></details>
+    <details><summary>2. 不带 --scope 写到哪？团队共享用什么？密钥怎么办？</summary><p class="ans">默认 local：写进 ~/.claude.json 的当前项目下，只有你、只在本项目。团队共享用 --scope project，写进项目根 .mcp.json 提交到 git，队友首次使用要确认；user 也在 ~/.claude.json，所有项目可用。密钥不进文件：用 ${VAR} 或 ${VAR:-默认值} 引用环境变量，或用 OAuth、headersHelper。多层同名时 local 优先。</p></details>
+    <details><summary>3. MCP 多了上下文被什么占掉？有什么办法？</summary><p class="ans">工具定义和中间结果。Claude Code 默认 Tool Search，工具定义按需发现，alwaysLoad 慎用；输出超过 1 万 tokens 警告、默认 2.5 万上限，更大的存文件只给路径；超过 2 分钟的调用自动转后台。原文还介绍了让代理写代码调用 MCP 的思路：数据在执行环境里流转，博客例子从约 15 万 tokens 降到约 2 千，但需要沙箱和额外基础设施，服务器很多时才划算。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 它解决什么 ---------- */
+$('#fcMcp').innerHTML = CH.file('.mcp.json（项目根，提交进 git）', CH.esc('{\n  "mcpServers": {\n    "github": {\n      "type": "http",\n      "url": "https://api.githubcopilot.com/mcp/",\n      "headers": {\n        "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"\n      }\n    }\n  }\n}'), '令牌放环境变量') +
+  '<p class="note">据原文 github-mcp.json。等价命令：<code>claude mcp add --scope project --transport http github https://api.githubcopilot.com/mcp/ --header "Authorization: Bearer YOUR_GITHUB_PAT"</code>（命令行写死令牌时就别提交了）。</p>';
+S.notes($('#n-what'), {
+  c: [
+    ['MCP', 'Model Context Protocol：访问外部工具、API、实时数据的标准接口。'],
+    ['MCP vs Memory', 'Memory 存不变的；MCP 取实时变的。'],
+    ['三种形态', '工具（mcp__服务器__工具）、prompt（/mcp__服务器__prompt）、资源（@服务器:协议://路径）。']
+  ],
+  p: [
+    ['动态工具', '服务器发 list_changed，工具列表自动更新，不用重连。'],
+    ['Elicitation', '服务器可中途弹窗向你要结构化输入。'],
+    ['MCP Apps', '工具调用可返回交互式界面。']
+  ]
+});
+
+/* ---------- 添加服务器 ---------- */
+var BD = { tp: 'http', sc: 'local' };
+var BDDEF = {
+  http: ['URL', 'https://api.githubcopilot.com/mcp/', '请求头', 'Authorization: Bearer ${GITHUB_PAT}'],
+  sse: ['URL', 'https://example.com/sse', '请求头', ''],
+  stdio: ['启动命令（-- 之后）', 'npx -y @bytebase/dbhub --config ./dbhub.toml', '环境变量', 'DATABASE_URL=${DATABASE_URL}'],
+  ws: ['URL', 'wss://mcp.example.com/socket', '请求头', 'Authorization: Bearer ${TOKEN}']
+};
+function bdSet(tp) {
+  var d = BDDEF[tp];
+  $('#bdTL').firstChild.textContent = d[0]; $('#bdTarget').value = d[1];
+  $('#bdXL').firstChild.textContent = d[2]; $('#bdX').value = d[3];
+}
+function bd() {
+  var n = $('#bdName').value.trim() || 'myserver', t = $('#bdTarget').value.trim(), x = $('#bdX').value.trim(), cmd, where, out = '';
+  var sc = BD.sc === 'local' ? '' : ' --scope ' + BD.sc;
+  where = BD.sc === 'project' ? '项目根 .mcp.json（提交进 git，队友首次使用需确认）' : BD.sc === 'user' ? '~/.claude.json（用户级，你的所有项目）' : '~/.claude.json 中当前项目路径下（只有你、只在本项目）';
+  if (BD.tp === 'ws') {
+    cmd = 'claude mcp add-json' + sc + ' ' + n + " '" + JSON.stringify({ type: 'ws', url: t, headers: x ? (function () { var o = {}; var i = x.indexOf(':'); o[x.slice(0, i).trim()] = x.slice(i + 1).trim(); return o; })() : undefined }) + "'";
+    out = '<p class="note"><code>--transport</code> 不接受 ws：只能用 <code>add-json</code> 或直接写进 <code>.mcp.json</code>。认证只有请求头，没有 OAuth。</p>';
+  } else if (BD.tp === 'stdio') {
+    cmd = 'claude mcp add' + sc + ' --transport stdio ' + n + (x ? ' --env ' + x : '') + ' -- ' + t;
+    out = '<p class="note"><code>--</code> 之后整段是要启动的命令。原生 Windows 上写成 <code>-- cmd /c npx …</code>。</p>';
+  } else {
+    cmd = 'claude mcp add' + sc + ' --transport ' + BD.tp + ' ' + n + ' ' + t + (x ? ' --header "' + x + '"' : '');
+    out = BD.tp === 'sse' ? '<p class="note">SSE 已弃用，能用 http 就用 http。</p>' : '<p class="note">支持 OAuth 的服务器可以不带请求头，用 <code>/mcp</code> 或 <code>claude mcp login ' + CH.esc(n) + '</code> 授权。</p>';
+  }
+  $('#bdOut').innerHTML = CH.file('终端', CH.esc(cmd)) + '<p class="ch-q"><b>写到：</b>' + where + '</p>' + out;
+}
+S.seg($('#tpSeg'), function (v) { BD.tp = v; bdSet(v); bd(); });
+S.seg($('#scSeg'), function (v) { BD.sc = v; bd(); });
+['#bdName', '#bdTarget', '#bdX'].forEach(function (s) { $(s).addEventListener('input', bd); });
+bd();
+S.notes($('#n-add'), {
+  c: [
+    ['http', '推荐；远程服务器，支持 OAuth 和 --header。'],
+    ['stdio', '本机进程；<code>-- 命令</code>，<code>--env K=V</code>。'],
+    ['sse', '已弃用，仍支持。'],
+    ['ws', '服务器主动推事件；只能 .mcp.json 或 add-json；只有请求头认证。']
+  ],
+  p: [
+    ['管理', '<code>claude mcp list / get / remove / add-json / login / logout</code>。'],
+    ['会话里', '<code>/mcp</code>：状态、工具数、OAuth。'],
+    ['streamable-http', 'JSON 配置里是 http 的别名。'],
+    ['项目根路径', 'stdio 环境里有 <code>CLAUDE_PROJECT_DIR</code>；配置里写 <code>${CLAUDE_PROJECT_DIR:-.}</code>。']
+  ]
+});
+
+/* ---------- 作用域 ---------- */
+CH.cfg($('#scq'), [
+  { path: '终端', code: 'claude mcp add --transport http notion https://mcp.notion.com/mcp',
+    q: '没带 --scope，这个服务器写到哪里、谁能用？', opts: ['项目 .mcp.json，团队共享', '~/.claude.json 当前项目下，只有你、只在本项目', '~/.claude.json，所有项目'], a: 1,
+    why: '默认 local。老版本里 local 叫 project，所以老文章里的“project”可能指的是现在的 local。' },
+  { path: '.mcp.json', code: '{\n  "mcpServers": {\n    "api": {\n      "type": "http",\n      "url": "${API_BASE_URL:-https://api.example.com}/mcp",\n      "headers": { "Authorization": "Bearer ${API_KEY}" }\n    }\n  }\n}',
+    q: '你的 shell 里设了 API_KEY，没设 API_BASE_URL。连到哪？', opts: ['连不上，变量缺失直接报错', '连 https://api.example.com/mcp，带你的 API_KEY', '连字面量 ${API_BASE_URL}/mcp'], a: 1,
+    why: '<code>${VAR:-默认值}</code> 在变量未设置时用默认值。没有默认值的 <code>${VAR}</code> 缺失时会保留字面量并在 list 和 /mcp 里提示。' },
+  { path: '同一个 github 服务器的两处定义', code: '.mcp.json            → github: 团队的只读令牌\n~/.claude.json(local) → github: 你自己的令牌',
+    q: '你本机会话里用的是哪一个？', opts: ['项目的', 'local 的', '两个都连上，各起一个名字'], a: 1,
+    why: '原文：同一服务器在多个作用域都有定义时，local 配置优先，用来在本机覆盖项目或用户级配置。' },
+  { path: '队友 clone 了仓库，里面有 .mcp.json', code: '{\n  "mcpServers": {\n    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/" }\n  }\n}',
+    q: '他第一次在这个项目里启动 Claude Code，会怎样？', opts: ['静默连接', '弹出确认，批准后才使用', '忽略，项目级 MCP 需要管理员开启'], a: 1,
+    why: '项目作用域的服务器首次使用要确认；在不受信任的目录里还要先接受信任对话框。批准记录可用 <code>claude mcp reset-project-choices</code> 重置。' }
+]);
+S.notes($('#n-scope'), {
+  c: [
+    ['local（默认）', '<code>~/.claude.json</code> 当前项目下：只有你、只在本项目。'],
+    ['project', '项目根 <code>.mcp.json</code>：提交共享，首次使用需确认。'],
+    ['user', '<code>~/.claude.json</code>：你的所有项目。']
+  ],
+  p: [
+    ['同名覆盖', 'local 优先。'],
+    ['变量展开', '<code>${VAR}</code>、<code>${VAR:-默认}</code>，适用于 command、args、env、url、headers。'],
+    ['密钥', '永远放环境变量，别提交令牌；定期轮换、尽量只读。'],
+    ['旧名字', 'local 原叫 project，user 原叫 global。']
+  ]
+});
+
+/* ---------- 上下文开销 ---------- */
+S.guess($('#gsMcp'), {
+  q: '把一份 2 小时会议纪要从 Google Drive 搬到 Salesforce。直接调用 MCP 工具时约 150,000 tokens；改成让代理写代码调用，大约剩多少？',
+  unit: 'tokens', ans: 2000, fmt: function (x) { return Math.round(x).toLocaleString(); },
+  why: '原文引用 Anthropic 工程博客：约 150,000 降到约 2,000，减少 98.7%。原因是工具定义按需浏览、纪要在执行环境里直接从一个工具流到另一个，不经过模型。代价是要有安全的沙箱、监控和额外基础设施。'
+});
+S.notes($('#n-ctx'), {
+  c: [
+    ['Tool Search', 'MCP 工具默认延后加载、按需发现。'],
+    ['alwaysLoad', '服务器级 <code>"alwaysLoad": true</code> 跳过延后；慎用。'],
+    ['写代码调用 MCP', '工具当带类型的函数，数据在执行环境里流转，只交回结果（原文引用的博客思路）。']
+  ],
+  p: [
+    ['ENABLE_TOOL_SEARCH', '不设=全部延后；<code>auto</code>/<code>auto:N</code> 按阈值；<code>false</code> 关闭。'],
+    ['输出阈值', '1 万 tokens 警告；默认上限 2.5 万，超了存文件；<code>MAX_MCP_OUTPUT_TOKENS</code>。'],
+    ['慢调用', '超过 2 分钟自动转后台。'],
+    ['描述截断', '重要信息写在工具描述开头。']
+  ]
+});
+
+/* ---------- 认证与排障 ---------- */
+CH.cards($('#tsq'), {
+  opts: ['claude mcp login 重新认证', '检查 URL 路径后缀', '远端问题，等或联系维护方', '检查令牌首尾空白'],
+  items: [
+    { t: '<code>claude mcp list</code> 显示：<code>github  ✗ 401 Unauthorized</code>', a: 0, why: '401/403：凭据坏了或过期。' },
+    { t: '<code>internal-docs  ✗ 404 Not Found</code>，URL 写的是 <code>https://docs.corp/api</code>', a: 1, why: '404：多半漏了 /mcp 或 /sse 后缀。' },
+    { t: '<code>jira  ✗ 503 Service Unavailable</code>', a: 2, why: '5xx 或超时：远端服务器挂了。' },
+    { t: '令牌是从聊天窗口复制的，Claude Code 提示配置值有首尾空白，认证一直失败。', a: 3, why: '用 <code>printf \'[%s]\\n\' "$TOKEN"</code> 看出隐藏的空格或换行，修剪后重试。' }
+  ]
+});
+S.notes($('#n-auth'), {
+  c: [
+    ['OAuth', '<code>/mcp</code> 走浏览器授权，令牌存系统钥匙串；可预配 client-id/secret/callback-port。'],
+    ['headersHelper', '动态生成请求头；401/403 时自动重新调用（v2.1.193）。'],
+    ['claude.ai 连接器', '自动可用；<code>ENABLE_CLAUDEAI_MCP_SERVERS=false</code> 关闭。']
+  ],
+  p: [
+    ['排障第一步', '<code>claude mcp list</code> 看状态码和错误文本。'],
+    ['401/403 · 404 · 5xx', '重新登录 · 查路径后缀 · 远端故障。'],
+    ['headless 静默跳过', '看 stream-json init 事件的 <code>mcp_server_errors</code>。'],
+    ['SSH 里登录', '<code>claude mcp login 名字 --no-browser</code>。']
+  ]
+});
+
+/* ---------- 更多接入点 ---------- */
+S.quiz($('#mq'), [
+  { q: '给 Claude 接数据库，真正保护数据的是什么？', o: ['DBHub 的只读模式', '一个只有 SELECT 权限的数据库用户', '在 CLAUDE.md 里写“不要改数据”'], a: 1, why: '原文：只读模式靠过滤 SQL 文本，历史上被绕过过；只读数据库用户才是真正的保护。并且永远别连生产库。' },
+  { q: '子代理定义里用 <code>mcpServers:</code> 配的服务器，主对话能用吗？', o: ['能', '不能，只在该子代理的执行上下文里可用', '能，但要重启'], a: 1, why: '原文“子代理作用域的 MCP”：不与父代理和兄弟代理共享。' },
+  { q: '组织想禁止所有 http:// 明文的 MCP 服务器，应该写在哪？', o: ['managed-mcp.json 里', '托管 settings 的 deniedMcpServers，如 { "serverUrl": "http://*" }', '项目 .mcp.json'], a: 1, why: 'managed-mcp.json 只负责下发服务器，不负责过滤；allowedMcpServers/deniedMcpServers 是 settings 键，要放在托管设置源里才强制。deny 优先于 allow。' },
+  { q: '<code>claude mcp serve</code> 是做什么的？', o: ['启动一个 MCP 服务器市场', '把 Claude Code 本身作为 stdio MCP 服务器给别的应用用', '重启所有 MCP 连接'], a: 1, why: '可以在另一个 Claude Code 里 <code>claude mcp add --transport stdio claude-agent -- claude mcp serve</code>，让一个实例编排另一个。' }
+]);
+S.notes($('#n-more'), {
+  c: [
+    ['插件 MCP', '插件根 <code>.mcp.json</code> 或 plugin.json 内联；<code>${CLAUDE_PLUGIN_ROOT}</code>。'],
+    ['子代理 MCP', '定义里 <code>mcpServers:</code>，只在该子代理可用。'],
+    ['托管 MCP', '<code>managed-mcp.json</code> 下发；<code>allowedMcpServers</code>/<code>deniedMcpServers</code> 过滤，deny 优先。'],
+    ['claude mcp serve', 'Claude Code 作为 MCP 服务器。']
+  ],
+  p: [
+    ['数据库', '只读用户 + 只读模式；别连生产。'],
+    ['安全清单（原文）', '凭据进环境变量、按月轮换、只读令牌、最小权限、别以 root 跑、别公开暴露端点。'],
+    ['allowManagedMcpServersOnly', '与 allowlist 放在同一托管源，否则各层 allowlist 会合并。']
+  ]
+});
+
+CH.tryNow($('#try'), '6', [
+  { t: '跑一次 <code>claude mcp list</code>', d: '看看你现在连着哪些服务器、各在哪个作用域、有没有失败的；会话里再用 <code>/mcp</code> 看每个服务器的工具数。' },
+  { t: '把一个写死令牌的 MCP 配置改成 <code>${VAR}</code> 引用', d: '令牌移到 shell 环境变量，配置才能放心提交。' },
+  { t: '给团队常用的一个只读服务（如内部 Gitea 或文档站）写一份项目级 <code>.mcp.json</code>', d: '用 <code>--scope project</code> 添加，提交后让同事试一次首次确认流程。' }
+]);

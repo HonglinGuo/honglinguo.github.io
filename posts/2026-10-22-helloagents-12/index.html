@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>性能评估：基准、指标与 LLM Judge</title>
+<meta name="description" content="Hello-Agents 学习笔记（十二）：智能体评估的三大难点与主流基准；BFCL 的四个类别与 AST 匹配（可交互的匹配器）；GAIA 的三级难度、准精确匹配归一化与下降率；用 LLM Judge、Win Rate、人工验证评估 AIME 风格的生成数据；分层评估与持续监控。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Cpath d='M12 3.5v4M20.5 12h-4M12 20.5v-4M3.5 12h4' stroke='%2313171C' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/helloagents.css">
+<script src="../study-shared/helloagents.js"></script>
+<style>
+.ast-in, .qem-in { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+.ast-in label, .qem-in label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; color: var(--ink-3); }
+.ast-in input, .qem-in input { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 7px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); }
+@media (max-width: 640px) { .ast-in, .qem-in { grid-template-columns: minmax(0, 1fr); } }
+.verdict { margin-top: 10px; font-size: 16px; line-height: 1.75; color: var(--ink-2); }
+.verdict code { font-family: var(--f-num); font-size: 15px; background: var(--bg); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+.verdict .ok { color: var(--ok); font-weight: 700; }
+.verdict .bad { color: var(--alert); font-weight: 700; }
+.jt { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 15px; }
+.jt th, .jt td { border-bottom: 1px solid var(--hair); padding: 6px 8px; text-align: center; }
+.jt th { color: var(--ink-3); font-weight: 600; }
+.jt td:first-child, .jt th:first-child { text-align: left; }
+.jt select { font: inherit; font-family: var(--f-num); font-size: 15px; padding: 2px 4px; border: 1px solid var(--rule); border-radius: 4px; background: var(--bg); color: var(--ink); }
+.jt td.avg { font-family: var(--f-num); font-weight: 700; }
+.jt td.pass { color: var(--ok); }
+.jt td.fail { color: var(--alert); }
+.kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.kpi div { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; background: var(--bg); text-align: center; }
+.kpi div b { display: block; font-family: var(--f-num); font-size: 26px; color: var(--ink); }
+.kpi div span { font-size: 15px; color: var(--ink-3); }
+</style>
+</head>
+<body data-series="helloagents-series" data-part="12">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Hello-Agents · 12</span><span>对应原书第 12 章</span><span>约 35 分钟</span></p>
+  <h1>没有评估，<em>就不知道改得对不对</em></h1>
+  <p class="lead">换了提示词、换了模型、加了工具，智能体到底变好了没有？第十二章给 HelloAgents 加上评估系统，选了三个场景：用 BFCL 测工具调用是否调得对，用 GAIA 测真实任务能否做成，用 LLM Judge、Win Rate 和人工打分测生成数据的质量。这一篇把三种判分方法都做成可以动手试的小工具：给一个函数调用看 AST 匹配怎么判，给一个答案看 GAIA 怎么归一化，给一组评分看及格率怎么算。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">Hello-Agents：从零开始构建智能体</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 14 日的仓库版本）的学习笔记。原书十六章，按“概念 → 手写范式 → 平台与框架 → 自研框架 → 记忆、上下文、协议、训练、评估 → 综合案例”展开，代码量很大。这里重排成十三篇，用自己的话重讲：代码只保留能看清机制的骨架，做成可以逐行走读、可以填空回忆的互动；每篇末尾配原书面试题清单里的相关题目做口述演练。每节标出对应的原书章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-22-helloagents/"><b>总览</b>复习台</a>
+  <a href="../2026-10-22-helloagents-1/" data-part="1"><b>01</b>初识智能体</a>
+  <a href="../2026-10-22-helloagents-2/" data-part="2"><b>02</b>发展史</a>
+  <a href="../2026-10-22-helloagents-3/" data-part="3"><b>03</b>LLM 基础</a>
+  <a href="../2026-10-22-helloagents-4/" data-part="4"><b>04</b>经典范式</a>
+  <a href="../2026-10-22-helloagents-5/" data-part="5"><b>05</b>低代码平台</a>
+  <a href="../2026-10-22-helloagents-6/" data-part="6"><b>06</b>框架实践</a>
+  <a href="../2026-10-22-helloagents-7/" data-part="7"><b>07</b>自建框架</a>
+  <a href="../2026-10-22-helloagents-8/" data-part="8"><b>08</b>记忆与检索</a>
+  <a href="../2026-10-22-helloagents-9/" data-part="9"><b>09</b>上下文工程</a>
+  <a href="../2026-10-22-helloagents-10/" data-part="10"><b>10</b>通信协议</a>
+  <a href="../2026-10-22-helloagents-11/" data-part="11"><b>11</b>Agentic RL</a>
+  <a href="../2026-10-22-helloagents-12/" aria-current="page" data-part="12"><b>12</b>性能评估</a>
+  <a href="../2026-10-22-helloagents-13/" data-part="13"><b>13</b>综合案例</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">为什么难</a><a href="#bfcl">BFCL 工具调用</a><a href="#gaia">GAIA 通用能力</a><a href="#judge">生成数据评估</a><a href="#ops">分层与持续评估</a><a href="#iv">面试演练</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>评估智能体为什么比测试传统软件难？主流基准按评估对象怎么分？</li>
+    <li>BFCL 的 AST 匹配和 GAIA 的准精确匹配分别怎么判对错？为什么各用各的？</li>
+    <li>评估生成数据时，LLM Judge、Win Rate、人工验证各负责什么？LLM Judge 有哪些偏见？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>为什么智能体评估难</h2><span class="meta">原书 12.1 节</span></div>
+  <div class="sec-lede">
+    <p>评估要回答三个问题：智能体有没有预期的能力？在不同任务上表现如何？和别人比处在什么水平？它的价值是把“感觉变好了”变成数字：量化表现、客观比较方案、发现弱点、向用户证明可靠。和传统软件测试相比，原书列了三个独特难点：<strong>输出不确定</strong>（同一问题可能有多个正确答案，很难简单判对错）、<strong>标准多样</strong>（工具调用要查函数签名，问答要看语义相似）、<strong>成本高</strong>（每次评估都要大量 API 调用，可能花掉数百元）。</p>
+    <p>应对办法是标准化的<strong>基准（Benchmark）</strong>：统一的数据集、指标和评分方法。原书按评估对象分三类：<strong>工具调用</strong>（BFCL：伯克利，1120+ 样本，四个类别，AST 匹配；ToolBench：清华，16000+ 真实 API 场景；API-Bank：微软，53 个常用 API）；<strong>通用能力</strong>（GAIA：Meta 与 Hugging Face，466 个真实问题，三级难度，准精确匹配；AgentBench：清华，8 个领域；WebArena：CMU，真实网页环境）；<strong>多智能体协作</strong>（ChatEval、SOTOPIA，或者自定义协作场景）。常用指标也分四类：准确性（Accuracy、Exact Match、F1）、效率（响应时间、Token 用量）、鲁棒性（错误率、故障恢复）、协作（通信效率、任务完成度）。HelloAgents 的评估模块按 Dataset、Evaluator、Metrics 三层组织，并照例封装成 Tool。</p>
+    <p class="go">每个基准评的是哪类能力？</p>
+  </div>
+  <div class="lab"><div id="benchSort"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="bfcl">
+  <div class="part-head"><h2>BFCL：函数调用调得对不对</h2><span class="meta">原书 12.2 节，表 12.1–12.2</span></div>
+  <div class="sec-lede">
+    <p>工具调用要做四件事：理解需求、选对工具、填对函数名和参数、处理复杂场景。BFCL 用四个难度递增的类别覆盖它们：<strong>simple</strong>（一个函数调一次）、<strong>multiple</strong>（给多个候选函数，要选对那一个）、<strong>parallel</strong>（一次请求要并行发出多个调用）、<strong>irrelevance</strong>（给的函数都不相关，正确做法是<strong>不调用</strong>）。每个样本有 question、可用的 function 列表（签名与描述）和 ground_truth。数据推荐从官方 gorilla 仓库克隆（含 possible_answer 标准答案），用 <code>BFCLDataset</code> 加载，也可以用官方 <code>bfcl evaluate</code> 命令行评估，结果与排行榜一致。</p>
+    <p>判分用 <strong>AST 匹配</strong>而不是字符串比较：把调用解析成抽象语法树再比较结构。三个条件：<strong>函数名精确一致</strong>（get_weather 和 get_temperature 是两个函数）；<strong>参数键值对集合相等</strong>（f(a=1, b=2) 等价于 f(b=2, a=1)）；<strong>参数值语义等价</strong>（单双引号不同的字符串视为相同）。多个调用时数量要相同、每个都要匹配，但顺序可以不同。指标是准确率、分类准确率、加权准确率（按类别权重求和）和错误率。原书的例子：simple 0.95、multiple 0.82、parallel 0.68，三类等权平均 0.817。</p>
+    <p class="go">在左边写模型的调用，右边写标准答案，看 AST 匹配怎么判（下面的匹配器是按原书描述写的简化版）。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="astEx"></div>
+    <div class="ast-in">
+      <label>模型输出<input id="astP" value='get_weather(city="Beijing", unit="celsius")'></label>
+      <label>标准答案<input id="astG" value="get_weather(unit='celsius', city='Beijing')"></label>
+    </div>
+    <div class="verdict" id="astOut"></div>
+  </div>
+  <div class="lab"><p class="lab-t">这条样本属于哪个类别？</p><div id="catCards"></div></div>
+  <div class="confuse">
+    <h4>读原文时值得多想一步：2 + 3 真的等于 5 吗</h4>
+    <p>原书说 AST 匹配“允许等价表达式（f(x=2+3) 等价于 f(x=5)）”。但据我了解，BFCL 官方检查器的做法是把每个参数值和标准答案里给出的<b>一组可接受取值</b>逐一比对（比如 unit 可以是 "celsius" 或省略），并不会去计算表达式。所以“等价”主要来自标注时列出的多个可接受答案，而不是自动推导。这是我的补充，具体以官方实现为准。</p>
+  </div>
+  <div class="notes" id="n-bfcl"></div>
+</section>
+
+<section class="part" id="gaia">
+  <div class="part-head"><h2>GAIA：真实任务做不做得成</h2><span class="meta">原书 12.3 节，表 12.3–12.4</span></div>
+  <div class="sec-lede">
+    <p>GAIA 的理念是<strong>真实世界的问题往往需要多种能力综合运用</strong>：多步推理、知识运用、多模态理解、网页浏览、文件操作。466 道题分三级难度，Level 1 几乎不用或只用一两步，Level 3 需要长链条的复杂推理。样本带 Question、Level、Final answer、可能的附件文件，以及标注者给出的步骤和所需工具。它是<strong>受限数据集</strong>，要先在 Hugging Face 申请权限并设置 HF_TOKEN；结果可以提交到官方排行榜。</p>
+    <p>判分用<strong>准精确匹配（Quasi Exact Match）</strong>：先归一化再精确比较。数字去掉千分位逗号和 $、% 等单位；字符串转小写、去冠词、合并空格、去末尾标点；列表按逗号切开、每项归一化、排序后再拼起来。为了让答案能被这样比较，GAIA 规定了官方系统提示词：思考之后必须以 <code>FINAL ANSWER: [答案]</code> 结尾，答案要么是一个数、要么尽量少的词、要么逗号分隔的列表；数字不写逗号和单位，字符串不用冠词和缩写。指标除了精确匹配率和分级准确率，还有<strong>难度递进下降率</strong> (Acc<sub>ℓ</sub> − Acc<sub>ℓ+1</sub>) / Acc<sub>ℓ</sub>，衡量难度升高时能力衰减得多快。</p>
+    <p class="go">输入模型答案和标准答案，看归一化后是否一致；再算一道下降率。</p>
+  </div>
+  <div class="lab">
+    <div class="btnrow" id="qemEx"></div>
+    <div class="qem-in">
+      <label>模型答案<input id="qemP" value="The United States"></label>
+      <label>标准答案<input id="qemG" value="united states"></label>
+    </div>
+    <div class="verdict" id="qemOut"></div>
+  </div>
+  <div class="lab"><div id="dropGuess"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：AST 匹配 vs 准精确匹配</h4>
+    <p>两者都是“先规范化再比较”，规范化的对象不同。<b>AST 匹配</b>规范的是<b>调用结构</b>：函数名、参数集合、参数值，因为工具调用的答案是一段结构化的代码。<b>准精确匹配</b>规范的是<b>答案文本的写法</b>：大小写、冠词、标点、单位，因为 GAIA 的答案是一个短事实。两者都无法处理真正的语义等价（“四十二”和“42”），这正是原书习题 3 追问的：需要更智能的匹配时，可以引入数值解析、同义词表，或者 LLM 判断。</p>
+  </div>
+  <div class="notes" id="n-gaia"></div>
+</section>
+
+<section class="part" id="judge">
+  <div class="part-head"><h2>评估生成数据：LLM Judge、Win Rate、人工</h2><span class="meta">原书 12.4 节</span></div>
+  <div class="sec-lede">
+    <p>第三个场景是评估“让智能体造数据”的质量。原书用 HelloAgents 生成 <strong>AIME 风格</strong>的数学题（美国数学邀请赛，答案都是 0 到 999 的整数，覆盖代数、几何、数论、组合、概率，难度相当于 AIME 第 6 到 9 题），从 900 多道历年真题里随机挑参考样例做风格示范，用英文生成以便与真题公平对比。一个工程细节：题目里的 LaTeX 反斜杠（\frac、\sqrt）在 JSON 里是非法转义，解析前要用正则把未转义的反斜杠加倍。</p>
+    <p>三种方法分工：<strong>LLM Judge</strong> 从<strong>正确性、清晰度、难度匹配、完整性</strong>四个维度给每道题打 1 到 5 分，汇总成<strong>平均分</strong>、<strong>及格率</strong>（平均 ≥ 3.5 的比例）和<strong>优秀率</strong>（≥ 4.5），并给出理由和改进建议；<strong>Win Rate</strong> 把生成题和 AIME 2025 真题成对比较，统计胜、负、平，<strong>理想值约 50%</strong>（生成质量接近真题），明显低于说明要改生成策略，明显高于则可能是评委有偏；<strong>人工验证</strong>用 Gradio 界面逐题看题目、答案和解答，四维打分并标注通过、拒绝或需修改，主要用来核实答案的正确性，也能发现创新性、趣味性这类自动评估看不到的东西。最后汇总成一份综合报告。</p>
+    <p class="go">改几道题的四维评分，看三个指标怎么变（评分为示意）。</p>
+  </div>
+  <div class="lab">
+    <table class="jt" id="jt"></table>
+    <div class="kpi" id="kpi"></div>
+  </div>
+  <div class="lab"><p class="lab-t">LLM 当评委，可能偏向什么？</p><div id="biasCards"></div></div>
+  <div class="notes" id="n-judge"></div>
+</section>
+
+<section class="part" id="ops">
+  <div class="part-head"><h2>分层评估与持续监控</h2><span class="meta">原书 12.5 节，习题 5</span></div>
+  <div class="sec-lede">
+    <p>原书小结给了四个扩展方向：按 Dataset、Evaluator、Metrics 三件套<strong>添加新基准</strong>；按场景<strong>自定义指标</strong>；<strong>接入 CI/CD</strong>（每次提交自动跑评估、设阈值防止退化、报告归档）；把生成数据评估扩展到代码、对话等更多数据类型。习题 5 再追问了两个工程问题：评估成本和质量怎么权衡（<strong>分层评估</strong>：日常迭代跑快速的小样本，版本发布前跑标准集，重大更新或对外发布才跑全量加人工），以及外部 API 和用户需求变化导致性能漂移怎么办（<strong>持续评估</strong>：定时跑固定评估集，记录趋势，跌破阈值告警，线上抽样做人工复核）。</p>
+    <p class="go">下面每项评估放在哪一层最合适？</p>
+  </div>
+  <div class="lab"><div id="tierCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>评估方法论（离线集、在线 A/B、轨迹评估）见<a href="../2026-10-16-agent-7/">《深入理解 AI Agent》07 篇</a>；企业里的可观测、资产与行为验证见<a href="../2026-10-22-handbook-10/">《AI Agent Handbook》10 篇</a>与<a href="../2026-10-22-handbook-12/">12 篇</a>；奖励黑客与评测陷阱见<a href="../2026-10-19-modernrl-12/">《动手学现代强化学习》12 篇</a>。</div>
+  <div class="notes" id="n-ops"></div>
+</section>
+
+<section class="part" id="iv">
+  <div class="part-head"><h2>面试演练</h2><span class="meta">题目取自原书 Extra01 · 模型评估与 Agent 评估</span></div>
+  <div class="ivs">
+    <div class="iv" data-id="12-1">
+      <p class="iv-q">什么是 LLM-as-a-Judge？它有哪些优点和潜在偏见？<small>Extra01 · 评估第 3 题</small></p>
+      <ul class="iv-a">
+        <li><b>定义</b>：用一个 LLM 按给定标准给另一个模型的输出打分或做成对比较。</li>
+        <li><b>优点</b>：便宜、快、可规模化，标准一致，能给出理由，适合开放式输出。</li>
+        <li><b>偏见</b>：位置偏见（偏向先出现的答案）、长度偏见（偏向更长的）、自我偏好（偏向同家族模型的风格）、对自信语气和格式的偏好、在专业正确性上可能判错。</li>
+        <li><b>缓解</b>：交换顺序各评一次、细化评分量表和示例、多评委投票、用人工标注集校准一致性、关键任务保留人工复核。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="12-2">
+      <p class="iv-q">评估 Agent 为什么比评估一个基础 LLM 更难？维度有哪些不同？<small>Extra01 · 评估第 5 题</small></p>
+      <ul class="iv-a">
+        <li><b>更难的原因</b>：多步交互、路径不唯一；依赖外部环境和工具（会变、会失败）；结果可能是对环境的改变而不是一段文本；随机性导致同一任务多次结果不同；评估成本高。</li>
+        <li><b>维度</b>：除了最终任务成功率，还有过程质量（工具调用正确率、步数、是否走弯路）、效率与成本（时间、Token）、鲁棒性（工具失败后能否恢复）、安全性（是否越权、是否被注入）。</li>
+        <li><b>方法</b>：可复现的沙箱环境、按状态而非文本判定成功、每题多次运行看平均与方差。</li>
+      </ul>
+    </div>
+    <div class="iv" data-id="12-3">
+      <p class="iv-q">除了最终结果正确，评估 Agent 时还应关注哪些过程指标？上线后怎么持续监控？<small>Extra01 · 评估第 7、10 题</small></p>
+      <ul class="iv-a">
+        <li><b>过程指标</b>：步数与冗余调用、工具调用成功率与参数正确率、重试次数、Token 与延迟、人工介入率、失败后的恢复率。</li>
+        <li><b>上线监控</b>：固定回归集定时跑；线上指标（成功率、用户反馈、投诉、转人工率）看趋势；抽样轨迹做人工或 LLM 复核；依赖的模型或 API 变更时触发全量评估；设阈值告警。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 为什么难？基准怎么分？</summary><p class="ans">三大难点：输出不确定（多个正确答案）、标准多样（工具调用与问答需不同方法）、成本高（大量 API 调用）。基准按对象分：工具调用（BFCL、ToolBench、API-Bank）、通用能力（GAIA、AgentBench、WebArena）、多智能体协作（ChatEval、SOTOPIA、自定义场景）。</p></details>
+    <details><summary>2. AST 匹配与准精确匹配怎么判？为何各用各的？</summary><p class="ans">AST 匹配把函数调用解析成语法树：函数名精确一致、参数键值对集合相等（忽略顺序）、参数值语义等价（如引号不同）；多调用时数量相同、顺序可不同。准精确匹配先归一化再比较：数字去逗号和单位，字符串小写、去冠词、合并空格、去末尾标点，列表切分归一化后排序。工具调用的答案是结构化代码，所以比结构；GAIA 的答案是短事实，所以规范写法。</p></details>
+    <details><summary>3. 三种方法分工？Judge 有何偏见？</summary><p class="ans">LLM Judge 按正确性、清晰度、难度匹配、完整性打 1–5 分，算平均分、及格率（≥ 3.5）、优秀率（≥ 4.5）；Win Rate 与真题成对比较，理想约 50%；人工验证核实答案正确性并标注通过、拒绝、需修改，补充创新性等主观维度。LLM Judge 可能有位置偏见、长度偏见、自我偏好、对自信语气的偏好，以及专业正确性误判。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-22-helloagents-11/"><small>上一篇</small><span>11 · Agentic RL：从 SFT 到 GRPO</span></a><a class="nx" href="../2026-10-22-helloagents-13/"><small>下一篇</small><span>13 · 综合案例与毕业设计</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/hello-agents" rel="noopener">datawhalechina/hello-agents</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+S.sortGame($('#benchSort'), {
+  bins: [{ k: 't', t: '工具调用' }, { k: 'g', t: '通用能力' }, { k: 'm', t: '多智能体协作' }],
+  items: [
+    { t: 'BFCL（伯克利，AST 匹配）', k: 't', why: '函数调用准确性。' },
+    { t: 'GAIA（466 题，三级难度）', k: 'g', why: '真实世界任务的综合能力。' },
+    { t: 'ToolBench（16000+ 真实 API 场景）', k: 't', why: '复杂的真实工具使用。' },
+    { t: 'WebArena（真实网页环境）', k: 'g', why: '网页交互与任务完成。' },
+    { t: 'SOTOPIA（社交场景互动）', k: 'm', why: '智能体之间的社交协作。' },
+    { t: 'API-Bank（53 个常用 API）', k: 't', why: '对 API 文档的理解与调用。' },
+    { t: 'AgentBench（8 个领域）', k: 'g', why: '多领域通用能力。' },
+    { t: 'ChatEval（多智能体对话质量）', k: 'm', why: '多智能体对话系统。' }
+  ]
+});
+S.notes($('#n-why'), {
+  c: [
+    ['三大难点', '输出不确定、评估标准多样、评估成本高。'],
+    ['基准', '统一的数据集、指标与评分方法，使不同智能体可比。'],
+    ['HelloAgents 评估三层', 'Dataset（加载）、Evaluator（执行）、Metrics（计算），并封装成 Tool。']
+  ],
+  p: [
+    ['工具调用基准', 'BFCL、ToolBench、API-Bank。'],
+    ['通用能力基准', 'GAIA、AgentBench、WebArena。'],
+    ['四类指标', '准确性、效率、鲁棒性、协作。']
+  ]
+});
+
+/* ---------- AST 匹配 ---------- */
+function splitTop(s) {
+  var out = [], depth = 0, q = null, cur = '';
+  for (var i = 0; i < s.length; i++) {
+    var c = s[i];
+    if (q) { cur += c; if (c === q && s[i - 1] !== '\\') q = null; continue; }
+    if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    if (c === ')' || c === ']' || c === '}') depth--;
+    if (c === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur);
+  return out.map(function (x) { return x.trim(); }).filter(Boolean);
+}
+function parseCalls(s) {
+  s = s.trim();
+  if (!s) return { calls: [] };
+  var parts = splitTop(s.replace(/^\[|\]$/g, ''));
+  var calls = [];
+  for (var i = 0; i < parts.length; i++) {
+    var m = parts[i].match(/^([A-Za-z_][\w.]*)\s*\(([\s\S]*)\)$/);
+    if (!m) return { err: '无法解析：' + parts[i] };
+    var args = {};
+    var kv = splitTop(m[2]);
+    for (var j = 0; j < kv.length; j++) {
+      var e = kv[j].indexOf('=');
+      if (e < 0) return { err: '参数需要写成 key=value：' + kv[j] };
+      var k = kv[j].slice(0, e).trim(), v = kv[j].slice(e + 1).trim();
+      if (/^(['"]).*\1$/.test(v)) v = 's:' + v.slice(1, -1);
+      else if (!isNaN(+v)) v = 'n:' + (+v);
+      else v = 'x:' + v.replace(/\s+/g, '');
+      args[k] = v;
+    }
+    calls.push({ name: m[1], args: args });
+  }
+  return { calls: calls };
+}
+function sameCall(a, b) {
+  if (a.name !== b.name) return '函数名不同：' + a.name + ' vs ' + b.name;
+  var ka = Object.keys(a.args).sort(), kb = Object.keys(b.args).sort();
+  if (ka.join() !== kb.join()) return '参数键不同：{' + ka.join(', ') + '} vs {' + kb.join(', ') + '}';
+  for (var i = 0; i < ka.length; i++) if (a.args[ka[i]] !== b.args[ka[i]]) return '参数 ' + ka[i] + ' 的值不同：' + a.args[ka[i]].slice(2) + ' vs ' + b.args[ka[i]].slice(2);
+  return null;
+}
+function astRun() {
+  var P = parseCalls($('#astP').value), G = parseCalls($('#astG').value), out = '';
+  if (P.err || G.err) { $('#astOut').innerHTML = '<span class="bad">' + (P.err || G.err) + '</span>'; return; }
+  if (!G.calls.length) {
+    out = P.calls.length ? '<span class="bad">不匹配</span>：标准答案是不调用任何函数（irrelevance 类），模型却调用了 ' + P.calls.length + ' 个。' : '<span class="ok">匹配</span>：两边都没有调用，这正是 irrelevance 类要考的。';
+  } else if (P.calls.length !== G.calls.length) {
+    out = '<span class="bad">不匹配</span>：调用数量不同（' + P.calls.length + ' vs ' + G.calls.length + '）。多调用必须数量相同。';
+  } else {
+    var used = {}, reasons = [], ok = true;
+    G.calls.forEach(function (g) {
+      var hit = -1, why = '';
+      P.calls.forEach(function (p, i) { if (hit < 0 && !used[i]) { var r = sameCall(p, g); if (!r) hit = i; else why = r; } });
+      if (hit < 0) { ok = false; reasons.push(why); } else used[hit] = 1;
+    });
+    out = ok ? '<span class="ok">匹配</span>：函数名一致，参数集合相等（顺序、引号风格都不影响）' + (G.calls.length > 1 ? '，多个调用按集合比较，顺序可以不同。' : '。') : '<span class="bad">不匹配</span>：' + reasons.join('；');
+  }
+  $('#astOut').innerHTML = out + '<br><span style="color:var(--ink-3)">解析结果：' + P.calls.map(function (c) { return '<code>' + c.name + '{' + Object.keys(c.args).sort().map(function (k) { return k + '=' + c.args[k].slice(2); }).join(', ') + '}</code>'; }).join(' ') + '</span>';
+}
+var AEX = [
+  ['参数顺序不同', 'get_weather(city="Beijing", unit="celsius")', "get_weather(unit='celsius', city='Beijing')"],
+  ['函数名不同', 'get_temperature(city="Beijing")', 'get_weather(city="Beijing")'],
+  ['并行，顺序不同', 'get_weather(city="Shanghai"), get_weather(city="Beijing")', 'get_weather(city="Beijing"), get_weather(city="Shanghai")'],
+  ['漏了一个参数', 'book_flight(origin="PEK", dest="SHA")', 'book_flight(origin="PEK", dest="SHA", date="2026-11-01")'],
+  ['不该调用却调了', 'get_weather(city="Paris")', ''],
+  ['表达式 2+3', 'calculate(x=2+3)', 'calculate(x=5)']
+];
+AEX.forEach(function (e) {
+  var b = h('button', { class: 'btn', type: 'button', text: e[0] }, $('#astEx'));
+  b.addEventListener('click', function () { $('#astP').value = e[1]; $('#astG').value = e[2]; astRun(); if (e[0] === '表达式 2+3') $('#astOut').innerHTML += '<br>这个简化匹配器不计算表达式，所以判为不匹配；原书说 AST 匹配认为两者等价，见下方的说明框。'; });
+});
+['#astP', '#astG'].forEach(function (x) { $(x).addEventListener('input', astRun); });
+astRun();
+HB.cards($('#catCards'), {
+  opts: ['simple', 'multiple', 'parallel', 'irrelevance'],
+  items: [
+    { t: '“北京今天天气怎么样？”可用函数只有 get_weather。', a: 0, why: '一个函数调一次。' },
+    { t: '“北京今天天气怎么样？”可用函数有 get_weather、get_stock_price、send_email。', a: 1, why: '要在多个候选中选对。' },
+    { t: '“分别查一下北京、上海、广州的天气。”', a: 2, why: '一次请求发出三个并行调用。' },
+    { t: '“讲个笑话吧。”可用函数只有 get_weather。', a: 3, why: '没有相关函数，正确做法是不调用、直接回答。考的是“会不会乱调”。' }
+  ]
+});
+S.notes($('#n-bfcl'), {
+  c: [
+    ['BFCL 四类', 'simple（单调用）、multiple（多选一）、parallel（并行多调用）、irrelevance（不该调用）。'],
+    ['AST 匹配', '把调用解析为语法树比较：函数名精确一致、参数集合相等、参数值语义等价；多调用数量相同、顺序可不同。']
+  ],
+  p: [
+    ['指标', '准确率 = 匹配样本 / 总数；分类准确率；加权准确率 Σ w<sub>c</sub> · Acc<sub>c</sub>；错误率 = 1 − 准确率。'],
+    ['原书示例', 'simple 0.95、multiple 0.82、parallel 0.68，等权平均 0.817。'],
+    ['数据来源', '官方 gorilla 仓库 bfcl_eval/data 与 possible_answer；官方命令 bfcl evaluate。']
+  ]
+});
+
+/* ---------- 准精确匹配 ---------- */
+function normOne(s) {
+  var t = s.trim();
+  var num = t.replace(/[$,%\s]/g, '');
+  if (num !== '' && !isNaN(+num)) return String(+num);
+  t = t.toLowerCase().replace(/\s+/g, ' ').trim();
+  t = t.replace(/^(the|a|an)\s+/, '');
+  t = t.replace(/[.!?;:]+$/, '');
+  return t;
+}
+function norm(s) {
+  if (s.indexOf(',') >= 0 && !/^\s*\$?[\d,]+(\.\d+)?%?\s*$/.test(s)) {
+    return s.split(',').map(normOne).sort().join(',');
+  }
+  return normOne(s);
+}
+function qem() {
+  var p = $('#qemP').value, g = $('#qemG').value, np = norm(p), ng = norm(g);
+  $('#qemOut').innerHTML = '归一化：<code>' + np + '</code> vs <code>' + ng + '</code>　' + (np === ng ? '<span class="ok">匹配</span>' : '<span class="bad">不匹配</span>');
+}
+var QEX = [['The United States', 'united states'], ['$1,234.56', '1234.56'], ['Paris, London, Berlin', 'berlin, london, paris'], ['50%', '50'], ['forty-two', '42'], ['NYC', 'New York City']];
+QEX.forEach(function (e) {
+  var b = h('button', { class: 'btn', type: 'button', text: e[0] + ' / ' + e[1] }, $('#qemEx'));
+  b.addEventListener('click', function () { $('#qemP').value = e[0]; $('#qemG').value = e[1]; qem(); if (/forty|NYC/.test(e[0])) $('#qemOut').innerHTML += '<br>归一化处理不了语义等价，所以 GAIA 的提示词才要求“数字写阿拉伯数字、不用缩写”，把格式问题挡在生成阶段。'; });
+});
+['#qemP', '#qemG'].forEach(function (x) { $(x).addEventListener('input', qem); });
+qem();
+S.guess($('#dropGuess'), {
+  q: '原书表 12.4 的例子：Level 1 准确率 100%，Level 2 准确率 66.7%。从 Level 1 到 Level 2 的下降率是多少？（填百分数里的数字）',
+  unit: '%', ans: 33.3,
+  why: '(1.00 − 0.667) / 1.00 ≈ 33%。下降率越大，说明难度一升高能力就掉得越快；原书例子里 Level 3 为 50%，整体精确匹配率 70%。'
+});
+S.notes($('#n-gaia'), {
+  c: [
+    ['GAIA', 'Meta 与 Hugging Face 的通用助手基准，466 题，Level 1–3；受限数据集需申请。'],
+    ['准精确匹配', '先归一化再精确比较：数字去逗号单位；字符串小写、去冠词、合并空格、去末尾标点；列表切分排序。'],
+    ['下降率', '(Acc<sub>ℓ</sub> − Acc<sub>ℓ+1</sub>) / Acc<sub>ℓ</sub>，衡量难度升高时的能力衰减。']
+  ],
+  p: [
+    ['官方提示词要点', '以 FINAL ANSWER: [答案] 结尾；数字不带逗号和单位；字符串不用冠词和缩写；列表逗号分隔。'],
+    ['GAIA 考的能力', '多步推理、知识运用、多模态理解、网页浏览、文件操作。']
+  ]
+});
+
+/* ---------- LLM Judge ---------- */
+var JD = [[5, 5, 4, 5], [4, 4, 3, 4], [3, 4, 3, 3], [5, 4, 5, 4], [2, 3, 3, 2], [4, 5, 4, 4]];
+var DIMS = ['正确性', '清晰度', '难度匹配', '完整性'];
+function judge() {
+  var t = $('#jt');
+  t.innerHTML = '<tr><th>生成题</th>' + DIMS.map(function (d) { return '<th>' + d + '</th>'; }).join('') + '<th>平均</th></tr>';
+  var avgs = [];
+  JD.forEach(function (row, i) {
+    var tr = h('tr', null, t);
+    h('td', { text: '题 ' + (i + 1) }, tr);
+    row.forEach(function (v, j) {
+      var td = h('td', null, tr);
+      var sel = h('select', { 'aria-label': '题 ' + (i + 1) + ' ' + DIMS[j] }, td);
+      [1, 2, 3, 4, 5].forEach(function (x) { var o = h('option', { value: x, text: x }, sel); if (x === v) o.selected = true; });
+      sel.addEventListener('change', function () { JD[i][j] = +sel.value; judge(); });
+    });
+    var a = row.reduce(function (s, x) { return s + x; }, 0) / 4;
+    avgs.push(a);
+    h('td', { class: 'avg ' + (a >= 3.5 ? 'pass' : 'fail'), text: S.f(a, 2) }, tr);
+  });
+  var mean = avgs.reduce(function (s, x) { return s + x; }, 0) / avgs.length;
+  var pass = avgs.filter(function (x) { return x >= 3.5; }).length / avgs.length;
+  var ex = avgs.filter(function (x) { return x >= 4.5; }).length / avgs.length;
+  $('#kpi').innerHTML = '<div><b>' + S.f(mean, 2) + '</b><span>平均分（满分 5）</span></div><div><b>' + S.pct(pass, 0) + '</b><span>及格率（≥ 3.5）</span></div><div><b>' + S.pct(ex, 0) + '</b><span>优秀率（≥ 4.5）</span></div>';
+}
+judge();
+HB.cards($('#biasCards'), {
+  opts: ['位置偏见', '长度偏见', '自我偏好', '不是偏见'],
+  items: [
+    { t: 'Win Rate 对比时，把生成题放在 A 位置胜率 58%，交换成 B 位置只有 44%。', a: 0, why: '同样的两道题换个顺序结论就变，说明评委偏向某个位置。对策：每对比较两次、交换顺序。' },
+    { t: '解答写得越长，“完整性”分越高，哪怕后半段是重复的。', a: 1, why: '把篇幅当成质量。对策：在评分标准里明确“冗余扣分”，或控制长度后再比较。' },
+    { t: '用 A 家族的模型当评委时，A 家族生成的题平均分明显更高。', a: 2, why: '偏向自己熟悉的风格。对策：换不同家族的评委、多评委投票。' },
+    { t: '一道题答案算错了，评委给“正确性”打了 1 分。', a: 3, why: '这是评委正确履职。不过数学题答案最好再由人工或程序验证，这也是原书安排人工验证的原因。' }
+  ]
+});
+S.notes($('#n-judge'), {
+  c: [
+    ['LLM Judge', 'LLM 按正确性、清晰度、难度匹配、完整性四维打 1–5 分，并给理由与建议。'],
+    ['Win Rate', '生成题与真题成对比较，统计胜、负、平；理想约 50%。'],
+    ['人工验证', 'Gradio 界面四维打分并标注 approved / rejected / needs_revision，重点核实答案。']
+  ],
+  p: [
+    ['三个指标', '平均分；及格率（平均 ≥ 3.5）；优秀率（≥ 4.5）。'],
+    ['AIME 特点', '答案为 0–999 整数，多领域，多步推理不涉高深理论。'],
+    ['LaTeX 解析坑', '反斜杠在 JSON 中是非法转义，需先把未转义的反斜杠加倍。'],
+    ['Win Rate 解读', '明显低于 50% 改生成策略；明显高于 50% 先怀疑评委偏差。']
+  ]
+});
+
+/* ---------- 分层 ---------- */
+HB.cards($('#tierCards'), {
+  opts: ['快速（每次迭代）', '标准（发布前）', '全面（重大更新）', '持续（线上）'],
+  items: [
+    { t: '改了一句系统提示词，跑 BFCL simple 类 50 个样本看有没有明显退化。', a: 0, why: '低成本、几分钟出结果，适合日常开发。' },
+    { t: '版本发布前，BFCL 四类全量 + GAIA Level 1–2 + 固定回归集。', a: 1, why: '中等成本，覆盖主要能力，作为发布门槛。' },
+    { t: '换底座模型，全部基准加 GAIA Level 3，外加人工抽检 100 条轨迹。', a: 2, why: '成本高，但底座变化影响面大，值得做全面评估。' },
+    { t: '每晚定时跑回归集，成功率跌破阈值就告警。', a: 3, why: '应对外部 API 和依赖变化导致的性能漂移。' }
+  ]
+});
+S.notes($('#n-ops'), {
+  c: [
+    ['分层评估', '快速（日常迭代小样本）、标准（发布前全量）、全面（重大更新 + 人工）。'],
+    ['持续评估', '定时跑固定集、记录趋势、阈值告警、线上抽样复核。']
+  ],
+  p: [
+    ['扩展新基准', '按 Dataset、Evaluator、Metrics 三件套实现并封装成 Tool。'],
+    ['接入 CI/CD', '提交即评估，设阈值防退化，报告归档。']
+  ]
+});
+})();
+</script>
+</body>
+</html>

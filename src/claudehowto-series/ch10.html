@@ -1,0 +1,287 @@
+---
+title: 规划、思考与权限模式
+desc: Claude How To 学习笔记（十）：Plan Mode 先规划后动手；扩展思考与 effort 强度的几种设法；六种权限模式在同一组操作上的表现对照模拟；auto 模式的分类器、默认拦截与放行、$defaults 与 hard_deny；权限规则的写法与合并；OS 级沙箱。权限模式、权限规则、沙箱三者的分工。
+kicker: <span>技术学习</span><span>Claude How To · 10</span><span>对应原文 09-advanced-features（规划、思考、权限、沙箱）</span><span>约 35 分钟</span>
+h1: 让它<em>想多深</em>、<em>能做多少</em>，分开调
+lead: 原教程的“高级功能”一章很长，这一篇挑出其中决定 Claude 行为边界的部分：规划模式让它先出方案再动手；扩展思考和 effort 决定它想多深；权限模式决定哪些操作不用问你；权限规则、auto 模式的分类器和沙箱，从不同层面限制它能碰什么。这些设置之间容易混：plan 是一种权限模式，auto 也是；hook 的 allow 推翻不了 deny 规则；沙箱管的是 Bash 子进程，不是 Claude 的编辑工具。
+nav: plan|规划模式;think|思考与强度;modes|六种权限模式;auto|auto 模式;rules|权限规则;sandbox|沙箱;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.pm { width: 100%; border-collapse: collapse; font-size: 15px; }
+.pm th, .pm td { padding: 8px 8px; border-bottom: 1px solid var(--hair); text-align: left; vertical-align: middle; }
+.pm th { color: var(--ink-3); font-weight: 600; }
+.pm td:first-child { color: var(--ink); }
+.pm td code { font-family: var(--f-num); font-size: 15px; }
+.pm tr.on td { background: var(--s1-soft); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>什么任务该用 Plan Mode，什么不该？进入它有哪几种方式？plan 模式下能改文件吗？</li>
+    <li>六种权限模式各自“不用问你就能做”的范围是什么？auto 模式靠什么判断，默认拦什么、放什么？</li>
+    <li>权限模式、权限规则（allow/ask/deny）、沙箱各管什么？哪个能拦住 Bash 子进程访问网络？</li>
+  </ol>
+</div>
+
+<section class="part" id="plan">
+  <div class="part-head"><h2>规划模式：先出方案，再动手</h2><span class="meta">原文「Planning Mode」</span></div>
+  <div class="sec-lede">
+    <p>规划模式分两段：<strong>规划阶段</strong> Claude 分析任务、写出详细的实施计划；你审阅、修改、批准之后，进入<strong>实施阶段</strong>按计划执行。原文给的适用场景：多文件的复杂重构、新功能、架构调整、数据库迁移、大的 API 改版；不适合：简单 bug、格式调整、单文件修改、快速提问。</p>
+    <p>进入方式有四种：<code>/plan 描述</code>；启动时 <code>claude --permission-mode plan</code>；会话里 <kbd>Shift+Tab</kbd> 在权限模式间切换；设成默认 <code>"permissions": {"defaultMode": "plan"}</code>。计划可以按 <kbd>Ctrl+G</kbd> 在外部编辑器里改；计划文件按产生它的提示词命名（v2.1.112）。模型别名 <code>opusplan</code> 表示用 Opus 规划、Sonnet 执行。两条行为规则要记住：v2.1.136 起 plan 模式<strong>无条件禁止写文件</strong>，即使 allow 里有匹配的 Edit 规则；v2.1.218 起如果 auto 模式可用（<code>useAutoModeDuringPlan</code> 默认开），规划期间的 shell 命令交给分类器审查，不再逐条问你。</p>
+    <p class="go">一张功能卡，再判断几个任务要不要规划。</p>
+  </div>
+  <div class="fcard">
+    <h3>Plan Mode<small>/plan 或 Shift+Tab</small></h3>
+    <dl>
+      <dt>解决什么问题</dt><dd>大改动一上来就动手，方向错了返工代价大。先让 Claude 只读、调研、给出分阶段计划，你确认后再改。</dd>
+      <dt>最小可用配置</dt><dd><div id="fcPlan"></div></dd>
+      <dt class="no">什么时候不该用</dt><dd>简单 bug、格式调整、单文件修改、快速提问（原文的 Don't 清单）。小事走规划只是多一轮来回。</dd>
+    </dl>
+  </div>
+  <div class="lab"><div id="pq"></div></div>
+  <div class="notes" id="n-plan"></div>
+</section>
+
+<section class="part" id="think">
+  <div class="part-head"><h2>思考与强度</h2><span class="meta">原文「Extended Thinking」，10-cli「Effort Levels」</span></div>
+  <div class="sec-lede">
+    <p>扩展思考让 Claude 在回答前花更多时间推理：拆解问题、比较多种方案、权衡取舍、推敲边界情况。原文的示例是一个架构选择题（微服务还是单体），推理过程列出团队规模、运维资源、时间线等约束，最后推荐模块化单体。在当前的模型上，思考深度主要由 <strong>effort（强度）</strong>控制，从轻到重是 <code>low</code> → <code>medium</code> → <code>high</code> → <code>xhigh</code> → <code>max</code>；不同模型的默认档和支持的档位不同（原文对此有详细列表，版本变化很快，以原文和 <code>/model</code> 里的显示为准）。</p>
+    <p>设置方法有五种：会话里 <code>/effort high</code>（交互式滑块），<code>/model</code> 里左右键也能调；启动时 <code>claude --effort high</code>；环境变量 <code>CLAUDE_CODE_EFFORT_LEVEL=high</code>；提示词里写 <code>ultrathink</code> 触发深度推理；Skill 和子代理的 frontmatter 里写 <code>effort:</code> 只对它生效。<kbd>Option+T</kbd>（macOS）/ <kbd>Alt+T</kbd> 开关扩展思考，<kbd>Ctrl+O</kbd> 看推理过程；原文注明在 Opus 5.5 等部分新模型上思考<strong>不能关闭</strong>，这个开关无效。另外 <code>/effort</code> 滑块里有个 <strong>Ultracode</strong> 开关，它不是强度档位，而是让 Claude 默认用动态工作流（编排一批后台子代理）来做事，见第 11 篇。</p>
+    <p class="go">判断这几种说法。</p>
+  </div>
+  <div class="lab"><div id="tq"></div></div>
+  <div class="notes" id="n-think"></div>
+</section>
+
+<section class="part" id="modes">
+  <div class="part-head"><h2>六种权限模式</h2><span class="meta">原文「Permission Modes」</span></div>
+  <div class="sec-lede">
+    <p>权限模式决定 Claude <strong>不经你确认</strong>能做哪些事。原文列了六种：<strong>manual</strong>（v2.1.200 前叫 default，两个名字都能用）只读文件，其余都问；<strong>acceptEdits</strong> 读写文件不问，命令要问；<strong>plan</strong> 只读，不能改；<strong>auto</strong> 全部操作交给后台安全分类器审查；<strong>dontAsk</strong> 只执行事先放行的工具，其余一律拒绝；<strong>bypassPermissions</strong> 不做任何权限检查（危险）。</p>
+    <p><kbd>Shift+Tab</kbd> 循环切换：manual → acceptEdits → plan，可用时再到 bypassPermissions 或 auto；<strong>dontAsk 不在循环里</strong>。设默认用 <code>--permission-mode</code> 或 <code>permissions.defaultMode</code>（注意键名是 <code>defaultMode</code>，没有 <code>permissions.mode</code>）。原文提到 v2.1.284 起交互会话在没配置模式时默认从 auto 开始，<code>claude -p</code> 在某些条件下从 default 开始，细节以原文为准。还有一个容易忽略的细节：即使在 acceptEdits 下，写 shell 启动文件（<code>.zshenv</code> 等）和会执行代码的构建配置（<code>.npmrc</code>、<code>.pre-commit-config.yaml</code>、<code>.devcontainer/</code> 等）仍然要问（v2.1.160）。</p>
+    <p class="go">选一个模式，看同一组操作各会怎样（auto 列取自原文的默认放行与拦截清单；dontAsk 假设事先放行了 Read 和 <code>Bash(npm install:*)</code>）。</p>
+  </div>
+  <div class="lab">
+    <div class="selrow"><span>权限模式</span><div class="seg" id="pmSeg"><button data-v="manual" aria-pressed="true">manual</button><button data-v="acceptEdits">acceptEdits</button><button data-v="plan">plan</button><button data-v="auto">auto</button><button data-v="dontAsk">dontAsk</button><button data-v="bypass">bypassPermissions</button></div></div>
+    <div class="tblw"><table class="pm" id="pm"></table></div>
+    <p class="note" id="pmNote"></p>
+  </div>
+  <div class="notes" id="n-modes"></div>
+</section>
+
+<section class="part" id="auto">
+  <div class="part-head"><h2>auto 模式：分类器替你点“允许”</h2><span class="meta">原文「Auto Mode」</span></div>
+  <div class="sec-lede">
+    <p>auto 模式用一个后台安全分类器，在每个操作执行前审查。原文给的判断顺序是：<strong>先看显式的 allow/deny 规则</strong>；<strong>只读和编辑自动通过</strong>；<strong>其余交给分类器</strong>；分类器<strong>连续拦 3 次或一个会话累计拦 20 次</strong>后，回退到弹窗问你。默认拦截：管道到 shell 的安装（<code>curl | bash</code>）、把密钥等敏感数据发出去、生产部署、大范围删除、IAM 权限变更、向 main 强推。默认放行：本地文件操作、按清单安装依赖、只读的 HTTP 请求、推到当前分支。此外还有基于意图的内置保护：<code>git reset --hard</code>、<code>git clean -fd</code>、<code>terraform destroy</code> 这类，除非你本次会话明确要求，否则拦下。</p>
+    <p>配置都在 <code>autoMode</code> 下：<code>allow</code>、<code>soft_deny</code>、<code>environment</code>（可信的基础设施，企业用）。v2.1.118 起数组里写 <code>"$defaults"</code> 表示<strong>在内置规则后面追加</strong>，不写就会<strong>整体替换</strong>内置规则；<code>hard_deny</code>（v2.1.136）是无论意图如何都拦的硬规则；<code>classifyAllShell: true</code> 让所有 shell 命令都过分类器。<code>claude auto-mode defaults</code> 打印默认规则，<code>claude auto-mode reset</code> 恢复默认。原文还提供了一个不用分类器的替代方案：脚本 <code>setup-auto-mode-permissions.py</code> 往 settings 里写一组保守的 allow 规则，危险操作一律不加。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="aq"></div></div>
+  <div class="notes" id="n-auto"></div>
+</section>
+
+<section class="part" id="rules">
+  <div class="part-head"><h2>权限规则</h2><span class="meta">原文 10-cli「Tool &amp; Permission Management」，02-memory「Settings File Hierarchy」，09「Configuration and Settings」</span></div>
+  <div class="sec-lede">
+    <p>权限规则写在 settings.json 的 <code>permissions</code> 下，分 <code>allow</code>、<code>ask</code>、<code>deny</code> 三组，<strong>跨层合并</strong>（不像其他设置那样高层覆盖低层，见第 3 篇）。规则格式是 <code>工具</code>（这个工具的所有调用）或 <code>工具(说明符)</code>：<code>Bash(git log:*)</code> 或 <code>Bash(npm run test *)</code> 按命令前缀；<code>Read(./.env.*)</code> 按路径；<code>mcp__github__*</code> 按 MCP 服务器；<code>Skill(deploy *)</code> 按 Skill；<code>Agent(fork)</code> 按子代理类型。v2.1.178 起还能按工具的参数匹配 <code>工具(参数:值)</code>，具体参数名各工具不同，写之前查官方文档。</p>
+    <p>几条原文点到的规则：超过 10,000 字符的 Bash 命令无论 allow 规则如何都要确认；Docker/Podman 用到改变守护进程的参数时要确认（v2.1.214）；<code>FOO=bar 命令</code> 这种带内联变量的写法不能靠只放行 <code>FOO=bar</code> 混过去（v2.1.145）。管理入口：<code>/permissions</code>（v2.1.234 起 Claude 工作时也能打开，改动对本轮剩余部分生效）；<code>/fewer-permission-prompts</code> 根据你最近的调用推荐 allow 规则。命令行上对应的是 <code>--allowedTools</code>、<code>--disallowedTools</code>、<code>--tools</code>（第 12 篇）。</p>
+    <p class="go">这些规则匹配吗？</p>
+  </div>
+  <div class="lab"><div id="rq"></div></div>
+  <div class="notes" id="n-rules"></div>
+</section>
+
+<section class="part" id="sandbox">
+  <div class="part-head"><h2>沙箱：OS 级的文件与网络隔离</h2><span class="meta">原文「Sandboxing」「Trust and Permission Scoping」</span></div>
+  <div class="sec-lede">
+    <p>沙箱给 Claude 执行的 <strong>Bash 命令</strong>加上操作系统级的文件系统和网络隔离，是权限规则之外的另一层防护。开启方式：<code>/sandbox</code>（选择写进本项目的 <code>.claude/settings.local.json</code>）；所有项目都开就在 <code>~/.claude/settings.json</code> 写 <code>"sandbox": {"enabled": true}</code>；临时用 <code>claude --settings '{"sandbox": {"enabled": true}}'</code>。原文特意说明<strong>没有</strong> <code>claude --sandbox</code> 这个参数。</p>
+    <p>主要设置：<code>sandbox.filesystem.allowWrite</code> / <code>allowRead</code> / <code>denyRead</code>（比如拒读 <code>~/.ssh</code>、<code>~/.aws</code>）；<code>sandbox.network.allowedDomains</code>（支持 <code>*.</code> 通配）与 <code>deniedDomains</code>（在通配之上再排除）；<code>strictAllowlist</code>（非白名单主机直接拒绝、不再询问）；<code>failIfUnavailable</code>；<code>credentials</code>（阻止读凭据文件，Linux/WSL 上还能用 mask 模式让进程读到假值、由代理在出口替换真值）。原文总结的一条趋势也值得记：<strong>凡是能让仓库里提交的文件扩大 Claude 权限的设置，现在多半只认用户级</strong>，比如嵌套仓库要单独确认信任、<code>sandbox.ripgrep</code>、Remote Control 自动启动。</p>
+    <p class="go">先把三层防护的分工理清楚，再做题。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：权限模式、权限规则、沙箱</h4>
+    <p><b>权限模式</b>决定“没有规则覆盖到的操作，默认问不问你”（manual 都问、acceptEdits 编辑不问、auto 交分类器……）。<b>权限规则</b>是按工具和参数写死的 allow / ask / deny，跨层合并，deny 和 ask 规则连 hook 的 allow 都推翻不了。</p>
+    <p><b>沙箱</b>不管“问不问”，而是在操作系统层面限制 Bash 子进程能读写哪些路径、能连哪些域名；命令即使被批准执行，越界访问也会被挡。三者叠加使用：规则挡已知的危险，模式管默认行为，沙箱兜底未知的。</p>
+  </div>
+  <div class="lab"><div id="sq"></div></div>
+  <div class="notes" id="n-sandbox"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 何时用 Plan Mode？怎么进？能改文件吗？</summary><p class="ans">多文件重构、新功能、架构调整、数据库迁移、大 API 改版用；简单 bug、格式、单文件、快速提问不用。进入：/plan 描述、claude --permission-mode plan、Shift+Tab、permissions.defaultMode: plan。v2.1.136 起 plan 模式无条件禁止写文件，即使有 Edit 的 allow 规则；auto 可用时规划期间的 shell 命令交给分类器。Ctrl+G 外部编辑计划；opusplan 用 Opus 规划、Sonnet 执行。</p></details>
+    <details><summary>2. 六种模式的范围？auto 靠什么、默认拦放什么？</summary><p class="ans">manual 只读其余都问；acceptEdits 读写不问、命令问；plan 只读不改；auto 交后台分类器；dontAsk 只执行预先放行的、其余拒绝；bypassPermissions 不检查（危险）。auto 判断顺序：显式规则 → 只读和编辑自动通过 → 分类器 → 连续 3 次或累计 20 次拦截后回退到询问。默认拦 curl|bash、外发敏感数据、生产部署、大范围删除、IAM 变更、强推 main；默认放本地文件操作、按清单装依赖、只读 HTTP、推当前分支。</p></details>
+    <details><summary>3. 权限模式、规则、沙箱各管什么？谁能拦 Bash 访问网络？</summary><p class="ans">模式管默认问不问；规则按工具和参数写死 allow/ask/deny，跨层合并，hook 的 allow 推翻不了 deny/ask；沙箱在 OS 层限制 Bash 子进程的文件和网络访问，sandbox.network.allowedDomains/deniedDomains 能拦住 Bash 子进程访问未授权的域名，即使命令本身被批准了。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 规划模式 ---------- */
+$('#fcPlan').innerHTML = CH.file('.claude/settings.json（让这个项目默认从规划开始）', CH.esc('{\n  "permissions": {\n    "defaultMode": "plan"\n  }\n}')) +
+  '<p class="note">临时用：会话里 <code>/plan 实现用户鉴权</code>，或 <code>claude --permission-mode plan</code>。批准后用 <kbd>Shift+Tab</kbd> 切出 plan 模式再让它改。</p>';
+CH.cards($('#pq'), {
+  opts: ['值得先规划', '直接做'],
+  items: [
+    { t: '把调度器从单进程改成多进程，涉及 12 个文件和一次配置格式迁移。', a: 0, why: '多文件重构 + 迁移，原文 Use 清单。' },
+    { t: '修一个 off-by-one：PRB 索引上限少了 1。', a: 1, why: '简单 bug，原文 Don\'t 清单。' },
+    { t: '给整个 REST API 换一套版本化方案。', a: 0, why: '大的 API 改版。' },
+    { t: '把这个函数的变量名改成 snake_case。', a: 1, why: '格式调整、单文件修改。' }
+  ]
+});
+S.notes($('#n-plan'), {
+  c: [
+    ['Plan Mode', '两段式：先只读调研写计划，批准后执行。'],
+    ['进入', '<code>/plan</code>、<code>--permission-mode plan</code>、<kbd>Shift+Tab</kbd>、<code>defaultMode: "plan"</code>。'],
+    ['写文件', 'v2.1.136 起无条件禁止，Edit 的 allow 规则也不行。']
+  ],
+  p: [
+    ['编辑计划', '<kbd>Ctrl+G</kbd> 打开外部编辑器。'],
+    ['opusplan', 'Opus 规划、Sonnet 执行：<code>claude --model opusplan</code>。'],
+    ['规划时的命令', 'auto 可用且 <code>useAutoModeDuringPlan</code> 开着时交分类器（v2.1.218）。'],
+    ['改计划', '直接说“改一下计划：先不做队列”。']
+  ]
+});
+
+/* ---------- 思考与强度 ---------- */
+S.quiz($('#tq'), [
+  { q: '只想让这一次回答想得更深，最轻的办法是？', o: ['改 settings.json', '在提示词里写 ultrathink，或临时 /effort high', '重启并加 --effort max'], a: 1, why: 'ultrathink 关键词触发深度推理；/effort 改的是会话级强度。' },
+  { q: '<code>/effort</code> 滑块里的 Ultracode 是比 max 更高的一档吗？', o: ['是', '不是，它让 Claude 用动态工作流编排后台子代理来做事，和强度档位无关', '是 xhigh 的别名'], a: 1, why: '原文：Ultracode 不是模型强度档位；v2.1.284 起开启它不再强制 xhigh。' },
+  { q: '想让某个审查 Skill 每次都用 high 强度、其他时候保持默认，怎么做？', o: ['设全局环境变量', '在这个 Skill 的 frontmatter 写 <code>effort: high</code>', '做不到'], a: 1, why: 'Skill 和子代理都支持 effort 字段，只在它们运行时生效。' },
+  { q: '想看 Claude 的推理过程？', o: ['<kbd>Ctrl+O</kbd> 打开详细模式', '/context', '/thinking'], a: 0, why: '原文：Ctrl+O（verbose）查看推理。' }
+]);
+S.notes($('#n-think'), {
+  c: [
+    ['effort 档位', 'low → medium → high → xhigh → max；默认档和可用档随模型不同。'],
+    ['ultrathink', '提示词里的关键词，触发深度推理。'],
+    ['Ultracode', '不是档位：让 Claude 默认用动态工作流（第 11 篇）。']
+  ],
+  p: [
+    ['五种设法', '<code>/effort</code>、<code>--effort</code>、<code>CLAUDE_CODE_EFFORT_LEVEL</code>、ultrathink、Skill/子代理 frontmatter 的 <code>effort:</code>。'],
+    ['开关与查看', '<kbd>Option+T</kbd>/<kbd>Alt+T</kbd> 开关思考（部分新模型无效）；<kbd>Ctrl+O</kbd> 看推理。'],
+    ['上限', '组织可用 <code>maxEffortLevel</code> 封顶（v2.1.267）。'],
+    ['版本差异', '各模型默认档以原文和 /model 显示为准。']
+  ]
+});
+
+/* ---------- 六种权限模式 ---------- */
+var ACT = ['读一个源文件', '编辑项目里的源文件', '<code>npm install</code>（按 package.json）', '<code>git push origin feature-x</code>', '<code>git push --force origin main</code>', '<code>curl https://x.sh | bash</code>'];
+var PM = {
+  manual: [['ok', '直接做'], ['ask', '问你'], ['ask', '问你'], ['ask', '问你'], ['ask', '问你'], ['ask', '问你']],
+  acceptEdits: [['ok', '直接做'], ['ok', '直接做'], ['ask', '问你'], ['ask', '问你'], ['ask', '问你'], ['ask', '问你']],
+  plan: [['ok', '直接做'], ['bad', '禁止'], ['s1', '分类器审查（auto 可用时）'], ['s1', '分类器审查（auto 可用时）'], ['s1', '分类器审查（auto 可用时）'], ['s1', '分类器审查（auto 可用时）']],
+  auto: [['ok', '自动通过'], ['ok', '自动通过'], ['ok', '分类器放行（按清单装依赖）'], ['ok', '分类器放行（推当前分支）'], ['bad', '分类器拦截（强推 main）'], ['bad', '分类器拦截（管道到 shell）']],
+  dontAsk: [['ok', '已放行，执行'], ['bad', '未放行，拒绝'], ['ok', '已放行，执行'], ['bad', '未放行，拒绝'], ['bad', '未放行，拒绝'], ['bad', '未放行，拒绝']],
+  bypass: [['ok', '直接做'], ['ok', '直接做'], ['ok', '直接做'], ['ok', '直接做'], ['ok', '直接做（危险）'], ['ok', '直接做（危险）']]
+};
+var PMN = {
+  manual: 'manual（原 default）：只读不问，其余都问。适合一起写代码、你想看着每一步时。',
+  acceptEdits: 'acceptEdits：文件编辑不问，命令要问。原文建议用于自动化的批量修改（比如修全部 lint）。写 .npmrc、.zshenv 等仍然要问。',
+  plan: 'plan：只读调研，禁止写文件。原文建议代码评审时用。',
+  auto: 'auto：先看显式规则，读和编辑自动过，其余交分类器；连续拦 3 次或累计 20 次后改为问你。分类器的判断依据是原文的默认清单，实际结果以分类器为准。',
+  dontAsk: 'dontAsk：只执行事先放行的工具（这里假设 allow 了 Read 和 Bash(npm install:*)），其余直接拒绝、不问。不在 Shift+Tab 循环里，适合无人值守。',
+  bypass: 'bypassPermissions：不做权限检查。原文：除非绝对必要别用，只在一次性沙箱里用；灾难性删除（rm -rf / 等）仍会提示。组织可用 disableBypassPermissionsMode 禁用。'
+};
+function pm(m) {
+  var t = '<tr><th>操作</th><th>结果</th></tr>';
+  ACT.forEach(function (a, i) { var r = PM[m][i]; t += '<tr><td>' + a + '</td><td><span class="ch-pill ' + r[0] + '">' + r[1] + '</span></td></tr>'; });
+  $('#pm').innerHTML = t; $('#pmNote').textContent = PMN[m];
+}
+S.seg($('#pmSeg'), function (v) { pm(v); }); pm('manual');
+S.notes($('#n-modes'), {
+  c: [
+    ['manual（原 default）', '只读不问，其余都问。'],
+    ['acceptEdits', '编辑不问，命令要问。'],
+    ['plan', '只读，禁止写文件。'],
+    ['auto', '交后台分类器审查。'],
+    ['dontAsk', '只执行预先放行的，其余拒绝。'],
+    ['bypassPermissions', '不检查（危险）。']
+  ],
+  p: [
+    ['切换', '<kbd>Shift+Tab</kbd>：manual → acceptEdits → plan → bypass/auto（dontAsk 不在循环）。'],
+    ['设默认', '<code>--permission-mode</code> 或 <code>permissions.defaultMode</code>。'],
+    ['原文用法建议', '评审用 plan，结对用 manual，批量自动化用 acceptEdits，自主工作用 auto。'],
+    ['子代理', '父会话在 bypass/acceptEdits/auto 时，子代理的 permissionMode 被忽略。']
+  ]
+});
+
+/* ---------- auto 模式 ---------- */
+CH.cfg($('#aq'), [
+  { path: '~/.claude/settings.json', code: '{\n  "autoMode": {\n    "allow": ["Bash(gh pr list:*)"]\n  }\n}',
+    q: '写了这一条之后，内置的默认放行规则还在吗？', opts: ['在，这条是追加', '不在了，没写 "$defaults" 时用户数组会整体替换内置规则', '只保留拦截规则'], a: 1,
+    why: 'v2.1.118 起要写 <code>["$defaults", "Bash(gh pr list:*)"]</code> 才是追加；之前的版本任何用户数组都会覆盖内置规则。' },
+  { path: '~/.claude/settings.json', code: '{\n  "autoMode": {\n    "soft_deny": ["$defaults", "Bash(kubectl delete:*)"],\n    "hard_deny": ["Bash(git push --force*)"]\n  }\n}',
+    q: '你在对话里明确说“帮我强推到 main”，auto 模式会执行吗？', opts: ['会，你明确要求了', '不会，hard_deny 无论推断出的意图如何都拦', '会弹窗问你'], a: 1,
+    why: '<code>hard_deny</code>（v2.1.136）是不可协商的硬规则；<code>soft_deny</code> 才会被分类器结合意图判断。' },
+  { path: '会话中（auto 模式）', code: '你：把工作区收拾干净\nClaude 准备执行：git reset --hard',
+    q: '没有配任何 autoMode 规则，会怎样？', opts: ['直接执行', '被内置的意图保护拦下，除非你本次会话明确要求过这个操作', '降级为 plan 模式'], a: 1,
+    why: 'v2.1.183 的内置保护：git reset --hard、git checkout -- .、git clean -fd、git stash drop、terraform destroy 等，除非明确要求否则拦下。' },
+  { path: '会话中（auto 模式）', code: '分类器已经连续拦下了 3 次操作',
+    q: '接下来会怎样？', opts: ['继续自动拦截', '回退为弹窗问你', '会话结束'], a: 1,
+    why: '原文：连续 3 次或会话累计 20 次拦截后回退到询问，确保你始终保有控制权。' }
+]);
+S.notes($('#n-auto'), {
+  c: [
+    ['判断顺序', '显式 allow/deny → 只读与编辑自动过 → 分类器 → 3 连拦或累计 20 次后改为询问。'],
+    ['默认拦截', 'curl|bash、外发敏感数据、生产部署、大范围删除、IAM 变更、强推 main。'],
+    ['默认放行', '本地文件操作、按清单装依赖、只读 HTTP、推当前分支。']
+  ],
+  p: [
+    ['$defaults', '数组里写它才是追加，否则整体替换内置规则。'],
+    ['hard_deny', '不看意图，一律拦。'],
+    ['classifyAllShell', '所有 shell 命令都过分类器（v2.1.193）。'],
+    ['命令', '<code>claude auto-mode defaults</code>、<code>claude auto-mode reset</code>；不用分类器可用原文的 setup-auto-mode-permissions.py。']
+  ]
+});
+
+/* ---------- 权限规则 ---------- */
+CH.cards($('#rq'), {
+  opts: ['匹配', '不匹配'],
+  items: [
+    { t: '规则 <code>Bash(git log:*)</code>，命令 <code>git log --oneline -20</code>。', a: 0, why: '命令前缀匹配。' },
+    { t: '规则 <code>Bash(git log:*)</code>，命令 <code>git push</code>。', a: 1, why: '前缀不同。' },
+    { t: 'deny 规则 <code>Read(./.env.*)</code>，Claude 读 <code>./.env.production</code>。', a: 0, why: '路径 glob 匹配，被拒。' },
+    { t: 'allow 规则 <code>mcp__github</code>，调用名叫 <code>github__mirror</code> 的服务器的工具（v2.1.299 之后）。', a: 1, why: '规则只匹配它点名的服务器，不再顺带匹配相似名字。' },
+    { t: 'allow 规则 <code>Bash(npm:*)</code>，一条 12,000 字符长的 npm 命令。', a: 1, why: '超过 10,000 字符的 Bash 命令无论 allow 规则如何都要确认（v2.1.214）。' }
+  ]
+});
+S.notes($('#n-rules'), {
+  c: [
+    ['三组规则', '<code>permissions.allow / ask / deny</code>，跨层合并。'],
+    ['格式', '<code>工具</code> 或 <code>工具(说明符)</code>；v2.1.178 起可 <code>工具(参数:值)</code>。']
+  ],
+  p: [
+    ['常见写法', '<code>Bash(git log:*)</code>、<code>Read(./.env.*)</code>、<code>mcp__github__*</code>、<code>Skill(deploy *)</code>、<code>Agent(fork)</code>。'],
+    ['总会询问', '超过 1 万字符的 Bash；改守护进程的 docker/podman 参数。'],
+    ['管理', '<code>/permissions</code>；<code>/fewer-permission-prompts</code> 推荐 allow 规则。'],
+    ['命令行', '<code>--allowedTools</code>、<code>--disallowedTools</code>、<code>--tools</code>。']
+  ]
+});
+
+/* ---------- 沙箱 ---------- */
+S.quiz($('#sq'), [
+  { q: '想让 Claude 跑的 Bash 命令只能访问公司内网的 *.corp.example.com，但不能访问其中的 secrets.corp.example.com。', o: ['在 CLAUDE.md 里写清楚', 'sandbox.network.allowedDomains: ["*.corp.example.com"] + deniedDomains: ["secrets.corp.example.com"]', '用 permissions.deny: WebFetch'], a: 1, why: 'deniedDomains 在通配之上再排除特定主机（v2.1.113）。WebFetch 是另一个工具，管不到 Bash 子进程。' },
+  { q: '想对这个项目临时开沙箱，又不想改任何文件。', o: ['claude --sandbox', 'claude --settings \'{"sandbox": {"enabled": true}}\'', '/sandbox'], a: 1, why: '没有 --sandbox 参数；/sandbox 会把选择写进 .claude/settings.local.json。' },
+  { q: '同事在仓库的 .claude/settings.json 里写了 <code>"sandbox": {"filesystem": {"disabled": true}}</code>，会生效吗？', o: ['会', '不会，这个键只认用户设置、托管设置或 --settings', '会，但只关网络'], a: 1, why: '原文：sandbox.filesystem.disabled 项目设置不能设置。凡能让提交的文件扩大权限的设置，多半只认用户级。' }
+]);
+S.notes($('#n-sandbox'), {
+  c: [
+    ['沙箱', 'OS 级限制 Bash 子进程的文件和网络访问，是权限规则之外的一层。'],
+    ['开启', '<code>/sandbox</code>（写 settings.local.json）、<code>"sandbox": {"enabled": true}</code>、<code>--settings</code>。']
+  ],
+  p: [
+    ['文件', '<code>filesystem.allowWrite / allowRead / denyRead</code>。'],
+    ['网络', '<code>network.allowedDomains</code>（支持 *.）+ <code>deniedDomains</code>；<code>strictAllowlist</code> 不问直接拒。'],
+    ['凭据', '<code>sandbox.credentials</code> 阻止读凭据；Linux/WSL 可 mask。'],
+    ['信任收紧', '能扩大权限的设置多半只认用户级；嵌套仓库要单独确认信任。']
+  ]
+});
+
+CH.tryNow($('#try'), '10', [
+  { t: '下一个跨多个文件的需求，先 <kbd>Shift+Tab</kbd> 切到 plan，让它出计划再动手', d: '用 <kbd>Ctrl+G</kbd> 在编辑器里改计划，批准后再切回。' },
+  { t: '跑 <code>claude auto-mode defaults</code>，看一眼默认规则', d: '如果要加自己的规则，记得数组里写 <code>"$defaults"</code>。' },
+  { t: '给 <code>~/.claude/settings.json</code> 加两条 deny', d: '比如 <code>Read(./.env*)</code> 和 <code>Bash(git push --force:*)</code>，再用 /permissions 确认生效。' }
+]);

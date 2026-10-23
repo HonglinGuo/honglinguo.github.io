@@ -1,0 +1,270 @@
+---
+title: 后台任务、定时、远程与终端习惯
+desc: Claude How To 学习笔记（十一）：后台任务与 Monitor 事件流（轮询与事件驱动的往返次数对比）；动态工作流与子代理、Agent Teams、/batch 的分工；/loop、提醒与 /schedule 云端定时的区别；Remote Control、网页会话、桌面应用、Channels、Chrome 集成各在哪里跑；git worktree 并行；输出风格、状态栏、快捷键与 ! 模式。
+kicker: <span>技术学习</span><span>Claude How To · 11</span><span>对应原文 09-advanced-features（后台、定时、远程、界面）</span><span>约 30 分钟</span>
+h1: 不用守着它：<em>放后台、定时跑、换个设备接着看</em>
+lead: 原教程“高级功能”的另一半，讲的是让 Claude Code 脱离“你盯着一个终端”的工作方式：长任务放到后台、用事件流代替轮询等待、定时重复执行、从手机或浏览器接管本机会话、用 worktree 同时开几条线。最后收一些天天用得上的终端习惯：输出风格、状态栏、快捷键和 ! 直接跑命令。这些功能版本更新最频繁，带版本号的细节以原文为准。
+nav: bg|后台与 Monitor;wf|动态工作流;sched|定时任务;where|在哪里跑;wt|worktree 并行;ui|终端习惯;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/claudehowto.css">
+<script src="../study-shared/claudehowto.js"></script>
+<style>
+.tog { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
+.tog label { font-size: 15px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.tog input[type=range] { accent-color: var(--s1); width: 140px; }
+.tog output { font-family: var(--f-num); color: var(--ink); min-width: 3em; display: inline-block; }
+.kb { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px 16px; }
+.kb div { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 8px; align-items: baseline; border-top: 1px solid var(--hair); padding: 6px 0; font-size: 15px; color: var(--ink-2); }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>等一个长时间运行的进程，用 <code>/loop</code> 轮询和用 Monitor 监听有什么区别？Monitor 最常见的坑是什么？</li>
+    <li><code>/loop</code>、一次性提醒、<code>/schedule</code> 分别跑在哪里、会话关了还跑不跑？</li>
+    <li>Remote Control 和网页会话（claude.ai/code）的根本区别是什么？哪个能用你本机的 MCP 和文件？</li>
+  </ol>
+</div>
+
+<section class="part" id="bg">
+  <div class="part-head"><h2>后台任务与 Monitor</h2><span class="meta">原文「Background Tasks」「Monitor Tool (Event-Driven Streams)」</span></div>
+  <div class="sec-lede">
+    <p><strong>后台任务</strong>让长时间的操作（整套测试、构建、迁移、部署脚本）不阻塞对话：跑起来以后按 <kbd>Ctrl+B</kbd> 放到后台，或者直接说“在后台跑测试”；你继续和 Claude 做别的，任务结束时 Claude 收到通知。<code>/tasks</code> 列出正在跑的 shell 和子代理，可以看输出或停掉。时间限制只在无人值守的会话里有（<code>-p</code>、SDK、CI、云端会话：默认 30 分钟、最多 2 小时），终端、桌面、VS Code 里的后台命令不限时。<code>CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=true</code> 整体关闭。</p>
+    <p><strong>Monitor 工具</strong>（v2.1.98）解决“等”的问题：它挂在一个后台命令的 stdout 上，每一行输出就是一个事件，会唤醒会话。和用 <code>/loop</code> 或 <code>sleep</code> 轮询相比，原文强调两点：轮询每一轮都要一次完整的 API 往返，不管有没有变化；Monitor 没事件时<strong>不花 token</strong>，有事件时立刻反应。两种典型写法：<strong>流过滤</strong>（<code>tail -f app.log | grep --line-buffered "ERROR"</code>）和<strong>定期检查只在变化时输出</strong>（循环里查 API，有新评论才打印）。原文说的头号坑：管道里用 grep 一定要加 <code>--line-buffered</code>，否则 grep 攒满 4KB 才输出，低流量时事件会延迟几分钟。每个 Monitor 都有截止时间（最多 30 分钟，<code>-p</code> 里 10 分钟），到期后 Claude 会被通知去重新挂上。</p>
+    <p class="go">调一调等待时长和轮询间隔，比较两种方式要多少次 API 往返（示意）。</p>
+  </div>
+  <div class="lab">
+    <div class="tog">
+      <label>要等多久（分钟）<input type="range" id="wM" min="10" max="240" step="10" value="60"><output id="wMV">60</output></label>
+      <label>/loop 间隔（分钟）<input type="range" id="wI" min="1" max="30" step="1" value="5"><output id="wIV">5</output></label>
+      <label>期间真正发生的事件数<input type="range" id="wE" min="1" max="10" step="1" value="2"><output id="wEV">2</output></label>
+    </div>
+    <div id="wBars"></div>
+    <p class="note">示意计算：轮询次数 = 等待时长 ÷ 间隔；Monitor 的唤醒次数 = 事件数。真实成本还取决于每次往返的上下文大小。</p>
+  </div>
+  <div class="notes" id="n-bg"></div>
+</section>
+
+<section class="part" id="wf">
+  <div class="part-head"><h2>动态工作流：把扇出写成脚本</h2><span class="meta">原文「Dynamic Workflows」</span></div>
+  <div class="sec-lede">
+    <p>动态工作流（v2.1.154）让 Claude 用一个<strong>脚本</strong>编排几十到几百个后台子代理：扇出、流水线、并行阶段都写在脚本里，而不是靠模型临场发挥，所以是<strong>确定性的</strong>。单个代理只有一个上下文窗口，工作流把任务拆给很多代理再汇总结果。原文给的适用场景：<strong>全面覆盖</strong>（跨很多文件或维度的审计、审查）、<strong>提高置信度</strong>（多个独立视角，再交叉验证发现）、<strong>超出单个上下文的规模</strong>（大迁移、大范围排查）。一次性的、你已经想清楚的任务，原文说单个代理或直接改仍然是正确选择。</p>
+    <p>用法：直接让 Claude“用工作流审一遍 src/ 下每个文件”，它会写编排脚本并在后台运行；<code>/workflows</code> 看运行中和已完成的工作流。规模有一个建议值（默认 medium，目标少于 10 个代理；Pro 计划默认 small），在 <code>/config</code> 的 Dynamic workflow size 里改，或设 <code>workflowSizeGuideline</code>；它是建议而不是硬上限，硬上限是 <code>CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS</code>。<code>/effort</code> 里的 Ultracode 开关打开后，Claude 默认就用工作流来做事。</p>
+    <p class="go">四种“多代理”方式容易混，先理一下。</p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：子代理、动态工作流、Agent Teams、/batch</h4>
+    <p><b>子代理</b>：Claude 临场决定委派一个或几个，结果交回。<b>动态工作流</b>：Claude 先写一个编排脚本，按脚本确定性地扇出几十上百个后台子代理并汇总，适合大范围、可并行的工作。</p>
+    <p><b>Agent Teams</b>（实验）：多个独立的 Claude Code 实例，靠共享任务列表和邮箱互相沟通。<b>/batch</b>：随附 Skill，用 git worktree 编排大规模的并行修改。</p>
+  </div>
+  <div class="lab"><div id="wfq"></div></div>
+  <div class="notes" id="n-wf"></div>
+</section>
+
+<section class="part" id="sched">
+  <div class="part-head"><h2>定时任务</h2><span class="meta">原文「Scheduled Tasks」</span></div>
+  <div class="sec-lede">
+    <p>本地定时有两种：<strong><code>/loop</code></strong> 按间隔重复执行一个提示词（<code>/loop 5m 检查部署是否完成</code>，也能写自然语言“每 30 分钟检查一次构建状态”，或标准 5 段 cron）；<strong>一次性提醒</strong>（“下午 3 点提醒我推 release 分支”“45 分钟后跑集成测试”）。它们的共同特点是<strong>随会话存在</strong>：Claude Code 在运行才会触发，会话结束就清掉，错过的不补跑，重启不保留；每个会话最多 50 个，循环任务 3 天后自动过期，触发时间有少量抖动。底层是 <code>CronCreate</code> / <code>CronList</code> / <code>CronDelete</code> 三个工具。</p>
+    <p><strong><code>/schedule</code></strong> 创建的是<strong>云端</strong>定时任务（在 claude.com 上叫 Routines），跑在 Anthropic 的基础设施上，重启不丢、本机不用开着。原文提醒一个坑：只要设置了 <code>ANTHROPIC_API_KEY</code>、<code>ANTHROPIC_AUTH_TOKEN</code> 或 <code>apiKeyHelper</code> 之一，<code>/schedule</code> 就会静默不可用，同样受影响的还有 Remote Control、claude.ai 的 MCP 连接器和通知偏好。需要长期稳定的自动化，原文建议还是用 CI/CD、GitHub Actions 或桌面应用的定时任务。</p>
+    <p class="go">每个需求用哪一种？</p>
+  </div>
+  <div class="lab"><div id="sq"></div></div>
+  <div class="notes" id="n-sched"></div>
+</section>
+
+<section class="part" id="where">
+  <div class="part-head"><h2>在哪里跑：远程、网页、桌面与外部输入</h2><span class="meta">原文「Remote Control」「Web Sessions」「Desktop App」「Channels」「Chrome Integration」</span></div>
+  <div class="sec-lede">
+    <p><strong>Remote Control</strong>：会话<strong>仍然跑在你的机器上</strong>，你从手机、平板或任意浏览器接着操作，本机的 MCP、文件和命令行工具都能用。启动用 <code>claude remote-control --name "Auth Refactor"</code>（服务器模式，可同时服务多个会话）或会话里 <code>/remote-control</code>（别名 <code>/rc</code>），然后用终端打印的 URL、按空格显示的二维码，或在 claude.ai/code 和手机应用里按名字找。只走出站 HTTPS，不开入站端口。终端要一直开着。</p>
+    <p><strong>网页会话</strong>：会话跑在 <strong>Anthropic 的云上</strong>，不依赖你的本机环境。命令行里 <code>claude --cloud "实现新接口"</code> 创建（<code>--remote</code> 是已弃用的别名），<code>claude --teleport</code> 或 <code>/teleport</code> 把网页会话拉回本地终端。<strong>桌面应用</strong>：可视化 diff 审阅、内嵌浏览器预览、PR 监控、多会话自动 worktree 隔离、定时任务，<code>/desktop</code> 把当前 CLI 会话交给它。<strong>Channels</strong>（研究预览）：通过 MCP 把 Telegram、Discord、iMessage、webhook 的消息<strong>推进</strong>正在运行的会话，<code>claude --channels plugin:名字@市场</code>。<strong>Chrome 集成</strong>：<code>claude --chrome</code> 或 <code>/chrome</code>，让 Claude 操作你登录状态下的浏览器做调试和验证，遇到登录页和验证码会停下等你。</p>
+    <p class="go">先想右列，再翻开。</p>
+  </div>
+  <div class="lab"><div id="wvs"></div></div>
+  <div class="notes" id="n-where"></div>
+</section>
+
+<section class="part" id="wt">
+  <div class="part-head"><h2>worktree 并行</h2><span class="meta">原文「Git Worktrees」</span></div>
+  <div class="sec-lede">
+    <p><code>claude --worktree</code>（<code>-w</code>）在一个隔离的 git worktree 里启动，可以在不 stash、不切分支的情况下并行做几件事。worktree 建在 <code>&lt;仓库&gt;/.claude/worktrees/&lt;名字&gt;</code>；会话结束时如果没有改动会自动清理。<code>-w</code> 还接受 GitHub PR 或 GitLab MR 的 URL，加 <code>--tmux</code> 会顺带开一个 tmux 会话。</p>
+    <p>三个设置：<code>worktree.baseRef</code> 决定从哪里分出来（默认 <code>"fresh"</code> 从 <code>origin/默认分支</code>，忽略你本地没推的提交；<code>"head"</code> 从本地 HEAD）；<code>worktree.sparsePaths</code> 在 monorepo 里只稀疏检出需要的包；<code>worktree.bgIsolation</code> 控制后台会话是否自己建 worktree（默认建，<code>"none"</code> 直接改当前工作区，代价是前后台并发修改可能冲突）。相关的工具 <code>EnterWorktree</code>、<code>ExitWorktree</code> 和 Hook 事件 <code>WorktreeCreate</code>、<code>WorktreeRemove</code>。</p>
+    <p class="go">读配置猜行为。</p>
+  </div>
+  <div class="lab"><div id="wtq"></div></div>
+  <div class="notes" id="n-wt"></div>
+</section>
+
+<section class="part" id="ui">
+  <div class="part-head"><h2>终端习惯：风格、状态栏、快捷键</h2><span class="meta">原文「Output Styles」「Status Line」「Interactive Features」</span></div>
+  <div class="sec-lede">
+    <p><strong>输出风格</strong>改的是 Claude <strong>怎么回答</strong>（角色、语气、格式），不是它知道什么。内置五种：Default、Proactive（遇到常规决定直接做，不停下来问，但不改变权限模式）、Explanatory（步骤之间加“Insights”解释实现选择）、Learning（除了解释还留 <code>TODO(human)</code> 让你自己写一小段）、Concise（先给结果，省掉铺垫）。用 <code>/output-style 名字</code> 或 <code>/config</code> 切换，<strong>在 <code>/clear</code> 或新会话后生效</strong>；自定义风格放 <code>~/.claude/output-styles/</code> 或 <code>.claude/output-styles/</code>，改沟通方式但仍要它写代码时加 <code>keep-coding-instructions: true</code>。风格只作用于主对话，子代理不受影响。</p>
+    <p><strong>状态栏</strong>是一个命令，Claude Code 把一段 JSON（模型、上下文用量百分比、花费、分支、worktree 等字段）从 stdin 喂给它，它打印什么底部就显示什么，用 <code>/statusline</code> 配置。几个天天用的交互：<code>!</code> 开头直接跑 shell 命令（v2.1.186 起输出会自动发给 Claude 并得到回应，<code>"respondToBashCommands": false</code> 改回只进上下文）；多行输入用 <code>\</code> 加回车、<kbd>Shift+Enter</kbd> 或 <kbd>Ctrl+J</kbd>；<kbd>Ctrl+R</kbd> 搜索历史（默认跨所有项目，<kbd>Ctrl+S</kbd> 收窄到当前项目）；<code>/keybindings</code> 编辑 <code>~/.claude/keybindings.json</code>。</p>
+    <p class="go">常用快捷键速查（据原文表，可在下面自测）。</p>
+  </div>
+  <div class="kb" id="kb"></div>
+  <div class="confuse">
+    <h4>易混辨析：输出风格、CLAUDE.md、--append-system-prompt</h4>
+    <p><b>输出风格</b>修改系统提示词，决定每一轮的角色、语气、格式；<b>CLAUDE.md</b> 作为系统提示词之后的一条用户消息加入，告诉 Claude 项目约定；<b>--append-system-prompt</b> 只对这一次调用追加系统提示词，不删除任何东西。</p>
+  </div>
+  <div class="lab"><div id="uq"></div></div>
+  <div class="notes" id="n-ui"></div>
+</section>
+
+<div id="try"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. /loop 轮询与 Monitor 的区别？Monitor 最常见的坑？</summary><p class="ans">轮询每一轮都要一次完整 API 往返，不管有没有变化；Monitor 挂在后台命令的 stdout 上，每行输出是一个事件，没事件时不花 token，有事件立刻唤醒。最常见的坑是管道里的 grep 没加 --line-buffered，输出攒满 4KB 才吐，事件延迟几分钟。Monitor 有截止时间（最多 30 分钟，-p 里 10 分钟）。</p></details>
+    <details><summary>2. /loop、提醒、/schedule 各跑在哪？会话关了还跑吗？</summary><p class="ans">/loop 和一次性提醒是会话内的本地定时：Claude Code 运行时才触发，会话结束清除，错过不补，重启不保留，每会话最多 50 个，循环 3 天过期。/schedule 是云端定时（Routines），跑在 Anthropic 基础设施上，重启不丢、本机可以不开；设置了 API key 类环境变量时 /schedule 不可用。</p></details>
+    <details><summary>3. Remote Control 与网页会话的根本区别？</summary><p class="ans">Remote Control 的会话跑在你的机器上，只是换个设备操作，本机的 MCP、文件、命令行工具都可用，终端要开着；网页会话跑在 Anthropic 云上，不依赖本机环境，用 claude --cloud 创建，claude --teleport 拉回本地。</p></details>
+  </div>
+</section>
+===SCRIPT===
+/* ---------- 后台与 Monitor ---------- */
+function wb() {
+  var m = +$('#wM').value, it = +$('#wI').value, e = +$('#wE').value;
+  $('#wMV').textContent = m; $('#wIV').textContent = it; $('#wEV').textContent = e;
+  var poll = Math.ceil(m / it), mx = Math.max(poll, e);
+  S.bars($('#wBars'), [
+    { label: '/loop ' + it + 'm 轮询', value: poll / mx, text: poll + ' 次', cls: 'alt' },
+    { label: 'Monitor 事件流', value: e / mx, text: e + ' 次', cls: 'ok' }
+  ]);
+}
+['#wM', '#wI', '#wE'].forEach(function (s) { $(s).addEventListener('input', wb); });
+wb();
+S.notes($('#n-bg'), {
+  c: [
+    ['后台任务', '长操作不阻塞对话；完成时通知 Claude。'],
+    ['Monitor', '挂在后台命令 stdout 上，每行一个事件；没事件不花 token。'],
+    ['两种写法', '流过滤（tail -f | grep）；定期检查只在变化时输出。']
+  ],
+  p: [
+    ['操作', '<kbd>Ctrl+B</kbd> 放后台；<code>/tasks</code>（/bashes）查看或停止。'],
+    ['头号坑', '<code>grep --line-buffered</code>。'],
+    ['时限', '无人值守会话的后台命令默认 30 分钟、最多 2 小时；Monitor 最多 30 分钟（-p 10 分钟）。'],
+    ['关闭', '<code>CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=true</code>。']
+  ]
+});
+
+/* ---------- 动态工作流 ---------- */
+CH.cards($('#wfq'), {
+  opts: ['单个子代理', '动态工作流', 'Agent Teams', '直接做'],
+  items: [
+    { t: '审查 src/ 下全部 300 个文件的错误处理是否统一，每个文件都要看。', a: 1, why: '全面覆盖、可并行：原文的典型场景。' },
+    { t: '先把这个模块的调用关系摸清楚再回来讨论。', a: 0, why: '一次调研，交给一个 Explore 子代理即可。' },
+    { t: '前端、后端、测试三个人各管一块，需要互相通知接口改了什么。', a: 2, why: '需要彼此沟通的并行协作。' },
+    { t: '把这个函数的返回类型改一下，你已经知道改哪三行。', a: 3, why: '原文：一次性、已经想清楚的任务，直接改仍是正确选择。' }
+  ]
+});
+S.notes($('#n-wf'), {
+  c: [
+    ['动态工作流', 'Claude 写编排脚本，确定性地扇出几十到几百个后台子代理并汇总（v2.1.154）。'],
+    ['适用', '全面覆盖、交叉验证提高置信度、超出单个上下文的规模。']
+  ],
+  p: [
+    ['查看', '<code>/workflows</code>。'],
+    ['规模建议', '默认 medium（少于 10 个代理），<code>/config</code> 或 <code>workflowSizeGuideline</code>；不是硬上限。'],
+    ['Ultracode', '<code>/effort ultracode on</code>：默认用工作流做事。']
+  ]
+});
+
+/* ---------- 定时任务 ---------- */
+CH.cards($('#sq'), {
+  opts: ['/loop', '一次性提醒', '/schedule（云端）', 'CI / GitHub Actions'],
+  items: [
+    { t: '接下来一小时里，每 5 分钟看一眼 staging 部署有没有完成，成功就停。', a: 0, why: '会话内的短期重复检查。原文示例：/loop 5m check the deployment status… If succeeded, stop looping.' },
+    { t: '45 分钟后跑一次集成测试。', a: 1, why: '一次性提醒，同样随会话存在。' },
+    { t: '每个工作日早上 9 点跑测试套件并汇报失败，笔记本合上也要跑。', a: 2, why: '云端定时，不依赖本机；注意设置 API key 环境变量时不可用。' },
+    { t: '每次合并到 main 都要自动审一遍，团队所有人都依赖它。', a: 3, why: '原文：需要跨重启、长期稳定的自动化，用 CI/CD 或 GitHub Actions（配合 claude -p，见第 12 篇）。' }
+  ]
+});
+S.notes($('#n-sched'), {
+  c: [
+    ['/loop', '会话内按间隔重复；支持自然语言和 cron。'],
+    ['一次性提醒', '“下午 3 点提醒我……”；同样随会话存在。'],
+    ['/schedule', '云端定时（Routines），重启不丢。']
+  ],
+  p: [
+    ['会话内定时的限制', '每会话 50 个；循环 3 天过期；错过不补；重启不保留。'],
+    ['API key 坑', '设了 ANTHROPIC_API_KEY 等时，/schedule、Remote Control、claude.ai 连接器不可用。'],
+    ['关闭本地定时', '<code>CLAUDE_CODE_DISABLE_CRON=1</code>。']
+  ]
+});
+
+/* ---------- 在哪里跑 ---------- */
+CH.vs($('#wvs'), {
+  k: '功能', a: '怎么开', b: '会话跑在哪 · 适合',
+  rows: [
+    ['Remote Control', '<code>claude remote-control</code> 或 <code>/rc</code>', '你的机器（本机 MCP、文件可用，终端要开着）· 离开工位用手机接着看'],
+    ['网页会话', '<code>claude --cloud "任务"</code>；<code>--teleport</code> 拉回本地', 'Anthropic 云 · 从任意浏览器开新任务，不依赖本机'],
+    ['桌面应用', '<code>/desktop</code> 交接当前会话', '本机应用 · 可视化 diff、预览、PR 监控、多会话 worktree 隔离'],
+    ['Channels', '<code>claude --channels plugin:名字@市场</code>', '本机会话 · 外部消息（Telegram、Discord、webhook）推进来'],
+    ['Chrome 集成', '<code>claude --chrome</code> 或 <code>/chrome</code>', '本机会话操作你的浏览器 · 前端调试、表单验证、对照设计稿']
+  ]
+});
+S.notes($('#n-where'), {
+  c: [
+    ['Remote Control', '本机跑，换设备操作；只走出站 HTTPS。'],
+    ['网页会话', '云上跑；<code>--cloud</code> 创建，<code>--teleport</code> 拉回。'],
+    ['Channels', '研究预览：外部消息经 MCP 推进会话。']
+  ],
+  p: [
+    ['RC 连接', '终端打印的 URL、空格显示二维码、按名字在 claude.ai/code 或手机应用里找。'],
+    ['推送通知', 'RC 开着时，<code>/config</code> 里开 Push when Claude decides。'],
+    ['Chrome', '遇到登录页、验证码会停下等你；站点权限在扩展里管理。'],
+    ['组织禁用 RC', '托管设置 <code>disableRemoteControl: true</code>。']
+  ]
+});
+
+/* ---------- worktree ---------- */
+CH.cfg($('#wtq'), [
+  { path: '~/.claude/settings.json', code: '{ "worktree": { "baseRef": "fresh" } }',
+    q: '你本地 main 上有 3 个还没推的提交，<code>claude -w</code> 新建的 worktree 包含它们吗？', opts: ['包含', '不包含，fresh 从 origin/默认分支分出', '只包含最近一个'], a: 1,
+    why: 'fresh（默认）忽略本地未推的提交；要包含就设 <code>"head"</code>。原文注明这个默认值在 v2.1.133 回退过，以原文为准。' },
+  { path: '~/.claude/settings.json', code: '{ "worktree": { "sparsePaths": ["packages/my-package", "shared/"] } }',
+    q: '这个设置有什么效果？', opts: ['只允许改这两个目录', 'worktree 只稀疏检出这两个路径，减少磁盘和检出时间', '把这两个目录排除在外'], a: 1,
+    why: '原文：monorepo 里用 sparse checkout 减少磁盘占用和克隆时间。' },
+  { path: '~/.claude/settings.json', code: '{ "worktree": { "bgIsolation": "none" } }',
+    q: '后台会话会怎样改代码？', opts: ['各自建 worktree', '直接改你当前的工作区，前后台同时改可能冲突', '后台会话不能改代码'], a: 1,
+    why: '默认后台会话会建自己的 worktree；"none" 去掉这层保护，适合 worktree 不现实（如很重的本地构建产物）或必须协调修改的情况。' }
+]);
+S.notes($('#n-wt'), {
+  c: [
+    ['claude -w', '在隔离的 worktree 里启动；位置 <code>.claude/worktrees/名字</code>；无改动自动清理。'],
+    ['baseRef', 'fresh（默认，从 origin）或 head（从本地 HEAD）。']
+  ],
+  p: [
+    ['sparsePaths', 'monorepo 稀疏检出。'],
+    ['bgIsolation', '后台会话是否建 worktree；"none" 直接改工作区。'],
+    ['相关', '<code>--tmux</code>、EnterWorktree/ExitWorktree、WorktreeCreate/Remove 事件。']
+  ]
+});
+
+/* ---------- 终端习惯 ---------- */
+var KB = [['Ctrl+C', '取消当前输入或生成'], ['Ctrl+D', '退出'], ['Esc Esc', '回退（rewind）'], ['Shift+Tab', '切换权限模式'], ['Ctrl+B', '把运行中的任务放后台'], ['Ctrl+O', '详细输出（看推理）'], ['Ctrl+R', '搜索历史'], ['Ctrl+G', '在外部编辑器里改计划'], ['Ctrl+T', '任务列表'], ['Option+P / Alt+P', '换模型'], ['Option+T / Alt+T', '开关扩展思考'], ['Ctrl+S', '暂存当前输入，再按恢复'], ['Ctrl+X Ctrl+K', '停掉所有后台子代理'], ['! 命令', '直接跑 shell 命令']];
+KB.forEach(function (k) { h('div', { html: '<kbd>' + k[0] + '</kbd><span>' + k[1] + '</span>' }, $('#kb')); });
+S.quiz($('#uq'), [
+  { q: '你切换到了 Explanatory 风格，但这一轮回答看起来没变化。为什么？', o: ['风格只在子代理里生效', '风格属于系统提示词，会话开始时读一次，/clear 或新会话后才生效', '需要重装'], a: 1, why: '原文：output style 在 /clear 后或新会话生效。' },
+  { q: '想让 Claude 用中文、先给结论，但仍按原样写代码，自定义风格要加什么？', o: ['keep-coding-instructions: true', 'force-for-plugin: true', '什么都不用'], a: 0, why: '改沟通方式但仍做软件工程时加它；不写代码的场景（写作助手、数据分析）可以不加。' },
+  { q: '在输入框里敲 <code>! git status</code> 会发生什么（v2.1.186 之后默认）？', o: ['发给 Claude 让它决定要不要跑', '直接执行，输出发给 Claude，Claude 会回应', '只在本地显示，Claude 看不到'], a: 1, why: '设 <code>"respondToBashCommands": false</code> 可改回只把输出加进上下文、不回应。' }
+]);
+S.notes($('#n-ui'), {
+  c: [
+    ['输出风格', '改怎么回答：Default、Proactive、Explanatory、Learning、Concise；可自定义。'],
+    ['状态栏', '一个读 stdin JSON、打印一行的命令；<code>/statusline</code> 配置。'],
+    ['! 模式', '直接跑 shell，输出发给 Claude。']
+  ],
+  p: [
+    ['风格生效', '<code>/clear</code> 或新会话后；只影响主对话。'],
+    ['自定义风格', '<code>~/.claude/output-styles/</code>；<code>keep-coding-instructions: true</code>。'],
+    ['多行输入', '<code>\\</code> 加回车、<kbd>Shift+Enter</kbd>、<kbd>Ctrl+J</kbd>。'],
+    ['改键', '<code>/keybindings</code> → <code>~/.claude/keybindings.json</code>；设为 null 解绑。']
+  ]
+});
+
+CH.tryNow($('#try'), '11', [
+  { t: '下次跑耗时的测试或构建，开头就说“在后台跑”，或跑起来后按 <kbd>Ctrl+B</kbd>', d: '同时让 Claude 做别的；用 <code>/tasks</code> 看进度。' },
+  { t: '让 Claude 用 Monitor 盯一个日志：<code>tail -F app.log | grep --line-buffered -E "ERROR|FATAL"</code>', d: '比 /loop 轮询省；记得 --line-buffered。' },
+  { t: '用 <code>/statusline</code> 配一个显示模型、上下文百分比和花费的状态栏', d: '原文有现成的 jq 脚本示例。' }
+]);
