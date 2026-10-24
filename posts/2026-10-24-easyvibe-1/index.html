@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从 Vibe Coding 到产品工程师</title>
+<meta name="description" content="Easy-Vibe 学习笔记（一）：Vibe Coding 的来历与它真正降低的门槛；Coding 与 Build Product 的两个问题；产品工程师、FDE、OPC 三个圆；对话编程的能力边界与三档适用场景；产品闭环八步；提示词从一句话到项目级；上下文长度与指令遵循。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.circles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: center; margin-top: 10px; }
+.circles svg { width: 100%; height: auto; max-width: 360px; justify-self: center; }
+.circles svg text { font-size: 15px; fill: var(--ink); }
+.circles svg .c { fill: none; stroke-width: 2; cursor: pointer; }
+.circles svg .c.on { stroke-width: 4; }
+@media (max-width: 760px) { .circles { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-series="easyvibe-series" data-part="1">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 01</span><span>对应原教程 学习地图、新手入门</span><span>约 25 分钟</span></p>
+  <h1>做得出来不难了，<em>难的是值不值得做</em></h1>
+  <p class="lead">原教程开篇先做一件事：把读者的目标从“让 AI 写出能跑的代码”挪到“做出有人用的产品”。Vibe Coding 跨过了“不会写代码就无法开始”的门槛，但随之冒出一串新问题：做什么、为谁做、怎么交出去、怎么证明有用。这一篇把这条主线和后面十四篇的分工讲清楚，再用贪吃蛇的例子看提示词是怎么一步步长出来的。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" aria-current="page" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#vc">Vibe Coding</a><a href="#pe">三个圆</a><a href="#edge">能力边界</a><a href="#loop">产品闭环</a><a href="#prompt">提示词进化</a><a href="#ask">提问的艺术</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>Vibe Coding 降低了哪道门槛？为什么原教程说它“改变并提高了”学习要求？</li>
+    <li>产品工程师、FDE、OPC 分别对什么结果负责？它们是一条晋升阶梯吗？</li>
+    <li>对话式 AI 编程擅长什么、不擅长什么？哪类系统不能“生成完就上线”？</li>
+  </ol>
+</div>
+
+<section class="part" id="vc">
+  <div class="part-head"><h2>Vibe Coding：先做出来，再说</h2><span class="meta">原教程 学习地图 · 从 Vibe Coding 到 Build Product</span></div>
+  <div class="sec-lede">
+    <p><strong>Vibe Coding</strong> 这个词由 Andrej Karpathy 在 2025 年 2 月 2 日提出：人主要用自然语言告诉 AI 想要什么，看运行结果，再继续对话修改，不必自己逐行手写、理解和管理每一行代码。一句话：<strong>描述想法 → AI 生成 → 运行看看 → 对话调整</strong>，循环往复。</p>
+    <p>它最先带来的变化，是让没写过代码的人也能在几分钟内做出小游戏、网页或可以演示的原型，跨过了“不会写代码，所以无法开始”这道门槛。人和计算机沟通的方式，从严格的语法延伸到了自然语言。</p>
+    <p>但原教程紧接着指出：当“做出一个能跑的 Demo”变得容易，难点就转移了。<strong>Coding</strong> 问的是“我能不能把它做出来”；<strong>Build Product</strong> 问的是“它值不值得做、谁会用、怎么交付出去、怎么知道它真的有效”。所以 Vibe Coding 没有消除学习要求，而是<strong>改变并提高了要求</strong>：写代码这部分变便宜了，判断做什么、交给谁、看结果这几部分的分量变重了。整套教程的目标因此不是“教会用 AI 编程工具”，而是培养一名初步的<strong>产品工程师</strong>。</p>
+    <p class="go">下面这些问题，各属于 Coding 还是 Build Product？</p>
+  </div>
+  <div class="lab"><div id="vcCards"></div></div>
+  <div class="notes" id="n-vc"></div>
+</section>
+
+<section class="part" id="pe">
+  <div class="part-head"><h2>产品工程师、FDE、OPC：三个逐渐扩大的圆</h2><span class="meta">原教程 学习地图 · 为什么现在需要产品工程师</span></div>
+  <div class="sec-lede">
+    <p><strong>Product Engineer（产品工程师）</strong>不是 2026 年的新头衔。Intercom 在 2018 年就用它描述一种对产品有“所有权”的工程师：不照着需求文档写完交差，而是理解用户问题、参与决定产品做成什么样、上线后继续跟踪效果。AI 的作用是把“一个人搞定原型、界面、前后端、AI 集成、测试、部署”的门槛压低了，于是越来越多公司直接这样招人。原教程摘了一串 2026 年的公开招聘：有的要求从一次客户对话里挖需求、马上做给真实用户试，有的要求深入销售和客服现场、对转化率负责。</p>
+    <p>和它并列的还有两个说法。<strong>FDE（Forward Deployed Engineer，前沿部署工程师）</strong>是把产品工程能力带到客户现场：找对问题、做 PoC 快速验证、写能上生产的代码接入客户数据和工作流、再把多个客户的共性沉淀成产品功能。OpenAI 的 FDE 岗位把“生产采用率”和“可量化的工作流效率提升”写成成功标准，而不是代码量。<strong>OPC（One-Person Company，一人公司）</strong>不是岗位，是一种经营方式：一个人主导整门生意，借 AI Agent、自动化平台和云服务完成过去要一个团队做的事，从找市场到客服、现金流都自己负责。</p>
+    <p>原教程强调：这三者<strong>不是必须依次晋升的阶梯</strong>，而是同一套能力覆盖的范围大小不同。起步要练的基本功一样：发现真实问题、做出最小可用产品、交到用户手里、讲清价值、根据使用和付费意愿迭代。对已经会写代码的人，变化在于工作起点、原型用途、能力边界、成功标准和与客户的距离都变了；对不会写代码的人，行业经验反而成了比代码更稀缺的资产。</p>
+    <p class="go">点圆圈看各自对什么负责；再把下面的工作描述归到最贴切的一类。</p>
+  </div>
+  <div class="lab">
+    <div class="circles">
+      <svg viewBox="0 0 320 260" role="img" aria-label="三个同心逐渐扩大的圆：产品工程师、FDE、OPC">
+        <circle class="c" data-i="2" cx="160" cy="135" r="120" stroke="var(--s2)"/>
+        <circle class="c" data-i="1" cx="160" cy="150" r="82" stroke="var(--ok)"/>
+        <circle class="c" data-i="0" cx="160" cy="168" r="46" stroke="var(--s1)"/>
+        <text x="160" y="172" text-anchor="middle">产品工程师</text>
+        <text x="160" y="96" text-anchor="middle">FDE</text>
+        <text x="160" y="38" text-anchor="middle">OPC</text>
+      </svg>
+      <div class="hb-info" id="circInfo"></div>
+    </div>
+  </div>
+  <div class="lab"><div id="peSort"></div></div>
+  <div class="lab">
+    <p class="lab-t">按需求写代码的工程师 vs 产品工程师（原教程列了五处变化）</p>
+    <div id="peVs"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：FDE 不是实施，也不是售前</h4>
+    <p>常见误解是把 FDE 当成“帮客户装软件的实施人员”或“只做演示的售前”。区别在<b>负责的范围</b>：实施只负责把既定产品装好，售前只负责演示赢单；FDE 从发现问题、PoC、生产级集成一路负责到用户采用，还要把共性需求带回产品路线图。“会销售”在这里的意思也很具体：找到需要的人、听懂痛点、演示方案、邀请试用、验证是否愿意持续用甚至付费。</p>
+  </div>
+  <div class="notes" id="n-pe"></div>
+</section>
+
+<section class="part" id="edge">
+  <div class="part-head"><h2>对话编程能做到哪一步</h2><span class="meta">原教程 新手入门 第 2 节</span></div>
+  <div class="sec-lede">
+    <p>原教程用 z.ai 的“全栈开发”模式，五行需求、一杯咖啡的时间生成一个可玩的贪吃蛇，然后给出一个稳定的经验结论：<strong>对话式 AI 能帮你完成一个“小而完整”的东西，但“做到什么程度算够”仍然要你一步步决策。</strong></p>
+    <p>它擅长的任务有三个共同特征：<strong>范围清晰</strong>（一页网页、一个内部小工具、一个小玩法）、<strong>结果可见</strong>（浏览器里马上能验证）、<strong>纠错直接</strong>（把现象、报错复制或截图贴回去就能改）。在这个边界内，AI 像一位执行力不错的辅助开发者。一旦要接后端、连数据库、整合第三方服务，还牵涉权限、安全、并发和大量业务规则，就需要“流程视角”：先梳理整体流程、每步的输入输出和状态变化、哪些节点对性能和安全最敏感，再把相对独立的环节拆出来交给 AI 生成接口、模块、脚本和测试。<strong>AI 加速一个个小步骤，拆分、串联、架构、集成和运维由人负责。</strong></p>
+    <p>“能写”不等于“能用”，原教程按用途分了三档：原型、Demo、内部自用工具，非常适合让 AI 打第一版；面向真实用户的大型产品，需要工程师在架构、性能和维护上长期投入；支付、风控、医疗这类强安全、强合规系统，<strong>当前阶段不宜生成完直接上线</strong>，必须有严格的审查和测试流程。</p>
+    <p class="go">判断下面每个需求落在哪一档。</p>
+  </div>
+  <div class="lab"><div id="edgeCards"></div></div>
+  <div class="vendor"><b>原教程引用的第三方数据</b>GitHub Copilot 相关统计：超过 1500 万开发者用 AI 辅助编程，平均 46% 的代码由 AI 生成（Java 项目约 61%）；对照实验中任务完成速度提升 55%（9.6 天降到 2.4 天的提交周期），获得权限当天 81% 的人完成安装。这些数字来自原教程链接的第三方汇总文章，口径各不相同，看作“趋势”即可。</div>
+  <div class="notes" id="n-edge"></div>
+</section>
+
+<section class="part" id="loop">
+  <div class="part-head"><h2>产品闭环：后面十四篇的地图</h2><span class="meta">原教程 学习地图 · 成长路径</span></div>
+  <div class="sec-lede">
+    <p>原教程把整门课要走通的东西写成一条闭环：<strong>发现问题 → 验证需求 → 设计方案 → 构建产品 → 交付用户 → 说明价值 → 观察结果 → 持续迭代</strong>。写代码只是“构建产品”这一环，而且是 AI 最能帮上忙的那一环。</p>
+    <p>课程结构按这条线分阶段：<strong>新手入门</strong>用小游戏感受 AI 编程；<strong>第一阶段</strong>（产品工程师入门）学 AI IDE、找点子、验证需求、做原型、接 AI 能力、交给真实用户；<strong>第二阶段</strong>（全栈产品工程师）学设计稿到代码、Supabase 数据库、部署、Stripe 支付、Dify 知识库；<strong>第三阶段</strong>（AI 产品工程师 / 技术负责人）学 Claude Code 工作流、规格驱动、Skills、MCP、长任务、多 Agent 协作、RAG 进阶和多端发布。原教程还坚持<strong>项目制</strong>：真实工作里需求是模糊的、边界会变、没人给标准答案，课程故意用“不那么傻瓜化”的项目逼你练拆解、查资料和读中大型代码库。</p>
+    <p class="go">每一环都在。试着拿掉一环，看这个产品会在哪里出问题；每一环后面标了本系列对应的篇目。</p>
+  </div>
+  <div class="lab"><div id="loopPipe"></div></div>
+  <div class="notes" id="n-loop"></div>
+</section>
+
+<section class="part" id="prompt">
+  <div class="part-head"><h2>提示词是怎么长出来的</h2><span class="meta">原教程 新手入门 第 3 节、附录 2–4</span></div>
+  <div class="sec-lede">
+    <p>原教程的第一个实战是“AI 原生贪吃蛇”：蛇吃的不是豆子而是单词，吃满 8 个让大模型写一首诗，诗写完再自动生成一幅画。重点不在游戏，而在示范<strong>需求是逐步加上去的</strong>：先一句“帮我做一个贪吃蛇游戏”拿到能跑的骨架，再加“吃单词、收集进盒子”，再加“写诗、生图”。每一版都能运行、能验证，出问题就把现象和报错贴回去修。</p>
+    <p>第二个技巧是<strong>让大模型帮你写项目级提示词</strong>：告诉它目标（贪吃蛇 + 吃词写诗 + 图像生成），让它产出一份带整体框架和实现路径的提示词，再拿这份提示词去全栈模式重新生成。自己写的需求往往只描述功能，模型写的会补上界面布局、状态流转、异常处理这些你没想到的部分。</p>
+    <p>原教程附录还半开玩笑地列了一串“真实的 Vibe Coding 提示词”：“不要改我的变量名！”“我让你实现的功能在哪里？”“不要做我没让你做的事。”这些话背后是两个模型能力：<strong>上下文长度</strong>（对话一长，前面的约定被挤出或被稀释，模型“忘了”）和<strong>指令遵循</strong>（要三条给五条、要只改一个函数却顺手重构）。所以 Vibe Coding 偏好长上下文、指令遵循强的模型，也要求人把关键约束在需要时重新说一遍。</p>
+    <p class="go">切换三个版本看提示词怎么长出来，高亮是这一版新加的信息。</p>
+  </div>
+  <div class="lab"><p class="lab-t">AI 原生贪吃蛇：三版提示词（据原教程 3.1 节）</p><div id="evo"></div></div>
+  <div class="pcard" data-t="让模型帮你写项目级提示词" data-k="原教程 3.2 节，替换目标即可复用"><pre>我想让 AI 生成一个网页贪吃蛇游戏，需要一个更完整的提示词，让生成结果更令人印象深刻和有趣。请生成相应的提示词。当前目标是：生成一个贪吃蛇游戏，需要实现吃不同单词生成诗歌的功能，并且应该包含图像生成模块。</pre></div>
+  <div class="confuse">
+    <h4>易混辨析：上下文长度 vs 指令遵循</h4>
+    <p><b>上下文长度</b>是“能看到多少”：一次对话里模型能读入的全部文本上限，用 token 计。接近上限时会遗忘早先细节、话题偏移、前后引用不一致；不是模型变笨，而是装不下了。对策是提炼长期要保留的信息、别反复原样塞旧内容、把长期记忆交给外部知识库。</p>
+    <p><b>指令遵循</b>是“看到了能不能照做”：数量、要素、格式、语气都按要求，不做多余延伸。它决定了输出能不能稳定复现、能不能被程序接住。一个是容量问题，一个是服从度问题；“不要改我原来的代码”这类抱怨，两种原因都可能。</p>
+  </div>
+  <div class="notes" id="n-prompt"></div>
+</section>
+
+<section class="part" id="ask">
+  <div class="part-head"><h2>提问的艺术：把上下文补齐</h2><span class="meta">原教程 学习地图 · 提问的艺术</span></div>
+  <div class="sec-lede">
+    <p>原教程把“向 AI 提问”列为 AI 时代的基本功：同一个报错，你怎么问几乎决定了 AI 给你的是一堆猜测还是可落地的改法。现实中很少有完整文档，更多是模糊需求、半成品代码和零散的错误信息；能力上限由沟通决定，你越能提供关键信息、越能约束输出格式，答案越可用。只问一句“为啥报错？”通常只能换来泛泛的猜测。</p>
+    <p>给 AI 喂信息有两种方式，各有用途：<strong>复制粘贴</strong>适合报错堆栈、日志、代码、配置、API 返回，要求尽量完整，不要只截一行关键字；<strong>截图</strong>适合界面布局问题、交互异常、工具里找不到按钮，要求截全屏、标注重点、配一句文字说明。前提是模型支持图片输入，不支持就只能贴文字。</p>
+    <p>如果目的是学会而不只是拿答案，可以在提问里直接要求讲解方式，例如先用五句话讲清概念，再出几道题考我。第 2 篇会把这一节扩展成一套完整的排错流程（先描述现象，再补 Console、Network、Elements 信息）。</p>
+    <p class="go">下面每个情况，该截图还是复制粘贴？</p>
+  </div>
+  <div class="lab"><div id="askCards"></div></div>
+  <div class="pcard" data-t="学习型提问" data-k="原教程 提问的艺术"><pre>请先用 5 句话讲清楚这个概念，再给几个问题提问我，验证我理解对了没。</pre></div>
+  <div class="pcard" data-t="报错求解：现象 + 信息 + 期望" data-k="据原教程作业要求整理"><pre>我在做【项目一句话描述】。
+现象：【点了什么 / 期望看到什么 / 实际看到什么】
+报错原文（完整粘贴）：
+【……】
+相关代码：【文件名 + 片段】
+请用小白能看懂的方式解释原因，再给出完整的修改后代码，不要改动与这个问题无关的部分。</pre></div>
+  <div class="notes" id="n-ask"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. Vibe Coding 降低了哪道门槛？为什么说它改变并提高了学习要求？</summary><p class="ans">它降低的是“不会写代码就无法开始”的实现门槛：用自然语言描述、AI 生成、运行验证、对话修改。但做出 Demo 变容易后，难点转移到“值不值得做、谁会用、怎么交付、怎么证明有效”，这些 Build Product 的问题 AI 替不了你，所以要求从“会写代码”变成“对从问题到结果的完整过程负责”。</p></details>
+    <details><summary>2. 产品工程师、FDE、OPC 分别对什么负责？是晋升阶梯吗？</summary><p class="ans">产品工程师在公司产品团队里，从发现问题、设计方案负责到上线、用户反馈和业务指标；FDE 深入客户现场，从发现需求、PoC、生产集成负责到用户采用和扩展，并把共性沉淀回产品；OPC 是一人公司的经营方式，从找市场、做产品负责到营销、交付、客服和现金流。三者是同一套能力覆盖的范围大小不同，不是必须依次晋升的阶梯。</p></details>
+    <details><summary>3. 对话式 AI 编程擅长什么、不擅长什么？哪类系统不能生成完就上线？</summary><p class="ans">擅长范围清晰、结果可见、纠错直接的小而完整的东西：单页网页、内部小工具、轻量游戏、数据看板。不擅长靠几轮对话端到端完成涉及后端、数据库、第三方集成、权限、并发和大量业务规则的大系统，这时要人先梳理流程再拆成小步交给 AI。支付、风控、医疗等强安全强合规系统不能生成完直接上线，必须经过严格审查和测试。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe/"><small>上一篇</small><span>系列总览</span></a><a class="nx" href="../2026-10-24-easyvibe-2/"><small>下一篇</small><span>02 · AI IDE 与对话节奏</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+HB.cards($('#vcCards'), {
+  opts: ['Coding', 'Build Product'],
+  items: [
+    { t: '贪吃蛇撞墙后没有结束，怎么修？', a: 0, why: '让代码按预期运行，是“能不能做出来”的问题。' },
+    { t: '这个记账工具，我身边有谁会每天打开？', a: 1, why: '“谁会用”是产品问题，AI 生成得再快也回答不了。' },
+    { t: '做好的网页怎么让别人在手机上打开？', a: 1, why: '交付到用户手里属于 Build Product；只在自己电脑上运行不算交付。' },
+    { t: '把按钮改成圆角、背景换深色。', a: 0, why: '实现层面的调整，几句对话就能完成。' },
+    { t: '用户试用一周后还在用吗？愿意付钱吗？', a: 1, why: '用使用、反馈和付费证明价值，是闭环的最后几环。' }
+  ]
+});
+
+var CIRC = [
+  ['产品工程师', '在公司内部的产品团队里，产品思维和工程能力融合。', '从发现问题、设计方案，一直负责到产品上线、用户反馈和业务指标。', '把产品做对并做出来'],
+  ['FDE 前沿部署工程师', '产品工程能力延伸到企业客户一线，在真实业务环境里工作。', '找对问题 → PoC 快速验证 → 生产级交付接入客户数据和工作流 → 把多个客户的共性沉淀成产品功能；有时参与销售。', '把产品带进客户现场并产生结果'],
+  ['OPC 一人公司', '一种经营方式，不是岗位：一个人主导业务，借 AI Agent、自动化和云服务当“数字团队”。', '从找市场机会、做产品，一直负责到营销、销售、交付、客服和现金流。', '用同一套能力经营一门完整生意']
+];
+function circ(i) {
+  $$('.circles .c').forEach(function (c) { c.classList.toggle('on', +c.getAttribute('data-i') === i); });
+  var x = CIRC[i];
+  $('#circInfo').innerHTML = '<b>' + x[0] + '</b><p>' + x[1] + '</p><p><b>对什么负责：</b>' + x[2] + '</p><p style="color:var(--s1)">一句话：' + x[3] + '</p>';
+}
+$$('.circles .c').forEach(function (c) { c.addEventListener('click', function () { circ(+c.getAttribute('data-i')); }); });
+circ(0);
+
+S.sortGame($('#peSort'), {
+  bins: [{ k: 'pe', t: '产品工程师' }, { k: 'fde', t: 'FDE' }, { k: 'opc', t: 'OPC' }],
+  items: [
+    { t: '在公司产品组里，自己去访谈用户、改版并盯留存数据', k: 'pe', why: '公司内部团队、对产品指标负责，是产品工程师的典型。' },
+    { t: '驻场一家保险公司，把理赔 Agent 接进他们的工单系统', k: 'fde', why: '深入客户现场、接入真实数据和工作流，是 FDE。' },
+    { t: '一个人做一个简历优化工具，自己投广告、回客服邮件', k: 'opc', why: '营销、客服、现金流都自己扛，是一人公司的经营方式。' },
+    { t: '把三家客户都提过的“批量导入”做成通用功能', k: 'fde', why: 'FDE 的第四件事：把多个客户的共性需求沉淀成产品能力。' },
+    { t: '做 PoC 证明方案既技术可行又有业务价值', k: 'fde', why: '快速验证是 FDE 的第二件事，常在客户现场完成。' },
+    { t: '参与讨论下个季度产品该往哪走，而不是等需求文档', k: 'pe', why: 'Intercom 2018 年定义产品工程师的核心：对产品有所有权。' }
+  ]
+});
+
+HB.vs($('#peVs'), {
+  a: '按需求写代码', b: '产品工程师',
+  rows: [
+    ['工作起点', '等产品经理把需求文档写好', '自己走到用户和业务一线发现真正的问题'],
+    ['原型的作用', '展示技术实现', '尽快交到用户手里，验证想法对不对'],
+    ['能力边界', '负责自己那一小块技术模块', '打通界面、后端、AI、部署，还关心体验'],
+    ['成功标准', '代码写完、功能上线', '有没有人用、有没有提效、能不能带来转化和收入'],
+    ['与客户的距离', '隔着产品和销售', '直接参与演示、PoC 和上线支持']
+  ]
+});
+
+HB.cards($('#edgeCards'), {
+  opts: ['放心让 AI 打第一版', '要工程师长期投入', '必须严格审查测试'],
+  items: [
+    { t: '给自己班级做一个随机点名网页。', a: 0, why: '范围清晰、结果可见、自用，正是对话编程的舒适区。' },
+    { t: '给销售团队做一个周报数据看板（内部用）。', a: 0, why: '内部工具、数据可视化，原教程明确说现阶段 AI 已足够胜任。' },
+    { t: '面向几万用户的在线预约平台，要和医院排班系统打通。', a: 1, why: '真实用户、规模、系统集成，需要架构、性能和长期维护。' },
+    { t: '接入在线支付和退款的会员系统。', a: 2, why: '支付属于强安全场景，不能生成完就直接上线。' },
+    { t: '根据病历给出用药建议的工具。', a: 2, why: '医疗属于强合规领域，必须引入严格的审查和测试流程。' }
+  ]
+});
+
+HB.pipe($('#loopPipe'), {
+  intro: '八环都在：问题是真的、方案是想清楚的、产品交到了用户手里，并且你知道它有没有用。',
+  steps: [
+    { t: '发现问题', d: '第 3 篇', miss: '做的是自己想象出来的需求，做得再漂亮也没人用。' },
+    { t: '验证需求', d: '第 4 篇', miss: '把朋友的客气话当成验证，上线后才发现没人愿意持续用。' },
+    { t: '设计方案', d: '第 4、5、10 篇', miss: '一股脑把需求丢给 AI，范围失控，越改越乱。' },
+    { t: '构建产品', d: '第 2、5–9、11–15 篇', miss: '只有想法和原型图，没有能用的东西。' },
+    { t: '交付用户', d: '第 5、9、15 篇', miss: '只能在自己电脑上跑，别人打不开。' },
+    { t: '说明价值', d: '第 5 篇', miss: '别人看不懂你做了什么、为什么值得试。' },
+    { t: '观察结果', d: '第 5 篇', miss: '不知道用户卡在哪、有没有留下来，迭代全靠猜。' },
+    { t: '持续迭代', d: '贯穿全系列', miss: '停在第一版，问题暴露了也没人修。' }
+  ]
+});
+
+EV.evolve($('#evo'), {
+  vers: [
+    { t: '第一版：一句话', p: '帮我做一个贪吃蛇游戏', r: '<p>能得到一个可玩的经典贪吃蛇。好处是马上有个能跑的骨架，坏处是所有细节都由模型自己决定。</p>' },
+    { t: '第二版：加一个机制', p: '帮我做一个贪吃蛇游戏，它应该支持\n[[1. 可以吃不同的单词，它们会被收集在一个盒子里]]', r: '<p>只加一条新规则，范围小，出问题容易定位。原教程的节奏是<b>每次只加一件事，先跑起来再继续</b>。</p>' },
+    { t: '第三版：接入 AI 能力', p: '帮我做一个贪吃蛇游戏，它应该支持：\n1. 可以吃不同的单词，它们会被收集在一个盒子里\n[[2. 当蛇吃了8个单词时，llm 应该根据这些单词创作一首诗，我们可以根据需要重新混合这首诗。\n3. 当诗完成后，下一步将自动根据这首诗创建一幅图像。]]', r: '<p>游戏里出现了“人工很难做到”的部分：写诗和画图。这就是原教程说的 <b>AI 原生</b>：AI 不只是帮你写代码，还是产品功能本身。作业要求能讲清“AI 在这里具体帮了什么忙”。</p>' }
+  ]
+});
+
+HB.cards($('#askCards'), {
+  opts: ['截图', '复制粘贴'],
+  items: [
+    { t: '终端里一大段红色报错堆栈。', a: 1, why: '堆栈要完整文本，模型才能定位文件和行号；截图还可能截不全。' },
+    { t: '按钮和输入框挤在一起、错位了。', a: 0, why: '布局问题用截图最直观，标出错位区域再配一句说明。' },
+    { t: '接口返回的 JSON 和预期字段不一致。', a: 1, why: 'API 返回属于复制粘贴类，完整贴出来模型才能比对字段。' },
+    { t: 'IDE 里找不到“新建对话”的按钮。', a: 0, why: '工具界面找不到按钮，截全屏让模型帮你指位置。' },
+    { t: '配置文件 package.json 的内容。', a: 1, why: '代码和配置一律贴文本，方便模型直接修改后给回完整版本。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-vc'), {
+  c: [
+    ['Vibe Coding', 'Karpathy 2025 年 2 月提出：用自然语言描述、AI 生成、运行看结果、对话修改，不逐行手写和管理代码'],
+    ['Build Product', '对从问题到结果的完整过程负责：值不值得做、谁会用、怎么交付、怎么证明有效']
+  ],
+  p: [
+    ['门槛变化', '实现变便宜，判断、交付和验证的分量变重'],
+    ['课程目标', '不是教会工具，而是培养初步的产品工程师']
+  ]
+});
+S.notes($('#n-pe'), {
+  c: [
+    ['产品工程师', '公司产品团队内，从发现问题负责到上线、反馈和业务指标（Intercom 2018）'],
+    ['FDE', '在客户现场：找对问题、PoC、生产交付、沉淀共性；以采用率和提效为成功标准'],
+    ['OPC', '一人公司的经营方式，借 AI 和云服务当数字团队，从市场负责到现金流']
+  ],
+  p: [
+    ['关系', '同一套能力的三个逐渐扩大的圆，不是晋升阶梯'],
+    ['共同基本功', '发现真实问题 → 最小可用产品 → 交给用户 → 讲清价值 → 按使用和付费迭代'],
+    ['“会销售”', '找到需要的人、听懂痛点、演示、邀请试用、验证是否持续使用或付费']
+  ]
+});
+S.notes($('#n-edge'), {
+  c: [
+    ['舒适区三特征', '范围清晰、结果可见、纠错直接'],
+    ['流程视角', '先梳理流程、输入输出、敏感节点，再拆成独立环节交给 AI']
+  ],
+  p: [
+    ['原型 / 内部工具', '放心让 AI 打第一版，再迭代细节'],
+    ['真实用户的大产品', '工程师在架构、抽象、性能、维护上长期投入'],
+    ['支付 / 风控 / 医疗', '不宜生成完直接上线，必须严格审查和测试']
+  ]
+});
+S.notes($('#n-loop'), {
+  c: [
+    ['产品闭环', '发现问题 → 验证需求 → 设计方案 → 构建产品 → 交付用户 → 说明价值 → 观察结果 → 持续迭代'],
+    ['项目制', '用模糊、不傻瓜化的真实项目练拆解、查资料、读代码库']
+  ],
+  p: [
+    ['第一阶段', 'AI IDE、找点子、验证需求、原型、接 AI、交付'],
+    ['第二阶段', '设计到代码、Supabase、部署、支付、Dify'],
+    ['第三阶段', 'Claude Code 工作流、Spec、Skills、MCP、长任务、多 Agent、RAG、多端']
+  ]
+});
+S.notes($('#n-prompt'), {
+  c: [
+    ['AI 原生', 'AI 不只写代码，还是产品功能本身（写诗、生图等人工难做的部分）'],
+    ['上下文长度', '模型一次能看到的文本上限；接近时遗忘、偏题、前后不一'],
+    ['指令遵循', '按要求的数量、要素、格式、语气执行，不多做']
+  ],
+  p: [
+    ['加需求的节奏', '先一句话拿骨架，每次只加一件事，每版都能跑'],
+    ['项目级提示词', '让模型先写一份带框架和路径的提示词，再用它生成'],
+    ['选模型', 'Vibe Coding 偏好长上下文 + 指令遵循强的模型']
+  ]
+});
+S.notes($('#n-ask'), {
+  c: [
+    ['提问是基本功', '怎么问决定 AI 给猜测还是可落地的改法'],
+    ['多模态前提', '截图沟通要求模型支持图片输入']
+  ],
+  p: [
+    ['复制粘贴', '报错堆栈、日志、代码、配置、API 返回；要完整'],
+    ['截图', '布局、交互异常、找不到按钮；截全屏 + 标注 + 一句说明'],
+    ['学习型提问', '先五句话讲清，再出题考我']
+  ]
+});
+
+EV.todo($('#todo'), '1', [
+  { t: '用任意在线平台（z.ai、Google AI Studio、Bolt.new 等）一句话生成一个贪吃蛇', d: '原教程 2.1 节，感受“60 秒做出来”。' },
+  { t: '按三版提示词复现 AI 原生贪吃蛇，至少做到吃单词写诗', d: '练习每次只加一件事；出错时把现象 + 报错 + 代码一次性贴给 AI。' },
+  { t: '让模型帮你写一份项目级提示词，再用它重新生成，对比差异', d: '看模型补上了哪些你没想到的部分。' },
+  { t: '自创一个 AI 原生小游戏或 Demo，并能说清 AI 帮了什么忙', d: '原教程作业 2：重点不是画面多炫。' },
+  { t: '用一句话写下：我更接近产品工程师、FDE 还是 OPC 的哪个圆？为什么？', d: '给后面找点子定个方向。' }
+]);
+})();
+</script>
+</body>
+</html>

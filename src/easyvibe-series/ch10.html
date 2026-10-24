@@ -1,0 +1,385 @@
+---
+title: 知识库应用与 PRD 大作业
+desc: Easy-Vibe 学习笔记（十）：聊天机器人“只说不做”与智能体的三项能力；知识库问答为什么要 RAG；Dify、Coze、n8n 怎么选；知识库的切分、重叠、Embedding、Rerank、Top K 与阈值；Dify 常用节点与意图分类工作流；把 Dify 当作 API 中枢；工作流平台的局限；第二阶段八个大作业各练什么，一份 PRD 由哪些部分组成，按 PRD 开发的四个阶段。
+kicker: <span>技术学习</span><span>Easy-Vibe · 10</span><span>对应原教程 二阶段 Dify 入门与知识库集成、Stage 2 综合实战（八个 PRD 项目）</span><span>约 35 分钟</span>
+h1: 让 AI 从会聊天到能做事，<em>再用一份 PRD 把它们串起来</em>
+lead: 第二阶段的 AI 部分从 Dify 开始。原教程先指出纯对话 AI 的局限：它能回答“怎么查订单”，却不能真的去查。要升级成“数字员工”，需要专属知识、工具调用和结构化执行。这一篇先用 Dify 把知识库问答和工作流跑通，再看第二阶段的收尾：八个围绕真实 PRD 的综合项目，把前端、数据库、支付、部署和 AI 能力全部串起来。
+nav: agent|从对话到智能体;platform|选平台;kb|知识库参数;flow|节点与工作流;api|Dify 当 API;limit|平台的局限;prd|PRD 大作业;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.chunks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chunks span { border-radius: 6px; padding: 4px 8px; font-size: 15px; line-height: 1.6; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); }
+.chunks span i { font-style: normal; background: var(--s2-soft); }
+.chunks span b { color: var(--s1); font-family: var(--f-num); margin-right: 4px; }
+.kbctl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+.kbctl label { font-size: 15px; color: var(--ink-2); }
+.kbctl input { width: 100%; accent-color: var(--s1); }
+.hits { margin-top: 10px; }
+.hits div { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) 5em; gap: 8px; align-items: center; font-size: 15px; padding: 5px 0; border-top: 1px solid var(--hair); color: var(--ink-2); }
+.hits div.off { opacity: .45; text-decoration: line-through; }
+.hits div em { font-style: normal; font-family: var(--f-num); color: var(--ink); }
+.hits .bar { height: 8px; border-radius: 4px; background: var(--s1); }
+@media (max-width: 680px) { .kbctl { grid-template-columns: minmax(0, 1fr); } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>要让 AI 从“只说不做”变成“数字员工”，需要哪三项能力？为什么企业更需要工作流而不是让模型自由发挥？</li>
+    <li>建知识库时，切分长度、重叠、Embedding、Rerank、Top K、相似度阈值各管什么？</li>
+    <li>一份可以直接拿来开发的 PRD 包含哪些部分？按 PRD 开发分哪四个阶段？</li>
+  </ol>
+</div>
+
+<section class="part" id="agent">
+  <div class="part-head"><h2>从对话到智能体，从智能体到工作流</h2><span class="meta">原教程 Dify 第 1.1–1.2 节</span></div>
+  <div class="sec-lede">
+    <p>原教程开头点出纯对话 AI 的局限：<strong>聊天机器人本身并不能做事</strong>。它能描述周报该包含什么，却不能汇总项目数据并发邮件。要从聊天伙伴升级为数字员工，需要三项能力：<strong>专属知识</strong>（读懂你的产品文档、客户资料、内部制度）、<strong>工具调用</strong>（操作数据库、调 API）、<strong>结构化执行</strong>（按预设逻辑一步步完成，而不是自由发挥）。原教程也坦白：业界说的简单“智能体”，大多是 LLM + 工具 + 知识库的增强型应用，还不是能自主规划的智能体（第 13 篇讲后者）。</p>
+    <p>最简单、最广泛的形态是<strong>知识库问答机器人</strong>：很多业务的核心诉求不是让 AI 执行复杂操作，而是基于企业自己的资料准确回答。难点是几千页文档里每轮对话怎样找到最相关的内容，答案是 <strong>RAG（检索增强生成）</strong>：提问时先从知识库检索出语义最相关的片段，注入到模型输入里，让它基于真实资料作答，减少幻觉，还能保持客服口径（第 14 篇深入讲 RAG）。</p>
+    <p>更复杂的业务光有知识库还不够。原教程的例子：“把上个月面向客户的新功能整理成文案发给市场部”，要检索发布记录、过滤客户相关特性、改写成客户语言、推送邮件。让模型一次自由推理，容易漏信息、混术语、格式不稳。更关键的是，<strong>企业需要可审计、可复用、可监控的标准化执行路径</strong>。于是有了 <strong>AI 工作流</strong>：把任务拆成有序、可配置、可自动执行的子步骤，用可视化或代码编排条件、循环、并行，把“如何用 AI 完成某件事”的经验固化成模板。原教程的一句话：智能体让 AI 从会聊天走向能做事，工作流让 AI 从偶尔做成一件事迈向稳定、规模化地完成一类事。</p>
+    <p class="go">下面这些需求，分别缺哪项能力？</p>
+  </div>
+  <div class="lab"><div id="capCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>Workflow 与 Agent 的分界在<a href="../2026-10-22-helloagents-1/">《Hello-Agents》01 篇</a>和<a href="../2026-10-22-handbook-3/">《AI Agent Handbook》03 篇</a>里讲得更细；本篇的 Dify、Coze、n8n 在<a href="../2026-10-22-helloagents-5/">《Hello-Agents》05 篇</a>有专门对比。</div>
+  <div class="notes" id="n-agent"></div>
+</section>
+
+<section class="part" id="platform">
+  <div class="part-head"><h2>Dify、Coze、n8n 怎么选</h2><span class="meta">原教程 Dify 第 1.3、2.1 节</span></div>
+  <div class="sec-lede">
+    <p>低代码平台用可视化拖拽、预置模板替代大量手写代码，把 AI 应用从创意到上线的周期从几周缩到几小时，而且都能把搭好的应用发布成标准 API。原教程比较了三个最常用的：<strong>Dify</strong> 定位为 LLM 应用开发与运营平台，开源可私有化部署，知识库和 RAG 能力突出，支持多模型，适合企业知识库问答、定制 Agent、API 服务；<strong>Coze</strong>（字节）以极致易用为核心，插件丰富，一键发布到豆包、飞书、微信公众号，私有化能力有限，适合社交机器人和快速原型；<strong>n8n</strong> 是通用的可编程工作流自动化引擎，数百种 SaaS 和数据库集成节点，可视化加 JS / Python 代码，可自托管，适合跨系统数据同步和 AI + 传统 SaaS 自动化。大厂方案（百度千帆 AppBuilder、阿里百炼、腾讯 TI）适合已在相应云生态里、合规要求高的企业。</p>
+    <p>原教程的建议是：它们核心逻辑相同，都是可视化地编排和连接能力模块，掌握一个就能迁移到其他。学习直接用 Dify 官方云的 Sandbox 免费方案，不必先买服务器自部署；确实需要控制实例时，再按官方 Docker Compose 指南部署（至少 2 核 4G），自部署不代表服务器和模型调用免费。</p>
+    <p class="go">按场景选平台。</p>
+  </div>
+  <div class="lab"><div id="platCards"></div></div>
+  <div class="notes" id="n-platform"></div>
+</section>
+
+<section class="part" id="kb">
+  <div class="part-head"><h2>建知识库：六个参数</h2><span class="meta">原教程 Dify 第 2.4 节</span></div>
+  <div class="sec-lede">
+    <p>在 Dify 里上传 PDF、TXT 后进入知识库设置。第一组是<strong>文本切分</strong>：长文本必须切成小块（chunk）才能检索。<strong>最大切分长度</strong>可以试 512、2048、4096 并预览效果；<strong>切片重叠</strong>决定相邻片段保留多少相同内容，适当重叠可以避免一句关键信息被切到两块里谁也说不全。还有个选项是让大模型把部分内容转成<strong>问答对</strong>再存储，某些场景下能明显提升检索效果。</p>
+    <p>第二组是模型。<strong>Embedding 模型</strong>把文本转成数字向量，语义相近的文本向量也相近，于是能按意思而不是关键词找内容；它的选择显著影响检索效果（原教程推荐先用 Qwen 的 0.6B Embedding，再换 4B、8B 对比）。<strong>Rerank 模型</strong>对初筛出的候选做二次精排，把最匹配的排到前面，就像搜索引擎先粗筛一千条再精选前十。</p>
+    <p>第三组在召回测试里调：<strong>Top K</strong> 是返回最相似的前 K 个片段；<strong>Score Threshold</strong> 是相似度阈值，低于它的片段不返回，用来过滤相关度低的内容。设置完点保存，Embedding 模型把所有切片向量化，之后可以逐个查看、编辑、删除不合适的切片，再把知识库挂到应用上，对话时能看到每次命中了哪些来源。</p>
+    <p class="go">先调切分长度和重叠，看一段文字怎么被切开（高亮是重叠部分）；再调 Top K 和阈值，看哪些片段会被送进模型。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">切分可视化（按字数切，示意）</p>
+    <div class="kbctl">
+      <label>最大切分长度 <b id="kcV">40</b> 字<input type="range" id="kc" min="20" max="80" step="10" value="40"></label>
+      <label>切片重叠 <b id="koV">8</b> 字<input type="range" id="ko" min="0" max="20" step="4" value="8"></label>
+    </div>
+    <div class="chunks" id="chunks"></div>
+    <p class="note" id="chunkNote"></p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">召回过滤：问题“年假有几天？”（相似度为示意值）</p>
+    <div class="kbctl">
+      <label>Top K <b id="tkV">3</b><input type="range" id="tk" min="1" max="6" step="1" value="3"></label>
+      <label>Score Threshold <b id="thV">0.50</b><input type="range" id="th" min="0" max="0.9" step="0.05" value="0.5"></label>
+    </div>
+    <div class="hits" id="hits"></div>
+    <p class="note" id="hitNote"></p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Embedding 检索 vs Rerank 精排</h4>
+    <p><b>Embedding 检索</b>把问题和每个切片都提前变成向量，比较向量距离，速度快、能处理海量切片，但只是“大致语义相近”。<b>Rerank</b> 把问题和每个候选片段放在一起交给一个更精细的模型重新打分，准但慢，所以只用在初筛出的少量候选上。实际流程是先用 Embedding 粗筛出几十条，再用 Rerank 选出最好的几条送进大模型。</p>
+  </div>
+  <div class="notes" id="n-kb"></div>
+</section>
+
+<section class="part" id="flow">
+  <div class="part-head"><h2>Dify 节点与一条意图分类工作流</h2><span class="meta">原教程 Dify 第 2.1、2.6–2.7 节</span></div>
+  <div class="sec-lede">
+    <p>搭工作流像拼积木：<strong>LLM 节点</strong>负责理解和生成；<strong>工具节点</strong>执行具体动作（搜索、查数据库、发邮件）；<strong>数据节点</strong>读写信息。原教程把常用节点分成三类。推理类：LLM、Knowledge Retrieval（知识检索）、Answer（输出）、Agent（可自主选工具的多步决策）、Question Classifier（问题分类）。流程控制类：IF/ELSE 条件分支、<strong>Iteration</strong>（无状态的批量并行处理）、<strong>Loop</strong>（有状态的循环，每轮依赖上一轮结果）。数据类：Code、Template、变量聚合与赋值、文档提取、参数提取、HTTP Request、列表操作。工具则有 Tavily 搜索、JSON 处理、Markdown 导出等，插件市场可扩展。</p>
+    <p>为什么要分类再分流？原教程的餐饮场景：用户的输入从来不是规范参数，有人下单、有人抱怨、有人闲聊、有人跑题。全交给同一个模型会出两个问题：<strong>回复风格不稳定</strong>（同样是抱怨，有时道歉有时解释）和<strong>业务逻辑不可控</strong>（你要求“抱怨必须先道歉”，模型未必每次遵守）。工程化的做法是：先做<strong>意图分类</strong>（buy_food、complain、chitchat、other），再<strong>按意图分流</strong>到各自的提示词和角色，最后<strong>统一封装输出</strong>。原教程还建议多用现成模板：工作流可以导出导入（DSL 文件），找官方推荐的工作流案例直接导入，比自己从零搭省时间。</p>
+    <p class="go">走一遍这条意图分类工作流。</p>
+  </div>
+  <div class="lab"><div id="intentFlow"></div></div>
+  <div class="lab"><div id="nodeCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Iteration vs Loop</h4>
+    <p><b>Iteration</b> 是无状态的批量处理：子任务之间没有依赖（批量翻译段落、并行审核多条内容），节点把输入数组分片并行跑同一条链路，结果自动聚合成数组；配置重点是并行度和失败重试。<b>Loop</b> 是有状态的循环：下一轮依赖上一轮的输出（反复修订文案直到满意），要先初始化状态变量、每轮更新，并且<b>必须定义终止条件</b>（最多 10 次、评分大于 9、收到停止信号）和超时，否则可能无限循环。</p>
+  </div>
+  <div class="notes" id="n-flow"></div>
+</section>
+
+<section class="part" id="api">
+  <div class="part-head"><h2>把 Dify 当作 API 中枢</h2><span class="meta">原教程 Dify 第 2.8–2.9 节</span></div>
+  <div class="sec-lede">
+    <p>Dify 搭好的应用可以发布成 API，让它成为你产品的“大模型中枢后端”。做法和第 6 篇接模型 API 是同一个套路：应用里点 Publish → Access API Reference，找到 “Send Chat Message”，复制右侧的 <strong>Request 和 Response 示例</strong>，再拿到 API Key。有了 Key、请求示例、返回示例这三样，就可以让 AI IDE 写调用代码，并按返回结构提取需要的字段。原教程在第二阶段的一个前端项目（霍格沃茨画像）里就是这么做的：前端页面负责展示和交互，Dify 工作流负责“画像人物”的对话和情绪判断。</p>
+    <p>要注意的仍然是第 6 篇那条规矩：Dify 的 API Key 同样不能放在前端，由你自己的后端或边缘函数转发。</p>
+    <p class="go">这条提示词把三样东西一起交给 AI IDE。</p>
+  </div>
+  <div class="pcard" data-t="用 Dify API 做一个前端对话应用" data-k="据原教程 2.9 节整理"><pre>我在 Dify 里发布了一个知识库问答应用，想做一个自己的网页聊天界面。
+下面是 Dify 的 “Send Chat Message” 接口文档里的请求示例和返回示例：
+【Request 示例】
+【Response 示例】
+请帮我：
+1. 做一个简洁的聊天页面，支持多轮对话（用返回的 conversation_id 续接上下文）；
+2. 前端只调用我自己的 /api/chat，由服务端带着 DIFY_API_KEY 转发给 Dify，Key 从环境变量读取；
+3. 如果返回里有引用的知识库片段，在回答下方显示来源；
+4. 等待和失败时给出提示。最后告诉我怎么配置和测试。</pre></div>
+  <div class="notes" id="n-api"></div>
+</section>
+
+<section class="part" id="limit">
+  <div class="part-head"><h2>工作流平台的局限</h2><span class="meta">原教程 Dify 第 6 节</span></div>
+  <div class="sec-lede">
+    <p>原教程对低代码平台的评价很中肯：<strong>“低代码”往往也是一种“高代码”</strong>，用户仍要理解平台的概念、规则和操作逻辑，这本身就是新的学习成本。很多简单工作流本质上就是几个大模型调用前后串起来，几行代码就能写完，包了一层平台反而让调用变麻烦。在 Vibe Coding 快速发展的今天，让 AI 直接生成代码有时更高效。</p>
+    <p>但它仍然值得掌握：像办公软件一样，在业务团队里非常普遍；非技术同事能直接看懂、修改流程；调试、追踪、复用都有现成界面。原教程预告第三阶段会用代码级的工作流和 RAG 框架（LangGraph、LlamaIndex）实现同样的事，届时可以对比两种方式在复杂度和灵活性上的差别。</p>
+    <p class="go">回答几个问题，看这次该用平台还是直接写代码。</p>
+  </div>
+  <div class="lab"><div id="limitPick"></div></div>
+  <div class="notes" id="n-limit"></div>
+</section>
+
+<section class="part" id="prd">
+  <div class="part-head"><h2>第二阶段大作业：按一份真实 PRD 交付产品</h2><span class="meta">原教程 Stage 2 综合实战（八个项目与 PRD）</span></div>
+  <div class="sec-lede">
+    <p>第二阶段的收尾是八个综合项目，每个都附一份真实风格的 <strong>PRD（产品需求文档）</strong>，要求把前面学的前端、后端、数据库、支付、部署全部串起来，交付一个可运行的产品原型。它们各自训练一种常见的产品形态：AI 营销文案 SaaS（Supabase + Stripe 的完整商业闭环）、类 Midjourney 生图 SaaS、类 Dify 智能体平台（多角色、多模块的“平台感”）、智能旅游规划 Agent（让 AI 输出<strong>结构化、可操作</strong>的行程而不是一大段文字）、在线考试系统（Express，多角色权限）、Spring Boot 电影推荐（内容 + 行为 + 可解释推荐）、生鲜电商微服务（服务拆分、API 网关、跨服务一致性）、Go 交通数据平台（数据接入 → 聚合 → 告警 → 可视化）。</p>
+    <p>以营销文案 SaaS 的 PRD 为例，一份能直接开发的 PRD 包括：<strong>项目定位</strong>（一句话定义 + 系统总览图 + 技术选型 + 竞品借鉴点）、<strong>目标用户与核心目标</strong>（“5 分钟内注册并完成第一次生成”这种可验证的目标）、<strong>MVP 范围</strong>（做什么、不做什么）、<strong>角色与权限</strong>（游客、注册用户、管理员）、<strong>页面架构</strong>（3 套入口 www / app / admin，共 10 个页面，每页列核心功能）、<strong>关键链路与状态流</strong>（游客 → 用户 → 付费用户，生成中 → 成功 / 失败）、<strong>后端模块与数据表</strong>、<strong>后台指标与监控</strong>、<strong>接口草案</strong>、<strong>非功能要求</strong>（历史只能自己可见、支付状态与套餐一致、移动端可用）、<strong>开发顺序</strong>。</p>
+    <p>原教程给每个项目的开发流程都是四个阶段：<strong>需求分析</strong>（读 PRD，答清几个入口、每页核心功能、有哪些模块和表、支付和免费额度怎么设计、MVP 做什么；答不清就不要开始写代码，需求不清是返工的最常见原因）→ <strong>搭骨架</strong>（让 AI 按 PRD 生成所有页面的结构和<strong>假数据</strong>，先不接真实接口，“风格要像现代 SaaS，不像课堂 demo”）→ <strong>后端集成</strong>（鉴权、数据库、模型调用、支付）→ <strong>联调上线</strong>（端到端跑通，部署，准备演示）。</p>
+    <p class="go">勾掉 PRD 的某一部分，看开发时会出什么问题；再看八个项目各自练的核心难点。</p>
+  </div>
+  <div class="lab"><p class="lab-t">PRD 缺失检查（结构取自原教程营销文案 SaaS 的 PRD）</p><div id="prdCheck"></div></div>
+  <div class="lab"><div id="projCards"></div></div>
+  <div class="pcard" data-t="按 PRD 生成前端骨架" data-k="原教程营销文案 SaaS 实战 2.1 节"><pre>请基于当前 PRD，帮我生成一个 AI 营销文案 SaaS 的前端骨架。
+要求：
+1. 分成三个入口：www、app、admin
+2. 官网包括：首页、定价、FAQ
+3. app 包括：登录、注册、生成工作台、历史记录、套餐页
+4. admin 包括：后台首页、用户管理、生成记录、支付订单
+5. 先只生成页面结构和假数据，不接真实接口
+6. 风格要像现代 SaaS，不像课堂 demo</pre></div>
+  <div class="notes" id="n-prd"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 数字员工需要哪三项能力？为什么企业更需要工作流？</summary><p class="ans">专属知识（基于企业资料回答，靠 RAG）、工具调用（操作数据库、调 API）、结构化执行（按预设逻辑一步步完成）。让模型自由推理容易漏信息、混术语、格式不稳，而企业需要可审计、可复用、可监控的标准化执行路径，非预期结果可能带来严重损失；工作流把任务拆成可配置的有序步骤，把经验固化成模板。</p></details>
+    <details><summary>2. 知识库六个参数各管什么？</summary><p class="ans">最大切分长度决定每个片段多长；切片重叠让相邻片段共享一段内容，避免关键信息被切断；Embedding 模型把文本变成向量，按语义检索；Rerank 模型对初筛候选做二次精排；Top K 决定最多返回几个片段；Score Threshold 过滤掉相似度低于阈值的片段。</p></details>
+    <details><summary>3. PRD 的组成？按 PRD 开发的四个阶段？</summary><p class="ans">项目定位与技术选型、目标用户与可验证的核心目标、MVP 范围（做与不做）、角色与权限、页面架构（入口与每页核心功能）、关键链路与状态流、后端模块与数据表、后台指标与监控、接口草案、非功能要求、开发顺序。四个阶段：需求分析（答不清不写代码）→ 按 PRD 用假数据搭全部页面骨架 → 后端集成（鉴权、数据库、模型、支付）→ 端到端联调、部署、演示。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.cards($('#capCards'), {
+  opts: ['专属知识', '工具调用', '结构化执行'],
+  items: [
+    { t: '员工问“今年年假制度怎么规定的”，希望照员工手册回答。', a: 0, why: '需要基于企业自己的资料作答，靠知识库 + RAG。' },
+    { t: '用户问“我的订单到哪了”，要真的去订单系统查。', a: 1, why: '需要调用外部系统的 API。' },
+    { t: '“抱怨必须先道歉、再给补偿方案”，每次都要这样处理。', a: 2, why: '业务规则要稳定执行，用工作流把路径固定下来。' },
+    { t: '每周一自动汇总上周数据、写成周报、发到群里。', a: 2, why: '多步骤、按固定顺序执行，并且要可复用、可监控。' }
+  ]
+});
+
+HB.cards($('#platCards'), {
+  opts: ['Dify', 'Coze', 'n8n', '大厂云平台'],
+  items: [
+    { t: '公司要一个基于内部制度文档的问答助手，数据必须私有化部署。', a: 0, why: '开源可私有化、知识库 RAG 能力突出。' },
+    { t: '做一个娱乐向聊天机器人，发布到飞书和微信公众号。', a: 1, why: '零代码、插件丰富、一键多渠道发布。' },
+    { t: '新表单提交后，同步到 CRM、发 Slack 通知，再用 AI 写一段摘要。', a: 2, why: '跨系统数据流动和 API 编排是 n8n 的强项。' },
+    { t: '已全面使用阿里云，合规要求高，要用通义模型。', a: 3, why: '阿里百炼等大厂方案与自家云生态深度融合。' }
+  ]
+});
+
+/* ---------- 切分可视化 ---------- */
+var DOC = '员工每年享有带薪年假。入职满一年不满十年的，年假为五天；满十年不满二十年的，年假为十天。年假可分次休，但需提前三天在系统中申请。病假需提供医院证明，三天以内由直属主管审批。';
+function drawChunks() {
+  var L = +$('#kc').value, O = +$('#ko').value;
+  if (O >= L) O = L - 4;
+  $('#kcV').textContent = L; $('#koV').textContent = O;
+  var out = [], i = 0, n = 0;
+  while (i < DOC.length && n < 40) {
+    var seg = DOC.slice(i, i + L);
+    var ov = n > 0 ? Math.min(O, seg.length) : 0;
+    out.push('<span><b>' + (n + 1) + '</b>' + (ov ? '<i>' + seg.slice(0, ov) + '</i>' : '') + seg.slice(ov) + '</span>');
+    n++;
+    if (i + L >= DOC.length) break;
+    i += L - O;
+  }
+  $('#chunks').innerHTML = out.join('');
+  var cut = DOC.indexOf('满一年不满十年的，年假为五天');
+  var note = '共 ' + n + ' 个切片。';
+  var whole = false;
+  for (var s = 0, k = 0; k < n; k++, s += L - O) { if (s <= cut && s + L >= cut + 14) whole = true; }
+  note += whole ? '“满一年不满十年的，年假为五天”完整落在某一片里，检索时能整句命中。' : '注意：“满一年不满十年的，年假为五天”被切断在两片之间，单独检索任何一片都说不全。加大重叠或切分长度试试。';
+  $('#chunkNote').textContent = note;
+}
+$('#kc').addEventListener('input', drawChunks); $('#ko').addEventListener('input', drawChunks); drawChunks();
+
+var HITS = [['年假规则：满一年不满十年五天，满十年十天', 0.86], ['年假可分次休，需提前三天申请', 0.71], ['员工每年享有带薪年假', 0.64], ['法定节假日安排说明', 0.41], ['病假需提供医院证明', 0.33], ['报销流程与发票要求', 0.12]];
+function drawHits() {
+  var k = +$('#tk').value, t = +$('#th').value, sent = 0;
+  $('#tkV').textContent = k; $('#thV').textContent = t.toFixed(2);
+  $('#hits').innerHTML = HITS.map(function (x, i) {
+    var on = i < k && x[1] >= t; if (on) sent++;
+    return '<div class="' + (on ? '' : 'off') + '"><em>' + x[1].toFixed(2) + '</em><span>' + x[0] + '</span><span class="bar" style="width:' + (x[1] * 100) + '%"></span></div>';
+  }).join('');
+  var msg = '送进模型的片段：' + sent + ' 个。';
+  if (sent === 0) msg += '一个都没有，模型只能说“找不到”。阈值太高了。';
+  else if (k >= 5 && t < 0.3) msg += 'Top K 大、阈值低，把病假、报销这类无关片段也塞进去了，既浪费上下文，也可能干扰回答。';
+  else if (sent <= 3 && t >= 0.5) msg += '只保留了真正相关的年假片段。';
+  $('#hitNote').textContent = msg;
+}
+$('#tk').addEventListener('input', drawHits); $('#th').addEventListener('input', drawHits); drawHits();
+
+EV.flow($('#intentFlow'), {
+  nodes: [{ k: 's', t: 'Start', sub: '用户输入' }, { k: 'q', t: 'Question Classifier', sub: '意图分类' }, { k: 'l', t: 'LLM 分支', sub: '各自提示词' }, { k: 'a', t: 'Answer', sub: '统一输出' }],
+  steps: [
+    { a: 's', b: 'q', m: '“你们也太慢了吧？等一个小时了。”', d: '用户随口一句话，不是规范参数。' },
+    { a: 'q', b: 'q', m: '判定：complain', d: '四类意图：buy_food 下单、complain 抱怨、chitchat 闲聊、other 跑题。' },
+    { a: 'q', b: 'l', m: '路由到“投诉安抚”分支', d: '这个分支的提示词规定：先道歉，再说明处理方式，不解释原因、不推卸。规则固化在分支里，而不是寄希望于模型每次自觉。' },
+    { a: 'l', b: 'a', m: '生成回复', d: '其他意图走各自分支：下单分支会追问缺失信息、不编造订单；跑题分支礼貌地把话题引回点餐。' },
+    { a: 'a', b: 'a', m: '统一封装输出', d: '不管走哪个分支，输出格式一致（意图标签 + 回复文本），前端和其他系统接入时不用分别处理。' }
+  ]
+});
+
+HB.cards($('#nodeCards'), {
+  opts: ['Knowledge Retrieval', 'Question Classifier', 'Iteration', 'Loop', 'HTTP Request', 'Parameter Extractor'],
+  items: [
+    { t: '回答前先从售后 SOP 知识库里找相关条款。', a: 0, why: '知识检索节点，为 LLM 提供依据。' },
+    { t: '把 50 段产品介绍分别翻译成英文。', a: 2, why: '子任务相互独立，批量并行处理。' },
+    { t: '反复修改文案，直到自评分数超过 9 分或改满 5 次。', a: 3, why: '每轮依赖上一轮结果，有状态，必须设终止条件。' },
+    { t: '从“帮我订明天下午三点两个人的位子”里取出日期、时间、人数。', a: 5, why: '把非结构化输入变成结构化参数。' },
+    { t: '把整理好的结果推送到公司内部系统的接口。', a: 4, why: '向外部系统发起 HTTP 请求。' },
+    { t: '先判断用户是在问售后、问用法还是其他。', a: 1, why: '问题分类，决定后面走哪条分支。' }
+  ]
+});
+
+HB.decide($('#limitPick'), {
+  qs: [
+    { id: 'who', q: '谁来维护这个流程？', opts: [['biz', '业务 / 运营同事'], ['dev', '开发者自己']], def: 'biz' },
+    { id: 'cx', q: '逻辑有多复杂？', opts: [['simple', '几步串联'], ['complex', '复杂状态、深度定制']], def: 'simple' },
+    { id: 'obs', q: '需要现成的调试、日志、知识库界面吗？', opts: [['y', '需要'], ['n', '不需要']], def: 'y' }
+  ],
+  decide: function (a) {
+    if (a.who === 'biz' || a.obs === 'y') return '<p><b>用工作流平台</b>（Dify / Coze / n8n）。</p><p>非技术同事能看懂和修改，调试、追踪、知识库管理都有现成界面；原教程说熟练使用这类平台正在成为像办公软件一样的基础技能。</p>';
+    if (a.cx === 'complex') return '<p><b>直接写代码</b>，必要时用 LangGraph 等代码级框架（第 13、14 篇）。</p><p>复杂状态和深度定制在拖拽画布里反而难表达，平台概念本身成了额外学习成本。</p>';
+    return '<p><b>直接写代码</b>。</p><p>几个模型调用前后串联，几行代码就能写完；原教程也承认，包一层平台反而让 API 调用变麻烦。</p>';
+  }
+});
+
+HB.check($('#prdCheck'), {
+  items: [
+    { t: '项目定位与技术选型', d: '一句话定义、系统总览、竞品借鉴', miss: 'AI 自己决定做成什么样，常常做成“一个输入框 + 一个结果框”的单页工具，而不是一个 SaaS。' },
+    { t: '可验证的核心目标', d: '如 5 分钟内完成首次生成', miss: '不知道做到什么程度算完成，验收全凭感觉。' },
+    { t: 'MVP 范围：做与不做', d: '团队协作、模板市场暂不做', miss: '范围越写越大，AI 顺手加功能，第一版迟迟交付不了。' },
+    { t: '角色与权限', d: '游客 / 注册用户 / 管理员', miss: '后台页面谁都能进；用户能看到别人的历史记录。' },
+    { t: '页面架构', d: '3 套入口、10 个页面及核心功能', miss: '页面漏建、入口混在一起，前端骨架反复返工。' },
+    { t: '关键链路与状态流', d: '免费 → 付费，生成中 → 成功 / 失败', miss: '支付后套餐不更新、生成失败没有状态，页面卡在加载中。' },
+    { t: '后端模块与数据表', d: 'profiles、generation_records、billing_records', miss: 'AI 临时拼表结构，字段不一致，后面加功能牵一发动全身。' },
+    { t: '非功能要求与指标监控', d: '历史仅自己可见、支付与套餐一致、移动端可用、成功率与转化率', miss: '上线后才发现越权、状态不一致，也没有数据判断产品是否有效。' },
+    { t: '接口草案与开发顺序', d: '先官网和登录，最后后台', miss: '前后端各写各的，联调时路径和字段对不上；开发顺序乱，支付先于登录无法测试。' }
+  ],
+  verdict: function (on, total) { return '<p>保留了 <b>' + on + ' / ' + total + '</b> 项。' + (on === total ? '这份 PRD 可以直接交给 AI 分阶段开发了。' : '缺的部分，AI 会自己猜。') + '</p>'; }
+});
+
+HB.cards($('#projCards'), {
+  opts: ['商业闭环', '平台感多模块', '结构化 AI 输出', '多角色权限', '推荐与行为', '服务拆分', '数据链路'],
+  items: [
+    { t: 'AI 营销文案 SaaS（Supabase + Stripe）', a: 0, why: '注册 → 生成 → 历史 → 套餐 → 支付 → 后台，一条完整的商业闭环。' },
+    { t: '类 Dify 智能体平台', a: 1, why: '用户控制台 + 管理后台 + 平台后端，智能体、对话、日志、知识库多模块。' },
+    { t: '智能旅游规划 Agent', a: 2, why: '核心挑战是让 AI 生成结构化、可保存可重用的每日行程，而不是一大段文字。' },
+    { t: '在线考试与管理系统（Express）', a: 3, why: '学生和管理员看到的页面、能做的操作不同。' },
+    { t: 'Spring Boot 电影推荐系统', a: 4, why: '用户行为如何影响推荐结果，推荐结果如何可解释。' },
+    { t: '生鲜电商微服务', a: 5, why: '按业务拆服务、API 网关统一对外、处理跨服务数据一致性。' },
+    { t: 'Go 交通数据分析平台', a: 6, why: '数据接入 → 聚合 → 告警 → 可视化的完整数据链路。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-agent'), {
+  c: [
+    ['三项能力', '专属知识、工具调用、结构化执行'],
+    ['知识库问答', '最简单最广泛的智能体，靠 RAG 让回答有据可依'],
+    ['AI 工作流', '把任务拆成有序、可配置、可自动执行的步骤，经验固化成模板']
+  ],
+  p: [
+    ['企业要什么', '可审计、可复用、可监控的标准化路径'],
+    ['一句话', '智能体让 AI 能做事，工作流让 AI 稳定地做成一类事'],
+    ['现状', '多数“智能体”是 LLM + 工具 + 知识库的增强应用']
+  ]
+});
+S.notes($('#n-platform'), {
+  c: [
+    ['Dify', '开源 LLM 应用平台，知识库 RAG 强，可私有化'],
+    ['Coze', '零代码 Bot，插件多，一键发布到豆包 / 飞书 / 公众号'],
+    ['n8n', '可编程工作流自动化，数百种集成，可自托管']
+  ],
+  p: [
+    ['共同点', '可视化编排能力模块，都能发布成 API；学一个就能迁移'],
+    ['起步', '用 Dify 官方云 Sandbox，自部署是可选的进阶']
+  ]
+});
+S.notes($('#n-kb'), {
+  c: [
+    ['Embedding', '把文本变向量，语义相近则向量相近'],
+    ['Rerank', '对初筛候选二次精排，准但慢'],
+    ['问答对存储', '让大模型把内容改写成 Q&A 再存，可提升检索']
+  ],
+  p: [
+    ['切分长度', '每片多长；太短断句，太长不精准'],
+    ['重叠', '相邻片段共享内容，防止关键句被切断'],
+    ['Top K', '最多返回几个片段'],
+    ['阈值', '低于相似度阈值的片段不返回']
+  ]
+});
+S.notes($('#n-flow'), {
+  c: [
+    ['三类节点', '推理（LLM / 检索 / 分类 / Agent / Answer）、流程控制、数据操作'],
+    ['Iteration vs Loop', '无状态并行批处理 vs 有状态循环（必须有终止条件）']
+  ],
+  p: [
+    ['分类再分流', '意图分类 → 各分支提示词 → 统一封装输出'],
+    ['解决的问题', '回复风格不稳定、业务规则不可控'],
+    ['省时间', '导入官方推荐的工作流 DSL 模板再改']
+  ]
+});
+S.notes($('#n-api'), {
+  c: [
+    ['Dify 当中枢', '发布成 API，前端只做展示和交互'],
+    ['三样东西', 'API Key + Request 示例 + Response 示例']
+  ],
+  p: [
+    ['续接对话', '用返回的 conversation_id'],
+    ['Key', '同样不进前端，由自己的后端转发']
+  ]
+});
+S.notes($('#n-limit'), {
+  c: [
+    ['低代码也是高代码', '平台概念和规则本身是学习成本']
+  ],
+  p: [
+    ['用平台', '业务同事维护、需要现成调试和知识库界面'],
+    ['写代码', '几步串联，或复杂状态深度定制（LangGraph 等）']
+  ]
+});
+S.notes($('#n-prd'), {
+  c: [
+    ['PRD', '定位、目标、MVP、角色、页面、链路、数据表、指标、接口、非功能、开发顺序'],
+    ['八个项目', '商业闭环、平台感、结构化输出、多角色、推荐、微服务、数据链路']
+  ],
+  p: [
+    ['四阶段', '需求分析 → 假数据骨架 → 后端集成 → 联调上线'],
+    ['开工条件', '答不清入口、页面、表、支付、MVP 就不写代码'],
+    ['骨架要求', '先页面结构和假数据，不接真实接口']
+  ]
+});
+
+EV.todo($('#todo'), '10', [
+  { t: '在 Dify 官方云建一个知识库问答应用，上传一份自己的文档', d: '' },
+  { t: '分别用 512 和 2048 的切分长度预览切片，在召回测试里调 Top K 和阈值', d: '' },
+  { t: '照原教程搭一条意图分类工作流（下单 / 抱怨 / 闲聊 / 其他）', d: '' },
+  { t: '把 Dify 应用发布成 API，用 AI IDE 做一个自己的聊天前端（Key 走后端）', d: '' },
+  { t: '挑一个大作业，读完 PRD 后先写下：几个入口、哪些表、MVP 做什么不做什么', d: '' },
+  { t: '按 PRD 用假数据生成全部页面骨架，再逐个接后端', d: '' }
+]);

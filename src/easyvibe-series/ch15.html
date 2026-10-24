@@ -1,0 +1,338 @@
+---
+title: 跨平台与发布
+desc: Easy-Vibe 学习笔记（十五）：选平台先问三个问题，十条常见架构路线各自擅长与代价；多端企业系统共用一个后端；“一套代码不等于一次测试”等四个误区；小程序、浏览器插件、PWA 各自的关键边界；从 Release 包到灰度发布的上架流程，打包、签名、分发、审核四件事，Android、iOS、桌面与 Web 的要点；用手机远程指挥编码 Agent 的瘦客户端架构；用 GitHub Pages 加模板加 AI 做个人主页。
+kicker: <span>技术学习</span><span>Easy-Vibe · 15</span><span>对应原教程 三阶段 跨平台开发（选平台、各端教程、发布上架）、手机远程开发、个人网页与学术博客</span><span>约 35 分钟</span>
+h1: 平台不是技术偏好题，<em>要看用户在哪里打开它</em>
+lead: 第三阶段的最后一部分是多端：原教程为网站、PWA、微信小程序、iOS、Android、Flutter、React Native、Electron、Qt、浏览器插件、VS Code 插件、Godot 游戏各写了一篇实战，又用一篇讲清怎么选、一篇讲清怎么上架。这一篇不复述各端的操作步骤，而是把“怎么选、各端的关键边界、怎么发布”整理成能查的表和判断题；最后两节是原教程的两个彩蛋：用手机远程指挥编码 Agent，以及用 AI 搭一个属于自己的个人主页。
+nav: choose|先问三个问题;routes|十条路线;multi|多端组合;edge|各端边界;publish|发布上架;mobile|手机远程开发;brand|个人主页;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>选平台先问哪三个问题？什么时候才值得做原生 App 或 Qt 这样的重桌面端？</li>
+    <li>多端产品哪些东西应该共用、哪些可以不同？“一套代码”为什么不等于“一次测试”？</li>
+    <li>上架前的打包、签名、分发、审核各解决什么？版本号和构建号有什么区别？</li>
+  </ol>
+</div>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>先问三个问题</h2><span class="meta">原教程 如何选择你的应用该开发的平台 第 1 节</span></div>
+  <div class="sec-lede">
+    <p>很多人有了想法先问“该用 Flutter、Electron 还是小程序”，原教程说这个顺序反了：<strong>平台不是技术偏好题，它取决于用户在哪里打开软件、任务发生在什么设备上、软件需要多深的系统权限。</strong>同样是“售后服务”，消费者入口适合小程序，客服和运营要网页后台，维修工程师可能还要一个能拍照、扫码、离线填写的移动端。业务只有一个，入口可以不止一个。</p>
+    <p>三个问题：<strong>用户会从哪里打开它？</strong>从搜索、链接、企业门户进来，优先网站或 PWA；从微信群、公众号、线下二维码进来，优先小程序；每天长时间使用、窗口一直开着，优先桌面端；工作本来就在浏览器或编辑器里，优先浏览器插件或 IDE 插件。<strong>需要哪些设备能力？</strong>相机、扫码、定位不一定非要原生；真正拉开差距的是长时间后台运行、蓝牙和串口通信、本地大文件处理、系统级快捷键、设备驱动和严格的性能要求。需要的权限越深，越该靠近操作系统。<strong>谁来长期维护？</strong>一套代码发多个平台能减少重复，但商店审核、登录、支付、通知、权限、文件系统、窗口行为最后仍要分别测试。</p>
+    <p>原教程把这三个问题压成一句口诀：<strong>能用链接解决的，先做 Web；用户就在微信里，先做小程序；需要后台运行、硬件或系统权限，再考虑原生；同一业务有多种角色，就让多个客户端共用一个后端。</strong></p>
+    <p class="go">回答三个问题，看第一版该选哪个平台。</p>
+  </div>
+  <div class="lab"><div id="platPick"></div></div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="routes">
+  <div class="part-head"><h2>十条常见架构路线</h2><span class="meta">原教程 选平台 第 2–3 节</span></div>
+  <div class="sec-lede">
+    <p>原教程逐条讲了十条路线，每条都说了企业里常拿它做什么、最大代价是什么。<strong>网站 / PWA</strong>：点开就能用，适合 SaaS 后台、CRM、看板、知识库、预约，代价是系统权限有限；PWA 仍然是网站，只是多了安装到桌面和离线缓存。<strong>微信小程序</strong>：优势不是比 App 高级，而是用户不用安装，适合会员、点单、报名、预约、售后工单，受微信环境和审核约束。<strong>iOS / Android 原生</strong>：离系统最近，后台定位、蓝牙、健康数据、音视频、复杂动画支持最完整，代价是两端各自的工程和发布成本。<strong>Flutter / React Native</strong>：大部分界面和业务共享，适合两端业务大体相同的电商、销售拜访、现场服务，平台差异仍要单独处理。</p>
+    <p><strong>Electron / Tauri</strong>：用 Web 技术做桌面软件，适合协作客户端、AI 桌面助手、内部工具；Electron 自带 Chromium 和 Node.js、生态成熟，Tauri 用系统 WebView、安装包更轻。<strong>Qt / 原生桌面</strong>：不只是工厂大屏，常用于设备控制台、医疗影像、汽车诊断、实验室和交易终端，要连串口、Modbus、CAN、仪器，在 Windows、Linux、嵌入式上长期稳定运行。<strong>浏览器插件</strong>：功能就发生在网页旁边，适合客服知识助手、销售线索补全、合规检查。<strong>VS Code 插件 / CLI</strong>：开发者工具放进开发流程，插件负责交互，CLI 负责进脚本和 CI。<strong>多端企业系统</strong>：不同角色不同入口，共用后端。<strong>Godot 等游戏引擎</strong>：实时画面、输入、碰撞、动画、关卡都现成，比在网页里重搭游戏循环合适。</p>
+    <p class="go">这些产品，第一版最该选哪条路线？</p>
+  </div>
+  <div class="lab"><div id="routeCards"></div></div>
+  <div class="notes" id="n-routes"></div>
+</section>
+
+<section class="part" id="multi">
+  <div class="part-head"><h2>多端组合：界面可以不同，后端应当统一</h2><span class="meta">原教程 选平台 第 2.9、4、6 节</span></div>
+  <div class="sec-lede">
+    <p>企业业务很少永远停在一个平台。原教程给的常见组合：<strong>零售与会员</strong>，消费者用小程序查积分领券申请售后，店员用移动端核销，总部在 Web 后台配活动看数据；<strong>现场服务与售后</strong>，客户从小程序报修，工程师在移动端接单拍照离线记录，调度在 Web 后台派单，要连检测仪器再加一个 Qt 或原生桌面工具；<strong>企业知识与 AI 助手</strong>，知识库和权限放后端，员工在浏览器里就给侧边栏插件，在 VS Code 里就给 IDE 插件，批量处理再给 CLI。</p>
+    <p>这里真正要共享的是<strong>业务规则和数据</strong>，不是强求每个端的界面代码一样：统一身份、业务 API、数据库、文件存储、审计日志。多端产品最怕每个客户端各写一套会员、订单、权限规则。原教程还列了四个常见误区：<strong>“一套代码”不等于“一次测试”</strong>（跨端框架替你共享代码，但替不了权限、支付、通知、窗口、商店和真机兼容测试）；<strong>企业软件不等于工控软件</strong>（CRM、审批、排班、售后都是企业软件，只有真的连设备协议、实时数据或本地大文件才轮到 Qt）；<strong>不要第一天就做全平台</strong>（同时做五端，容易得到五个都不完整的版本）；<strong>客户端不同，后端仍应当统一</strong>。</p>
+    <p class="go">点开售后服务这套多端系统的每一层。</p>
+  </div>
+  <div class="lab"><div id="multiLayers"></div></div>
+  <div class="lab"><div id="mythCards"></div></div>
+  <div class="notes" id="n-multi"></div>
+</section>
+
+<section class="part" id="edge">
+  <div class="part-head"><h2>几个端各自的关键边界</h2><span class="meta">原教程 带后端的微信小程序、浏览器 AI 插件、PWA 等各端教程</span></div>
+  <div class="sec-lede">
+    <p>各端教程的操作步骤会随工具更新而变，但每篇里都有一两条不变的边界，值得单独记住。<strong>带后端的小程序</strong>：原教程的一句话是“<strong>前端负责让用户操作，后端负责让业务可信</strong>”。AppSecret、支付密钥、AI Key，用户身份和工单归属，价格库存积分订单状态，内容审核和防重复提交，这四类都不能为了省事放在前端。它用 CloudBase 给一个“会员 + 售后工单”小程序逐项接后端，每接一项就同时去小程序页面和控制台确认结果。</p>
+    <p><strong>浏览器插件</strong>：只有三个核心部分，<strong>Content Script</strong> 读取当前页面可见文字，<strong>Service Worker</strong> 接收事件组织流程，<strong>Side Panel</strong> 展示按钮、加载状态和结果。原教程对比了 Glean（侧边栏查公司资料，仍遵守原系统权限）、Grammarly（建议直接出现在句子旁边，平时安静）、Edge Copilot（读当前页面要用户知情、管理员可管）三种入口，结论是：<strong>侧边栏只是入口</strong>，员工身份、文档权限、搜索服务和审计在后端；插件只申请真正需要的站点和能力，共享密钥放企业后端；开发先从不联网的本地版本开始。<strong>PWA</strong>：首先还是网页，适合想马上打开、网络偶尔断、没必要装几十兆客户端的轻量产品（原教程举了 Starbucks 点单），菜单和购物车可以弱网可用，<strong>提交订单和付款时明确要求联网</strong>；它不等于拥有原生 App 的全部系统能力。</p>
+    <p class="go">这些说法分别在讲哪个端？</p>
+  </div>
+  <div class="lab"><div id="edgeSort"></div></div>
+  <div class="notes" id="n-edge"></div>
+</section>
+
+<section class="part" id="publish">
+  <div class="part-head"><h2>发布上架：能运行和发布给用户是两回事</h2><span class="meta">原教程 如何把开发好的程序发布上架</span></div>
+  <div class="sec-lede">
+    <p>无论用什么技术，最后都要走这段路：<strong>确定渠道 → 固定应用身份 → 构建 Release 包 → 签名 → 内测 → 准备商店资料 → 提交审核 → 灰度发布 → 监控与更新</strong>。常被混称为“上架”的其实是四件不同的事：<strong>打包</strong>（生成正式安装包）、<strong>签名</strong>（证明包来自你且没被篡改）、<strong>分发</strong>（通过什么渠道交到用户手里）、<strong>审核</strong>（平台检查是否符合规则）。第一款作品不必同时上六个平台，先选用户最集中的一个渠道做通一次完整发布。</p>
+    <p>所有平台共用的发布前检查：<strong>用组织身份持有资产</strong>（开发者账号、域名、签名证书、云服务、收款资料不要绑在外包或某个员工的私人账号上，并开双重验证）；<strong>尽早固定应用身份</strong>（Android 包名、Apple Bundle ID 是“身份证”，发布后改了会被当成全新应用，旧用户无法升级；别再用 com.example.myapplication）；<strong>区分版本号和构建号</strong>（用户看到的是 1.2.0，商店识别的是每次上传的构建号，哪怕只是重打同一版本也要加构建号）；<strong>准备真正的 Release 环境</strong>（生产域名和 HTTPS、客户端里没有服务端密钥、没有测试账号和调试菜单、崩溃监控可用、数据库升级不清空旧数据）；<strong>隐私声明与真实行为一致</strong>（最常见的问题不是没有隐私政策，而是代码、权限弹窗、商店申报、隐私政策四者互相矛盾）；<strong>给审核人员一条走得通的路径</strong>（专用测试账号，不能要求短信验证码）。</p>
+    <p>各平台要点：Android 面向 Google Play 用 <code>.aab</code>，keystore 放团队密码库、绝不进 Git，先走内部或封闭测试轨道再逐步放量；中国大陆没有单一 Android 商店，要分别上华为、小米、OPPO、vivo 等，并按规定办理 APP 备案，多市场保持包名一致、签名兼容、版本号只增不减。iOS 在 Xcode Archive 后上传，先 TestFlight 内测，提交时<strong>先点 Add for Review 再点 Submit for Review</strong>，只做前一步不等于送审；被拒后改代码要加构建号重新归档。Windows 可走 Microsoft Store（MSIX）或官网分发（要受信任的代码签名证书）；macOS 官网分发要 Developer ID 签名、提交 Apple 公证并 staple 票据；Linux 常用 Flathub、Snap Store；Web 没有上架按钮，部署到 HTTPS 域名就是发布。</p>
+    <p class="go">先走一遍发布流程；再勾一勾你的发布前检查。</p>
+  </div>
+  <div class="lab"><div id="pubFlow"></div></div>
+  <div class="lab"><p class="lab-t">发布前检查（据原教程第 3 节）</p><div id="pubCheck"></div></div>
+  <div class="lab"><div id="pubCards"></div></div>
+  <div class="notes" id="n-publish"></div>
+</section>
+
+<section class="part" id="mobile">
+  <div class="part-head"><h2>用手机远程指挥编码 Agent</h2><span class="meta">原教程 三阶段 Claude Code 手机远程开发</span></div>
+  <div class="sec-lede">
+    <p>原教程收了一个很实用的话题：通勤路上想到修复方案、排队时收到线上故障，能不能用手机让编码 Agent 干活？手机直接开发有四个限制：输入、屏幕、环境（跑不了完整工具链）、连接（移动网络易断）。所有方案的核心思想都是<strong>瘦客户端架构</strong>：手机只是“控制台”，负责输入指令、查看输出、审查改动；真正运行 CLI、执行代码、访问文件的是家里的主机或云端。</p>
+    <p>原教程比较了几种做法：官方移动端和 Remote Control（官方集成、可访问本地环境，有订阅和地区限制）；Happy Coder（扫码配对、跨平台、端到端加密，但依赖第三方中继，社区反馈断线较多）；HAPI（本地优先、可自建中继、支持多种编码 Agent，搭配 Tailscale 更稳）；<strong>SSH + Tailscale + tmux</strong>（Tailscale 组虚拟局域网免内网穿透，tmux 让会话在断线后继续运行，功能最完整但配置稍复杂，电脑要常开）；Android 上的 Termux 本地运行；没有电脑就用云端开发机。安全上要想清楚<strong>中继服务器能看到和能做什么</strong>：元数据、端到端加密实现不当时的明文、配置不当时的 API Key，甚至注入命令。对稳定性和安全要求高时，原教程推荐自建中继或官方方案。</p>
+    <p class="go">回答几个问题，看哪种方案适合你。</p>
+  </div>
+  <div class="lab"><div id="mobPick"></div></div>
+  <div class="notes" id="n-mobile"></div>
+</section>
+
+<section class="part" id="brand">
+  <div class="part-head"><h2>用 AI 搭一个属于自己的个人主页</h2><span class="meta">原教程 三阶段 如何构建属于自己的个人网页与学术博客</span></div>
+  <div class="sec-lede">
+    <p>原教程最后一篇回到个人：个人主页是你在互联网上的一块“私有领地”，不依赖平台算法、不会因为平台倒闭而消失，能被搜索引擎索引。对外它是“永不过期的名片”，对内是“第二大脑”，对未来意味着别人搜你的名字时，排在前面的是你定义的内容。在 Vibe Coding 模式下，你的角色从写代码的人变成<strong>网站主编</strong>：你决定调性和内容，AI 负责把指令变成代码，GitHub Pages 提供免费托管。</p>
+    <p>建站有四种方式：从零手写（最灵活、门槛最高）、可视化建站（Wix、WordPress，简单但常要付费、难深度定制）、<strong>基于 GitHub 模板</strong>（Fork 成熟的 Jekyll / Hugo 学术模板，只改配置和内容，原教程最推荐）、AI 视觉生成（截一张喜欢的网页让 AI 照着写）。它的实操路线是：Fork 模板 → 拉到本地预览 → 用 AI 分阶段修改内容（为了避免隐私顾虑，先拿公众人物的公开资料当测试数据）→ 定制风格 → 推送到 GitHub Pages。关键技巧是先发一条<strong>统一前置约束</strong>给 AI 立规矩：每步只做当前阶段目标、不改站点结构不引新插件、改动必须能被模板正常构建，防止它自由发挥把网站结构弄坏。进阶玩法是让 AI 从零“手搓”一个风格鲜明的主页。</p>
+    <p>这一节正好也是这个博客的来历：本系列就是用编码 Agent 写成、部署在 GitHub Pages 上的。</p>
+    <p class="go">这条前置约束可以直接复用。</p>
+  </div>
+  <div class="pcard" data-t="改模板前的统一前置约束" data-k="据原教程 4.1 节整理"><pre>你现在是一个“GitHub Pages + Jekyll 学术主页模板”的站点维护者。
+当前仓库是一个 Jekyll 驱动的学术主页（含 _config.yml、_data、_layouts 等）。
+你的修改必须满足以下原则：
+1. 每一步修改只做“当前阶段目标”，禁止提前做后续阶段内容
+2. 不修改站点结构、不引入新插件、不改主题风格（除非我明确要求）
+3. 所有内容必须可被 Jekyll 正常构建，改完告诉我本地预览命令
+4. 每次只列出改了哪些文件、改了什么，不要大段重写无关内容</pre></div>
+  <div class="lab"><div id="siteCards"></div></div>
+  <div class="notes" id="n-brand"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 选平台的三个问题？何时才值得做原生或 Qt？</summary><p class="ans">用户会从哪里打开它（链接、微信、长时间桌面使用、浏览器或编辑器里）；需要哪些设备能力；谁来长期维护。相机、扫码、定位不一定要原生；只有需要长时间后台运行、蓝牙串口、本地大文件、系统级快捷键、设备驱动、严格性能时，才值得靠近系统做原生；Qt 适合真的要连设备协议、实时数据、离线长期运行的桌面软件，普通企业管理后台用 Web 更易部署维护。</p></details>
+    <details><summary>2. 多端产品共用什么？为什么一套代码不等于一次测试？</summary><p class="ans">共用统一身份、业务 API、数据库、文件存储、审计日志等业务规则和数据；各端界面可以不同，按角色和工作环境设计。跨端框架能共享代码，但权限、支付、通知、窗口行为、应用商店审核和真机兼容在每个平台上都不一样，仍要分别测试；所以先做最重要的一个入口，后端边界稳定后再扩展。</p></details>
+    <details><summary>3. 打包、签名、分发、审核各解决什么？版本号和构建号的区别？</summary><p class="ans">打包生成正式安装包；签名证明包来自你且未被篡改（keystore 等签名材料要放团队密码库，不能进 Git）；分发决定通过哪个渠道交给用户；审核是平台检查是否合规。版本号是用户看到的 1.2.0；构建号是商店识别每次上传的编号（Android 的 versionCode、Apple 的 Build），即使重打同一版本也必须递增。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.decide($('#platPick'), {
+  qs: [
+    { id: 'where', q: '用户会从哪里打开它？', opts: [['link', '搜索 / 链接 / 门户'], ['wx', '微信群 / 公众号 / 二维码'], ['desk', '电脑上长时间开着'], ['page', '就在浏览器或编辑器里']], def: 'link' },
+    { id: 'cap', q: '需要哪些设备能力？', opts: [['basic', '填表查数据看报表'], ['phone', '后台定位 / 蓝牙 / 健康数据'], ['device', '串口 / 设备协议 / 本地大文件'], ['game', '实时画面与关卡']], def: 'basic' },
+    { id: 'both', q: '必须同时覆盖 iOS 和 Android 吗？', opts: [['0', '不必'], ['1', '必须']], def: '0' }
+  ],
+  decide: function (a) {
+    var r;
+    if (a.cap === 'game') r = ['Godot 等游戏引擎', '实时画面、输入、碰撞、动画、关卡都现成；各平台仍要分别导出实测。'];
+    else if (a.cap === 'device') r = ['Qt / 原生桌面', '连接串口、Modbus、CAN、仪器或本地数据库，长期稳定运行。远程配置和报表可以再配一个 Web 后台。'];
+    else if (a.cap === 'phone') r = a.both === '1' ? ['Flutter / React Native（必要时原生模块）', '两端业务大体相同就共享；重度平台能力用原生模块接入，通知、支付、权限两端分别验证。'] : ['iOS / Android 原生', '离系统最近，后台定位、蓝牙、健康数据支持最完整；代价是两端各自的工程和发布成本。'];
+    else if (a.where === 'wx') r = ['微信小程序', '用户不用安装，扫码和群分享直接进入流程；要保存数据和区分账号时接后端。'];
+    else if (a.where === 'desk') r = ['Electron / Tauri', '团队熟悉 Web 技术，需要独立窗口、托盘、文件读写和桌面通知。'];
+    else if (a.where === 'page') r = ['浏览器插件 / VS Code 插件 / CLI', '功能就出现在用户正在工作的地方；插件负责交互，CLI 负责自动化。'];
+    else r = a.both === '1' ? ['先做 Web / PWA，再考虑跨端 App', '能用链接解决的先做 Web；确认有人用、确实需要两端 App 时再上 Flutter / React Native。'] : ['网站 / PWA', '点开就能用，更新最快；需要安装到桌面和离线时补 PWA。'];
+    return '<p><b>第一版：' + r[0] + '</b></p><p>' + r[1] + '</p><p class="note">原教程的建议：先做最重要的一个入口，把第一条完整链路做通，再决定第二个平台。</p>';
+  }
+});
+
+HB.cards($('#routeCards'), {
+  opts: ['网站 / PWA', '小程序', '原生 App', '跨端 App', 'Electron / Tauri', 'Qt', '浏览器插件', 'Godot'],
+  items: [
+    { t: '连锁咖啡店的会员积分和门店点单。', a: 1, why: '用户就在微信里，扫码即用、不用安装。' },
+    { t: '团队内部用的数据看板和审批后台。', a: 0, why: '打开链接就能办事，更新最快。' },
+    { t: '跑步应用，要后台持续定位并连接心率带。', a: 2, why: '后台定位和蓝牙需要最完整的系统能力。' },
+    { t: '销售拜访工具，iOS 和 Android 都要，功能基本一样。', a: 3, why: '两端业务相同，共享大部分代码。' },
+    { t: '一个常驻桌面的 AI 语音转文字助手，团队只会 Web。', a: 4, why: 'Web 技术 + 独立窗口、托盘、系统快捷键。' },
+    { t: '实验室仪器控制软件，要连串口、长期离线运行。', a: 5, why: '设备协议和长期稳定运行是 Qt 的主场。' },
+    { t: '客服在工单网页旁边就能查知识库的助手。', a: 6, why: '功能发生在网页旁边，侧边栏读取当前页面。' },
+    { t: '一个像素风横版闯关游戏。', a: 7, why: '实时画面、碰撞、动画、关卡用游戏引擎更合适。' }
+  ]
+});
+
+HB.layers($('#multiLayers'), {
+  hint: '点一层，看它负责什么。',
+  layers: [
+    { t: '客户', sub: '微信小程序', items: [{ t: '报修与进度', d: '扫码进入、填写问题、上传图片、查看处理进度。流程短、使用频率低，正适合小程序。' }] },
+    { t: '工程师', sub: '移动端 App', items: [{ t: '接单与现场记录', d: '接单、导航、拍照、扫码、离线填写，回到有网的地方再同步。' }] },
+    { t: '调度与运营', sub: 'Web 后台', items: [{ t: '派单与报表', d: '安排任务、监控时效、看数据报表；打开浏览器就能用。' }] },
+    { t: '检测设备', sub: 'Qt / 原生桌面（按需）', items: [{ t: '连接仪器', d: '只有真的要连检测仪器、串口或本地大文件时才加这一端。' }] },
+    { t: '统一后端', sub: '所有端共用', items: [
+      { t: '统一身份', d: '一个账号体系，客户、工程师、调度员角色不同、权限不同。' },
+      { t: '业务 API 与规则', d: '工单状态、派单规则、时效计算只在后端写一次，不在每个端各写一套。' },
+      { t: '数据库与文件存储', d: '工单、图片、记录集中存放。' },
+      { t: '审计日志', d: '谁在什么时候改了什么，可追溯。' }
+    ] }
+  ]
+});
+
+HB.cards($('#mythCards'), {
+  opts: ['对', '误区'],
+  items: [
+    { t: '用了 Flutter，一套代码，测一遍就能同时上两个商店。', a: 1, why: '共享代码不等于共享测试，权限、支付、通知、商店审核要在两端分别验证。' },
+    { t: '我们是企业软件，所以应该用 Qt。', a: 1, why: 'CRM、审批、排班、售后都是企业软件；只有连设备协议、实时数据、本地大文件时才轮到 Qt。' },
+    { t: '第一版只做小程序，跑通后再做 Web 后台。', a: 0, why: '先做最重要的一个入口验证业务，再扩展。' },
+    { t: '小程序、App、后台各自维护一套会员和订单规则，互不影响更灵活。', a: 1, why: '多端最怕规则分裂；身份、规则、数据、审计应来自同一套后端。' }
+  ]
+});
+
+S.sortGame($('#edgeSort'), {
+  bins: [{ k: 'mp', t: '带后端的小程序' }, { k: 'ext', t: '浏览器插件' }, { k: 'pwa', t: 'PWA' }],
+  items: [
+    { t: '前端负责让用户操作，后端负责让业务可信', k: 'mp', why: '原教程带后端小程序一章的核心句。' },
+    { t: 'Content Script 读页面、Service Worker 组织流程、Side Panel 展示结果', k: 'ext', why: '插件的三个核心部分。' },
+    { t: '首先还是网页，可以先点开用，再决定要不要装到桌面', k: 'pwa', why: '原教程用 Starbucks 点单举例。' },
+    { t: 'AppSecret、支付密钥、工单归属、积分规则都不能放前端', k: 'mp', why: '四类必须交给后端的东西。' },
+    { t: '只申请真正需要的站点权限，用户有权看什么由企业后端决定', k: 'ext', why: '侧边栏只是入口。' },
+    { t: '菜单弱网可用，提交订单和付款时明确要求联网', k: 'pwa', why: '离线缓存的边界。' }
+  ]
+});
+
+EV.flow($('#pubFlow'), {
+  nodes: [{ k: 'id', t: '应用身份', sub: '包名 / Bundle ID' }, { k: 'build', t: 'Release 包', sub: '构建 + 签名' }, { k: 'test', t: '内测', sub: '测试轨道 / TestFlight' }, { k: 'store', t: '商店资料与审核', sub: '截图 / 隐私 / 审核备注' }, { k: 'roll', t: '灰度与监控', sub: '逐步放量' }],
+  steps: [
+    { a: 'id', b: 'id', m: '固定包名、开发者主体', d: '如 com.example.fridgechef。发布后改了会被当成全新应用，旧用户无法升级。资产用组织账号持有并开双重验证。' },
+    { a: 'id', b: 'build', m: '用 Release 配置构建并签名', d: 'Android 用 .aab，keystore 放团队密码库不进 Git；iOS 用 Xcode Archive。确认生产域名、无测试账号、无服务端密钥。记录版本号、构建号和对应的 Git 标签。' },
+    { a: 'build', b: 'test', m: '先给内部测试', d: 'Google Play 内部 / 封闭测试轨道，iOS TestFlight。用商店安装出来的版本复测登录、支付、通知、覆盖升级。' },
+    { a: 'test', b: 'store', m: '补齐资料，提交审核', d: '真实截图、隐私申报与代码一致、审核测试账号（不要短信验证码）。iOS 先 Add for Review 再 Submit for Review。被拒就复现问题，改代码要加构建号。' },
+    { a: 'store', b: 'roll', m: '通过后小范围放量', d: '先给一部分用户，盯崩溃率和差评，再扩大比例；保留回滚通道。' }
+  ]
+});
+
+HB.check($('#pubCheck'), {
+  items: [
+    { t: '开发者账号、域名、签名证书用组织身份持有', d: '并开启双重验证', miss: '外包或离职员工的私人账号里锁着你的应用，换人就无法更新。' },
+    { t: '包名 / Bundle ID 已经定稿', d: '不再是 com.example.myapplication', miss: '上线后改名等于新应用，旧用户收不到更新。' },
+    { t: '版本号与构建号分开记录', d: '重新上传必加构建号', miss: '同一构建号重复上传被商店拒收。' },
+    { t: 'Release 包连生产环境、无测试账号和密钥', d: 'HTTPS、关闭详细日志、有崩溃监控', miss: '正式包连着测试数据库，或客户端里藏着服务端密钥。' },
+    { t: '隐私政策、权限弹窗、商店申报与代码一致', d: '包括第三方 SDK 收集的数据', miss: '原教程说的最常见拒审原因：四者互相矛盾。' },
+    { t: '审核备注里有走得通的测试路径', d: '专用测试账号、无短信验证码', miss: '审核员登不进去，直接拒审。' }
+  ],
+  verdict: function (on, total) { return '<p>完成 <b>' + on + ' / ' + total + '</b> 项。' + (on === total ? '可以提交了。提交前再找一个没参与开发的人照着审核说明走一遍。' : '没勾的每一项都可能让发布卡住：') + '</p>'; }
+});
+
+HB.cards($('#pubCards'), {
+  opts: ['打包', '签名', '分发', '审核'],
+  items: [
+    { t: '在 Android Studio 里生成 .aab 文件。', a: 0, why: '生成正式安装包。' },
+    { t: '用 Developer ID 对 macOS 应用签名并提交公证。', a: 1, why: '证明来源与完整性，让 Gatekeeper 放行。' },
+    { t: '决定先上华为应用市场，再上小米和 OPPO。', a: 2, why: '选择交付渠道。' },
+    { t: '平台检查隐私申报和功能是否符合规则。', a: 3, why: '审核。' },
+    { t: '把 keystore 存进团队密码库，绝不提交到 Git。', a: 1, why: '签名材料丢失或泄露，后续更新会出大问题。' }
+  ]
+});
+
+HB.decide($('#mobPick'), {
+  qs: [
+    { id: 'pc', q: '有一台常开的电脑吗？', opts: [['1', '有'], ['0', '没有']], def: '1' },
+    { id: 'sec', q: '能接受代码经过第三方中继吗？', opts: [['1', '可以'], ['0', '不能']], def: '0' },
+    { id: 'want', q: '更看重什么？', opts: [['easy', '扫码就能用'], ['full', '体验和桌面一样完整']], def: 'full' }
+  ],
+  decide: function (a) {
+    if (a.pc === '0') return '<p><b>云端开发机</b>（或 Android 上用 Termux 本地运行）。没有常开的执行端，就把执行端放到云上。</p>';
+    if (a.sec === '0') return a.want === 'full' ? '<p><b>SSH + Tailscale + tmux</b>。Tailscale 组虚拟局域网，不用暴露端口；tmux 让会话断线后继续跑；手机上的终端就是完整的开发环境。或者用官方 Remote Control。</p>' : '<p><b>自建中继的 HAPI + Tailscale</b>，或<b>官方 Remote Control</b>。原教程对稳定性和安全要求高时的推荐。</p>';
+    return a.want === 'easy' ? '<p><b>Happy Coder 一类扫码配对的方案</b>。最省心，但依赖第三方中继，留意断线和中继能看到什么。</p>' : '<p><b>HAPI</b>（支持多种编码 Agent、本地优先）或 <b>SSH + Tailscale</b>。</p>';
+  }
+});
+
+HB.cards($('#siteCards'), {
+  opts: ['从零手写', '可视化建站', 'GitHub 模板', 'AI 视觉生成'],
+  items: [
+    { t: 'Fork 一个 Jekyll 学术模板，只改配置文件和 Markdown 内容。', a: 2, why: '原教程最推荐：零成本、模板专业、只需写 Markdown。' },
+    { t: '截一张喜欢的网页，让 AI 照着写出来。', a: 3, why: '依赖多模态理解，第 5 篇的截图复刻就是这个方法。' },
+    { t: '在 Wix 上拖拽搭建，按月付费。', a: 1, why: '简单，但常要付费、代码臃肿、难深度定制。' },
+    { t: '一行行写 HTML 和 CSS，完全自己控制。', a: 0, why: '最灵活，门槛也最高。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-choose'), {
+  c: [
+    ['平台选择', '取决于用户在哪打开、任务在什么设备、需要多深的系统权限'],
+    ['三个问题', '从哪里打开？要哪些设备能力？谁来长期维护？']
+  ],
+  p: [
+    ['口诀', '链接能解决先 Web；用户在微信先小程序；要后台硬件系统权限再原生；多角色多客户端共用一个后端'],
+    ['原生的分水岭', '后台运行、蓝牙串口、本地大文件、系统快捷键、驱动、严格性能']
+  ]
+});
+S.notes($('#n-routes'), {
+  c: [
+    ['十条路线', 'Web/PWA、小程序、原生、Flutter/RN、Electron/Tauri、Qt、浏览器插件、VS Code 插件/CLI、多端组合、游戏引擎'],
+    ['Electron vs Tauri', '自带 Chromium + Node，生态成熟 / 用系统 WebView，安装包更轻']
+  ],
+  p: [
+    ['各自代价', 'Web 权限有限、小程序受微信约束、原生两端成本、跨端仍有平台差异、Qt 门槛高'],
+    ['Qt 的真正用途', '设备控制、医疗影像、汽车诊断、实验室、交易终端']
+  ]
+});
+S.notes($('#n-multi'), {
+  c: [
+    ['多端组合', '不同角色不同入口，共用统一后端'],
+    ['共享什么', '身份、业务规则、数据、文件、审计；不是界面代码']
+  ],
+  p: [
+    ['四个误区', '一套代码≠一次测试；企业软件≠工控；不要第一天全平台；客户端不同后端要统一'],
+    ['节奏', '先一个入口做通，后端稳定再扩展']
+  ]
+});
+S.notes($('#n-edge'), {
+  c: [
+    ['小程序后端', '前端让用户操作，后端让业务可信'],
+    ['插件三件套', 'Content Script、Service Worker、Side Panel'],
+    ['PWA', '仍是网页 + 安装 + 离线缓存']
+  ],
+  p: [
+    ['不能放前端', '密钥、身份与归属、价格库存积分订单、审核与防重复'],
+    ['插件边界', '最小权限，权限和密钥在企业后端，先做不联网本地版'],
+    ['PWA 边界', '弱网可浏览，下单付款要联网；不等于原生能力']
+  ]
+});
+S.notes($('#n-publish'), {
+  c: [
+    ['发布流程', '渠道 → 身份 → Release 包 → 签名 → 内测 → 资料 → 审核 → 灰度 → 监控'],
+    ['四件事', '打包、签名、分发、审核'],
+    ['版本号 vs 构建号', '用户看到的 1.2.0 / 商店识别的每次上传编号，必须递增']
+  ],
+  p: [
+    ['发布前检查', '组织持有资产、固定身份、Release 环境、隐私一致、审核路径'],
+    ['Android', '.aab、keystore 不进 Git、测试轨道、国内多市场与 APP 备案'],
+    ['iOS', 'TestFlight；Add for Review 后还要 Submit for Review'],
+    ['桌面与 Web', 'MSIX 或签名安装包；macOS 公证；Web 部署到 HTTPS 即发布']
+  ]
+});
+S.notes($('#n-mobile'), {
+  c: [
+    ['瘦客户端', '手机只做控制台，执行在主机或云端'],
+    ['中继风险', '能看到元数据、可能的明文和 Key，甚至注入命令']
+  ],
+  p: [
+    ['SSH + Tailscale + tmux', '功能最完整，电脑需常开'],
+    ['HAPI / 官方方案', '自建中继或官方集成，稳定和安全要求高时选'],
+    ['无电脑', '云端开发机或 Termux']
+  ]
+});
+S.notes($('#n-brand'), {
+  c: [
+    ['个人主页', '不依赖平台、可被索引的私有领地'],
+    ['主编角色', '你定调性和内容，AI 写代码，GitHub Pages 托管']
+  ],
+  p: [
+    ['四种方式', '手写、可视化、GitHub 模板（推荐）、AI 视觉生成'],
+    ['前置约束', '每步只做当前目标、不改结构不加插件、保证能构建']
+  ]
+});
+
+EV.todo($('#todo'), '15', [
+  { t: '用三个问题为你的产品选第一版平台，写下第二个入口什么时候做', d: '' },
+  { t: '画出你产品的多端结构，标出哪些规则必须只在后端写一次', d: '' },
+  { t: '对照发布前检查清单，补齐组织账号、应用身份和隐私声明', d: '' },
+  { t: '（可选）把一个小工具做成 PWA 或浏览器插件，体验另一个端', d: '' },
+  { t: '（可选）配置 Tailscale + tmux，用手机远程看一次编码 Agent 的进度', d: '' },
+  { t: '用 GitHub Pages + 模板 + AI 搭一个个人主页，把这个系列的作品放上去', d: '' }
+]);

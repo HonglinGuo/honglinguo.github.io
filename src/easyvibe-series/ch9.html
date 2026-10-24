@@ -1,0 +1,381 @@
+---
+title: 上线：Git、部署与支付
+desc: Easy-Vibe 学习笔记（九）：Git 与 GitHub、SSH 公钥私钥；为什么先用平台一键发布，选部署平台的三个问题；自己买 VPS 时的备案、安全组、Nginx 反向代理和 HTTPS；云厂商服务全家福；让 AI 当运维助手的万能部署模板与排错速查；支付三原则、最小支付链路、success 页面为什么不等于支付成功、Webhook 幂等、订阅事件与按地区选支付方案。
+kicker: <span>技术学习</span><span>Easy-Vibe · 09</span><span>对应原教程 二阶段 Git 工作流、一键发布、VPS 部署、Stripe 支付</span><span>约 40 分钟</span>
+h1: 让别人用上，<em>还要让别人付得了钱</em>
+lead: 产品在自己电脑上跑得再好，别人打不开就等于不存在。原教程第二阶段的后半段处理三件事：用 Git 和 GitHub 管理代码版本；把应用部署到公网，从一键发布平台到自己买 VPS；接上收费系统。这三件事都有同一个特点：步骤可以交给 AI，但边界必须由你守住。私钥不能给人、端口不能乱开、价格不能由前端决定、支付成功要以 Webhook 为准。
+nav: git|Git 与 SSH;choose|选部署平台;vps|自己买 VPS;cloud|云服务全家福;aiops|AI 当运维;pay|支付三原则;webhook|Webhook 与订阅;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>选部署平台前先问哪三个问题？什么样的项目需要 VPS 或常驻型平台？</li>
+    <li>自己部署到 VPS 时，用户的请求从域名到你的应用经过哪几层？502 和刷新 404 各说明什么？</li>
+    <li>接支付的三条原则是什么？为什么 success 页面不等于支付成功？</li>
+  </ol>
+</div>
+
+<section class="part" id="git">
+  <div class="part-head"><h2>Git 与 GitHub：版本检查点和远程仓库</h2><span class="meta">原教程 Git 和 GitHub 工作流</span></div>
+  <div class="sec-lede">
+    <p>每次和 AI 对话都会生成一版新代码，想回到之前某一版怎么办？这就是<strong>版本控制</strong>要解决的问题。<strong>Git</strong> 是本地的版本控制工具，给代码打检查点、在版本间切换；<strong>GitHub</strong> 是基于 Git 的远程“代码仓库云盘 + 协作社区”，提供 Issues、Pull Requests 等协作功能，也是全球最大的开源社区。安装后先用 <code>git config --global</code> 设好用户名和邮箱，它们会写进每次提交记录。</p>
+    <p>建仓库时两个文件值得留意：<strong>README</strong> 是仓库的说明书；<strong>.gitignore</strong> 告诉 Git 哪些文件不跟踪不上传（依赖包、临时文件、大文件，以及<strong>放密钥的 .env</strong>）。连接 GitHub 推荐用 <strong>SSH</strong>：本地生成一对密钥，<strong>公钥</strong>像一把可以公开的锁，交给 GitHub；<strong>私钥</strong>是你的钥匙，留在本机 <code>~/.ssh/</code>，绝不分享。推送时本机用私钥签名，GitHub 用你绑定的公钥验证，于是不用每次输密码。多台电脑各生成一对，分别绑定；私钥泄露就立刻在 GitHub 删掉对应公钥。</p>
+    <p>原教程的日常操作都交给 AI IDE：克隆（clone）别人的仓库、修改前先拉取（pull）最新更改、改完让它提交并推送（commit &amp; push）。提示词里要写清仓库文件夹路径，避免推错仓库。Git 的命令和分支、合并这些机制，博客里已有一篇可以动手玩的图解。</p>
+    <p class="go">SSH 的两把钥匙，哪些操作对、哪些危险？</p>
+  </div>
+  <div class="lab"><div id="sshCards"></div></div>
+  <div class="xlink"><b>延伸阅读：</b>Git 的提交、分支、合并、回退可以在本博客的<a href="../2026-git-playground/">《Git 交互图解》</a>里一步步动手试。</div>
+  <div class="notes" id="n-git"></div>
+</section>
+
+<section class="part" id="choose">
+  <div class="part-head"><h2>选部署平台：先回答三个问题</h2><span class="meta">原教程 一键发布；VPS 部署 第 0–1 节</span></div>
+  <div class="sec-lede">
+    <p>为什么不直接买服务器？原教程列出了手动部署的五步，每步都可能踩坑：<strong>准备服务器</strong>（选地区配置、学会 SSH 连接）、<strong>配置环境</strong>（Node.js / Python 版本不匹配就起不来）、<strong>上传代码</strong>、<strong>启动并测试</strong>（访问不了可能是防火墙没放行端口，也可能是程序有 bug）、<strong>维护更新</strong>（每次改代码重新上传重启，宕机后要进程守护）。这里顺带解释了两个词：<strong>IP 是设备的门牌号，端口是同一设备上不同应用的房间号</strong>，合起来 IP:port 定位一个网络服务。Vercel、Cloudflare Pages 这类平台把这五步全包了：连上 GitHub 仓库，它自动拉代码、识别类型、配环境、给你一个公网地址，还能绑域名。</p>
+    <p>选平台前原教程建议先问三个问题：<strong>需要 24 小时在线吗？</strong>文档站、博客、普通网站是用户访问才响应，选静态托管或 PaaS；定时任务、爬虫、聊天机器人、WebSocket 需要常驻，选常驻型 PaaS 或 VPS。<strong>需要 GPU 吗？</strong>只调用 OpenAI、Anthropic 的 API 不需要；自己跑开源模型、生成图片视频才需要 GPU 云（Modal、Replicate、AutoDL）。<strong>用户在哪里？</strong>国内优先评估国内云并实测访问，海外看 Vercel、Railway、Fly.io，都有就用 CDN。</p>
+    <p>几个平台的定位：<strong>Vercel</strong> 是 Next.js 官方平台、前端首选；<strong>Cloudflare Pages</strong> 托管静态站和构建产物，支持本地上传和 Git 自动部署；<strong>Render</strong> 能跑独立的 Node / Python 后端，但免费实例闲置 15 分钟会休眠；<strong>Railway、Fly.io</strong> 适合常驻进程和数据库组合；<strong>CloudBase</strong> 国内访问快、与微信生态整合；<strong>Dify 官方云</strong>注册即用，不必先自部署。原教程反复提醒：免费额度和试用不等于长期免费，以官网当期为准；学完要记得停止和删除不用的项目。</p>
+    <p class="go">回答三个问题，看你的项目该部署到哪类平台。</p>
+  </div>
+  <div class="lab"><p class="lab-t">部署平台决策（据原教程第 0 节决策图）</p><div id="deployPick"></div></div>
+  <div class="notes" id="n-choose"></div>
+</section>
+
+<section class="part" id="vps">
+  <div class="part-head"><h2>自己买 VPS：一次请求经过哪几层</h2><span class="meta">原教程 VPS 部署 第 2–5、9.3 节</span></div>
+  <div class="sec-lede">
+    <p>需要常驻、想完全控制、或者想省钱时，可以买一台 VPS（腾讯云 / 阿里云轻量应用服务器、Vultr、Hetzner 等）。国内服务器有一件绕不开的事：<strong>备案</strong>。在中国大陆资源上对外提供网站服务需要按接入商要求办理，原教程特别澄清“不是换个端口就不用备案”；香港及境外地域通常不按大陆 ICP 备案处理，但普通 Cloudflare 免费服务也不等于“免备案且有大陆加速”。</p>
+    <p>买完第一件事是<strong>安全组</strong>（云厂商控制台里的防火墙）：只放行 22（SSH，最好限制为自己的 IP）、80（HTTP）、443（HTTPS）；应用自己的端口（比如 3000）<strong>不要直接对公网开放</strong>，而是由 Nginx 在本机代理。服务器内部再用 ufw 开一层防火墙。登录方式改成 SSH 密钥，确认能登录后再考虑关掉密码登录。</p>
+    <p>原教程的三种部署场景对应三种结构：纯前端静态站，Nginx 直接托管构建产物；Node.js 后端，用 PM2 守护进程（崩了自动拉起），Nginx 反向代理到应用端口；全栈项目，用 Docker Compose 一键起前端、后端、数据库。最后买域名、把 A 记录解析到服务器 IP，用 Let's Encrypt 免费证书一键开 HTTPS。安全加固清单：fail2ban 封暴力破解、开自动安全更新、密钥和 .env 不进 Git、定期备份数据库并<strong>在独立环境验证能恢复</strong>。</p>
+    <p class="go">逐步走一遍用户访问你网站的路径。</p>
+  </div>
+  <div class="lab"><div id="vpsFlow"></div></div>
+  <div class="lab"><p class="lab-t">部署后常见故障：先查哪里（原教程 8.3 节速查）</p><div id="opsCards"></div></div>
+  <div class="notes" id="n-vps"></div>
+</section>
+
+<section class="part" id="cloud">
+  <div class="part-head"><h2>云厂商服务全家福</h2><span class="meta">原教程 VPS 部署 第 6–7 节</span></div>
+  <div class="sec-lede">
+    <p>买过一台服务器后，会发现云厂商控制台里有几十种服务。原教程把它们归成几类，并给出国内和海外的对应名字：<strong>计算</strong>（跑代码的地方：云服务器 ECS / CVM / EC2，Serverless 函数，容器服务）、<strong>存储</strong>（对象存储 OSS / COS / S3 最常用，云硬盘，文件存储 NAS）、<strong>数据库</strong>（云数据库 RDS，缓存 Redis）、<strong>网络</strong>（CDN 内容分发、负载均衡、DNS 解析、SSL 证书、VPC 私有网络），以及域名、邮件、短信、监控日志等。</p>
+    <p>原教程还单列了 AI 专用的部署平台：<strong>Modal</strong>（Python 的 Serverless GPU，按秒计费）、<strong>Hugging Face Spaces</strong>（AI Demo 首选，Gradio / Streamlit 一键托管）、<strong>Replicate</strong>（把模型变成 API）、国内的 <strong>AutoDL</strong>（便宜的 GPU 租用）。</p>
+    <p class="go">点开每一类，看它解决什么问题。</p>
+  </div>
+  <div class="lab"><div id="cloudLayers"></div></div>
+  <div class="notes" id="n-cloud"></div>
+</section>
+
+<section class="part" id="aiops">
+  <div class="part-head"><h2>让 AI 当运维助手</h2><span class="meta">原教程 VPS 部署 第 8 节</span></div>
+  <div class="sec-lede">
+    <p>原教程称这是 Vibe Coding 时代最重要的部署心法：<strong>不需要记住所有命令，AI 就是运维助手。</strong>有两种协作方式。<strong>方式一：本地生成，手动执行</strong>：让编码 Agent 生成部署步骤清单、所有配置文件（Nginx、PM2、Dockerfile、compose）、部署脚本和环境变量检查清单，你先检查路径、启动命令、端口、环境变量是否和项目匹配，再在测试环境执行。<strong>方式二：AI 直接 SSH 到服务器操作</strong>：具备终端权限的编码 Agent 在你授权后调用本地已有的 SSH 配置去执行，更省事，但前提是你先在本地终端确认能登录。</p>
+    <p>原教程的安全提醒很具体：先在测试服务器练手；重要数据定期备份；用<strong>独立的部署用户</strong>并限制可执行的管理命令（有不受限 sudo 的用户等于有 root）；AI 执行危险命令前先看一眼；删除数据、改登录方式、产生云费用前要求它先说明影响。真实私钥和密码留在本地凭证里，环境变量只给名字，真实值通过服务器密钥配置注入，<strong>不要粘贴到对话里</strong>。出问题时先看日志（Nginx 错误日志、<code>pm2 logs</code>、<code>docker compose logs</code>、<code>journalctl</code>），去掉密码和 Token 后连同配置一起发给 AI。</p>
+    <p class="go">这份模板填好就能交给任何编码 Agent。</p>
+  </div>
+  <div class="pcard" data-t="万能部署 Prompt 模板" data-k="原教程 8.2 节"><pre>帮我部署一个项目，信息如下：
+【部署目标】
+- 平台/服务器：[Vercel / Railway / Fly.io / Ubuntu 24.04 VPS / ...]
+- 服务器 IP（如果是 VPS）：xxx.xxx.xxx.xxx
+- 已配置：[SSH 密钥登录 / Docker 已装 / Nginx 已装 / ...]
+【项目信息】
+- 项目类型：[Next.js / Vite+React / Node.js Express / Python FastAPI / ...]
+- 代码位置：GitHub 仓库 https://github.com/xxx/xxx
+- 技术栈：Node.js（按项目 engines 核对）+ PostgreSQL + Redis
+- 启动命令：npm run start
+- 监听端口：3000
+- 需要的环境变量名称：DATABASE_URL、JWT_SECRET、OPENAI_API_KEY
+- 真实值通过服务器密钥配置注入，不粘贴到对话中
+【域名】
+- 域名：mydomain.com；已解析到服务器 IP：是/否；需要 HTTPS：是/否
+【要求】
+1. 给出完整步骤（本地操作 vs 服务器操作分开列出）
+2. 提供所有配置文件
+3. 告诉我如何验证部署成功
+4. 列出常见坑和排查方法
+5. 删除数据、修改登录方式或产生云费用前，先说明影响并等我确认</pre></div>
+  <div class="lab"><div id="aiopsCards"></div></div>
+  <div class="notes" id="n-aiops"></div>
+</section>
+
+<section class="part" id="pay">
+  <div class="part-head"><h2>支付三原则：前端负责跳转，后端负责定价和确认</h2><span class="meta">原教程 如何集成 Stripe 等收费系统 第 1–6 节</span></div>
+  <div class="sec-lede">
+    <p>原教程说，第一次接支付的人常把注意力放在“怎么跳转到付款页”，但决定系统是否稳定的是整条链路：<strong>谁决定价格、谁确认支付成功、谁更新数据库、谁回收权限</strong>。它让你只记三条：① <strong>价格必须由后端决定</strong>，不能相信前端传来的金额；② <strong>真正让权限生效的是 Webhook</strong>，不是 success 页面；③ <strong>你自己的数据库必须保存支付状态</strong>，不能只依赖支付平台后台。边界对了，从 Stripe 换成 PayPal、支付宝、微信支付，都只是“接口换了，架构不变”。</p>
+    <p>为什么不能让前端直接连 Stripe 省掉后端？浏览器发出的请求用户可以随意修改（价格被改）；密钥和开通逻辑会暴露；跳到成功页不代表数据库记上了；用户说“我付了钱”你却查不到。所以分工是一句话：<strong>前端可以负责跳转，后端必须负责定价和确认。</strong>前端只传套餐名和用户信息，后端把套餐映射成 Stripe 里事先建好的 <code>priceId</code>，用密钥创建 <strong>Checkout Session</strong>（Stripe 托管的付款页），返回链接让前端跳转。</p>
+    <p>Stripe 适合海外 SaaS、订阅会员、数字产品和 AI 积分包；主要用户在中国大陆则优先支付宝、微信支付。原教程的选型顺序是：先按主要用户所在地选一条主支付链路，跑通最小版本，再按真实用户来源补第二种。</p>
+    <p class="go">走一遍最小可行支付链路。</p>
+  </div>
+  <div class="lab"><div id="payFlow"></div></div>
+  <div class="pcard" data-t="让 AI 接入 Stripe 的提示词" data-k="原教程第 7 节"><pre>请你帮我把当前项目接上 Stripe 支付，我希望做一个最简单能跑起来的会员收费功能。
+我的要求：
+1. 请你先自己看项目，再决定代码应该改哪里。
+2. 只做最简单版本：月付和年付两个套餐。
+3. 用户点击购买后，能跳到 Stripe 付款页面。
+4. 付款成功后，我数据库里的会员状态能变成已开通（以 Webhook 为准，并做幂等处理）。
+5. 价格由后端决定，前端只传套餐名。
+6. 不要一开始加优惠券、升级降级、复杂发票。
+输出要求：先给改动计划，再改代码，最后告诉我怎么一步一步本地测试（包括 stripe listen 联调 Webhook）。</pre></div>
+  <div class="notes" id="n-pay"></div>
+</section>
+
+<section class="part" id="webhook">
+  <div class="part-head"><h2>Webhook、幂等与订阅事件</h2><span class="meta">原教程 Stripe 第 8 节、附录 A–D</span></div>
+  <div class="sec-lede">
+    <p>原教程用一个真实场景解释为什么 success 页面不等于支付成功：如果你在 <code>success.html</code> 里写“到了这页就开通会员”，那么没付钱、付到一半关掉页面的人，直接在地址栏输入这个网址也能开通。success 页面是<strong>用户浏览器</strong>发起的跳转，可以伪造，不一定代表付款成功；<strong>Webhook</strong> 是 <strong>Stripe 服务器</strong>发给你后端的正式通知，带签名，后端验签通过后才更新数据库。前端刷新后从数据库读状态，才显示会员功能。</p>
+    <p>最容易踩的四个坑：把 success 页面当成支付成功；让前端传金额；Webhook 路由被 <code>express.json()</code> 提前解析（Stripe 验签需要<strong>原始请求体</strong>）；<strong>没做幂等</strong>。最后一条要特别记：Webhook 可能因为超时等原因被重试，同一事件可能到达多次，每次都给用户加会员或加积分就会出事故。所以要记录已处理过的事件 ID（或订单状态），重复的直接返回成功、不再执行。</p>
+    <p>订阅制要监听四个事件：<code>checkout.session.completed</code>（首次开通，创建本地订阅记录）、<code>invoice.paid</code>（续费成功，延长有效期）、<code>invoice.payment_failed</code>（扣费失败，标记风险并提醒）、<code>customer.subscription.deleted</code>（订阅取消，回收权限或到期失效）。状态在“未开通 → 有效 → 扣费失败待恢复 → 已取消”之间流转。本地联调用 Stripe CLI 的 <code>stripe listen</code> 把事件转发到本机。</p>
+    <p class="go">先翻开 success 页面和 Webhook 的对照；再给事件配上该做的动作。</p>
+  </div>
+  <div class="lab"><div id="whVs"></div></div>
+  <div class="lab"><div id="evtCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：支付网关 vs MoR（记录商户）</h4>
+    <p>原教程附录的对比表里有一列“税务处理”。<b>支付网关</b>（Stripe、PayPal、支付宝、微信支付、Adyen）只负责收钱，你是卖家，销售税、增值税这些要自己处理。<b>MoR（Merchant of Record）</b>如 Paddle、Lemon Squeezy，法律上由它们作为卖家向用户销售，再和你结算，<b>代你处理全球税务</b>，抽成更高。面向全球卖数字产品、不想研究各国税务的独立开发者，原教程建议看 MoR；按地区选：大陆用支付宝 / 微信，香港看 Stripe 加 Airwallex / Adyen，海外 SaaS 用 Stripe 或 Paddle。</p>
+  </div>
+  <div class="notes" id="n-webhook"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 选部署平台的三个问题？什么项目需要 VPS 或常驻平台？</summary><p class="ans">需要 24 小时在线吗；需要 GPU 吗；用户主要在哪里。用户访问才响应的文档站、博客、普通网站用静态托管或 PaaS（Cloudflare Pages、Vercel）；定时任务、爬虫、聊天机器人、WebSocket 这类需要常驻进程的，用 Railway、Fly.io、Render 付费实例或自己买 VPS；自己跑模型才需要 GPU 云。</p></details>
+    <details><summary>2. VPS 上的请求路径？502 和刷新 404 说明什么？</summary><p class="ans">用户输入域名 → DNS 把域名解析成服务器 IP → 云厂商安全组和服务器防火墙放行 443 → Nginx 终止 HTTPS，静态文件直接返回，API 请求反向代理到本机应用端口 → 由 PM2 或 Docker 守护的应用处理并访问数据库。502 通常是后端没启动、端口不对或 proxy_pass 写错；刷新 404 是单页应用没在 Nginx 配 try_files 回退到 index.html。</p></details>
+    <details><summary>3. 支付三原则？success 页面为什么不等于支付成功？</summary><p class="ans">价格由后端决定、权限以 Webhook 为准、支付状态保存在自己的数据库。success 页面只是用户浏览器的跳转，任何人都能直接访问这个网址，关页、断网时也可能没到达；Webhook 是支付平台服务器发给后端、带签名的正式通知，验签后更新数据库才可靠。处理 Webhook 还要读原始请求体验签，并做幂等防止重试导致重复开通。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.cards($('#sshCards'), {
+  opts: ['可以', '危险'],
+  items: [
+    { t: '把 id_ed25519.pub 的内容粘贴到 GitHub 的 SSH keys 里。', a: 0, why: '这是公钥，本来就是要交给 GitHub 的“锁”。' },
+    { t: '把 id_ed25519 发给同事，让他也能推送到你的仓库。', a: 1, why: '这是私钥，等于把钥匙给了别人。同事应生成自己的密钥，或者你把他加为协作者。' },
+    { t: '笔记本和台式机各生成一对密钥，都绑定到同一个 GitHub 账号。', a: 0, why: '原教程的做法：每台设备一张自己的“门禁卡”。' },
+    { t: '把 .env 一起 commit 推到公开仓库，方便部署。', a: 1, why: '密钥会公开；.env 要写进 .gitignore，部署时在平台上单独配置环境变量。' },
+    { t: '怀疑私钥泄露，立即在 GitHub 删掉对应公钥并重新生成。', a: 0, why: '原教程给的补救步骤。' }
+  ]
+});
+
+HB.decide($('#deployPick'), {
+  qs: [
+    { id: 'kind', q: '项目类型？', opts: [['static', '纯前端静态站'], ['next', 'Next.js 等全栈框架'], ['api', '有后端 API'], ['ai', '要自己跑模型']], def: 'static' },
+    { id: 'always', q: '需要 24 小时常驻进程吗（定时任务、Bot、WebSocket）？', opts: [['0', '不需要'], ['1', '需要']], def: '0' },
+    { id: 'where', q: '用户主要在？', opts: [['cn', '国内'], ['intl', '海外'], ['both', '都有']], def: 'cn' }
+  ],
+  decide: function (a) {
+    var r = [];
+    if (a.kind === 'ai') r.push('<b>GPU 云：</b>推理 API 用 Modal / Replicate / Hugging Face；国内 GPU 看 AutoDL、阿里云 PAI。只调用大模型 API 的话其实不需要 GPU。');
+    else if (a.always === '1') r.push('<b>常驻型：</b>不想管服务器用 Railway / Render 付费实例 / Fly.io；想完全控制或省钱就买 VPS（国内项目可选腾讯云轻量应用服务器）。注意 Render 免费实例会休眠，不适合常驻。');
+    else if (a.kind === 'next') r.push('<b>Vercel：</b>Next.js 官方平台，前后端一起部署，体验最好。');
+    else if (a.kind === 'api') r.push('<b>请求触发的函数：</b>Vercel Functions / Cloudflare Workers（先查语言和依赖是否兼容），或 Render 部署独立 Express / FastAPI。');
+    else r.push('<b>静态托管：</b>Cloudflare Pages / GitHub Pages / Vercel。只上传构建产物（dist）。');
+    if (a.where === 'cn') r.push('<b>国内用户：</b>海外平台在国内访问可能不稳，先在目标用户的网络下实测；面向大陆长期运营要了解备案，或考虑 CloudBase、国内 OSS + CDN。');
+    if (a.where === 'both') r.push('<b>两边都有：</b>用 CDN，国内资源放国内，海外放海外。');
+    return r.map(function (x) { return '<p>' + x + '</p>'; }).join('') + '<p class="note">免费额度和试用不等于长期免费，部署前核对当期配额；不用的项目记得停止和删除。</p>';
+  }
+});
+
+EV.flow($('#vpsFlow'), {
+  nodes: [{ k: 'u', t: '用户浏览器', sub: 'mydomain.com' }, { k: 'dns', t: 'DNS', sub: '域名 → IP' }, { k: 'fw', t: '安全组 / ufw', sub: '只放 22/80/443' }, { k: 'ng', t: 'Nginx', sub: 'HTTPS + 反代' }, { k: 'app', t: '应用', sub: 'PM2 / Docker :3000' }],
+  steps: [
+    { a: 'u', b: 'dns', m: '查询 mydomain.com', d: '域名的 A 记录解析到服务器 IP。HTTPS 证书申请失败，常见原因就是域名还没解析过来。' },
+    { a: 'u', b: 'fw', m: '连接 IP:443', d: '云厂商安全组和服务器内的 ufw 都要放行 443。<b>直接用 IP 访问不了</b>，多半卡在这一层。' },
+    { a: 'fw', b: 'ng', m: '放行到 Nginx', d: 'Nginx 用 Let\'s Encrypt 证书终止 HTTPS。静态资源（前端构建产物）直接由 Nginx 返回；单页应用要配 <code>try_files</code> 回退到 index.html，否则刷新子页面 404。' },
+    { a: 'ng', b: 'app', m: 'proxy_pass http://127.0.0.1:3000', d: '/api 请求反向代理到本机应用端口。3000 端口不对公网开放。<b>502 Bad Gateway</b> 就是这一跳失败：应用没启动、端口不对、proxy_pass 写错。' },
+    { a: 'app', b: 'app', m: '处理请求、访问数据库', d: 'PM2 或 Docker 守护进程，崩溃自动拉起；PM2 频繁重启说明代码有 bug，看 <code>pm2 logs</code>。' },
+    { a: 'app', b: 'u', m: '响应一路返回', d: '经 Nginx 加密后回到浏览器。每一层都有自己的日志，排错从离用户最近的失败点往里查。' }
+  ]
+});
+
+HB.cards($('#opsCards'), {
+  opts: ['应用 / 反代', '防火墙 / 安全组', 'Nginx 配置', 'DNS / 证书'],
+  items: [
+    { t: '访问网站显示 502 Bad Gateway。', a: 0, why: '后端没启动、端口不对或 proxy_pass 地址错。先看 pm2 / docker 状态和 Nginx 错误日志。' },
+    { t: '浏览器输入服务器 IP 完全打不开。', a: 1, why: '安全组没开端口、ufw 没放行，或 Nginx 没启动。' },
+    { t: '首页正常，刷新 /dashboard 显示 404。', a: 2, why: '单页应用没配 try_files，Nginx 去找了一个不存在的文件。' },
+    { t: 'Let\'s Encrypt 申请证书失败。', a: 3, why: '域名没解析到这台服务器、80 端口被占或防火墙没开 80。' },
+    { t: '图片和 JS 都 404，页面一片空白。', a: 2, why: 'root 路径写错或文件权限不对。' }
+  ]
+});
+
+HB.layers($('#cloudLayers'), {
+  hint: '点一个服务，看它负责什么。',
+  layers: [
+    { t: '计算', sub: '跑代码的地方', items: [
+      { t: '云服务器', tag: 'ECS / CVM / EC2', d: '一台完整的虚拟机，自由度最高，也要自己运维。' },
+      { t: 'Serverless 函数', tag: '函数计算 / Lambda', d: '按请求计费、没有服务器要管，适合事件触发的小段逻辑；有冷启动和时长限制。' },
+      { t: '容器服务', tag: 'ACK / EKS', d: '大规模部署和编排容器（Kubernetes），大型生产项目才需要。' }
+    ] },
+    { t: '存储', sub: '放文件和数据', items: [
+      { t: '对象存储', tag: 'OSS / COS / S3', d: '最常用：图片、视频、备份按 URL 访问，可配合图片处理和视频转码。' },
+      { t: '云硬盘', tag: 'EBS', d: '挂在云服务器上的磁盘。' },
+      { t: '文件存储', tag: 'NAS / EFS', d: '多台服务器共享的文件系统。' }
+    ] },
+    { t: '数据库', sub: '结构化数据', items: [
+      { t: '云数据库', tag: 'RDS', d: '托管的 MySQL / PostgreSQL，备份、主从、扩容由厂商负责。' },
+      { t: '缓存', tag: 'Redis / ElastiCache', d: '把热点数据放内存里，减轻数据库读压力。' }
+    ] },
+    { t: '网络', sub: '更快、更安全', items: [
+      { t: 'CDN', d: '把静态资源缓存到离用户最近的节点，加速访问。' },
+      { t: '负载均衡', tag: 'SLB / ALB / ELB', d: '把流量分发到多台服务器。' },
+      { t: 'DNS', d: '域名解析，把域名指向 IP。' },
+      { t: 'SSL 证书', d: 'HTTPS 证书；个人项目用 Let\'s Encrypt 免费证书即可。' },
+      { t: 'VPC', d: '私有网络，让数据库等资源只在内网可达。' }
+    ] },
+    { t: '其他', sub: '常用周边', items: [
+      { t: '邮件 / 短信', tag: 'SES / SMS', d: '注册验证、通知。' },
+      { t: '监控日志', tag: 'CloudWatch', d: '看指标、报警、查日志。' }
+    ] },
+    { t: 'AI 专用', sub: 'GPU 与模型托管', items: [
+      { t: 'Modal', d: 'Python 的 Serverless GPU，适合推理和微调任务。' },
+      { t: 'Hugging Face Spaces', d: 'AI Demo 首选，托管 Gradio / Streamlit 应用。' },
+      { t: 'Replicate', d: '把开源模型变成一个 API。' },
+      { t: 'AutoDL', d: '国内便宜的 GPU 租用。' }
+    ] }
+  ]
+});
+
+HB.cards($('#aiopsCards'), {
+  opts: ['可以放心交给 AI', '先看一眼再让它做', '不要这样做'],
+  items: [
+    { t: '让 AI 生成 Nginx、PM2、Dockerfile 配置和 deploy.sh。', a: 0, why: '生成文件本身没有风险；执行前检查路径、端口、启动命令。' },
+    { t: 'AI 准备执行 rm -rf 清理旧版本目录。', a: 1, why: '删除操作先确认路径，原教程要求危险命令前先看它要做什么。' },
+    { t: '把数据库密码和 OPENAI_API_KEY 的真实值贴进对话，让 AI 写进配置。', a: 2, why: '只给变量名，真实值通过服务器密钥配置注入。' },
+    { t: '用 root 账号直接授权 AI 在生产服务器上随意操作。', a: 2, why: '用独立部署用户、限制命令，先在测试服务器练手。' },
+    { t: '把去掉 Token 的 Nginx 错误日志和配置发给 AI 排查 502。', a: 0, why: '原教程的排错流程：日志 + 配置 + 状态，脱敏后交给 AI。' }
+  ]
+});
+
+EV.flow($('#payFlow'), {
+  nodes: [{ k: 'u', t: '前端页面', sub: '只负责跳转' }, { k: 'b', t: '你的后端', sub: '定价 + 确认' }, { k: 's', t: 'Stripe', sub: 'Checkout + Webhook' }, { k: 'db', t: '你的数据库', sub: 'orders / subscriptions' }],
+  steps: [
+    { a: 'u', b: 'b', m: 'POST 套餐名 = 年付 + 用户 ID', d: '前端<b>不传金额</b>。' },
+    { a: 'b', b: 'b', m: '校验套餐 → 映射 priceId', d: '价格只存在后端和 Stripe 后台的 Product / Price 里，前端改请求也改不了价。' },
+    { a: 'b', b: 's', m: '用 Secret Key 创建 Checkout Session', d: 'Secret Key 只在后端环境变量里。' },
+    { a: 's', b: 'u', m: '返回 session.url，前端跳转付款页', d: '付款页由 Stripe 托管，卡号不经过你的服务器。' },
+    { a: 's', b: 'b', m: 'Webhook：checkout.session.completed', d: '用户付完款，Stripe <b>服务器</b>通知你的后端。这才是正式确认。' },
+    { a: 'b', b: 'db', m: '验签 → 幂等检查 → 写入已付费', d: '用原始请求体校验签名；查一下这个事件处理过没有，处理过就直接返回 200。' },
+    { a: 'u', b: 'db', m: '刷新页面读取会员状态', d: '前端从数据库读到“已付费”，才显示会员功能。' }
+  ]
+});
+
+HB.vs($('#whVs'), {
+  a: 'success 页面跳转', b: 'Webhook 通知',
+  rows: [
+    ['谁发起', '用户的浏览器', 'Stripe 的服务器'],
+    ['能伪造吗', '能，直接访问这个 URL 就行', '不能，有签名验证'],
+    ['一定代表付款成功吗', '不一定（关页、断网、根本没付）', '一定'],
+    ['你的系统怎么知道', '前端代码猜的', '支付平台正式通知的'],
+    ['该用来做什么', '给用户一个“正在确认”的提示', '更新数据库、开通或回收权限']
+  ]
+});
+
+HB.cards($('#evtCards'), {
+  opts: ['创建订阅记录', '延长有效期', '标记风险并提醒', '回收权限'],
+  items: [
+    { t: 'checkout.session.completed', a: 0, why: '首次开通成功，在本地写入订阅记录。' },
+    { t: 'invoice.paid', a: 1, why: '自动续费成功。' },
+    { t: 'invoice.payment_failed', a: 2, why: '扣费失败，进入待恢复状态，提醒用户更新支付方式。' },
+    { t: 'customer.subscription.deleted', a: 3, why: '订阅取消，立即回收或到期后失效。' },
+    { t: '同一个 invoice.paid 因为超时被 Stripe 重发了第二次', a: 1, why: '仍然是续费事件，但幂等检查发现处理过，直接返回 200，<b>不要再延长一次</b>。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-git'), {
+  c: [
+    ['Git vs GitHub', '本地版本控制工具 vs 远程仓库 + 协作社区'],
+    ['SSH 密钥对', '公钥是锁（交给 GitHub），私钥是钥匙（留在本机，绝不分享）'],
+    ['.gitignore', '不跟踪的文件：依赖、临时文件、大文件、.env']
+  ],
+  p: [
+    ['日常四步', 'clone → 改前 pull → commit → push；提示词写清仓库路径'],
+    ['多设备', '每台一对密钥，分别绑定'],
+    ['泄露', '删除 GitHub 上的公钥，重新生成']
+  ]
+});
+S.notes($('#n-choose'), {
+  c: [
+    ['手动部署五步', '备服务器、配环境、传代码、启动测试、维护更新'],
+    ['IP 与端口', 'IP 是门牌号，端口是房间号']
+  ],
+  p: [
+    ['选平台三问', '24 小时在线？要 GPU？用户在哪？'],
+    ['静态站', 'Cloudflare Pages / Vercel / GitHub Pages'],
+    ['常驻进程', 'Railway / Fly.io / Render 付费 / VPS'],
+    ['坑', 'Render 免费实例闲置 15 分钟休眠；免费≠长期免费']
+  ]
+});
+S.notes($('#n-vps'), {
+  c: [
+    ['备案', '大陆资源对外服务需按接入商要求办理，不是换端口能免'],
+    ['反向代理', 'Nginx 接 443，转发到本机应用端口，应用端口不对公网开放'],
+    ['进程守护', 'PM2 / Docker 让应用崩溃后自动拉起']
+  ],
+  p: [
+    ['安全组', '只开 22（限 IP）、80、443'],
+    ['请求路径', 'DNS → 安全组 / ufw → Nginx（HTTPS）→ 应用 → 数据库'],
+    ['502', '应用没起、端口错、proxy_pass 错'],
+    ['刷新 404', '没配 try_files'],
+    ['加固', '密钥登录、fail2ban、自动更新、备份并验证可恢复']
+  ]
+});
+S.notes($('#n-cloud'), {
+  c: [
+    ['五类云服务', '计算、存储、数据库、网络、周边（邮件 / 短信 / 监控）'],
+    ['AI 专用平台', 'Modal、Hugging Face Spaces、Replicate、AutoDL']
+  ],
+  p: [
+    ['最常用', '对象存储、云数据库、CDN'],
+    ['国内 / 海外对照', 'ECS↔EC2、OSS↔S3、RDS↔RDS、SLB↔ELB']
+  ]
+});
+S.notes($('#n-aiops'), {
+  c: [
+    ['AI 当运维', '不必记命令，让编码 Agent 生成配置或经授权 SSH 操作'],
+    ['两种方式', '本地生成后手动执行 / AI 直接 SSH 操作']
+  ],
+  p: [
+    ['安全边界', '测试机练手、独立部署用户、危险命令先看、真实密钥不进对话'],
+    ['排错', '先看日志（Nginx / pm2 / docker / journalctl），脱敏后连配置一起给 AI'],
+    ['模板要素', '目标平台、项目类型、启动命令、端口、环境变量名、域名、验证方式']
+  ]
+});
+S.notes($('#n-pay'), {
+  c: [
+    ['支付三原则', '价格后端定、权限看 Webhook、状态存自己数据库'],
+    ['Checkout Session', 'Stripe 托管的付款页，由后端用密钥创建']
+  ],
+  p: [
+    ['一句话分工', '前端负责跳转，后端负责定价和确认'],
+    ['前端直连的问题', '价格可改、密钥暴露、无法可靠确认、状态混乱'],
+    ['选型', '海外 SaaS 用 Stripe，大陆用支付宝 / 微信']
+  ]
+});
+S.notes($('#n-webhook'), {
+  c: [
+    ['Webhook', '支付平台服务器发给后端的带签名正式通知'],
+    ['幂等', '同一事件到达多次只处理一次'],
+    ['MoR', '记录商户（Paddle、Lemon Squeezy），代处理全球税务']
+  ],
+  p: [
+    ['四个坑', 'success 当成功、前端传金额、验签前被 json 解析、没做幂等'],
+    ['订阅四事件', 'session.completed 开通、invoice.paid 续期、payment_failed 预警、subscription.deleted 回收'],
+    ['联调', 'stripe listen 把事件转发到本地']
+  ]
+});
+
+EV.todo($('#todo'), '9', [
+  { t: '配置 SSH 密钥并用 ssh -T git@github.com 验证；检查 .env 在 .gitignore 里', d: '' },
+  { t: '把你的前端项目部署到 Cloudflare Pages 或 Vercel，拿到公网地址', d: '' },
+  { t: '用三个问题给你的项目选部署方式，写下理由', d: '' },
+  { t: '（进阶）用万能部署模板让 AI 生成 VPS 部署方案，在测试机上跑通 Nginx + HTTPS', d: '' },
+  { t: '用 Stripe 测试模式接入一个套餐，验证 Webhook 到达后数据库才变成已付费', d: '用 stripe listen 本地联调。' },
+  { t: '手动重放同一个 Webhook 事件，确认不会重复开通', d: '' }
+]);

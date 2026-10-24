@@ -1,0 +1,356 @@
+---
+title: 从原型到能交出去的作品
+desc: Easy-Vibe 学习笔记（五）：需求与业务的区别，一页需求说明的六项和两个误区；把需求交给 AI IDE 的三种起步方式；从截图复刻练眼力；开始、等待、成功、失败四个时刻；请别人试用时只说目标、只看不教，问题按五级排序；反馈分 bug、体验、新需求，三个指标看留存、复访、推荐；一分钟介绍与发布前清单。
+kicker: <span>技术学习</span><span>Easy-Vibe · 05</span><span>对应原教程 初级三 构建原型、从截图复刻、初级五 完整项目实战、产品思维基础 3、魔搭发布</span><span>约 35 分钟</span>
+h1: 原型的价值不由功能数量决定，<em>由范围清不清楚决定</em>
+lead: 有了问题定义，原教程第一阶段用一个贯穿案例把它做成产品：一家店铺的运营想“用 AI 辅助制作商品图片和文案，让上新准备时间更短”。这句话直接丢给 AI，只能得到一个靠猜的页面。这一篇沿着原教程的路线走：先向业务提问、收敛范围、写成一页需求说明，再交给 AI IDE 生成原型；然后不加新功能，把四个容易卡住的时刻补好，请别人用一次，按真实卡点改一遍，最后整理成别人打开就能用的作品。
+nav: spec|一页需求说明;gen|交给 AI IDE;clone|截图复刻;states|四个时刻;test|请人试用;ship|整理发布;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.mock { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 14px; margin-top: 10px; }
+.mock-ui { border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); padding: 12px; font-size: 15px; min-height: 220px; }
+.mock-ui .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.mock-ui .fld { flex: 1; min-width: 0; border: 1px solid var(--rule); border-radius: 6px; padding: 4px 8px; color: var(--ink-3); background: var(--panel); }
+.mock-ui .fld.req { border-color: var(--alert); }
+.mock-ui .tip { color: var(--alert); font-size: 15px; }
+.mock-ui .hint { color: var(--ink-3); font-size: 15px; }
+.mock-ui .gbtn { border: 0; border-radius: 6px; padding: 5px 14px; background: var(--s1); color: #fff; font: inherit; font-size: 15px; }
+.mock-ui .gbtn[disabled] { opacity: .55; }
+.mock-ui .res { margin-top: 8px; border-top: 1px dashed var(--rule); padding-top: 8px; color: var(--ink-2); line-height: 1.7; }
+.mock-ui .mini { border: 1px solid var(--rule); border-radius: 999px; padding: 1px 10px; font-size: 15px; color: var(--ink-2); background: var(--panel); }
+.fixes label { display: flex; gap: 8px; align-items: flex-start; font-size: 15px; line-height: 1.6; margin: 6px 0; cursor: pointer; color: var(--ink-2); }
+.fixes input { margin-top: 4px; accent-color: var(--s1); }
+.fixes b { color: var(--ink); }
+@media (max-width: 760px) { .mock { grid-template-columns: minmax(0, 1fr); } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>一页需求说明包含哪六项？最容易被跳过、却最能防止范围膨胀的是哪一项？</li>
+    <li>一个 AI 功能在开始、等待、成功、失败四个时刻，各要给用户什么反馈？</li>
+    <li>请别人试用时你该做什么、不该做什么？试用后发现一堆问题，按什么顺序改？</li>
+  </ol>
+</div>
+
+<section class="part" id="spec">
+  <div class="part-head"><h2>写代码前，写一页需求说明</h2><span class="meta">原教程 初级三 第 1 节</span></div>
+  <div class="sec-lede">
+    <p>原教程先分清两个词：<strong>需求</strong>描述用户希望取得的进展和当前的阻碍（“运营希望缩短每个商品准备首版图文的时间”）；<strong>业务</strong>是用户每天实际在做的事（上架、改价、做图、看数据）。理解业务，才能判断功能该放在哪个环节、是否真的减少了工作量。于是第一步是带着问题去访谈：“效率高一点”是更快、更少重复还是更高转化？现在怎么上架？哪件事最不想做？</p>
+    <p>访谈得到的事实很具体：一个人管好几个店，在上架、改价、做图、看数据之间来回切；内容不是一次做好，而是先用厂家图和旧素材快速上架、花点小钱推广看有没有人买，<strong>卖得好的才认真做</strong>。问题被归成节奏、效率、内容三类，第一版只选内容；再往下挖出两个具体阻碍：批量制作要重复操作，好用的旧方案找不到、复用不了。于是范围定为两件事：<strong>批量生成图文草稿，把好用的方案存成模板</strong>。</p>
+    <p>原教程建议把结论写成<strong>一页需求说明</strong>，六项：给谁用、在什么场景用；要解决的问题（直接用 JTBD 句式）；第一版只做的核心流程；第一版<strong>不做</strong>什么；怎样算验证成功（写成能观察到的结果）；还没确认的问题。它有两个用处：先和自己对齐范围，再作为交给 AI IDE 的输入，AI 不用再猜。两个常见误区：<strong>写成功能清单</strong>（只列上传、生成、编辑、导出，没写给谁用、解决什么，AI 会照单全收）；<strong>只写做什么、不写不做什么</strong>。“不做什么”交给 AI IDE 时还能提醒它别自行补功能。AI 让开发变快了，但第一版仍要足够小，正因为快，才能先满足一群人、拿去测试、小步快跑。</p>
+    <p class="go">先判断访谈里冒出来的这些想法，第一版做不做；再用模板写一份你自己的需求说明。</p>
+  </div>
+  <div class="lab"><p class="lab-t">电商内容工作台：第一版做不做？</p><div id="scopeSort"></div></div>
+  <div class="lab"><p class="lab-t">一页需求说明（原教程 1.3 节模板，“填入示例”是原教程的电商案例）</p><div id="specTpl"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：第 1 项按什么细分人群</h4>
+    <p>原教程给了三步：先列出互不重叠的<b>参与方</b>（店铺运营、买家、设计师，需求各不相同，别混写）；选一类参与方后，按<b>行为或动机</b>细分，而不是按年龄、性别这类人口属性（“同时管好几个店、要批量上新”和“只管一个店、精细打磨每个商品”是两类运营）；最后从“影响”（人多不多、问题频不频繁）和“未被满足程度”（现在的办法有多麻烦）两个角度打分，只挑一个群体。</p>
+  </div>
+  <div class="notes" id="n-spec"></div>
+</section>
+
+<section class="part" id="gen">
+  <div class="part-head"><h2>把需求交给 AI IDE：三种起步方式</h2><span class="meta">原教程 初级三 第 2–4 节</span></div>
+  <div class="sec-lede">
+    <p>原教程给了三种起步方式，按准备程度选。<strong>从口述开始</strong>：用自己的话把想法说一遍（哪怕很粗糙），交给通用对话模型，让它整理成业务逻辑文档和一份给 AI IDE 的实现说明；它常会反问你没想到的问题（“要不要支持批量上传？”），你再删掉不需要的。<strong>直接交业务文档</strong>：已经写好一页需求说明，就按“输入 / 输出 / 期望的使用方式变化”的格式直接交给 AI IDE，并说明“先做第一个功能，模板库后面再加”。<strong>提示词的提示词</strong>：让通用模型先写一份给编码 Agent 的提示词，要求包含页面布局、数据结构和交互、技术栈、核心功能点，再拿去生成。</p>
+    <p>生成后的节奏和第 2 篇一致：先单页面跑通核心流程，再让 AI 对照需求列出还只有外观、没有行为的入口，按优先级逐个补成多页面；每补一页都实际点一遍。两个实用技巧：让 AI 加一个<strong>“载入示例”入口</strong>，准备一组正常数据和几组边界数据（信息缺失、图片格式不对），每次刷新后都能一键复现同一条流程；让 AI 做<strong>需求对照检查</strong>，列出哪些已完成、哪些没实现或体验不足。但原教程强调：AI 可以生成检查清单，最终仍要你亲手操作确认。</p>
+    <p>报错时的原则也一样：<strong>先保留一个能运行的版本</strong>，再把现象、错误信息、预期行为交给 AI。发送日志前检查里面有没有 API Key、账号等敏感信息。改了很多次还不行，就回退到能运行的版本、换模型，或者把“当前代码 + 错误日志 + 预期行为”打包一次性交给 AI 整体重构那一块。</p>
+    <p class="go">三种方式各适合什么情况？</p>
+  </div>
+  <div class="lab"><div id="genCards"></div></div>
+  <div class="pcard" data-t="提示词的提示词" data-k="原教程 2.1.3 节"><pre>基于下面的想法，帮我写一个发给 coding Agent 的写代码用的提示词，我需要用这个提示词来生成代码。
+【把你的业务逻辑描述贴在这里】
+要求：
+1. 提示词要包含清晰的页面布局描述
+2. 明确数据结构和交互逻辑
+3. 指定技术栈（如 React + Tailwind）
+4. 列出需要实现的核心功能点</pre></div>
+  <div class="pcard" data-t="载入示例与需求对照检查" data-k="据原教程第 4 节整理"><pre>我现在需要测试这条用户流程能否完全走通。请结合下面的需求，在界面上加一个“载入示例”入口：
+准备 1 组信息完整的正常数据，再准备 2 组边界数据（缺少必填字段、图片格式不支持）。
+【粘贴需求】
+完成后，请对照我最开始的需求列一个功能清单，标出哪些已经完成、哪些尚未实现或体验不足。</pre></div>
+  <div class="notes" id="n-gen"></div>
+</section>
+
+<section class="part" id="clone">
+  <div class="part-head"><h2>从截图复刻：练眼力，也练描述</h2><span class="meta">原教程 从截图复刻：第一次模仿练习</span></div>
+  <div class="sec-lede">
+    <p>原教程在 AI IDE 和原型之间插了一节“临摹课”：找一张喜欢的产品截图（官网首屏、SaaS 看板、小游戏画面），拖进聊天框，只说一句“照着这张图帮我做一个网页，做好后帮我打开看看”。截图已经替你说明了颜色、间距和布局的大半，文字只需告诉它要把图变成网页。如果只想参考样子，加一句“样子参考这张图，名字和内容换成新的”。</p>
+    <p>它想练的是 Vibe Coding 里很重要的一项能力：<strong>看出画面细节，并说出哪里不像</strong>。做完把作品和参考图并排放，看自己能模仿到五成、七成还是九成。第一版先做到“能看”：页面能打开、主要内容出现、按钮能点；不要因为字体差一点就推倒重来，一次只指出一个最明显的问题（“中间的标题再大一点”）。</p>
+    <p>原教程里有个很好的反例：老师拿 Minecraft 截图说“帮我做一个像这样的方块小游戏”，结果得到一个 <strong>2D 横版</strong>游戏，因为没说要 3D，AI 选了更简单的做法；加上“3D、可以转动视角”之后才得到第一人称方块世界。<strong>你没说清的维度，AI 会替你选一个省事的。</strong></p>
+    <p class="go">截图复刻时，下面这些做法哪个更好？</p>
+  </div>
+  <div class="lab"><div id="cloneQuiz"></div></div>
+  <div class="notes" id="n-clone"></div>
+</section>
+
+<section class="part" id="states">
+  <div class="part-head"><h2>四个时刻：开始、等待、成功、失败</h2><span class="meta">原教程 初级五 第 1–2 节</span></div>
+  <div class="sec-lede">
+    <p>原型接上 AI 以后，原教程的第一阶段收尾课明确说：<strong>这一章不加新功能</strong>。先像用户一样从第一页用到拿到结果，哪一步还需要你在旁边解释，哪一步就是要改的地方。开发久了页面里总有上次的数据，所以要开无痕窗口或清空本地数据，做三次测试：<strong>空白打开一次</strong>（什么都不填直接点）、<strong>正常生成一次</strong>、<strong>模拟出错一次</strong>（传不支持的文件或让请求失败）。</p>
+    <p>问题通常集中在四个时刻。<strong>刚打开时</strong>：只有一个输入框不够，要有一句说明、一组示例或支持格式的提示；字段多就只留必填，其余放进“更多设置”。<strong>等待 AI 时</strong>：按钮显示“生成中”并防止重复提交，已填内容不消失；图片视频要排队可以显示阶段，<strong>不要编造一个看似精确的百分比</strong>，除非接口真的给了进度。<strong>拿到结果后</strong>：AI 返回不是终点，至少要能编辑、复制、下载或重新生成；模型无法确认的信息直接标出来。<strong>失败时</strong>：不给普通用户看整段报错，但要说清这次没完成，保留输入并提供重试；刷新会丢一大段输入的话，可以用 LocalStorage 存草稿，但别存 API Key 和敏感资料。</p>
+    <p class="go">下面是一个模拟的生成页面。选一个测试场景点“生成”，再逐个勾上修复项，看体验怎么变。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="scSeg"><button data-v="empty" aria-pressed="true">空白打开直接点</button><button data-v="ok">正常生成</button><button data-v="fail">请求失败</button></div>
+    <div class="mock">
+      <div class="mock-ui" id="mockUi"></div>
+      <div class="fixes" id="fixes">
+        <label><input type="checkbox" data-f="intro"><span><b>开始：</b>一句用途说明 + 示例 + 必填提示</span></label>
+        <label><input type="checkbox" data-f="wait"><span><b>等待：</b>按钮变“生成中”并禁用，输入保留</span></label>
+        <label><input type="checkbox" data-f="next"><span><b>成功：</b>结果可编辑、复制、重新生成，存疑信息标出</span></label>
+        <label><input type="checkbox" data-f="err"><span><b>失败：</b>说清没完成、保留输入、提供重试</span></label>
+        <div class="hb-out" id="mockVerdict" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+  <div class="pcard" data-t="让 AI 一次补齐四个时刻" data-k="原教程 2.4 节"><pre>请围绕“上传商品图片并生成文案”这条流程，检查开始、等待、成功和失败四个时刻。
+优先修复会阻止用户继续操作的问题：
+- 必填项缺少提示；
+- 请求期间可以重复点击；
+- 失败后输入被清空；
+- 结果没有编辑、复制或重新生成入口。
+修改前先告诉我准备改哪些文件，完成后给出一套手动测试步骤。</pre></div>
+  <div class="notes" id="n-states"></div>
+</section>
+
+<section class="part" id="test">
+  <div class="part-head"><h2>请别人用一次，再改一遍</h2><span class="meta">原教程 初级五 第 3–4 节；产品思维基础 3.4 节</span></div>
+  <div class="sec-lede">
+    <p>自己做的页面怎么看都顺。找一个没参与开发的人（最好是真可能用它的人），测试开始时<strong>只说目标</strong>：“请用这个工具，根据这张商品图片生成一版标题和卖点，把你认为可以继续修改的版本复制出来。”然后<strong>只看不教</strong>，记录他停顿、返回、重复点击、向你提问的位置。你一开口解释，本该由页面解决的问题就被掩盖了。用完再问三个问题：哪一步最不确定？结果里哪些会直接用、哪些一定要改？下次还愿不愿意用、为什么？不要只问“好不好用”，礼貌的“挺好的”指导不了修改。用真实素材测试前，要说明内容会发给哪类 AI 服务。</p>
+    <p>试用后会记下一堆问题，原教程给了<strong>五级优先级</strong>：① 无法完成任务（按钮无效、请求失败、结果带不走）；② 结果明显不可信（编造信息、无法核对）；③ 操作容易误解（不知道从哪开始、不清楚当前状态）；④ 使用成本过高（步骤重复、内容丢失、等待无反馈）；⑤ 样式和新增功能。先挑最重要的一到三个，改完自己从头再试，最好请那个人回来看。交给 AI IDE 时把<strong>观察到的现象</strong>写进去，而不是一句“帮我优化一下”。</p>
+    <p>产品思维附录补充了更长期的视角。反馈分三类：<strong>bug</strong>（说好会发生的没发生或发生错了，尽快复现修复并告知受影响用户）、<strong>体验问题</strong>（流程长度、按钮位置、文案没选到最顺的路径，结合观察判断改不改）、<strong>新需求</strong>（用户提出你没想到的功能，先看背后有没有共性、是否和你要服务的人群一致，别被分散需求拉到各个方向）。判断要不要继续投入看三个指标：<strong>留存</strong>（一段时间后还有多少人在用）、<strong>复访频率</strong>（多久回来一次，和你预期的使用节奏比）、<strong>推荐意愿</strong>（推荐带个人信用背书，比满意度更能说明问题）。</p>
+    <p class="go">先给试用中记下的问题排优先级；再判断几条反馈属于哪一类。</p>
+  </div>
+  <div class="lab"><p class="lab-t">试用记录排优先级（五级来自原教程第 4 节）</p><div id="prioSort"></div></div>
+  <div class="lab"><div id="fbCards"></div></div>
+  <div class="pcard" data-t="把观察到的问题交给 AI IDE" data-k="原教程 4.1 节"><pre>用户任务：上传商品图片并生成三条卖点。
+观察到的问题：两位测试者点击“生成”后再次连续点击，因为页面没有明显显示请求已经开始，最后产生了重复任务。
+请修改当前页面：
+1. 请求开始后禁用生成按钮，并显示“正在生成”；
+2. 请求结束或失败后恢复按钮；
+3. 不要清空用户已经填写的内容；
+4. 修改后告诉我怎样手动测试重复点击和失败情况。</pre></div>
+  <div class="notes" id="n-test"></div>
+</section>
+
+<section class="part" id="ship">
+  <div class="part-head"><h2>整理成别人打开就能用的作品</h2><span class="meta">原教程 初级五 第 5 节；在魔搭社区发布</span></div>
+  <div class="sec-lede">
+    <p>一分钟介绍按这个顺序：<strong>谁遇到了什么问题 → 产品怎样帮他 → 接了什么 AI 能力 → 用户怎样完成任务 → 试用后改了什么</strong>。先让人听懂你做了什么，再说框架和模型。分享前准备三样东西：可以运行的应用（链接，或写清启动命令）、30 到 60 秒的演示视频（完整展示一次核心任务，不要只快速切页面）、一页项目说明（目标用户、核心问题、主要流程、AI 能力、一次用户反馈和据此做的修改）。原教程还说，不必为了显得原创去做陌生题目，一个来自自己生活工作的小问题，经过真实试用和修改，比功能很多但没人用过的页面更有说服力。</p>
+    <p>发出去之前最后打开一次分享链接从头用一遍：别人能打开、AI 能返回、页面和截图里没有 API Key、用到的图片声音文档有使用授权。没有服务器的话，原教程附录介绍了魔搭社区的创空间：选 <strong>Static</strong> 类型上传纯静态网页即可得到公开链接；Gradio、Streamlit、带自定义后端的应用分别选对应类型或 Docker。第 9 篇会讲正式的部署。</p>
+    <p class="go">用模板写一段一分钟介绍。</p>
+  </div>
+  <div class="lab"><p class="lab-t">一分钟介绍（原教程 5.1 节的五步）</p><div id="pitchTpl"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：源代码 vs 构建产物</h4>
+    <p>纯 HTML/CSS/JS 写的页面，源代码本身就能被浏览器直接打开。Vue、React、Vite 项目不一样：源代码要先 <code>npm install</code> 装依赖、<code>npm run build</code> 构建，生成 <code>dist</code> 或 <code>build</code> 目录里的静态文件，浏览器才能运行。原教程提醒，往魔搭 Static 空间（以及任何静态托管）上传时，<b>只传构建产物</b>，不要把源代码目录直接当网站传，托管平台不会替你执行构建。</p>
+  </div>
+  <div class="notes" id="n-ship"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 一页需求说明的六项？最能防止范围膨胀的是哪项？</summary><p class="ans">给谁用和在什么场景用；要解决的问题（JTBD 句式）；第一版只做的核心流程；第一版不做什么；怎样算验证成功（可观察的结果）；还没确认的问题。最容易被跳过、也最能防止范围膨胀的是“第一版不做什么”，交给 AI IDE 时还能阻止它自行补功能。</p></details>
+    <details><summary>2. 开始、等待、成功、失败四个时刻各要什么反馈？</summary><p class="ans">开始：一句用途说明、示例或支持格式提示，只保留必填字段；等待：按钮显示“生成中”并防止重复提交，已填内容不消失，有真实进度才显示百分比；成功：结果可编辑、复制、下载或重新生成，存疑信息标出；失败：说明这次没完成，保留输入，提供重试或返回修改的入口，不向普通用户展示整段技术报错。</p></details>
+    <details><summary>3. 请别人试用时该做什么、不该做什么？问题按什么顺序改？</summary><p class="ans">只告诉对方要完成什么，然后只看不教，记录停顿、返回、重复点击和提问的位置，结束后问哪一步最不确定、哪些结果会直接用、下次是否还用；不要边用边解释，也不要只问好不好用。修改按五级：无法完成任务 → 结果明显不可信 → 操作容易误解 → 使用成本过高 → 样式和新功能，先改最重要的一到三个，改完从头复测。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.sortGame($('#scopeSort'), {
+  bins: [{ k: 'do', t: '第一版做' }, { k: 'no', t: '第一版不做' }],
+  items: [
+    { t: '批量导入商品信息和图片', k: 'do', why: '核心流程第一步，对应“批量制作要重复操作”这个阻碍。' },
+    { t: '生成主图草稿 + 标题 + 1–2 句卖点', k: 'do', why: '核心产出；首版只需达到测试要求。' },
+    { t: '上架时间与调价节奏管理', k: 'no', why: '属于“节奏问题”，访谈里存在，但不是这次选定的内容问题。' },
+    { t: '把好用的一套方案存成模板再套用', k: 'do', why: '对应第二个阻碍“好方案找不到、复用不了”。' },
+    { t: '多店铺多商品统一管理', k: 'no', why: '属于“效率问题”，原教程明确列入第一版不做。' },
+    { t: '销售数据分析看板', k: 'no', why: '“看数据”不在本次验证范围内。' },
+    { t: '一次生成可直接用的精修图', k: 'no', why: '运营的真实工作方式是先测试再精做，首版不追求精修。' }
+  ]
+});
+
+EV.tpl($('#specTpl'), {
+  fields: [
+    { k: 'who', t: '1. 给谁用、在什么场景下用', ph: '同时管理多个店铺、要批量上新做测试的运营，在准备一批新商品上架、需要快速做出首版图文时使用', area: true },
+    { k: 'job', t: '2. 要解决的问题（JTBD）', ph: '当我要一次上架多个新商品时，我想要快速得到一批能用于测试的首版主图和文案，以便于先上架看看有没有人买', area: true },
+    { k: 'flow', t: '3. 第一版只做的核心流程', ph: '批量导入商品信息和图片 → 生成主图草稿、标题和卖点 → 运营筛选修改 → 好方案存成模板', area: true },
+    { k: 'not', t: '4. 第一版不做什么', ph: '不做节奏管理、不做多店铺统一管理、不做数据分析、不追求精修图', area: true },
+    { k: 'ok', t: '5. 怎样算验证成功', ph: '请 3 位运营试用，至少 2 位愿意直接用生成的草稿上架测试；存过的模板下次能直接找到并套用', area: true },
+    { k: 'open', t: '6. 还没确认的问题', ph: '一批通常多少个商品、Excel 需要哪些字段；运营更习惯从零生成还是先选模板', area: true }
+  ],
+  render: function (v) {
+    return '# 需求说明\n1. 给谁用、在什么场景下用：' + v.who + '\n2. 要解决的问题：' + v.job + '\n3. 第一版只做的核心流程：' + v.flow + '\n4. 第一版不做什么：' + v.not + '\n5. 怎样算验证成功：' + v.ok + '\n6. 还没确认的问题：' + v.open;
+  }
+});
+
+HB.cards($('#genCards'), {
+  opts: ['从口述开始', '直接交业务文档', '提示词的提示词'],
+  items: [
+    { t: '脑子里有个大概想法，还说不清细节，也没写过需求说明。', a: 0, why: '口述最真实；让通用模型扩写，它会反问你没想到的问题，你再删减。' },
+    { t: '已经按六项写好了一页需求说明，范围很清楚。', a: 1, why: '直接按“输入 / 输出 / 使用方式变化”交给 AI IDE，并说明先做哪个功能。' },
+    { t: '想精细控制技术栈、数据结构和页面布局。', a: 2, why: '先让通用模型产出一份结构化的编码提示词，审过再交给编码 Agent。' }
+  ]
+});
+
+S.quiz($('#cloneQuiz'), [
+  { q: '第一次复刻，选什么样的参考图？', o: ['最复杂最酷的页面，挑战一下', '一个页面、主要内容看得清、做完能马上看出像不像', '登录、支付、后台一起截'], a: 1, why: '原教程：第一次只选一个页面，范围越小越容易成功。' },
+  { q: '第一版出来了，字体、间距、按钮都有点不像，怎么办？', o: ['推倒重来，重写提示词', '一次列出五六处问题让它全改', '先确认能打开，再挑一个最明显的问题让它改'], a: 2, why: '先做到“能看”，一次改一处，比上一版更接近就算有用。' },
+  { q: '想要第一人称的方块世界，却得到了 2D 横版，原因是？', o: ['模型能力不够', '没说要 3D，AI 选了更省事的做法', '截图分辨率太低'], a: 1, why: '没说清的维度 AI 会替你选简单的；加上“3D、可以转动视角”就对了。' },
+  { q: '只想要参考图的样子，不想用原产品的名字和文案？', o: ['不用管，AI 会自动换', '多说一句“样子参考这张图，名字和内容换成新的”', '把截图里的文字涂掉'], a: 1, why: '原教程原句；参考结构和风格，品牌和文案要换成自己的。' }
+]);
+
+/* ---------- 四个时刻模拟器 ---------- */
+var sc = 'empty', fx = {};
+function drawMock() {
+  var ui = $('#mockUi'), html = '', ok = [], bad = [];
+  html += fx.intro ? '<p class="hint">上传一张商品图，填名称和卖点关键词，生成一版可修改的标题和卖点。<span class="mini">载入示例</span></p>' : '';
+  var showReq = sc === 'empty' && fx.intro;
+  html += '<div class="row"><span>图片</span><span class="fld' + (showReq ? ' req' : '') + '">' + (sc === 'empty' ? '未选择' : 'bag.jpg') + '</span></div>';
+  html += '<div class="row"><span>名称</span><span class="fld' + (showReq ? ' req' : '') + '">' + (sc === 'empty' ? '' : '通勤双肩包') + '</span></div>';
+  if (showReq) html += '<p class="tip">请先上传图片并填写名称</p>';
+  var waiting = sc !== 'empty';
+  html += '<div class="row"><button class="gbtn" type="button"' + (waiting && fx.wait ? ' disabled' : '') + '>' + (waiting && fx.wait ? '生成中…' : '生成') + '</button>' + (waiting && !fx.wait ? '<span class="hint">（点了没反应？再点一次……）</span>' : '') + '</div>';
+  if (sc === 'empty') {
+    if (fx.intro) ok.push('空白时知道该做什么，缺的字段就地提示。'); else bad.push('只有空输入框和一个按钮；点了没反应，用户不知道该填什么，以为页面坏了。');
+  } else {
+    if (fx.wait) ok.push('等待时按钮禁用并显示“生成中”，不会重复提交。'); else bad.push('请求已经发出但页面毫无变化，用户连点三次，产生重复任务。');
+  }
+  if (sc === 'ok') {
+    html += '<div class="res"><b>标题：</b>通勤双肩包 大容量防泼水 15.6 寸电脑仓<br><b>卖点：</b>一包装下电脑和健身衣……' + (fx.next ? '<br><span style="color:var(--s2)">“防泼水”未在资料中确认，请核对</span><div class="row"><span class="mini">编辑</span><span class="mini">复制</span><span class="mini">重新生成</span></div>' : '') + '</div>';
+    if (fx.next) ok.push('结果能编辑、复制、重新生成，存疑信息被标出。'); else bad.push('结果只能看不能带走；“防泼水”是模型编的也没人发现。');
+  }
+  if (sc === 'fail') {
+    if (fx.err) { html += '<div class="res"><span class="tip">这次没有生成成功（AI 服务暂时不可用）。你填写的内容都还在。</span><div class="row"><span class="mini">重新生成</span></div></div>'; ok.push('失败时说清没完成，输入保留，可以一键重试。'); }
+    else { html = html.replace('通勤双肩包', '').replace('bag.jpg', '未选择'); html += '<div class="res"><span class="tip">Error: 502 Bad Gateway at fetch (api.js:42)</span></div>'; bad.push('满屏技术报错，刚填的内容被清空，只能从头再来。'); }
+  }
+  ui.innerHTML = html;
+  $('#mockVerdict').innerHTML = (bad.length ? '<ul class="hb-miss">' + bad.map(function (b) { return '<li>' + b + '</li>'; }).join('') + '</ul>' : '') + (ok.length ? '<p style="color:var(--ok)">' + ok.join(' ') + '</p>' : '');
+}
+S.seg($('#scSeg'), function (v) { sc = v; drawMock(); });
+$$('#fixes input').forEach(function (c) { c.addEventListener('change', function () { fx[c.getAttribute('data-f')] = c.checked; drawMock(); }); });
+drawMock();
+
+S.sortGame($('#prioSort'), {
+  bins: [{ k: '1', t: '① 无法完成任务' }, { k: '2', t: '② 结果明显不可信' }, { k: '3', t: '③ 操作容易误解' }, { k: '4', t: '④ 使用成本过高' }, { k: '5', t: '⑤ 样式与新功能' }],
+  items: [
+    { t: '点“复制”按钮没有任何效果，结果带不走', k: '1', why: '任务完成不了，最高优先级。' },
+    { t: '卖点里写了资料中没有的“防泼水”', k: '2', why: '模型编造信息，结果不可信。' },
+    { t: '测试者打开页面后愣了十秒不知道先做什么', k: '3', why: '不知道从哪开始，属于操作容易误解。' },
+    { t: '每次生成都要重新上传同一张图', k: '4', why: '步骤重复，使用成本过高。' },
+    { t: '希望能换一套深色主题', k: '5', why: '不影响核心任务，放进愿望清单。' },
+    { t: '请求失败后，刚填的内容全没了', k: '4', why: '内容丢失，成本过高；同时也提醒你补失败状态。' }
+  ]
+});
+
+HB.cards($('#fbCards'), {
+  opts: ['bug', '体验问题', '新需求'],
+  items: [
+    { t: '上传 PNG 图片时偶尔直接报错退出。', a: 0, why: '说好会发生的没发生，尽快复现、修复，并告诉受影响的用户。' },
+    { t: '大家总在“保存为模板”按钮前犹豫，怕点了会覆盖原结果。', a: 1, why: '文案和交互没选到最顺的路径，结合观察决定怎么改。' },
+    { t: '有人希望能直接导出到店铺后台。', a: 2, why: '先看是否是共性、是否和你服务的人群与核心任务一致，再决定做不做。' },
+    { t: '“重新生成”放在结果区最底下，很多人找不到。', a: 1, why: '重要功能放在不显眼的位置，属于体验问题。' }
+  ]
+});
+
+EV.tpl($('#pitchTpl'), {
+  fields: [
+    { k: 'who', t: '谁遇到了什么问题', ph: '电商运营准备首版图文时，要反复整理图片和卖点' },
+    { k: 'help', t: '产品怎样帮他', ph: '上传商品图片和资料，生成一版可以继续修改的内容' },
+    { k: 'ai', t: '接入了什么 AI 能力', ph: '图片理解与文本生成' },
+    { k: 'flow', t: '用户怎样完成任务', ph: '上传、生成、检查、修改、复制' },
+    { k: 'fix', t: '试用后改了什么', ph: '补充了等待状态，并在失败后保留输入' }
+  ],
+  render: function (v) {
+    return v.who + '。\n这个工具让他' + v.help + '，背后用到了' + v.ai + '。\n一次完整使用是：' + v.flow + '。\n请两位运营试用后，我们' + v.fix + '。';
+  }
+});
+
+EV.pcards();
+
+S.notes($('#n-spec'), {
+  c: [
+    ['需求 vs 业务', '需求是想取得的进展和阻碍；业务是用户每天实际在做的事'],
+    ['一页需求说明', '给谁用 / 要解决的问题 / 核心流程 / 不做什么 / 验证成功 / 未确认问题']
+  ],
+  p: [
+    ['两个误区', '写成功能清单；只写做什么不写不做什么'],
+    ['细分人群', '列参与方 → 按行为动机细分 → 按影响和未满足程度挑一个'],
+    ['小步快跑', 'AI 让开发变快，所以第一版更要小，先测再补']
+  ]
+});
+S.notes($('#n-gen'), {
+  c: [
+    ['三种起步', '口述让 AI 扩写 / 直接交业务文档 / 提示词的提示词'],
+    ['载入示例', '一键填入正常和边界数据，每次刷新都能复现同一流程']
+  ],
+  p: [
+    ['节奏', '单页跑通核心流程 → 列出空壳入口 → 逐页补齐并实点'],
+    ['报错原则', '先保留能运行的版本；日志去掉 Key；不行就回退、换模型、打包重构'],
+    ['需求检查', 'AI 列清单，你亲手确认']
+  ]
+});
+S.notes($('#n-clone'), {
+  c: [
+    ['截图复刻', '截图 + 一句话让 AI 照着做，练看细节和描述差异的能力'],
+    ['没说清的维度', 'AI 会替你选省事的做法（2D 而不是 3D）']
+  ],
+  p: [
+    ['一句话', '“照着这张图帮我做一个网页，做好后帮我打开看看”'],
+    ['第一版', '先能看：能打开、内容在、按钮能点；一次改一处'],
+    ['参考不照抄', '“样子参考这张图，名字和内容换成新的”']
+  ]
+});
+S.notes($('#n-states'), {
+  c: [
+    ['不加新功能', '先把一条用户任务做完整，再谈登录、协作、看板'],
+    ['三次测试', '空白打开一次、正常生成一次、模拟出错一次（无痕窗口）']
+  ],
+  p: [
+    ['开始', '用途说明、示例、支持格式；只留必填'],
+    ['等待', '“生成中”+ 防重复提交 + 输入保留；没有真实进度不编百分比'],
+    ['成功', '可编辑、复制、下载、重新生成；存疑信息标出'],
+    ['失败', '说清没完成、保留输入、可重试；草稿可存 LocalStorage 但不存 Key']
+  ]
+});
+S.notes($('#n-test'), {
+  c: [
+    ['试用原则', '只说目标，只看不教，记录停顿、返回、重复点击和提问'],
+    ['反馈三类', 'bug、体验问题、新需求'],
+    ['三个指标', '留存、复访频率、推荐意愿']
+  ],
+  p: [
+    ['事后三问', '哪步最不确定 / 哪些结果直接用 / 下次还用吗'],
+    ['五级优先级', '完不成 → 不可信 → 易误解 → 成本高 → 样式和新功能'],
+    ['给 AI 的改动说明', '写观察到的现象和期望，并要手动测试步骤']
+  ]
+});
+S.notes($('#n-ship'), {
+  c: [
+    ['一分钟介绍', '谁的问题 → 怎么帮 → 什么 AI → 怎么用 → 试用后改了什么'],
+    ['构建产物', 'Vue/React/Vite 要先 build，只上传 dist 或 build']
+  ],
+  p: [
+    ['分享三件套', '可运行链接、30–60 秒演示视频、一页项目说明'],
+    ['发出前检查', '能打开、AI 能返回、没有 API Key、素材有授权'],
+    ['魔搭创空间', '静态页选 Static；Gradio / Streamlit / Docker 各有类型']
+  ]
+});
+
+EV.todo($('#todo'), '5', [
+  { t: '为自己的方向写一页需求说明，第 4 项至少写三条“不做”', d: '' },
+  { t: '用“从口述开始”的方式让 AI 扩写需求，再交给 AI IDE 生成单页原型', d: '' },
+  { t: '做一次截图复刻，并给自己打分：五成、七成还是九成像', d: '' },
+  { t: '在无痕窗口做三次测试：空白、正常、出错；把四个时刻补齐', d: '' },
+  { t: '请一个没参与开发的人只按目标完成一次任务，你只看不教', d: '记录停顿位置，问事后三问。' },
+  { t: '按五级优先级挑 1–3 个问题修复并复测', d: '' },
+  { t: '准备分享三件套：链接（或魔搭 Static）、60 秒演示视频、一页说明', d: '原教程：别人能打开并独立完成一次使用，Stage 1 才算完成。' }
+]);

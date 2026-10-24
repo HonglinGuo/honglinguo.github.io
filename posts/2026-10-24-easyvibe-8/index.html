@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>后端：数据库、登录与权限</title>
+<meta name="description" content="Easy-Vibe 学习笔记（八）：数据库解决的五个问题；关系型与非关系型怎么选，规范化与冗余的取舍；主键、外键与 JOIN 的行数乘法；SQL 增删改查；BaaS 与 Supabase 的六个模块；行级安全 RLS 与 auth.uid()；把任意应用接入 Supabase 的四步流程；OAuth 第三方登录五步；实时、存储、边缘函数各管什么，以及各模块的替代方案。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.jt { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 10px; }
+.jt th, .jt td { border: 1px solid var(--hair); padding: 5px 8px; text-align: left; }
+.jt th { background: var(--panel); color: var(--ink-2); font-weight: 600; }
+.jt td.new { background: var(--s1-soft); }
+.rls-tbl tr.hide td { color: var(--ink-3); text-decoration: line-through; background: var(--dim-soft); }
+.rls-tbl tr.show td { background: var(--s1-soft); }
+.rls-tbl tr.leak td { background: var(--alert-soft); }
+</style>
+</head>
+<body data-series="easyvibe-series" data-part="8">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 08</span><span>对应原教程 二阶段 从数据库到 Supabase</span><span>约 40 分钟</span></p>
+  <h1>从“能跑起来”到“像个线上产品”，<em>差的是数据和身份</em></h1>
+  <p class="lead">到目前为止，原型里的数据一刷新就没了，所有人看到的也是同一份内容。原教程第二阶段用最长的一章解决这件事：先讲清楚数据库是什么、关系型和非关系型的取舍，再以 Supabase 为主线，一次补上数据库和用户系统两项基础能力，最后以 Supabase 的各个模块为参照，看清现代云后端通常由哪几块组成。这一篇把这条线压实，重点放在最容易出安全问题的地方：行级安全。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" aria-current="page" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#db">为什么要数据库</a><a href="#sql">SQL 与 NoSQL</a><a href="#join">主键外键 JOIN</a><a href="#baas">BaaS 与 Supabase</a><a href="#rls">行级安全</a><a href="#sop">接入四步</a><a href="#oauth">第三方登录</a><a href="#more">实时存储函数</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>关系型数据库和非关系型数据库各适合什么场景？“规范化”和“冗余”分别换来了什么？</li>
+    <li>RLS 解决什么问题？在 Supabase 里，为什么开了 RLS 才能放心让前端直连数据库？</li>
+    <li>把一个现有应用接入 Supabase 的四步是什么？OAuth 登录时，为什么 Google 先返回授权码而不是用户信息？</li>
+  </ol>
+</div>
+
+<section class="part" id="db">
+  <div class="part-head"><h2>为什么需要数据库</h2><span class="meta">原教程 第 1.1–1.2 节</span></div>
+  <div class="sec-lede">
+    <p>数据是信息的载体：联系方式、订单、游戏等级都是。程序里最简单的数据是变量，但变量活在内存里，用户一关浏览器就全丢了，也没法让不同用户共享商品库存、订单记录。<strong>数据库</strong>就是专门对数据做规范化组织、安全存储、系统管理和高效查询的程序，可以部署在本地，也可以放在云端按需扩容。</p>
+    <p>原教程归纳了它解决的五个核心问题：<strong>持久化存储</strong>（写到硬盘，应用关了数据还在）；<strong>便捷的查询与分析</strong>（用 SQL 这类语言从海量数据里筛选聚合）；<strong>高性能与高并发</strong>（靠索引、缓存、连接池、分布式架构毫秒级响应成千上万并发）；<strong>完整性与一致性</strong>（用约束保证年龄必须是数字、订单号必须唯一）；<strong>安全性</strong>（身份验证、访问控制、加密、备份恢复）。</p>
+    <p class="go">下面这些问题，分别靠数据库的哪项能力解决？</p>
+  </div>
+  <div class="lab"><div id="dbCards"></div></div>
+  <div class="notes" id="n-db"></div>
+</section>
+
+<section class="part" id="sql">
+  <div class="part-head"><h2>关系型与非关系型：规范化 vs 聚合</h2><span class="meta">原教程 第 1.3 节</span></div>
+  <div class="sec-lede">
+    <p>原教程用两个比喻区分两大类。<strong>关系型数据库（SQL）</strong>像结构严谨的 Excel：每张表事先定义好结构（Schema，比如姓名必须是文字、年龄必须是数字），表与表通过关联字段连起来。好处是数据精确可靠，适合银行转账、库存、订单、账务这类不能出错、需要事务的场景；缺点是改结构麻烦，超大规模时扩展受限。<strong>非关系型数据库（NoSQL）</strong>像灵活的文件夹：可以存格式各异的文档、键值对，不需要提前定结构，扩展更方便，适合社交内容、日志、物联网写入、推荐特征这类高并发、结构多变的场景，代价是关联查询能力和一致性保障弱一些。</p>
+    <p>同一个博客平台（用户、文章、评论、标签）在两类数据库里存法截然不同。关系型把它们拆成五张职责单一的表，再用一张 <code>post_tags</code> 表表达“一篇文章多个标签、一个标签多篇文章”的多对多关系，查一篇文章的完整信息要 JOIN 多张表；这叫<strong>规范化</strong>，换来一致性和最小冗余。文档型则把作者名、评论、标签都<strong>嵌进</strong>一篇文章的文档里，一次读取拿到全部；代价是冗余：作者改了用户名，要遍历所有包含他名字的文档逐一更新，失败一部分就会出现前后不一致。原教程的结论是看读写比例：<strong>读多写少</strong>（博客、资讯、商品详情）用少量冗余换极致读取是值得的，写多读少就要慎重。</p>
+    <p>原教程还说了句很实在的话：初期不必花大量时间纠结选哪种数据库，现在的云数据库已经很成熟，问云厂商要选型建议、或按场景对照厂商的选型表即可。</p>
+    <p class="go">先翻开对照表；再判断几个场景更适合哪一类。</p>
+  </div>
+  <div class="lab"><div id="sqlVs"></div></div>
+  <div class="lab"><div id="sqlCards"></div></div>
+  <div class="notes" id="n-sql"></div>
+</section>
+
+<section class="part" id="join">
+  <div class="part-head"><h2>主键、外键，和 JOIN 的行数乘法</h2><span class="meta">原教程 第 1.3、2.2–2.3 节</span></div>
+  <div class="sec-lede">
+    <p>关系型数据库有两个核心概念。<strong>主键</strong>（Primary Key）是每一行的唯一身份证，比如班级表里的班级编号。<strong>外键</strong>（Foreign Key）是当前表（子表）里的一个字段，它的值引用另一张表（父表）的主键，比如学生表里的“所属班级编号”引用班级表的“班级编号”，于是知道谁在哪个班。查询时用 <strong>JOIN</strong> 沿着外键把多张表拼起来。</p>
+    <p>原教程推荐的建表方式是：让大模型生成适配 Supabase 的 SQL，粘贴到 SQL Editor 执行；也可以在 Table Editor 里可视化建表并添加外键。SQL 的基本动作就五个：<code>CREATE</code> 建表结构、<code>INSERT</code> 插入数据、<code>SELECT</code> 查询、<code>UPDATE</code> 修改、<code>DELETE</code> 删除。</p>
+    <p>原教程给了一条跨五张表查《初识 SQL》完整信息的 SQL。这里补一个原文没展开、但实际很容易踩的细节：<strong>一对多的 JOIN 会让行数相乘</strong>。这篇文章有 2 条评论、2 个标签，拼完不是 1 行，而是 2 × 2 = 4 行，每条评论都和每个标签配了一次对。所以前端拿到结果要去重，或者分开查评论和标签。</p>
+    <p class="go">一步一步执行这条 JOIN，看结果表怎么长出来。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">博客平台：查 post_id = 1 的完整信息（数据取自原教程示例）</p>
+    <div id="joinStep"></div>
+  </div>
+  <div class="lab"><div id="crudCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：UPDATE / DELETE 忘了写 WHERE</h4>
+    <p><code>UPDATE menu_items SET price = 0 WHERE id = 3</code> 只改一行；漏掉 <code>WHERE id = 3</code>，整张表的价格都变成 0。<code>DELETE</code> 同理。AI 生成的 SQL 也要先看一眼有没有 WHERE、条件对不对，再执行。原教程的建表脚本出错时，建议先在 Table Editor 里删掉已建的表，或者干脆删掉这个 Supabase 项目重建，说明练习阶段用一个可以随便重来的项目最省心。</p>
+  </div>
+  <div class="notes" id="n-join"></div>
+</section>
+
+<section class="part" id="baas">
+  <div class="part-head"><h2>BaaS：把常见后端打包成服务</h2><span class="meta">原教程 第 2、5.1 节</span></div>
+  <div class="sec-lede">
+    <p>选好数据库并不能让应用马上上线。真实项目还要用户注册登录、权限校验、文件上传存储、对外 API、定时任务、实时通知，过去要自己搭服务器、设计 API、处理安全和运维。<strong>BaaS（Backend as a Service，后端即服务）</strong>把这些常见后端能力打包成云平台，开发者通过 SDK 或 API 直接调用。<strong>Supabase</strong> 是新一代代表：以 <strong>PostgreSQL</strong> 为核心，集成了认证、存储、实时、边缘函数、向量等能力，所有用户数据自动同步到 <code>auth.users</code> 表。</p>
+    <p>为什么选它？原教程的理由是：初创团队既想掌控后端又必须快速上线，自建一整套数据库、实时同步、认证、API、存储、监控要几个月；Supabase 开箱即用，让人把资源集中在核心功能上。和闭源的 Firebase 相比，Supabase <strong>完全开源、支持私有化部署</strong>，规避供应商锁定。原教程的选型建议：个人项目或极小范围测试，PocketBase 这类超轻量方案就够；要对接复杂企业身份系统、满足上市公司合规审计，看 WorkOS 这类企业级方案；验证 MVP、承载早期用户，Supabase 足够，还能集成 Stripe、Resend、Cloudflare。</p>
+    <p class="go">点开 Supabase 控制台的每个模块，看它负责什么。</p>
+  </div>
+  <div class="lab"><div id="sbLayers"></div></div>
+  <div class="notes" id="n-baas"></div>
+</section>
+
+<section class="part" id="rls">
+  <div class="part-head"><h2>行级安全 RLS：每个人只能看到自己的行</h2><span class="meta">原教程 第 2.4、3.3、5.4.1 节</span></div>
+  <div class="sec-lede">
+    <p>多用户应用的核心问题是<strong>数据隔离</strong>：用户 A 只能看自己的订单，看不到 B 的。<strong>RLS（Row Level Security，行级安全）</strong>允许你给表定义策略，根据请求者的身份精确控制他能访问、修改哪些行。表一旦启用 RLS，所有 <code>SELECT</code>、<code>INSERT</code>、<code>UPDATE</code>、<code>DELETE</code> 都要至少通过一条策略才能执行；没有任何策略允许，就直接拒绝，从数据库底层阻断越权访问。</p>
+    <p>Supabase 让它很好用：函数 <code>auth.uid()</code> 返回当前发起请求的已登录用户 ID。于是“订单的 <code>user_id</code> 等于当前用户 ID 才能查到”就是一条策略。原教程建议在建表脚本里就把 RLS 一起写好，而不是事后手动配。登录后 Supabase 会建立会话，之后所有请求自动携带身份，RLS 据此把每个人的数据隔开。Storage 的权限同样用 RLS 管：策略写在 <code>storage.objects</code> 上，比如只允许用户上传到以自己 user_id 命名的文件夹。</p>
+    <p>下面的 SQL 是这类策略的典型写法（据原教程描述补写的示意）：</p>
+    <pre class="ev-p">alter table orders enable row level security;
+create policy "只能看自己的订单" on orders
+  for select using (auth.uid() = user_id);</pre>
+    <p class="go">切换当前请求者，再开关 RLS，看能查到哪些行。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="rlsWho"><button data-v="alice" aria-pressed="true">Alice 登录</button><button data-v="bob">Bob 登录</button><button data-v="anon">未登录访客</button></div>
+    <div class="seg" id="rlsOn" style="margin-top:8px"><button data-v="1" aria-pressed="true">RLS 开启</button><button data-v="0">RLS 关闭</button></div>
+    <div class="tblw"><table class="jt rls-tbl" id="rlsTbl"></table></div>
+    <div class="hb-out" id="rlsOut" aria-live="polite"></div>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：anon key 能放前端，service_role key 绝不能（补充说明）</h4>
+    <p>第 6 篇说过第三方 API Key 不能进前端，那原教程示例里前端直接带着 Supabase 的 <code>anon_key</code> 请求，岂不矛盾？不矛盾。这一点原文没有展开，这里补充：Supabase 的 anon（公开）key 本来就是设计给浏览器用的，它只代表“一个匿名或已登录的普通用户”，<b>真正的安全边界是 RLS</b>。所以反过来说：<b>只要前端直连 Supabase，每张表都必须开 RLS 并写好策略</b>，否则任何人拿着公开 key 就能读写整张表。另一把 <code>service_role</code> key 会绕过 RLS，只能放在服务端或边缘函数里。</p>
+  </div>
+  <div class="notes" id="n-rls"></div>
+</section>
+
+<section class="part" id="sop">
+  <div class="part-head"><h2>把任意应用接入 Supabase 的四步</h2><span class="meta">原教程 第 3–4 节</span></div>
+  <div class="sec-lede">
+    <p>原教程用汉堡店的两个示例项目（菜单增删改查、带认证的用户商店）练手，然后总结出一套可以套在任何应用上的标准流程。<strong>第一步：需求梳理</strong>，告诉 AI 应用现在做什么、要新增什么数据能力，让它列出涉及哪些数据操作、需要哪些表和字段；补上约束（时间戳用 <code>timestamptz</code>、金额用整数存分、待办只有自己可见）；审核它的结果，漏了就补（“你漏了截止时间”）。<strong>第二步：生成 <code>init.sql</code></strong>，在 SQL Editor 执行，报错就把错误交给 AI 修。<strong>第三步：重构代码</strong>，让 AI 基于这份 SQL 改造项目，和 Supabase 通信。<strong>第四步：配置与验证</strong>，用环境变量配好地址和 key，跑一遍所有数据功能，同时在 Table Editor 里看数据是否真的同步。</p>
+    <p>加登录系统时，要和 AI 讲清<strong>跳转逻辑</strong>：登录成功去哪个页面、失败留在当前页并显示错误。验收标准是注册后能在 Authentication 里看到新用户，登录后能进入原本进不去的页面。原教程的案例是给贪吃蛇加在线排行榜和登录；还有两个实用技巧：对话轮次太多想开新会话时，把 <code>init.sql</code> 作为上下文带过去；AI 实现的登录不对劲，就把一个已经能用的项目路径给它，让它参考迁移。</p>
+    <p class="go">四步都在。拿掉一步，看会出什么问题。</p>
+  </div>
+  <div class="lab"><div id="sopPipe"></div></div>
+  <div class="pcard" data-t="第一步：让 AI 梳理数据需求" data-k="原教程 4.1 节"><pre>我现有一个本地 React Todo 应用，数据仅存在浏览器本地存储，需新增“数据云端同步”功能并接入 Supabase 数据库。
+请帮我梳理：这个应用涉及哪些数据操作（如新增待办、修改状态、删除待办）？需要创建哪些数据表来存储这些数据？
+约束：时间戳用 timestamptz；每条待办只有创建者自己可见（请一并写好 RLS 策略）。</pre></div>
+  <div class="pcard" data-t="第二、三步：生成 init.sql 并重构" data-k="原教程 4.1 节"><pre>基于上述思路和表结构，返回给我在 Supabase 中可以进行初始化的 init.sql 脚本。
+（执行成功后）请你根据我的 sql 脚本以及上面讨论的设定，重构项目的代码，让它能够和 Supabase 对应的数据库通信并处理数据。Supabase 地址和 key 从环境变量读取。</pre></div>
+  <div class="notes" id="n-sop"></div>
+</section>
+
+<section class="part" id="oauth">
+  <div class="part-head"><h2>第三方登录：OAuth 2.0 的五步</h2><span class="meta">原教程 第 5.2 节</span></div>
+  <div class="sec-lede">
+    <p>邮箱注册之外，实际产品常用 Google、GitHub 一键登录。背后是 <strong>OAuth 2.0</strong> 开放授权协议，本质是“授权代理”：用户授权你的应用读取他在第三方平台的公开信息（邮箱、头像），但<strong>不必把第三方密码交给你的应用</strong>。配置上要去 Google Cloud 和 GitHub 分别申请 Client ID 与 Secret，填进 Supabase 的 Provider 设置，并约定好回调地址。一个完整的认证系统还要有密码重置。</p>
+    <p>流程中最值得记住的设计是：Google 授权通过后<strong>不直接返回用户信息，而是返回一个一次性、短期有效的授权码</strong>，由后端（Supabase 托管）拿着授权码去 Google 换 Access Token，再用 Token 拉取信息。这样 Token 不经过前端传输，即使授权码被截获也很快失效。另外，原教程还演示了用 Clerk 做登录、再通过 Webhook 触发边缘函数把用户数据同步进 Supabase 的做法：认证和业务数据库可以由不同服务负责。</p>
+    <p class="go">走一遍“用 Google 登录”。</p>
+  </div>
+  <div class="lab"><div id="oauthFlow"></div></div>
+  <div class="notes" id="n-oauth"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>实时、存储、边缘函数</h2><span class="meta">原教程 第 2.1、5.3–5.5、6 节</span></div>
+  <div class="sec-lede">
+    <p><strong>Realtime</strong> 让应用即时收到变化，不用反复轮询，通过 WebSocket 推送。三项功能：<strong>Postgres Changes</strong> 监听表的增删改（可按条件过滤，并遵守 RLS，用户只收到有权看的变更）；<strong>Broadcast</strong> 让客户端之间通过频道发低延迟的临时消息（聊天、光标、游戏状态）；<strong>Presence</strong> 追踪谁在线（“当前 3 人正在查看”）。</p>
+    <p><strong>Storage</strong> 管理图片、视频、文档这类非结构化文件。原教程解释了为什么要单独的对象存储：文件体积差异大、数量可能极多，放在业务服务器上会拖慢读写；对象存储（S3、OSS 都是）给每个文件一个 URL，前端直接加载，不经业务服务器中转。Supabase Storage 兼容 S3 协议，基本单位是<strong>存储桶</strong>（Bucket），每个桶可单独配置策略。取文件地址有两种：<strong>公开 URL</strong> 永久固定，适合头像这类公开图片；<strong>签名 URL</strong> 带有效期，适合私有文件。</p>
+    <p><strong>Edge Functions</strong> 是部署在全球边缘节点的服务端函数，不用自己管服务器。核心用途是<strong>安全中间层</strong>：前端只和你的函数通信，OpenAI、Stripe 这类密钥存在 secrets 里，函数通过环境变量读取（和第 6 篇的 /api 是同一个思路）。它还能识别当前登录用户、遵守 RLS，并适合接收第三方 Webhook（支付成功、Clerk 用户变更）、发邮件、生成报告。原教程最后提醒：Supabase 的每一块在业界几乎都有专业替代品，了解它们能判断“全用 Supabase 是否就够”，以及将来能否把某块单独换掉而不被锁死。</p>
+    <p class="go">这些需求，各用哪个模块？</p>
+  </div>
+  <div class="lab"><div id="modCards"></div></div>
+  <div class="vendor"><b>原教程列出的替代方案（摘要）</b>一站式 BaaS：Firebase（最成熟但闭源、计费复杂）、Appwrite、Nhost、AWS Amplify、Convex 等。认证：Firebase Auth、Auth0、AWS Cognito、Logto（开源）、Keycloak（开源，运维重）。存储：Amazon S3、阿里云 OSS / 腾讯云 COS、MinIO（开源自建）、Cloudinary（媒体优化）。边缘函数：Cloudflare Workers、Vercel Edge Functions、Netlify、Lambda@Edge。实时：Ably、Pusher、自建 Socket.IO。数据库托管：Neon（Serverless Postgres，支持分支）、CockroachDB、TiDB Cloud、MongoDB Atlas。免费额度和价格变化快，以官网为准。</div>
+  <div class="notes" id="n-more"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 关系型与非关系型各适合什么？规范化与冗余各换来什么？</summary><p class="ans">关系型事先定义表结构、用外键关联，数据精确一致、支持事务，适合金融交易、库存、订单、账务；非关系型结构灵活、易扩展，适合社交内容、日志、物联网写入等高并发多变场景，但关联查询和一致性较弱。规范化（拆表 + 外键 + JOIN）换来一致性和最小冗余；冗余（把关联数据嵌进文档）换来一次读取拿全数据的性能，代价是更新时要改多处，适合读多写少。</p></details>
+    <details><summary>2. RLS 解决什么？为什么开了 RLS 才能让前端直连？</summary><p class="ans">RLS 在数据库层按请求者身份控制每一行能否被读写，启用后每个操作都必须通过至少一条策略，否则被拒绝；Supabase 用 auth.uid() 取当前用户 ID 写策略，实现“只能看自己的数据”。前端携带的是公开的 anon key，任何人都能拿到，真正的安全边界是 RLS；不开 RLS，拿着公开 key 就能读写整张表。绕过 RLS 的 service_role key 只能放在服务端。</p></details>
+    <details><summary>3. 接入 Supabase 的四步？OAuth 为什么先给授权码？</summary><p class="ans">四步：让 AI 梳理数据操作和表结构并审核补充约束；生成 init.sql 在 SQL Editor 执行；让 AI 基于 SQL 重构代码与 Supabase 通信；用环境变量配置地址和 key，测试并在 Table Editor 核对数据。OAuth 先返回一次性、短期有效的授权码，由后端拿授权码去换 Access Token 再拉取用户信息，这样 Token 不经前端传输，授权码被截获也很快失效，用户密码始终不交给你的应用。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe-7/"><small>上一篇</small><span>07 · 前端：从设计稿到界面</span></a><a class="nx" href="../2026-10-24-easyvibe-9/"><small>下一篇</small><span>09 · 上线：Git、部署与支付</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+HB.cards($('#dbCards'), {
+  opts: ['持久化', '查询分析', '高并发', '完整一致', '安全'],
+  items: [
+    { t: '用户关掉浏览器再打开，购物车还在。', a: 0, why: '数据写进硬盘，不再只活在内存里。' },
+    { t: '秒杀活动时几万人同时下单，页面不卡。', a: 2, why: '索引、缓存、连接池、分布式架构支撑并发。' },
+    { t: '运营想知道上个月哪个城市复购率最高。', a: 1, why: '用 SQL 对海量数据筛选、聚合、分析。' },
+    { t: '两个订单不可能拥有同一个订单号。', a: 3, why: '唯一约束保证数据符合预设规则。' },
+    { t: '服务器硬盘坏了，昨天的数据还能恢复。', a: 4, why: '备份与恢复属于安全机制的一部分。' }
+  ]
+});
+
+HB.vs($('#sqlVs'), {
+  a: '关系型 SQL（结构严谨的 Excel）', b: '非关系型 NoSQL（灵活的文件夹）',
+  rows: [
+    ['结构', '事先定义 Schema，字段类型固定', '不需要提前规定结构，格式可各异'],
+    ['关联', '外键 + JOIN，跨表查询灵活', '常把关联数据嵌入同一文档，关联查询弱'],
+    ['一致性', '强，适合事务', '较弱，换取扩展性和读写性能'],
+    ['扩展', '海量数据时扩展受限、改结构麻烦', '加服务器横向扩展方便'],
+    ['典型场景', '金融交易、库存、订单、账务', '社交内容、日志、物联网写入、推荐特征'],
+    ['代表', 'PostgreSQL、MySQL', 'MongoDB、Redis、Cassandra']
+  ]
+});
+
+HB.cards($('#sqlCards'), {
+  opts: ['关系型', '非关系型'],
+  items: [
+    { t: '钱包余额和充值、扣款记录，必须一分不差。', a: 0, why: '强一致性和事务，是关系型的主场。' },
+    { t: '每秒写入几万条设备传感器读数。', a: 1, why: '高并发写入、结构简单，原教程列为非关系型的典型场景。' },
+    { t: '商品详情页，读的次数远多于改的次数，希望一次读出全部信息。', a: 1, why: '读多写少，用文档嵌入换读取性能是值得的。' },
+    { t: '学生、班级、课程、选课记录之间相互关联，要做各种统计。', a: 0, why: '多表关联和复杂查询，关系型更合适。' }
+  ]
+});
+
+/* ---------- JOIN 分步 ---------- */
+var JS = [
+  { l: 'FROM posts WHERE post_id = 1', cols: ['title'], rows: [['初识SQL']], note: '先从 posts 表取出这一篇。1 行。' },
+  { l: 'JOIN users ON p.author_id = u.user_id', cols: ['title', 'author'], rows: [['初识SQL', 'Alice']], add: 1, note: 'author_id = 101 是外键，指向 users 表主键 101 → Alice。一对一，仍是 1 行。' },
+  { l: 'LEFT JOIN comments ON p.post_id = c.post_id', cols: ['title', 'author', 'comment'], rows: [['初识SQL', 'Alice', '写得很棒！'], ['初识SQL', 'Alice', '有没有更多例子？']], add: 2, note: '这篇文章有 2 条评论（1001、1003），一对多：1 行变 2 行。LEFT JOIN 表示即使没有评论也保留文章。' },
+  { l: 'LEFT JOIN post_tags + tags', cols: ['title', 'author', 'comment', 'tag'], rows: [['初识SQL', 'Alice', '写得很棒！', '数据库'], ['初识SQL', 'Alice', '写得很棒！', '技术'], ['初识SQL', 'Alice', '有没有更多例子？', '数据库'], ['初识SQL', 'Alice', '有没有更多例子？', '技术']], add: 3, note: '通过中间表 post_tags 找到 2 个标签（51 数据库、52 技术）。2 条评论 × 2 个标签 = <b>4 行</b>：每条评论都和每个标签配对了一次。前端要去重，或把评论和标签分两次查询。' }
+];
+var jsBox = h('div');
+S.stepper($('#joinStep'), JS.length, function (i) {
+  var s = JS[i], html = '<pre class="ev-p" style="margin-top:8px">' + JS.slice(0, i + 1).map(function (x, k) { return (k === i ? '→ ' : '  ') + x.l; }).join('\n') + '</pre>';
+  html += '<div class="tblw"><table class="jt"><tr>' + s.cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr>' + s.rows.map(function (r) { return '<tr>' + r.map(function (v, k) { return '<td' + (k === s.add ? ' class="new"' : '') + '>' + v + '</td>'; }).join('') + '</tr>'; }).join('') + '</table></div><p class="note">' + s.note + '</p>';
+  jsBox.innerHTML = html;
+}, ['posts', '+ users', '+ comments', '+ tags']);
+$('#joinStep').appendChild(jsBox);
+
+HB.cards($('#crudCards'), {
+  opts: ['CREATE', 'INSERT', 'SELECT', 'UPDATE', 'DELETE'],
+  items: [
+    { t: '新开一张菜单表，定义名称、价格、分类、是否上架四列。', a: 0, why: '创建表结构。' },
+    { t: '把“芝士汉堡 25 元”加进菜单。', a: 1, why: '插入一行新数据。' },
+    { t: '列出所有已上架、价格低于 30 元的饮料。', a: 2, why: '带条件的查询。' },
+    { t: '把 3 号菜品价格改成 28 元。', a: 3, why: '修改现有数据；记得写 WHERE id = 3。' },
+    { t: '下架并移除已停售的季节限定。', a: 4, why: '删除数据；同样必须带 WHERE 条件。' }
+  ]
+});
+
+HB.layers($('#sbLayers'), {
+  hint: '点一个模块，看它负责什么。',
+  layers: [
+    { t: '数据', sub: 'PostgreSQL 为核心', items: [
+      { t: 'Table Editor', d: '像表格一样可视化查看、编辑数据表，建表时可以设置字段类型和外键。' },
+      { t: 'SQL Editor', d: '直接执行 SQL。原教程推荐的建表方式：让 AI 生成 init.sql，粘贴到这里运行。' },
+      { t: 'Database', d: '管理表、函数、扩展、RLS 策略等数据库层面的设置。' }
+    ] },
+    { t: '身份', sub: 'Authentication', items: [
+      { t: 'Auth', d: '开箱即用的注册、登录、密码重置、邮箱验证；支持 Google、GitHub 等 OAuth；用户数据自动同步到 auth.users。可关闭强制邮箱确认、设置限流，也可接入 Clerk 等第三方认证。' }
+    ] },
+    { t: '文件', sub: 'Storage', items: [
+      { t: 'Storage', d: '兼容 S3 的对象存储，以存储桶组织文件；访问权限同样由 RLS 策略控制；可取公开 URL 或带有效期的签名 URL。' }
+    ] },
+    { t: '服务端逻辑', sub: 'Edge Functions', items: [
+      { t: 'Edge Functions', d: '部署在全球边缘节点的服务端函数，无需自建服务器。密钥放 secrets、用环境变量读取，是前端与第三方服务之间的安全中间层；也用来接 Webhook。' }
+    ] },
+    { t: '实时', sub: 'Realtime', items: [
+      { t: 'Realtime', d: '通过 WebSocket 推送：Postgres Changes 监听表变化、Broadcast 客户端间临时消息、Presence 在线状态。' }
+    ] },
+    { t: '设置', sub: 'Project Settings', items: [
+      { t: 'Settings', d: '项目的 API 地址和 key、计算资源、各功能的底层参数。创建项目时区域选离目标用户最近的。' }
+    ] }
+  ]
+});
+
+/* ---------- RLS 模拟 ---------- */
+var ORD = [['#1001', 'alice', 'Alice', '芝士汉堡 × 2'], ['#1002', 'bob', 'Bob', '薯条 × 1'], ['#1003', 'alice', 'Alice', '可乐 × 3'], ['#1004', 'carol', 'Carol', '鸡块 × 6']];
+var rls = { who: 'alice', on: true };
+function drawRls() {
+  var vis = 0, leak = 0;
+  var html = '<tr><th>订单</th><th>user_id</th><th>内容</th><th>这次请求能否看到</th></tr>';
+  ORD.forEach(function (o) {
+    var own = rls.who === o[1], see = rls.on ? own : true;
+    if (see) vis++;
+    if (see && !own) leak++;
+    html += '<tr class="' + (see ? (own ? 'show' : 'leak') : 'hide') + '"><td>' + o[0] + '</td><td>' + o[2] + '</td><td>' + o[3] + '</td><td>' + (see ? (own ? '能（自己的）' : '能（别人的！）') : '被策略拦下') + '</td></tr>';
+  });
+  $('#rlsTbl').innerHTML = html;
+  var uid = rls.who === 'anon' ? 'null（未登录）' : rls.who;
+  var msg = '<p>auth.uid() = <b>' + uid + '</b>，返回 ' + vis + ' 行。</p>';
+  if (!rls.on) msg += '<p style="color:var(--alert)"><b>RLS 关闭：</b>任何拿到公开 anon key 的人都能读到全部订单' + (leak ? '，包括 ' + leak + ' 条别人的' : '') + '。前端直连数据库时这是严重漏洞。</p>';
+  else if (rls.who === 'anon') msg += '<p>未登录时 auth.uid() 为空，没有任何一行满足 <code>auth.uid() = user_id</code>，所以一行也看不到。</p>';
+  else msg += '<p style="color:var(--ok)">策略 <code>auth.uid() = user_id</code> 生效，只返回自己的订单。</p>';
+  $('#rlsOut').innerHTML = msg;
+}
+S.seg($('#rlsWho'), function (v) { rls.who = v; drawRls(); });
+S.seg($('#rlsOn'), function (v) { rls.on = v === '1'; drawRls(); });
+drawRls();
+
+HB.pipe($('#sopPipe'), {
+  intro: '四步都在：表结构是审过的，脚本在 Supabase 里真实执行了，代码按这份脚本改造，最后在 Table Editor 里亲眼看到数据同步。',
+  steps: [
+    { t: '梳理需求，让 AI 列表结构', d: '补约束、审核遗漏', miss: 'AI 自己猜表结构，漏字段（截止时间）、类型不合适（金额用浮点），后面改起来牵一发动全身。' },
+    { t: '生成并执行 init.sql', d: 'SQL Editor 里运行，报错交给 AI', miss: '代码里引用的表在数据库里根本不存在，一运行就报错。' },
+    { t: '让 AI 基于 SQL 重构代码', d: '和 Supabase 通信', miss: '页面还在读写本地存储，数据库建好了却没人用。' },
+    { t: '配置环境变量并验证', d: '跑全部功能，Table Editor 核对', miss: '以为接通了，其实页面显示的是残留的本地数据；或者 key 写死在代码里。' }
+  ]
+});
+
+EV.flow($('#oauthFlow'), {
+  nodes: [{ k: 'u', t: '用户浏览器', sub: '你的应用页面' }, { k: 'g', t: 'Google', sub: '授权服务器' }, { k: 's', t: 'Supabase', sub: '托管的后端' }],
+  steps: [
+    { a: 'u', b: 'g', m: '点击 Sign in with Google，重定向', d: '跳转到 Google <b>官方</b>授权页，避免钓鱼。你的应用从头到尾接触不到 Google 密码。' },
+    { a: 'u', b: 'g', m: '登录 Google 并同意授权', d: '用户在 Google 页面验证身份，并同意你的应用读取邮箱、头像等公开信息。' },
+    { a: 'g', b: 's', m: '重定向到回调 URL，附带一次性授权码', d: '返回的是<b>短期有效、只能用一次</b>的授权码，而不是用户信息或 Token。回调地址必须事先在 Google 和 Supabase 里配置一致。' },
+    { a: 's', b: 'g', m: '用授权码 + Client Secret 换 Access Token', d: '这一步在后端完成，Token 不经过前端传输。' },
+    { a: 'g', b: 's', m: '返回 Access Token；Supabase 拉取用户信息', d: '用 Token 获取邮箱、头像。' },
+    { a: 's', b: 'u', m: '创建或关联账户，建立会话', d: '首次登录自动建账户，之后直接关联；生成会话，后续请求自动携带身份，RLS 据此隔离数据。' }
+  ]
+});
+
+HB.cards($('#modCards'), {
+  opts: ['Postgres Changes', 'Broadcast', 'Presence', 'Storage', 'Edge Functions'],
+  items: [
+    { t: '新订单一写入数据库，后厨大屏立刻出现。', a: 0, why: '监听表的 INSERT 事件并推送，且遵守 RLS。' },
+    { t: '协作白板上显示其他人的光标位置。', a: 1, why: '客户端之间的低延迟临时消息，不需要落库。' },
+    { t: '文档右上角显示“3 人正在查看”。', a: 2, why: '追踪和同步在线状态。' },
+    { t: '用户上传头像，页面通过 URL 显示。', a: 3, why: '对象存储 + 公开 URL；私有文件用签名 URL。' },
+    { t: 'Stripe 支付成功后回调，给用户开通会员。', a: 4, why: '接收第三方 Webhook，用服务端密钥改数据库。' },
+    { t: '前端要调 OpenAI，但不能暴露 Key。', a: 4, why: '安全中间层：密钥存在 secrets 里，前端只调你的函数。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-db'), {
+  c: [
+    ['数据库', '对数据做规范化组织、安全存储、系统管理和高效查询的程序'],
+    ['变量的局限', '活在内存里，关掉就丢，无法跨用户共享']
+  ],
+  p: [
+    ['五个问题', '持久化、查询分析、高并发、完整一致、安全']
+  ]
+});
+S.notes($('#n-sql'), {
+  c: [
+    ['关系型', '事先定义 Schema，外键关联，强一致，适合交易和账务'],
+    ['非关系型', '结构灵活易扩展，适合高并发和多变结构'],
+    ['规范化 vs 冗余', '拆表换一致性；嵌入换读取性能']
+  ],
+  p: [
+    ['选型看读写比', '读多写少可以接受冗余，写多读少慎重'],
+    ['初期策略', '不必纠结，问云厂商或对照选型表']
+  ]
+});
+S.notes($('#n-join'), {
+  c: [
+    ['主键', '每行的唯一身份证'],
+    ['外键', '子表字段引用父表主键，表达关联'],
+    ['多对多', '用中间表（post_tags）表达']
+  ],
+  p: [
+    ['五个动作', 'CREATE 建表、INSERT 插入、SELECT 查询、UPDATE 修改、DELETE 删除'],
+    ['JOIN 行数乘法', '一对多连两次：2 评论 × 2 标签 = 4 行'],
+    ['危险操作', 'UPDATE / DELETE 先看 WHERE 条件']
+  ]
+});
+S.notes($('#n-baas'), {
+  c: [
+    ['BaaS', '把数据库、认证、存储、实时等后端能力打包成云服务'],
+    ['Supabase', '以 PostgreSQL 为核心的开源 BaaS，可私有化部署']
+  ],
+  p: [
+    ['六个模块', '数据（Table / SQL Editor）、Auth、Storage、Edge Functions、Realtime、Settings'],
+    ['选型', '极小项目 PocketBase；MVP 和早期用户 Supabase；企业身份合规 WorkOS'],
+    ['对比 Firebase', 'Supabase 开源、免锁定；Firebase 成熟但闭源']
+  ]
+});
+S.notes($('#n-rls'), {
+  c: [
+    ['RLS', '行级安全：按请求者身份控制每一行能否读写'],
+    ['auth.uid()', '返回当前已登录用户 ID，未登录为空'],
+    ['anon vs service_role', 'anon key 可公开、受 RLS 约束；service_role 绕过 RLS，只能放服务端']
+  ],
+  p: [
+    ['启用后', '每个操作必须通过至少一条策略，否则拒绝'],
+    ['典型策略', 'using (auth.uid() = user_id)'],
+    ['前端直连的前提', '每张表都开 RLS 并写好策略'],
+    ['Storage', '策略写在 storage.objects 上']
+  ]
+});
+S.notes($('#n-sop'), {
+  c: [
+    ['接入四步', '梳理表结构 → 执行 init.sql → 按 SQL 重构代码 → 配环境变量并验证'],
+    ['init.sql', '可复用的数据库初始化脚本，也是开新会话时的上下文']
+  ],
+  p: [
+    ['补约束', 'timestamptz、金额用整数存分、可见范围'],
+    ['登录要讲清', '成功跳哪、失败留在哪并提示'],
+    ['验收', 'Authentication 有新用户；Table Editor 有数据']
+  ]
+});
+S.notes($('#n-oauth'), {
+  c: [
+    ['OAuth 2.0', '授权代理：读第三方公开信息，不拿第三方密码'],
+    ['授权码', '一次性、短期有效，由后端换 Access Token']
+  ],
+  p: [
+    ['五步', '重定向 → 用户授权 → 回调带授权码 → 后端换 Token → 建账户和会话'],
+    ['配置', 'Client ID / Secret + 回调地址一致'],
+    ['认证与业务分离', 'Clerk 认证 + Webhook 触发边缘函数同步到 Supabase']
+  ]
+});
+S.notes($('#n-more'), {
+  c: [
+    ['Realtime 三功能', 'Postgres Changes 表变化、Broadcast 临时消息、Presence 在线状态'],
+    ['对象存储', '文件放 S3 类服务，前端按 URL 直取'],
+    ['Edge Functions', '边缘节点上的服务端函数，安全中间层 + Webhook']
+  ],
+  p: [
+    ['公开 vs 签名 URL', '永久公开 / 带有效期的私有访问'],
+    ['存储桶', 'Storage 的基本单位，各自配置策略'],
+    ['可替换', '每个模块都有专业替代品，避免被锁死']
+  ]
+});
+
+EV.todo($('#todo'), '8', [
+  { t: '新建一个练习用的 Supabase 项目，在 SQL Editor 里跑一遍建表和增删改查', d: '' },
+  { t: '为一张表开启 RLS，写一条 auth.uid() = user_id 的策略，用两个账号验证隔离', d: '' },
+  { t: '按四步流程，把你项目里存在本地的数据迁到 Supabase', d: '最后在 Table Editor 里核对数据。' },
+  { t: '加上邮箱注册登录，讲清跳转逻辑，验收 Authentication 里出现新用户', d: '' },
+  { t: '（可选）配置 GitHub 或 Google 登录，跑通 OAuth 回调', d: '' },
+  { t: '检查前端代码：只出现 anon key，没有 service_role key 和第三方 Key', d: '' }
+]);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验证需求：双钻、JTBD 与 Mom Test</title>
+<meta name="description" content="Easy-Vibe 学习笔记（四）：双钻模型的四个阶段、各自产出和四个常见误区；Jobs to Be Done 的五要素、句式和功能 / 情绪 / 社会三层 job；The Mom Test 为什么会得到假阳性、意见与行为证据、三个提问原则和访谈顺序；把“提高文档处理效率”逐层拆成可执行的一句话；入口页、操作页、结果页三张草图。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.dd { width: 100%; height: auto; display: block; max-width: 760px; margin: 6px auto 0; }
+.dd text { font-size: 15px; fill: var(--ink); }
+.dd .sm { font-size: 15px; fill: var(--ink-3); }
+.dd .ph { cursor: pointer; stroke-width: 2; transition: fill .2s; }
+.dd .ph.on { stroke-width: 3.5; }
+.pages3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.pages3 > div { border: 1px solid var(--rule); border-radius: 10px; padding: 12px; background: var(--bg); font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+.pages3 > div b { display: block; color: var(--ink); font-size: 16px; margin-bottom: 4px; }
+.pages3 .wire { border: 1px dashed var(--rule); border-radius: 6px; padding: 8px; margin: 8px 0; font-family: var(--f-num); font-size: 15px; color: var(--ink-3); white-space: pre-line; }
+@media (max-width: 760px) { .pages3 { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-series="easyvibe-series" data-part="4">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 04</span><span>对应原教程 双钻设计模型、JTBD、The Mom Test、产品思维基础 2</span><span>约 35 分钟</span></p>
+  <h1>先把问题想清楚，<em>再决定做什么</em></h1>
+  <p class="lead">上一篇攒下了线索和一个方向。原教程第一阶段接着用三件工具把它压实：双钻模型把“理解问题”和“设计方案”分成两段，防止一边访谈一边给自己喜欢的功能找理由；JTBD 把需求从“要什么功能”改写成“想取得什么进展”；The Mom Test 教你怎么访谈才不会被礼貌的“挺好的”骗。最后用产品思维附录里的拆解练习，把抽象愿望一路拆到 AI 可以直接执行的一句话。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" aria-current="page" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#dd">双钻模型</a><a href="#jtbd">JTBD</a><a href="#mom">Mom Test</a><a href="#break">从抽象到具体</a><a href="#sketch">三张草图</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>双钻模型的四个阶段各产出什么？为什么要把问题空间和方案空间分开？</li>
+    <li>JTBD 的五个要素是什么？它和用户画像、功能列表有什么不同？</li>
+    <li>访谈为什么容易得到假阳性？哪三个原则能把“意见”换成“行为证据”？</li>
+  </ol>
+</div>
+
+<section class="part" id="dd">
+  <div class="part-head"><h2>双钻模型：两次发散，两次收敛</h2><span class="meta">原教程 双钻设计模型 第 1–8 节</span></div>
+  <div class="sec-lede">
+    <p><strong>双钻模型（Double Diamond）</strong>是英国 Design Council 推广的设计流程。两个钻石分别代表<strong>问题空间</strong>和<strong>方案空间</strong>，每个钻石都是先<strong>发散</strong>（打开视野看更多可能）再<strong>收敛</strong>（缩小范围做取舍）。四个阶段：<strong>Discover</strong> 广泛了解用户、场景、替代方案；<strong>Define</strong> 从一堆信息里收出一个值得先解决的核心问题；<strong>Develop</strong> 围绕这个问题发散多种方案；<strong>Deliver</strong> 筛选、做原型、测试、迭代。</p>
+    <p>为什么要分开？常见的开发过程是：想到点子 → 觉得很酷 → 马上画原型 → 功能越来越多 → 最后不知道在解决什么问题。原教程点出背后的同一个错误：<strong>把“已经投入了多少”当成“方向是否正确”的证据</strong>。原型只能证明你做出了什么；访谈、观察和真实使用，才能说明问题是否存在。所以进入下一阶段前要自问：别因为想法顺手就默认问题成立，别因为方案能做出来就默认值得做，别因为原型完整就默认用户需要。</p>
+    <p>Define 的产出是一句清晰的问题定义。原教程的例子：“我想做一个提高开会效率的 AI 工具”收敛成“我们先解决<strong>项目型团队</strong>在 <strong>30 到 60 分钟协作会议结束后</strong>，<strong>无法在 10 分钟内输出带待办、责任人和截止时间的纪要</strong>这个问题”，用户、场景、卡点、成功标准都有了。Deliver 也不等于“大而全上线”，一张流程图、一个 Figma 原型、一轮五人试用都算，重点是尽快放进真实环境验证。AI 产品尤其容易“能力先行”，一上来就想接多模态、做 Agent，双钻逼你先问：用户到底卡在哪个环节，这个卡点是不是非 AI 不可。</p>
+    <p class="go">点四个阶段看各自做什么、产出什么、暂时不做什么；再当一回“阶段守门员”。</p>
+  </div>
+  <div class="lab">
+    <svg class="dd" viewBox="0 0 760 220" role="img" aria-label="双钻模型：Discover、Define、Develop、Deliver 四个阶段">
+      <polygon class="ph" data-i="0" points="20,110 200,20 200,200" fill="var(--s1-soft)" stroke="var(--s1)"/>
+      <polygon class="ph" data-i="1" points="200,20 380,110 200,200" fill="var(--s1-soft)" stroke="var(--s1)"/>
+      <polygon class="ph" data-i="2" points="380,110 560,20 560,200" fill="var(--s2-soft)" stroke="var(--s2)"/>
+      <polygon class="ph" data-i="3" points="560,20 740,110 560,200" fill="var(--s2-soft)" stroke="var(--s2)"/>
+      <text x="135" y="115" text-anchor="middle">Discover</text>
+      <text x="265" y="115" text-anchor="middle">Define</text>
+      <text x="495" y="115" text-anchor="middle">Develop</text>
+      <text x="625" y="115" text-anchor="middle">Deliver</text>
+      <text class="sm" x="200" y="216" text-anchor="middle">问题空间</text>
+      <text class="sm" x="560" y="216" text-anchor="middle">方案空间</text>
+      <text class="sm" x="380" y="104" text-anchor="middle">问题定义</text>
+    </svg>
+    <div class="hb-info" id="ddInfo" style="margin-top:10px"></div>
+  </div>
+  <div class="lab"><p class="lab-t">阶段守门员：这个项目现在处在哪一阶段？（据原教程 11.5 节）</p><div id="ddCards"></div></div>
+  <div class="pcard" data-t="让 AI 当阶段守门员" data-k="原教程双钻 11.5 节"><pre>请你扮演产品流程教练。
+下面是我当前的项目状态：【你的描述】
+请你判断我现在更像处于 Discover、Define、Develop 还是 Deliver，并告诉我：
+1. 我是不是过早跳到了下一阶段
+2. 当前阶段最该补的动作是什么
+3. 哪些事情现在先别做</pre></div>
+  <div class="confuse">
+    <h4>易混辨析：Discover 的发散 vs Develop 的发散</h4>
+    <p>两次都是发散，对象不同。<b>Discover</b> 发散的是<b>问题</b>：用户开完会到底哪里最痛，是记录难、整理难还是同步难，他们现在怎么凑合。<b>Develop</b> 发散的是<b>方案</b>：做网页还是会议插件，上传录音还是实时记录，只做摘要还是重点做待办。Develop 的前提是所有方案都服务同一个已定义的问题；如果因为某个方案好做就回头改问题定义（原教程误区 6.3），那是在给自己偏爱的方案找理由。</p>
+  </div>
+  <div class="notes" id="n-dd"></div>
+</section>
+
+<section class="part" id="jtbd">
+  <div class="part-head"><h2>JTBD：用户雇用产品，是为了完成一件事</h2><span class="meta">原教程 Jobs to Be Done 需求理论</span></div>
+  <div class="sec-lede">
+    <p><strong>Jobs to Be Done</strong> 把产品看作用户“雇来”完成某项任务的工具。这里的 job 不是表面动作，而是用户希望自己的状态取得某种<strong>进展</strong>：不是“我要一个 AI 纪要工具”，而是“我想在会后 10 分钟内把重点、待办和责任人理清楚，别再靠回忆补笔记”。由此推出一个重要结论：<strong>竞争对手不一定是同类应用</strong>。用户想“上班路上不那么无聊”，可雇用的有短视频、播客、游戏、聊天甚至打瞌睡；想“快速搞懂一份长 PDF”，可雇用的有 AI 摘要、实习生、同事、硬着头皮自己看、或者干脆先不看。</p>
+    <p>原教程把一条 JTBD 拆成<strong>五个要素</strong>：<strong>场景</strong>（什么时刻、什么环境想起你，没有场景的需求通常不够真实）、<strong>触发</strong>（是什么让他决定立刻找办法，往往带着情绪）、<strong>想完成的进展</strong>（从混乱到清楚、从焦虑到安心、从拖延到启动）、<strong>当前替代方案</strong>（谁是替代方案，谁就是你真实的竞争环境）、<strong>成功标准</strong>（10 分钟内拿到可分享的结果、不用二次大改就能发出去）。</p>
+    <p>做 AI 产品时还要看三层 job：<strong>功能层</strong>（总结、改写、提取待办，用户嘴上最容易说出来）、<strong>情绪层</strong>（不想那么慌、不想显得不专业、想更有掌控感，很多付费意愿和它有关）、<strong>社会层</strong>（在团队里显得更有组织能力、在客户面前更专业）。只做功能层很容易被替代，理解了情绪层和社会层才容易有黏性。常见误区有四个：把 job 写成功能名、把人群写得很宽、只听用户说不看用户怎么做、一开始就想做完整平台。</p>
+    <p class="go">用句式写一条你的 JTBD；再把下面这些“需求”分到三层里。</p>
+  </div>
+  <div class="lab"><p class="lab-t">JTBD 句式（原教程第 5 节）</p><div id="jtbdTpl"></div></div>
+  <div class="lab"><div id="jobSort"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：用户画像、功能列表、JTBD</h4>
+    <p><b>用户画像</b>回答“这个人大概是谁”（25 岁、一线城市、白领），但解释不了他为什么<b>此刻</b>采取行动。<b>功能列表</b>是用户嘴上的表层表达（“我想要导出 Word”），原教程称之为“job 的一种临时翻译”，只收集功能会把产品做成“用户说什么就堆什么”。<b>JTBD</b> 回答“这个人现在到底想完成什么”，会追问：为什么要 Word 不要 PDF？想改写是因为文风差还是要适配不同对象？想语音输入是懒得打字，还是常在走路、开车时要记？</p>
+  </div>
+  <div class="notes" id="n-jtbd"></div>
+</section>
+
+<section class="part" id="mom">
+  <div class="part-head"><h2>The Mom Test：别问意见，问发生过什么</h2><span class="meta">原教程 The Mom Test 第 1–10 节</span></div>
+  <div class="sec-lede">
+    <p>JTBD 写出来的仍然是假设，要靠访谈检查它是否真的发生过。<strong>The Mom Test</strong> 来自 Rob Fitzpatrick 的同名书，名字点出一个现象：<strong>就算是你妈妈，也很难直接告诉你“这是个烂想法”</strong>。不是她不诚实，而是她不想伤害你、会下意识鼓励你、会顺着你的问法回答。朋友、同事甚至陌生人都一样。原教程归纳了三个原因：人会保持礼貌；人会高估未来的自己（更自律、更愿意付费）；你的问法本身就在引导答案（“我这个想法是不是挺好？”已经把正确答案塞进去了）。</p>
+    <p>所以要区分<strong>意见</strong>和<strong>行为证据</strong>。“挺好的”“听起来很有用”“如果免费我会试试”是意见，而且谈的是还没发生的未来；“我上周为这事折腾了两小时”“我现在用 Excel 加微信硬撑”“上个月已经为类似工具花过钱”是证据。三个提问原则：<strong>少谈你的点子，多谈用户过去的真实经历</strong>；<strong>少问抽象意见，多问具体事实</strong>；<strong>少问用户想要什么方案，多看他现在怎么解决</strong>。一句话：从意见走向事实，从未来走向过去，从你的方案走向用户的问题。</p>
+    <p>访谈顺序是：开场说明“我在研究大家怎么处理这类问题，不是来推销的”→ 从<strong>最近一次真实经历</strong>开始问 → 往下追问行为、成本和替代方案 → 最后从细节里判断痛感（是否经常遇到、是否已在主动补救、是否愿意付出成本、讲的时候是否带情绪），不要直接问“这是不是你的痛点”。常见误区：把访谈做成产品介绍会、对象全是熟人、过早追问功能、把一句“我会用”当成验证、聊完不整理。</p>
+    <p class="go">判断这些访谈原话是证据还是意见；再翻开“问废的问题”应该怎么改写。</p>
+  </div>
+  <div class="lab"><div id="evSort"></div></div>
+  <div class="lab"><p class="lab-t">容易问废的问题 → 更有价值的问题（原教程第 5 节）</p><div id="askVs"></div></div>
+  <div class="lab"><p class="lab-t">一次访谈的四步（拿掉一步看看会发生什么）</p><div id="ivPipe"></div></div>
+  <div class="pcard" data-t="访谈问题清单" data-k="原教程第 10 节，可直接复制"><pre>【开场】最近一次你遇到这个问题是什么时候？当时具体发生了什么？
+【行为】你当时是怎么处理的？为什么会选择这种方式？
+【成本】这件事一般会花掉你多少时间或精力？有没有为了解决它花过钱？
+【替代】你试过别的工具或办法吗？为什么最后没有继续用？
+【收尾】如果以后还遇到同样的问题，你觉得最理想的解决方式应该是什么样？（放最后：前面要的是事实，不是愿望）</pre></div>
+  <div class="pcard" data-t="让 AI 改写容易问废的问题" data-k="据原教程 Mom Test 第 11 节整理"><pre>下面是我准备的用户访谈问题：
+【粘贴问题列表】
+请按 The Mom Test 的原则逐条检查：哪些在问意见、哪些在问未来、哪些在推销我的方案。
+把有问题的改写成询问“最近一次真实经历、现在的做法、已付出的成本”的问题，并说明改写理由。</pre></div>
+  <div class="confuse">
+    <h4>易混辨析：JTBD 与 Mom Test 怎么配合</h4>
+    <p><b>JTBD</b> 帮你<b>定义需求假设</b>（当我准备投实习时，我想快速把旧简历改成贴合岗位的版本）；<b>Mom Test</b> 帮你<b>访谈验证假设</b>（你最近一次投递是什么时候？当时怎么改的？哪段最难写？改完怎么判断够不够好？）。访谈也不是最后一步：它能告诉你过去发生了什么，做出原型后还要让用户实际操作，观察他说的做法和真实行为是否一致。真正的验证看用户是否付出真实成本：时间、切换成本、试用行为、付费。</p>
+  </div>
+  <div class="notes" id="n-mom"></div>
+</section>
+
+<section class="part" id="break">
+  <div class="part-head"><h2>从抽象到具体：拆到 AI 能直接执行</h2><span class="meta">原教程 产品思维基础 2.2 节</span></div>
+  <div class="sec-lede">
+    <p>发散出想法很容易，得到<strong>可执行步骤</strong>很难。“做一个提升效率的工具”听起来宏大，动手时面对的却是：第一版做哪一小块、要哪些页面、要不要登录、要不要支付。原教程把这种能力叫<strong>拆解并细化</strong>，先用一个生活例子热身：“我想吃汉堡”拆开有动机（馋、赶时间、和朋友聚）、范围（什么品类、几点、要不要套餐）、实现方式（堂食、外卖、自己做），最后落到“打开外卖、搜那家店、选套餐去掉饮料、备注不要酱、下单”这种立刻能做的动作。</p>
+    <p>应用例子是“我想做一个提高文档处理效率的应用”。<strong>第一层</strong>把每个词都定义一遍：什么“文档”（表格、Word、PDF、扫描件，处理方式完全不同）、什么叫“处理”（看得更快、改得更好、传得更方便）、什么“应用”（自用小工具还是给一群人长期用）、“用什么提高”（一定要 AI 吗？有些用规则和模板就够）、“效率”指什么（速度、质量、出错率还是认知门槛）。得到中间目标：“一个用 AI 提高 PDF 转文字速度和质量的网页程序”。</p>
+    <p><strong>第二层</strong>继续收窄每个关键词，并把取舍写下来：AI 是轻量 OCR 还是大模型清洗（成本、开发难度、产品形态都不同）；只支持结构清晰、以文字为主的 PDF，不保证扫描件；“质量”优先保证段落结构和标题层级，错别字允许几分钟人工修完；“速度”定为 20 页以内约 10 秒；网页定为无需登录的小工具，只走“上传 → 等待 → 展示 → 复制或下载”一条路径。原教程的结论：问题拆到原子化后只剩两个选项，<strong>我来做，或者交给 AI 和专家做</strong>。</p>
+    <p class="go">切换四个版本，看一句愿望怎么被一层层收紧。</p>
+  </div>
+  <div class="lab"><p class="lab-t">“提高文档处理效率”的逐层拆解（原教程 2.2 节）</p><div id="breakEvo"></div></div>
+  <div class="notes" id="n-break"></div>
+</section>
+
+<section class="part" id="sketch">
+  <div class="part-head"><h2>先画三张草图，再写代码</h2><span class="meta">原教程 产品思维基础 2.3–2.5 节</span></div>
+  <div class="sec-lede">
+    <p>一想到做应用，很多人先想代码、数据库、接口、框架，却忽略了最关键的：<strong>用户到底在你这里要做什么</strong>。原教程建议先拿白板或纸，把用户从进来到离开的路径画成三类页面：<strong>入口页</strong>（从哪儿进来、第一眼看到什么、知不知道这是干嘛的）、<strong>操作页</strong>（需要输入、点击、选择什么）、<strong>结果页</strong>（得到了什么、怎么展示、下一步做什么）。</p>
+    <p>画的时候可以<strong>聪明地抄作业</strong>：找同类产品看它们的入口怎么引导、表单怎么设计、结果怎么呈现，学结构不抄外观。还有一条反直觉的建议：<strong>不要等一切就绪才调查用户</strong>。纸面阶段就边画边问，半成品阶段就拉人试用，不要害怕暴露粗糙；越早发现方向错，代价越小。</p>
+    <p class="go">以上一节拆出来的 PDF 转文字工具为例，看三张草图各回答什么问题。</p>
+  </div>
+  <div class="lab">
+    <div class="pages3">
+      <div><b>入口页</b>用户从哪儿进来，第一眼看到什么？<div class="wire">PDF 转可编辑文本
+20 页以内 · 约 10 秒 · 无需登录
+[ 拖入 PDF 或点击上传 ]</div>一句话说清能做什么、边界在哪，唯一的主按钮就是上传。</div>
+      <div><b>操作页</b>用户需要输入、点击、选择什么？<div class="wire">report.pdf · 14 页
+正在解析……预计 8 秒
+[ 取消 ]</div>这个工具几乎没有选项，操作页就是一个带预计时间的等待状态。少一个选项，少一处犹豫。</div>
+      <div><b>结果页</b>得到了什么，怎么展示，下一步是什么？<div class="wire">## 第一章 背景
+正文段落……
+[ 一键复制 ]  [ 下载 .txt ]  [ 再传一个 ]</div>保留标题层级让用户一眼看出结构没乱；下一步动作就在结果旁边。</div>
+    </div>
+  </div>
+  <div class="notes" id="n-sketch"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 双钻四阶段各产出什么？为什么要把问题和方案分开？</summary><p class="ans">Discover 产出对用户、场景、替代方案的广泛理解；Define 产出一句包含用户、场景、卡点、成功标准的问题定义；Develop 产出围绕同一问题的多个候选方案；Deliver 产出可测试的原型或 MVP 及测试结果。分开是为了避免选错问题、误解用户、过早锁定方案，以及把“已经投入多少”误当成“方向正确”的证据。</p></details>
+    <details><summary>2. JTBD 五要素？和用户画像、功能列表有何不同？</summary><p class="ans">场景、触发、想完成的进展、当前替代方案、成功标准。用户画像描述“这个人大概是谁”，解释不了他此刻为什么行动；功能列表是用户对 job 的临时翻译，只收集功能会变成堆功能；JTBD 关注用户此刻想取得的状态进展，并把替代方案（不一定是同类产品）当作真实竞争环境。</p></details>
+    <details><summary>3. 访谈为什么会假阳性？哪三个原则能换来行为证据？</summary><p class="ans">人会出于礼貌鼓励你、会高估未来的自己、你的问法本身在引导答案，所以问“你觉得怎么样”“你会不会用”只能得到好听的意见。三个原则：少谈你的点子多谈用户过去的真实经历；少问抽象意见多问具体事实；少问想要什么方案多看他现在怎么解决。即从意见到事实、从未来到过去、从你的方案到用户的问题。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe-3/"><small>上一篇</small><span>03 · 找到值得做的点子</span></a><a class="nx" href="../2026-10-24-easyvibe-5/"><small>下一篇</small><span>05 · 从原型到能交出去的作品</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var DD = [
+  ['Discover 发现', '广泛调研：看用户在真实场景里怎么做，访谈最近一次遇到问题的经历，观察怎么凑合解决，看竞品和替代方案。', '对人和场景的理解、一张问题地图。', '别太早以为自己已经知道答案；不画原型、不定功能。', '一直调研却不收敛（误区 6.2）。'],
+  ['Define 定义', '收束：哪个问题最常出现、最痛、最有价值？第一版只盯哪个场景？', '一句问题定义：用户 + 场景 + 卡点 + 成功标准。', '不保留所有观察；不因为某方案好做而改问题。', '定义之后又偷偷改问题去适配方案（误区 6.3）。'],
+  ['Develop 发展', '围绕同一个问题发散多种方案：形态、交互、范围、是否用 AI。', '若干候选方案及各自的优点、风险、验证成本。', '不在问题没定义时脑暴，否则又变成功能乱飞。', '只盯着脑子里第一个方案。'],
+  ['Deliver 交付', '筛选最小但最有用的版本，做原型，找人测试，按结果决定继续、修改或放弃。', '可测试的东西：流程图、Figma 原型、MVP、一轮用户测试的结论。', '不追求大而全上线。', '还没 Discover 就直接 Deliver（误区 6.1，最常见）；或把 Deliver 理解成完整上线（误区 6.4）。']
+];
+function ddPick(i) {
+  $$('.dd .ph').forEach(function (p) { p.classList.toggle('on', +p.getAttribute('data-i') === i); });
+  var d = DD[i];
+  $('#ddInfo').innerHTML = '<b>' + d[0] + '</b><span class="hb-tag">' + (i < 2 ? '问题空间' : '方案空间') + ' · ' + (i % 2 ? '收敛' : '发散') + '</span><p><b>做什么：</b>' + d[1] + '</p><p><b>产出：</b>' + d[2] + '</p><p><b>暂时不做：</b>' + d[3] + '</p><p style="color:var(--alert)"><b>常见误区：</b>' + d[4] + '</p>';
+}
+$$('.dd .ph').forEach(function (p) { p.addEventListener('click', function () { ddPick(+p.getAttribute('data-i')); }); });
+ddPick(0);
+
+HB.cards($('#ddCards'), {
+  opts: ['Discover', 'Define', 'Develop', 'Deliver'],
+  items: [
+    { t: '聊了 8 个应届生，记了一堆“不知道写什么”“改了很多版还不敢投”的原话，还没归纳。', a: 0, why: '还在收集问题，下一步该收敛成一句问题定义，而不是开始画界面。' },
+    { t: '把笔记压成一句：“第一次投实习的学生，不确定简历是否已达可投递水平，因此反复修改并拖延投递。”', a: 1, why: '用户、场景、卡点都清楚了，这是 Define 的产出。' },
+    { t: '列出四个方向：可投递检查清单、按岗位改写、上传后给风险提示、优秀案例对照。', a: 2, why: '围绕同一个问题发散方案，并且包括了不依赖 AI 的方案。' },
+    { t: '只做“上传简历给出哪些地方还不适合投递”，找 5 个学生试用，看是否更快投出第一版。', a: 3, why: '选最小可测的版本放进真实环境验证。' },
+    { t: '刚有想法就开始写 PRD、接模型、做页面。', a: 3, why: '人在做 Deliver 的事，但跳过了前两步，正是最常见的误区 6.1。' }
+  ]
+});
+
+EV.tpl($('#jtbdTpl'), {
+  fields: [
+    { k: 'when', t: '当……的时候（场景 + 触发）', ph: '我开完一场信息量很大的项目会' },
+    { k: 'want', t: '我想要……（进展）', ph: '快速得到一份带待办、责任人和截止时间的纪要' },
+    { k: 'so', t: '以便于……（成功后的状态）', ph: '马上同步团队并推进执行' },
+    { k: 'now', t: '现在我只能通过……（替代方案）', ph: '自己回忆、翻聊天记录和手工整理' }
+  ],
+  render: function (v) {
+    return '当' + v.when + '的时候，我想要' + v.want + '，以便于' + v.so + '。\n现在我只能通过' + v.now + '来勉强完成这件事。';
+  }
+});
+
+S.sortGame($('#jobSort'), {
+  bins: [{ k: 'f', t: '功能层' }, { k: 'e', t: '情绪层' }, { k: 's', t: '社会层' }],
+  items: [
+    { t: '把会议录音整理成待办列表', k: 'f', why: '用户嘴上最容易说出的表面任务。' },
+    { t: '不想每次汇报前都那么慌', k: 'e', why: '希望减少的不舒服感受。' },
+    { t: '在客户面前显得更专业', k: 's', why: '希望在别人眼里成为什么样。' },
+    { t: '不想每次都从零开始写', k: 'e', why: '对重复劳动的厌倦，属于情绪层。' },
+    { t: '把长 PDF 总结成一页', k: 'f', why: '具体动作，功能层。' },
+    { t: '在团队里显得更有组织能力', k: 's', why: '社会层：同事眼中的自己。' },
+    { t: '想对这件事更有掌控感', k: 'e', why: '原教程列举的情绪层例子。' }
+  ]
+});
+
+S.sortGame($('#evSort'), {
+  bins: [{ k: 'y', t: '可用的行为证据' }, { k: 'n', t: '只是意见或愿望' }],
+  items: [
+    { t: '“挺好的，我觉得你可以试试。”', k: 'n', why: '礼貌的鼓励，不涉及任何发生过的事。' },
+    { t: '“我上周为这事折腾了两个小时。”', k: 'y', why: '过去发生的事实，带有时间成本。' },
+    { t: '“如果免费的话我应该会用。”', k: 'n', why: '对未来的预测，人会高估未来的自己。' },
+    { t: '“我现在是用 Excel 加微信硬撑。”', k: 'y', why: '揭示了当前替代方案，也就是你真实的竞争环境。' },
+    { t: '“上个月我已经为类似工具花过钱。”', k: 'y', why: '已经付出金钱成本，是最强的一类证据。' },
+    { t: '“这个功能听起来很有用。”', k: 'n', why: '对你方案的评价，不是对问题的描述。' }
+  ]
+});
+
+HB.vs($('#askVs'), {
+  a: '容易问废', b: '更有价值',
+  rows: [
+    ['问想法', '你觉得我这个想法怎么样？', '你最近一次遇到这个问题是什么时候？'],
+    ['问未来使用', '如果有这个产品你会用吗？', '你现在是怎么处理这件事的？'],
+    ['问付费', '你愿意为这个功能付费吗？', '你上次为了这个问题花过钱吗？花在什么上？'],
+    ['问重要性', '你觉得这个功能重要吗？', '这个流程里最烦、最慢、最不放心的是哪一步？'],
+    ['问方案', '你想不想要一个 AI 帮你自动做？', '你现在为什么还没有找到更顺手的解决办法？']
+  ]
+});
+
+HB.pipe($('#ivPipe'), {
+  intro: '四步都在：对方放下了“要给你鼓励”的负担，对话落在真实事件上，你拿到了行为、成本和替代方案，痛感是从细节里判断出来的。',
+  steps: [
+    { t: '开场：说明在学习，不是推销', d: '“我在研究大家怎么处理这类问题”', miss: '对方进入“配合你、鼓励你”的模式，后面全是好听话。' },
+    { t: '从最近一次真实经历问起', d: '什么时候、发生了什么、第一反应', miss: '对话停在想象的偏好上，信息质量很低。' },
+    { t: '追问行为、成本、替代方案', d: '怎么解决、花了多少、试过什么', miss: '不知道问题有多痛、竞争对手是谁、用户会不会换。' },
+    { t: '最后从细节判断痛感', d: '频率、是否主动补救、是否付出成本、情绪', miss: '直接问“这是不是你的痛点”，又换回一句意见。' }
+  ]
+});
+
+EV.evolve($('#breakEvo'), {
+  vers: [
+    { t: '抽象愿望', p: '我想做一个提高文档处理效率的应用。', r: '<p>方向没错，但不知道第一步画什么页面、第一版做到什么程度，也没法跟别人解释。</p>' },
+    { t: '第一层：定义每个词', p: '我想做一个[[用 AI]]提高[[PDF 文档转成文字]]的[[速度和质量]]的[[网页程序]]。', r: '<p>文档类型（PDF）、处理方式（转文字）、优化方向（速度和质量）、技术路径（AI）、承载形态（网页）都定了。但“用什么 AI”“快到什么程度”“什么样的 PDF”仍然笼统，这只是中间目标。</p>' },
+    { t: '第二层：收窄并写下取舍', p: '为用户提供一个基于浏览器的小工具，优先支持[[结构较清晰、以文字为主]]的 PDF 报告，通过适配的解析流程与[[轻量级 AI 清洗]]，在[[约 10 秒内]]输出一份[[段落结构明晰、标题层级基本保留、识别错误率可接受]]的可编辑文本，[[无需登录]]即可使用。', r: '<p>每个形容词都换成了可以检查的标准，并明确了<b>不做什么</b>：不保证扫描件和重度图文混排，不做账号体系。后续的技术方案、界面文案、预期管理都有了依据。</p>' },
+    { t: '精简成一句可执行指令', p: '为用户提供一个网页工具，让他上传一份[[不超过 20 页]]的文字型 PDF，在[[约 10 秒内]]得到一份段落结构清晰、标题层级保留的可编辑文本，并支持[[一键复制和下载为 .txt]]。', r: '<p>这句话可以直接当提示词交给编码 Agent 生成最小版本，也可以交给设计师画原型、交给工程师评估成本。原教程的话：拆到原子化后，只剩“我来做”和“交给 AI 或专家做”两个选项。</p>' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-dd'), {
+  c: [
+    ['双钻模型', 'Design Council 推广；问题空间 + 方案空间，各自先发散后收敛'],
+    ['问题定义', 'Define 的产出：用户 + 场景 + 卡点 + 成功标准'],
+    ['Deliver', '把方案变成可测试、可验证、可迭代的东西，不等于大而全上线']
+  ],
+  p: [
+    ['四阶段', 'Discover 调研 → Define 收敛问题 → Develop 发散方案 → Deliver 原型测试'],
+    ['根本错误', '把“已经投入多少”当成“方向正确”的证据'],
+    ['四误区', '跳过 Discover；只 Discover 不 Define；Define 后改问题；Deliver 当完整上线'],
+    ['AI 产品', '先问卡点是否非 AI 不可，避免能力很强价值很弱']
+  ]
+});
+S.notes($('#n-jtbd'), {
+  c: [
+    ['JTBD', '产品是用户雇来完成某项任务的工具；job 是用户想取得的状态进展'],
+    ['竞争对手', '用户现在雇用的任何做法，不一定是同类应用'],
+    ['三层 job', '功能层（动作）、情绪层（感受）、社会层（别人眼中的自己）']
+  ],
+  p: [
+    ['五要素', '场景、触发、想完成的进展、当前替代方案、成功标准'],
+    ['句式', '当……的时候，我想要……，以便于……；现在只能通过……勉强完成'],
+    ['四误区', 'job 写成功能名、人群太宽、只听不看、一上来做完整平台']
+  ]
+});
+S.notes($('#n-mom'), {
+  c: [
+    ['The Mom Test', '连妈妈都很难直说你的想法烂；访谈要找可核对的经历而非评价'],
+    ['假阳性三因', '礼貌、高估未来的自己、问法引导答案'],
+    ['意见 vs 证据', '“挺好的”是意见；“上周折腾两小时、花过钱”是证据']
+  ],
+  p: [
+    ['三原则', '谈经历不谈点子、问事实不问意见、看现做法不问方案'],
+    ['访谈顺序', '说明在学习 → 最近一次经历 → 行为成本替代 → 细节里判断痛感'],
+    ['与 JTBD 配合', 'JTBD 定义假设，Mom Test 访谈验证，原型观察真实行为']
+  ]
+});
+S.notes($('#n-break'), {
+  c: [
+    ['拆解并细化', '把大而泛的目标拆到可以立刻动手的最小行动项'],
+    ['原子化', '拆到最后只剩：我来做，或交给 AI / 专家做']
+  ],
+  p: [
+    ['第一层', '给每个关键词下定义：文档、处理、应用、用什么、效率'],
+    ['第二层', '收窄并写下取舍：支持什么、不保证什么、指标多少'],
+    ['产出', '一句带量化标准的话，可直接当提示词或开发计划']
+  ]
+});
+S.notes($('#n-sketch'), {
+  c: [
+    ['三类页面', '入口页（第一眼看到什么）、操作页（输入点击选择）、结果页（得到什么、下一步）'],
+    ['聪明地抄作业', '学同类产品的结构和引导，不抄外观']
+  ],
+  p: [
+    ['先画后写', '先想用户在这里要做什么，再想技术'],
+    ['尽早验证', '纸面阶段边画边问，半成品就拉人试用，不怕粗糙']
+  ]
+});
+
+EV.todo($('#todo'), '4', [
+  { t: '把上一篇的方向写成一句 Define 阶段的问题定义（用户 + 场景 + 卡点 + 成功标准）', d: '' },
+  { t: '用句式写出至少一条 JTBD，并标出它的功能层、情绪层、社会层', d: '' },
+  { t: '用 AI 按 Mom Test 原则改写你的访谈问题清单', d: '' },
+  { t: '访谈 3 位非熟人的目标用户，每次都从“最近一次”问起，聊完 24 小时内整理', d: '整理五项：高频问题、情绪原话、替代方案、已付出成本、你的新判断。' },
+  { t: '把你的产品愿望按“两层拆解”收紧成一句带量化标准的话', d: '' },
+  { t: '在纸上画出入口页、操作页、结果页三张草图，拿给一个人看', d: '原教程：边画边问，不怕粗糙。' }
+]);
+})();
+</script>
+</body>
+</html>

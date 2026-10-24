@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code 与终端工作流</title>
+<meta name="description" content="Easy-Vibe 学习笔记（十一）：CLI 编码 Agent 与 IDE 内置 Agent 的区别，Claude Code、Codex、OpenCode；十个高频技巧（回退、@ 引用、! 执行、先规划、/init、/compact、提交流程、自动接受、紧急制动、/context）；CLAUDE.md 与项目知识库三件套；AI 擅长与不擅长什么；全新、成熟、原型、维护四类项目的策略；新功能、修 Bug、重构、代码审查四种任务里人和 AI 的分工。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+</head>
+<body data-series="easyvibe-series" data-part="11">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 11</span><span>对应原教程 二阶段 CLI AI 编程工具、三阶段 Claude Code 快速上手、AI 辅助开发工作流</span><span>约 35 分钟</span></p>
+  <h1>你想清楚、做决策、把关质量，<em>AI 负责执行</em></h1>
+  <p class="lead">第三阶段从终端里的编码 Agent 开始。原教程的判断是：在最新的实战里，往往优先用 Claude Code、Codex 这类 CLI 工具，而不是 IDE 内置的 Agent，因为上下文更长、工具调用更快、能接更多模型。工具本身十分钟就能装好，难的是把它放进真实的开发流程：上千个文件从哪里看起、不熟的代码怎么加功能、Bug 怎么定位、重构怎么不改坏。这一篇把原教程的技巧和工作流整理成可以对照执行的分工表。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" aria-current="page" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#cli">CLI 编码 Agent</a><a href="#tips">十个技巧</a><a href="#memory">项目知识库</a><a href="#edge">能力边界</a><a href="#proj">四类项目</a><a href="#task">四种任务</a><a href="#more">更多用法</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>CLI 编码 Agent 比 IDE 内置 Agent 强在哪、弱在哪？</li>
+    <li>CLAUDE.md、常见问题记录、技术决策记录（ADR）各存什么？为什么要建项目知识库？</li>
+    <li>开发新功能、修 Bug、重构时，哪些步骤必须你自己做，哪些交给 AI？</li>
+  </ol>
+</div>
+
+<section class="part" id="cli">
+  <div class="part-head"><h2>CLI 编码 Agent：只活在终端里的那个 Agent</h2><span class="meta">原教程 二阶段 CLI AI 编程工具</span></div>
+  <div class="sec-lede">
+    <p><strong>CLI</strong>（命令行界面）是用纯文本命令操作软件，不依赖图形界面。工业界大量交互本来就走 CLI（连服务器集群只有终端）。原教程打了个比方：CLI 编码 Agent 可以看作“特殊的 z.ai”，一个对话入口就能替你执行所有操作；也可以看作把 AI IDE 侧边栏那块 Agent 单独拿出来。没用过命令行也不必怕，照搬前面让 Trae 帮忙的思路，让它替你进目录、搜文件、跑开源项目。</p>
+    <p>为什么优先用它？原教程引用的对比是：Claude Code 在<strong>自动执行任务、多文件操作、Git 一体化、上下文长度、自动化调试</strong>上更强；Cursor 这类 IDE 在<strong>编辑器集成、实时代码补全、上手难度</strong>上更好。CLI 工具通常由模型厂商直接开发（Claude Code 本来就是 Anthropic 内部研发团队用的工具），能支持更长时间的连续工作、更长的上下文、更快的响应，并能接入更多自定义模型。</p>
+    <p>原教程推荐三款并建议都试一试：<strong>Claude Code</strong>（可以接官方，也可以通过 GLM 等国内模型的兼容接口转发，降低成本）、<strong>Codex</strong>（OpenAI 出品，可看作“OpenAI 版的 Claude Code”，可用官方订阅或第三方网关）、<strong>OpenCode</strong>（开源，可随意切换模型、有免费模型，便于控成本）。模型更新很快，原教程的原则是选当下“效果 / 成本”最好的，某个工具多次试下来效果一般就直接换。</p>
+    <p class="go">先翻开对照表；再判断几个场景更适合哪类工具。</p>
+  </div>
+  <div class="lab"><div id="cliVs"></div></div>
+  <div class="lab"><div id="cliCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>Claude Code 的斜杠命令、Memory、Skills、Subagents、MCP、Hooks、Plugins、回退与权限模式，在<a href="../2026-10-22-claudehowto/">《Claude How To》十二篇</a>里逐个拆开讲过；本篇只取 Easy-Vibe 的“入门技巧 + 工作流”视角。</div>
+  <div class="notes" id="n-cli"></div>
+</section>
+
+<section class="part" id="tips">
+  <div class="part-head"><h2>十个高频技巧</h2><span class="meta">原教程 三阶段 Claude Code 快速上手 · 核心技巧</span></div>
+  <div class="sec-lede">
+    <p>原教程总结了十个来自实际开发的技巧。<strong>回退</strong>：按两次 Esc 回到上一轮对话状态，说错话、AI 跑偏时“时光倒流”；原教程特别提醒它回退的是<strong>对话</strong>，文件改动要靠 Git 恢复，所以大改之前先 commit 或 stash。<strong>@ 引用</strong>：<code>@src/utils.ts</code> 精准指定上下文，可以引用多个文件、整个目录甚至行号范围，比让它自己去找更准、更省 token。<strong>! 执行</strong>：<code>!npm test</code> 直接在对话里跑命令，失败了接着说“分析原因并修复”。<strong>先规划后编码</strong>：超过 30 分钟的任务先让它分析需求、评估现状、列分阶段计划，你确认后再逐阶段执行。</p>
+    <p><strong>/init</strong> 扫描项目结构、配置文件和代码风格，生成一份 <code>CLAUDE.md</code>，这是 Claude Code 的“项目记忆”，每次启动自动读取。<strong>/compact</strong> 把长对话压缩成摘要（保留已做的决策、已生成的代码、已确认的需求），在对话变长、它开始“遗忘”或要切换子任务时用；<strong>/context</strong> 查看上下文用了多少。<strong>提交流程</strong>：先 <code>/diff</code> 或让它解读 <code>git diff</code>，按 Conventional Commits 生成提交信息，你确认后再执行 <code>git commit</code>；想要一条命令提交可以装官方插件市场里的 commit-commands。<strong>Shift+Tab</strong> 切换自动接受模式，熟悉后让修改直接生效（务必配合 Git）。<strong>Ctrl+C</strong> 是紧急制动，长任务跑偏时立即中断。</p>
+    <p>原教程在这一章里也提醒了版本变化：一些曾经内置的命令已经移除或标记为弃用，要以官方命令文档为准。这里再补一条读后核对：在较新的 Claude Code 版本里，双击 Esc 打开的回退菜单也可以把<strong>代码</strong>恢复到某个检查点，而“先规划”对应的是用 Shift+Tab 切换到的 Plan 模式。快捷键和命令以你本机 <code>/help</code> 为准。</p>
+    <p class="go">遇到这些情况，用哪个技巧？</p>
+  </div>
+  <div class="lab"><div id="tipCards"></div></div>
+  <div class="pcard" data-t="生成提交信息" data-k="原教程 技巧 7 推荐工作流"><pre>/diff
+!git status
+请基于当前 git diff，按照 Conventional Commits 规范生成一个 commit message，并用中文解释为什么这样分类。
+（确认无误后）
+!git add -A
+!git commit -m "feat(docs): update Claude Code workflow guidance"</pre></div>
+  <div class="notes" id="n-tips"></div>
+</section>
+
+<section class="part" id="memory">
+  <div class="part-head"><h2>建立项目知识库：三份文件</h2><span class="meta">原教程 AI 辅助开发工作流 第 4 节；Claude Code 快速上手 技巧 5</span></div>
+  <div class="sec-lede">
+    <p>每次开新会话都要重新解释“我们用什么框架、代码怎么写、数据库表长什么样”，既费 token 又容易漏。原教程建议给项目建一个知识库，由三份文件组成。<strong>项目说明文件</strong>（Claude Code 里就是 <code>CLAUDE.md</code>，可以先用 <code>/init</code> 生成再手改）：项目概述、技术栈、目录结构、代码规范、开发流程、常用命令、常见任务、注意事项、数据库表结构。<strong>常见问题记录</strong>：开发环境问题（npm install 失败、数据库连不上）和功能问题（刷新就退出登录、图片上传失败），每条写现象、原因、解决办法。<strong>技术决策记录（ADR）</strong>：每个重要决策一份，按“状态、背景、决策、理由、后果”五段写，比如“ADR-001：选择 PostgreSQL 作为数据库”。</p>
+    <p>它们的价值是让 AI 和新同事都不用重新摸索：AI 每次启动就知道规范和背景，遇到老问题直接查记录，想推翻一个技术选型时能看到当初为什么这样选、代价是什么。原教程的建议是新项目初始化后立即生成项目说明，之后随项目演进持续更新。</p>
+    <p class="go">这些信息该记进哪份文件？</p>
+  </div>
+  <div class="lab"><div id="kbSort"></div></div>
+  <div class="pcard" data-t="ADR 模板" data-k="原教程 4.3 节结构"><pre># ADR-001: 选择 PostgreSQL 作为数据库
+## 状态
+已采纳（2026-10-24）
+## 背景
+需要存储用户、订单和支付记录，订单与支付之间要求强一致。
+## 决策
+使用 PostgreSQL（通过 Supabase 托管）。
+## 理由
+支持事务和外键；Supabase 提供 Auth 与 RLS；团队熟悉 SQL。
+## 后果
+复杂统计查询需要注意索引；若未来日志量极大，日志单独放到其他存储。</pre></div>
+  <div class="notes" id="n-memory"></div>
+</section>
+
+<section class="part" id="edge">
+  <div class="part-head"><h2>AI 擅长什么，不擅长什么</h2><span class="meta">原教程 AI 辅助开发工作流 第 1、5 节</span></div>
+  <div class="sec-lede">
+    <p>原教程把 AI 比作“很聪明但需要明确指令的助手”。它擅长<strong>有明确规则、可以自动化的工作</strong>：根据描述快速生成代码框架、几秒钟读完几千行代码找到目标位置、发现明显的语法错误和常见安全漏洞、批量重命名、格式化、写文档注释。它不擅长的是：<strong>不了解你的业务逻辑</strong>（除非你详细告诉它订单流程怎么走）、<strong>做不了技术选型和架构这种需要权衡的决策</strong>、<strong>不知道团队的特殊规范</strong>（“所有 API 都要加日志”）。最重要的一条：<strong>AI 生成的代码不能直接用，必须审查和测试</strong>，它会写出看起来对但有问题的代码，也会漏边界情况。</p>
+    <p>于是分工很清楚：<strong>你负责想清楚要做什么、做决策、把关质量；AI 负责执行具体编码、查找信息、发现明显问题</strong>。就像带一个执行速度极快、但判断力不如人的初级开发者。原教程给的三条效率技巧也由此而来：描述要清晰具体；<strong>一次只做一件事</strong>；<strong>及时验证结果</strong>，每一步完成都跑一下，而不是攒一堆再看。</p>
+    <p class="go">先翻开对照表。</p>
+  </div>
+  <div class="lab"><div id="edgeVs"></div></div>
+  <div class="notes" id="n-edge"></div>
+</section>
+
+<section class="part" id="proj">
+  <div class="part-head"><h2>四类项目，四种策略</h2><span class="meta">原教程 AI 辅助开发工作流 第 2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>全新项目</strong>没有历史包袱：先让 AI 推荐技术栈、设计目录结构、规划数据库表，再搭基础框架，然后按优先级逐个实现功能。关键是<strong>一开始就建立代码规范</strong>，让 AI 按规范生成；每完成一个模块就测试，及时更新文档。<strong>成熟项目</strong>代码量大、有历史规范：先让 AI 分析整体结构、找到相关代码，再<strong>找项目里类似功能的实现作为参考</strong>（要加优惠券，先看满减和折扣是怎么做的），让它模仿现有风格和目录结构；先理解再动手，避免破坏架构。</p>
+    <p><strong>快速原型</strong>追求速度：直接描述需求、快速迭代（“加个搜索”“改成深色主题”），不必在意代码质量，验证成功后再重构。<strong>维护项目</strong>以修 Bug 为主：先定位（现象 + 报错 + 位置），再分析根因（数据从哪来、什么情况下为空），最后修复并加防御性代码和友好提示；改动要谨慎，修完充分测试，并把问题和解法记进常见问题文件。</p>
+    <p class="go">每个场景该用哪种策略？</p>
+  </div>
+  <div class="lab"><div id="projCards"></div></div>
+  <div class="notes" id="n-proj"></div>
+</section>
+
+<section class="part" id="task">
+  <div class="part-head"><h2>四种任务：每一步谁来做</h2><span class="meta">原教程 AI 辅助开发工作流 第 3 节</span></div>
+  <div class="sec-lede">
+    <p>原教程把四种常见任务都拆成了五步左右，并明确标出每一步是<strong>你自己完成</strong>、<strong>让 AI 帮你</strong>、还是<strong>和 AI 一起</strong>。<strong>开发新功能</strong>：理解需求（输入输出、边界、性能安全要求）由你完成；了解现有代码交给 AI；实现计划和 AI 一起定；实现由 AI 生成、你审查；测试验证（主流程、边界、权限，比如不能删别人的评论）由你完成，也可以让 AI 写自动化测试。</p>
+    <p><strong>修 Bug</strong>：收集信息（报错、复现步骤、何时出现、影响范围）你来；定位交给 AI；分析根因一起；修复 AI 生成你审查；验证修复并思考别处是否有同类问题你来。原教程的对话示例很典型：刷新就退出登录，AI 发现 token 存在 sessionStorage 里，刷新被清空。<strong>重构</strong>：重构目标和可接受风险你定；方案一起定；<strong>先让 AI 写测试当安全网</strong>；再让 AI 逐步重构、你逐步验证；最后跑全部测试。<strong>代码审查</strong>：让 AI 总结 PR 改动、检查安全（SQL 注入、XSS）、性能（N+1 查询）、明显 Bug 和规范；业务逻辑、边界、更好的实现和反馈由你完成。</p>
+    <p class="go">以“开发新功能”为例，把五个步骤分给你、AI 或一起。</p>
+  </div>
+  <div class="lab"><p class="lab-t">开发新功能：每一步谁来做（据原教程 3.1 节）</p><div id="whoSort"></div></div>
+  <div class="lab"><p class="lab-t">重构的正确顺序（拿掉一步看看后果）</p><div id="refPipe"></div></div>
+  <div class="pcard" data-t="让 AI 审查一次改动" data-k="原教程 3.4 节"><pre>总结一下这次 PR 做了什么改动，主要修改了哪些文件。
+然后检查这次改动：
+1. 有没有安全问题（SQL 注入、XSS 等）
+2. 有没有性能问题（N+1 查询、内存泄漏等）
+3. 有没有明显的 Bug
+4. 代码风格是否符合项目规范（参照 CLAUDE.md）
+每个问题给出文件和行号，并说明为什么是问题、怎么改。</pre></div>
+  <div class="notes" id="n-task"></div>
+</section>
+
+<section class="part" id="more">
+  <div class="part-head"><h2>CLI Agent 的更多用法</h2><span class="meta">原教程 二阶段 CLI AI 编程工具 · 更多用法</span></div>
+  <div class="sec-lede">
+    <p>CLI Agent 不只写代码。原教程列了几种用法。<strong>具体化需求</strong>：大模型需要把抽象需求具体化（“我很饿”→“想吃一个红豆面包配一杯豆浆”），这一步很花精力，可以让 AI 先把一句话想法扩写成完整 PRD（产品介绍、目标用户、用户故事、功能拆解、MVP），审过再开发，比直接开写更少偏差。<strong>管理文件夹</strong>：整理下载目录、批量重命名。<strong>开发新项目</strong>和<strong>部署开源项目</strong>（比如本地把 Dify 跑起来，遇到报错让它自己查）。<strong>讲解代码与写文档</strong>：读一个陌生仓库，生成架构说明。</p>
+    <p>原教程还演示了项目约定的写法：在项目说明里列出“项目约定、开发流程、禁止事项”，例如禁止事项写“不要修改 migrations 目录下已有的文件”“不要引入新的依赖而不说明”。这和第 5 篇“第一版不做什么”是同一个思路：<strong>告诉 AI 不做什么，往往比告诉它做什么更能防止跑偏。</strong></p>
+    <p class="go">两条可以直接用的提示词。</p>
+  </div>
+  <div class="pcard" data-t="先把一句话想法扩写成 PRD" data-k="原教程 CLI 更多用法 · 具体化需求"><pre>Based on my needs, please elaborate and provide a more detailed Product Requirement Document for reference. My idea is: 【一句话想法】
+请包含：产品定位、目标用户与痛点、用户故事、MVP 功能拆解（含不做的部分）、关键页面与交互、数据结构。先不要写代码。</pre></div>
+  <div class="pcard" data-t="CLAUDE.md 里的约定与禁止事项" data-k="据原教程 CLI 一章的项目约定整理"><pre>## 项目约定
+- 前端 React + Vite，组件放 src/components，一个组件一个文件
+- 所有接口返回 { code, message, data }
+## 开发流程
+- 改动前先读相关文件；每完成一步运行 npm test
+- 提交信息用 Conventional Commits
+## 禁止事项
+- 不要修改 supabase/migrations 下已有的文件，只能新增
+- 不要在未说明的情况下引入新依赖
+- 不要把任何 Key 写进代码，统一读环境变量</pre></div>
+  <div class="notes" id="n-more"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. CLI 编码 Agent 强在哪、弱在哪？</summary><p class="ans">强在自动执行任务、多文件操作、Git 一体化、上下文更长、可长时间连续工作、能接入更多自定义模型，多由模型厂商直接开发、编码更稳定。弱在没有图形化的编辑器集成和实时代码补全，学习成本略高。原教程建议 Claude Code、Codex、OpenCode 都试，按效果 / 成本选。</p></details>
+    <details><summary>2. 项目知识库三份文件各存什么？为什么要建？</summary><p class="ans">项目说明（CLAUDE.md）存概述、技术栈、目录结构、代码规范、开发流程、常用命令、注意事项、表结构；常见问题记录存环境和功能问题的现象、原因、解决办法；ADR 按状态、背景、决策、理由、后果记录重要技术决策。这样 AI 每次启动就知道背景和规范，老问题直接查，推翻决策前能看到当初的理由和代价，新同事也能快速上手。</p></details>
+    <details><summary>3. 新功能、修 Bug、重构里哪些必须你做？</summary><p class="ans">新功能：理解需求和最终测试验证由你完成，了解现有代码交给 AI，计划一起定，实现由 AI 生成你审查。修 Bug：收集信息和验证修复由你完成，定位交给 AI，根因一起分析。重构：目标和可接受风险由你定，先让 AI 写测试当安全网，再逐步重构逐步验证。核心是你负责想清楚、做决策、把关质量，AI 负责执行。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe-10/"><small>上一篇</small><span>10 · 知识库应用与 PRD 大作业</span></a><a class="nx" href="../2026-10-24-easyvibe-12/"><small>下一篇</small><span>12 · 规格驱动、Skills 与 MCP</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+HB.vs($('#cliVs'), {
+  a: 'CLI 编码 Agent（Claude Code 等）', b: 'IDE 内置 Agent（Cursor 等）',
+  rows: [
+    ['自动执行任务', '非常强，可长时间连续工作', '能力有限'],
+    ['多文件操作', '非常强', '还不错'],
+    ['Git 一体化', '可直接提交', '更多需手动'],
+    ['上下文长度', '非常长', '较好'],
+    ['编辑器集成 / 实时补全', '没有，纯命令行', '原生 VS Code，补全体验极佳'],
+    ['学习成本', '中等', '上手简单']
+  ],
+  hint: '对比来自原教程引用的第三方评测，先想右列，再点开。'
+});
+
+HB.cards($('#cliCards'), {
+  opts: ['CLI 编码 Agent', 'IDE 内置 Agent / 补全'],
+  items: [
+    { t: '让 AI 一口气完成“加登录、改十几个文件、跑测试、提交”的整件事。', a: 0, why: '多文件、长链路、Git 一体化是 CLI Agent 的强项。' },
+    { t: '边写代码边要逐行的智能补全。', a: 1, why: 'CLI 工具没有实时补全。' },
+    { t: '登录到远程服务器上部署和排错。', a: 0, why: '服务器只有终端，CLI 天然适合。' },
+    { t: '第一次接触编程，想在熟悉的图形界面里点点看。', a: 1, why: 'IDE 上手更简单；熟悉后再过渡到 CLI。' }
+  ]
+});
+
+HB.cards($('#tipCards'), {
+  opts: ['双击 Esc', '@ 引用', '! 执行', '先规划', '/init', '/compact', 'Shift+Tab', 'Ctrl+C'],
+  items: [
+    { t: '刚发出的指令写错了，AI 已经开始照着做。', a: 7, why: '先紧急制动，再双击 Esc 回到上一轮重新说。' },
+    { t: '想让它只看 Header 和 app 这两个文件，分析它们的关系。', a: 1, why: '@src/app.tsx @src/components/Header.tsx，精准又省 token。' },
+    { t: '要加一整套用户认证，估计要一两个小时。', a: 3, why: '超过 30 分钟的任务先出分阶段计划，确认后逐阶段执行。' },
+    { t: '新接手一个项目，希望以后每次启动它都知道技术栈和规范。', a: 4, why: '生成 CLAUDE.md 这份项目记忆，再手动调整。' },
+    { t: '对话已经很长，它开始忘记前面定好的接口格式。', a: 5, why: '压缩成保留关键决策的摘要，再继续下一个子任务。' },
+    { t: '想跑一下测试，看失败在哪。', a: 2, why: '!npm test，接着说“分析失败原因并修复”。' },
+    { t: '已经很熟悉了，不想每处修改都点确认。', a: 6, why: '切到自动接受模式，前提是改动前已经提交到 Git。' },
+    { t: '它的回答不是你想要的，想换个说法重问。', a: 0, why: '回退到上一轮对话状态；注意文件改动要另外用 Git 或检查点恢复。' }
+  ]
+});
+
+S.sortGame($('#kbSort'), {
+  bins: [{ k: 'md', t: '项目说明 CLAUDE.md' }, { k: 'faq', t: '常见问题记录' }, { k: 'adr', t: '技术决策记录 ADR' }],
+  items: [
+    { t: '启动命令 npm run dev，测试命令 npm test', k: 'md', why: '常用命令属于项目说明。' },
+    { t: '登录后刷新就退出：token 存在 sessionStorage，改用 localStorage', k: 'faq', why: '现象、原因、解决办法，典型的常见问题条目。' },
+    { t: '为什么选 PostgreSQL 而不是 MongoDB，以及代价', k: 'adr', why: '重要技术决策的背景、理由和后果。' },
+    { t: '组件文件用 PascalCase，提交用 Conventional Commits', k: 'md', why: '代码规范属于项目说明。' },
+    { t: 'npm install 卡住：换国内镜像源', k: 'faq', why: '开发环境问题。' },
+    { t: '决定状态管理从 Redux 换成 Zustand', k: 'adr', why: '架构层面的选择，应留下理由，方便以后回看。' },
+    { t: 'users、orders、payments 三张表的字段', k: 'md', why: '原教程把数据库表结构列在项目说明里。' }
+  ]
+});
+
+HB.vs($('#edgeVs'), {
+  a: 'AI 擅长', b: 'AI 不擅长（需要你）',
+  rows: [
+    ['写代码', '按描述快速生成框架和模块', '知道你的业务流程该怎么走'],
+    ['读代码', '几秒读完几千行，找到目标位置', '判断哪种架构更适合这个团队'],
+    ['查问题', '发现语法错误、常见安全漏洞', '发现“看起来对、其实不对”的业务逻辑错误'],
+    ['重复劳动', '批量重命名、格式化、写注释和文档', '知道“所有 API 都要加日志”这类团队约定'],
+    ['产出', '大量可运行的代码', '保证它真的正确：审查和测试']
+  ]
+});
+
+HB.cards($('#projCards'), {
+  opts: ['全新项目', '成熟项目', '快速原型', '维护项目'],
+  items: [
+    { t: '周末想验证一个记账小工具的点子，可能用完就扔。', a: 2, why: '追求速度，能用就行，成功了再重构。' },
+    { t: '在十万行的电商系统里加优惠券功能。', a: 1, why: '先找满减、折扣的实现作参考，模仿现有风格。' },
+    { t: '用户反馈提交订单页面卡住，控制台报 Cannot read property id of undefined。', a: 3, why: '定位 → 根因 → 修复并加防御代码，修完记进常见问题。' },
+    { t: '从零开始做一个团队任务管理应用。', a: 0, why: '先定技术栈、目录、表结构和代码规范，再逐个实现。' }
+  ]
+});
+
+S.sortGame($('#whoSort'), {
+  bins: [{ k: 'me', t: '你自己完成' }, { k: 'ai', t: '让 AI 帮你' }, { k: 'both', t: '和 AI 一起' }],
+  items: [
+    { t: '① 理解需求：输入输出、边界条件、性能和安全要求', k: 'me', why: '需求理解是判断，AI 不知道你的业务。' },
+    { t: '② 了解现有代码：有没有类似功能、数据怎么存', k: 'ai', why: '读代码、找位置是 AI 的强项。' },
+    { t: '③ 制定实现计划，检查有没有遗漏', k: 'both', why: 'AI 提出方案，你确认是否合理、有无遗漏。' },
+    { t: '④ 实现数据模型、API 和前端组件', k: 'ai', why: 'AI 生成，你审查。' },
+    { t: '⑤ 测试验证：主流程、边界、权限', k: 'me', why: '最终把关由你完成，可以让 AI 写自动化测试辅助。' }
+  ]
+});
+
+HB.pipe($('#refPipe'), {
+  intro: '五步都在：知道为什么重构、方案评估过风险、有测试兜底、小步推进、最后全量验证。',
+  steps: [
+    { t: '确定重构目标', d: '你：解决什么问题、范围多大、能接受的风险', miss: '为重构而重构，改动范围越扩越大。' },
+    { t: '制定重构计划', d: '一起：分析重复、提出方案、评估风险', miss: '边改边想，改到一半发现方向不对。' },
+    { t: '先写测试当安全网', d: 'AI：为现有行为写测试用例', miss: '改完不知道功能有没有变，只能靠手点碰运气。' },
+    { t: '逐步重构', d: 'AI 执行一步，你验证一步', miss: '一次性大改，出了问题定位不到是哪一步。' },
+    { t: '验证结果', d: '你：跑全部测试 + 手测关键功能', miss: '测试过了但关键流程坏了，或者代码质量并没有提升。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-cli'), {
+  c: [
+    ['CLI', '用文本命令操作软件，服务器上只有它'],
+    ['CLI 编码 Agent', '只在终端里运行的编码 Agent，相当于 IDE 侧边栏 Agent 的独立加强版']
+  ],
+  p: [
+    ['强项', '自动执行、多文件、Git、长上下文、长时间工作、可接多模型'],
+    ['弱项', '无编辑器集成和实时补全，学习成本略高'],
+    ['三款', 'Claude Code、Codex、OpenCode；按效果 / 成本选，不行就换']
+  ]
+});
+S.notes($('#n-tips'), {
+  c: [
+    ['CLAUDE.md', 'Claude Code 的项目记忆，启动时自动读取'],
+    ['/compact', '把长对话压成保留关键决策的摘要']
+  ],
+  p: [
+    ['双击 Esc', '回退对话；大改前先 commit 或 stash'],
+    ['@ / !', '@ 精准引用文件目录行号；! 在对话里跑命令'],
+    ['先规划', '超过 30 分钟的任务先出计划再执行'],
+    ['提交', '/diff → 生成 Conventional Commits 信息 → 你确认 → commit'],
+    ['Shift+Tab / Ctrl+C', '自动接受模式 / 紧急制动；以本机 /help 为准']
+  ]
+});
+S.notes($('#n-memory'), {
+  c: [
+    ['项目说明', '概述、技术栈、结构、规范、流程、命令、表结构'],
+    ['常见问题', '现象 + 原因 + 解决办法'],
+    ['ADR', '状态、背景、决策、理由、后果']
+  ],
+  p: [
+    ['价值', 'AI 和新人都不必重新摸索；推翻决策前看到当初的代价'],
+    ['做法', '新项目先 /init 生成，再随项目演进持续更新']
+  ]
+});
+S.notes($('#n-edge'), {
+  c: [
+    ['AI 擅长', '有明确规则、可自动化的工作'],
+    ['AI 不擅长', '业务逻辑、需要权衡的决策、团队特殊规范']
+  ],
+  p: [
+    ['分工', '你想清楚、做决策、把关质量；AI 执行、查找、发现明显问题'],
+    ['三条效率技巧', '描述清晰具体、一次只做一件事、及时验证'],
+    ['底线', 'AI 生成的代码必须审查和测试']
+  ]
+});
+S.notes($('#n-proj'), {
+  c: [
+    ['全新项目', '先定技术栈、结构、表和规范，再逐个实现'],
+    ['成熟项目', '先找类似功能作参考，模仿现有风格'],
+    ['快速原型', '只求快，成功再重构'],
+    ['维护项目', '定位 → 根因 → 修复 + 防御代码 → 记录']
+  ],
+  p: [
+    ['成熟项目关键', '先理解再动手，不破坏架构'],
+    ['全新项目关键', '一开始就建立代码规范']
+  ]
+});
+S.notes($('#n-task'), {
+  c: [
+    ['新功能五步', '理解需求（你）→ 读代码（AI）→ 计划（一起）→ 实现（AI，你审）→ 验证（你）'],
+    ['修 Bug 五步', '收集信息（你）→ 定位（AI）→ 根因（一起）→ 修复（AI，你审）→ 验证（你）']
+  ],
+  p: [
+    ['重构', '先写测试当安全网，再小步重构小步验证'],
+    ['审查', 'AI 查安全、性能、明显 Bug、规范；你看业务逻辑和边界']
+  ]
+});
+S.notes($('#n-more'), {
+  c: [
+    ['具体化需求', '先让 AI 把一句话扩写成 PRD，审过再开发'],
+    ['禁止事项', '告诉 AI 不做什么，比告诉它做什么更防跑偏']
+  ],
+  p: [
+    ['其他用法', '整理文件夹、部署开源项目、讲解代码、写文档']
+  ]
+});
+
+EV.todo($('#todo'), '11', [
+  { t: '装好 Claude Code 或 Codex（或 OpenCode），在一个练习项目里跑通第一次对话', d: '' },
+  { t: '在项目里运行 /init，再手动补上“禁止事项”', d: '' },
+  { t: '把十个技巧各用一次，尤其是大改前先 commit、改坏后恢复', d: '' },
+  { t: '为项目建 docs/faq.md 和第一份 ADR', d: '' },
+  { t: '按“新功能五步”加一个功能，五步里属于你的那两步不要交给 AI', d: '' },
+  { t: '用审查提示词让 AI 审一次自己的改动', d: '' }
+]);
+})();
+</script>
+</body>
+</html>

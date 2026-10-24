@@ -1,0 +1,429 @@
+---
+title: RAG：从入门到进阶
+desc: Easy-Vibe 学习笔记（十四）：上下文窗口越来越大，为什么还需要 RAG；“苹果”知识库演示检索、相似度阈值和拒答；Naive、Advanced、Modular 三代 RAG 与四种查询改写；企业级 RAG 的三个模块与 Embedding、Rerank 选型；检索与生成的评测指标，Recall@K、MRR 自己算一遍；竞赛方案里的语义缓存与可追溯问答；用 LangGraph 做可升级的客服 Agent、用 LlamaIndex 做可治理的企业知识库。
+kicker: <span>技术学习</span><span>Easy-Vibe · 14</span><span>对应原教程 三阶段 RAG 入门、LangGraph 企业客服 Agent、LlamaIndex 企业知识库</span><span>约 40 分钟</span>
+h1: 能给出一个回答，和稳定可控地给出正确答案，<em>是两件事</em>
+lead: 第 10 篇用 Dify 搭过知识库问答，看到了切分、Embedding、Rerank 这些参数。原教程第三阶段把 RAG 从原理讲到企业落地：为什么长上下文替代不了它，检索和生成各自怎么出错，三代 RAG 各解决了什么，企业系统里模型怎么选、效果怎么量化，以及最后两个实战：一个“该自动时自动、不确定时补问、高风险时转人工”的客服 Agent，一个持续治理的企业知识库。
+nav: why|为什么要 RAG;how|检索与拒答;gen|三代 RAG;ent|企业级流水线;eval|效果评测;comp|竞赛经验;cs|客服 Agent;kb|企业知识库;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.simtbl { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 10px; }
+.simtbl td { border-top: 1px solid var(--hair); padding: 6px 8px; vertical-align: top; color: var(--ink-2); }
+.simtbl td:first-child { font-family: var(--f-num); white-space: nowrap; color: var(--ink); }
+.simtbl tr.in td { background: var(--s1-soft); }
+.simtbl tr.out td { color: var(--ink-3); }
+.rank { display: grid; gap: 6px; margin-top: 10px; }
+.rank button { font: inherit; font-size: 15px; display: grid; grid-template-columns: 2.4em minmax(0, 1fr) 4.5em; gap: 8px; align-items: center; text-align: left; border: 1px solid var(--rule); border-radius: 8px; padding: 6px 10px; background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.rank button[aria-pressed="true"] { border-color: var(--ok); background: var(--panel); }
+.rank button[aria-pressed="true"] em { color: var(--ok); }
+.rank button.cut { opacity: .45; }
+.rank em { font-style: normal; font-family: var(--f-num); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.metrics div { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 10px; background: var(--panel); font-size: 15px; color: var(--ink-2); }
+.metrics b { display: block; font-family: var(--f-num); font-size: 22px; color: var(--ink); }
+@media (max-width: 680px) { .metrics { grid-template-columns: minmax(0, 1fr); } }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>上下文窗口已经很大了，为什么企业仍然需要 RAG？三类问题是什么？</li>
+    <li>Naive、Advanced、Modular 三代 RAG 各自改进了什么？查询改写有哪四种？</li>
+    <li>检索评测看哪些指标？Recall@10 高而 MRR 低说明什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>上下文这么长了，为什么还要 RAG</h2><span class="meta">原教程 RAG 入门 第 1–2 节</span></div>
+  <div class="sec-lede">
+    <p><strong>RAG（检索增强生成）</strong>的思路是：生成回答前，先从外部知识库检索出与问题相关的信息，连同问题一起交给模型，让它基于真实资料作答。一个自然的疑问是：模型上下文窗口越来越大，把资料全塞进去不就行了？原教程的回答是：<strong>“能给出一个回答”和“在真实业务里持续、稳定、可控地给出正确答案”是两件事</strong>，只靠参数记忆或长上下文，至少有三类问题。</p>
+    <p><strong>成本与效率</strong>：推理成本和上下文长度强相关，8K 和 200K token 的价格与延迟不在一个量级；绝大多数问题只需要极少量相关信息，全量塞入是浪费，还拖慢吞吐。<strong>注意力与聚焦</strong>：模型能“覆盖”超长上下文，却不能同等质量地利用每一段，早期信息容易被忽略，无关、重复甚至冲突的内容会把回答带偏。<strong>知识更新与可控性</strong>：知识写在参数里，一变就要重训或微调；写在提示词里要人工维护还容易出错；而且很难说清回答依据了哪条信息，合规审计做不了。</p>
+    <p>RAG 的做法正好对应：只检索必要的知识交给模型；知识独立存在外部库里，更新只需改库；回答附带引用来源，可追溯。原教程总结它为企业解决了五个问题：时效性、专业性、幻觉、可解释与可审计、算力成本。流程分两段：<strong>索引阶段</strong>把文档切成语义片段、用 Embedding 模型变成向量写入索引；<strong>检索生成阶段</strong>把问题也变成向量，找出最相近的片段，和问题一起组成提示词交给大模型。</p>
+    <p class="go">这些痛点，分别属于哪一类问题？</p>
+  </div>
+  <div class="lab"><div id="whyCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>RAG 和记忆系统在<a href="../2026-10-22-helloagents-8/">《Hello-Agents》08 篇</a>里有代码级拆解；Embedding 的原理见<a href="../2026-10-15-llm/">《LLM 入门》系列</a>。</div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="how">
+  <div class="part-head"><h2>一个“苹果”知识库：检索、阈值与拒答</h2><span class="meta">原教程 RAG 入门 第 3 节</span></div>
+  <div class="sec-lede">
+    <p>原教程用一个只有三段的知识库把机制拆开：A 是苹果公司 1976 年创立，B 是水果苹果富含维生素 C，C 是苹果公司 2007 年推出 iPhone。每段被 Embedding 模型转换成高维向量（常见 768、1024、1536 维），存进向量数据库（Pinecone、Weaviate、FAISS 等）。向量的每个维度大致对应某种语义特征，所以“公司创立”和“iPhone 发布”的向量彼此接近，和“水果营养”离得远。</p>
+    <p>提问时，问题也被转成向量，和每个片段计算<strong>余弦相似度</strong>，取 Top-K。关键在于第三个问题“今天天气怎么样”：它和三段都不相关，但 Top-K 仍然会返回分数最高的两段（0.18 和 0.10）。所以实际系统要配合<strong>最低相似度阈值</strong>，低于阈值就返回空召回。另一道防线在<strong>系统提示词</strong>：要求模型严格依据参考信息回答，参考信息里没有答案就明确说“根据现有资料无法回答”，不要编造，并注明依据。原教程的总结：系统指令定角色和规则，检索证据提供可信素材，用户问题明确任务，这种结构化输入正是 RAG 约束幻觉的关键。</p>
+    <p class="go">选一个问题，调阈值，看哪些片段被送进模型，模型最后会怎么回答（相似度为原教程的示意值）。</p>
+  </div>
+  <div class="lab">
+    <div class="seg" id="qSeg"><button data-v="0" aria-pressed="true">苹果公司是什么时候创立的？</button><button data-v="1">吃苹果有什么好处？</button><button data-v="2">今天天气怎么样？</button></div>
+    <label style="display:block;font-size:15px;color:var(--ink-2);margin-top:10px">最低相似度阈值 <b id="thV">0.30</b><input type="range" id="thR" min="0" max="0.8" step="0.05" value="0.3" style="width:100%;accent-color:var(--s1)"></label>
+    <table class="simtbl" id="simTbl"></table>
+    <div class="hb-out" id="simOut" aria-live="polite"></div>
+  </div>
+  <div class="pcard" data-t="RAG 系统提示词" data-k="原教程 3.2 节"><pre>你是一个专业的问答助手。请严格根据用户提供的“参考信息”来回答问题。
+如果参考信息中包含问题答案，请直接基于该信息进行回答。
+如果参考信息中不包含问题答案，请明确告知用户“根据现有资料无法回答该问题”，切勿自行编造信息。
+请在回答中注明依据的信息点。
+【参考信息】
+{检索到的片段}
+【用户问题】
+{问题}</pre></div>
+  <div class="notes" id="n-how"></div>
+</section>
+
+<section class="part" id="gen">
+  <div class="part-head"><h2>三代 RAG</h2><span class="meta">原教程 RAG 入门 第 4 节</span></div>
+  <div class="sec-lede">
+    <p>RAG 的雏形可以追溯到 2017 年的 DrQA，2020 年 DPR 用神经网络做语义检索替代 TF-IDF、BM25 这类词频方法，2021 年前后系统化。原教程把演进分成三代。<strong>Naive RAG</strong> 三步走：固定长度切块、向量化入库；问题向量化后 Top-K 检索；把检索结果和问题简单拼接交给模型。它低门槛地证明了“先查再答”有效，但切块粗糙（把一段话拦腰截断或把多个主题混在一块）、检索信号单一（只有向量相似度，不看关键词、时间、来源可信度、权限）、结果不经治理（噪音、重复、矛盾的片段原样塞进上下文）。</p>
+    <p><strong>Advanced RAG</strong> 在检索前后做精细化。检索前：索引端改为按章节段落句子的语义分块、分层和多粒度索引，给每块加来源、时间、作者、类型等元数据；查询端对问题做改写、扩展、拆分。检索后：用 Rerank 模型或 LLM 重排，筛选去重压缩，必要时微调让模型更倾向依据证据作答并给出引用。<strong>Modular RAG</strong> 不再是固定流水线，而是可插拔的模块按需编排：查询理解与路由（错误日志走代码库、监管新规走搜索或法规库）、多源检索与融合（向量库、全文检索、关系数据库、知识图谱、搜索引擎）、记忆与个性化、任务适配与治理（同一批证据给产品经理出 PRD、给法务出审查意见，并强制引用）。它还可以多轮往返检索和生成，或者让模型自己判断什么时候需要检索。</p>
+    <p class="go">先点开三代 RAG 的组件；再给几个问题配上合适的查询改写方式。</p>
+  </div>
+  <div class="lab"><div id="genLayers"></div></div>
+  <div class="lab"><p class="lab-t">四种查询改写（例子取自原教程）</p><div id="qtCards"></div></div>
+  <div class="notes" id="n-gen"></div>
+</section>
+
+<section class="part" id="ent">
+  <div class="part-head"><h2>从 Demo 到企业级：三个模块和三类模型</h2><span class="meta">原教程 RAG 入门 第 5.1–5.2 节</span></div>
+  <div class="sec-lede">
+    <p>原教程强调，企业实际数据质量参差、格式混乱，要在预处理和导入上投入更多精力。完整系统分三个模块：<strong>版面分析与知识采集</strong>（PDF、Word、Excel、PPT、HTML、扫描图片、录音，按格式解析：区分标题正文表格页眉页脚、恢复阅读顺序，图片做 OCR、语音做 ASR，保留文档名、章节、页码等元信息）；<strong>知识库构建</strong>（合理切分并保留来源元数据、Embedding、建向量索引，如 Faiss、Milvus）；<strong>在线问答</strong>（问题向量化粗排出 Top N，Rerank 精排出 Top K，配合系统提示词拼接后生成，附引用）。</p>
+    <p>三类模型的选型要点：<strong>Embedding</strong> 参考 MTEB 榜单（8 大类任务、56 个数据集），关注两个参数：<strong>维度</strong>（越高语义刻画越细、区分度越强，适合医疗法律等精准检索；越低越省存储、越快，适合千万级高并发）和<strong>上下文长度</strong>（超出部分被截断，短问答 512–1024 就够，论文报告要 2048 以上）。原教程的实用建议是：选大模型厂商自带的或云平台部署的 Embedding 大概率不会错，中文可看 BGE、Qwen 系列，混合检索可看 bge-m3。<strong>Rerank</strong> 可参考专门的重排榜单，要同时看排序质量和<strong>延迟</strong>，只追精度不顾速度会损害体验。<strong>LLM</strong> 按任务复杂度和成本选。</p>
+    <p>框架上，低代码平台（Dify、Coze、n8n、擅长复杂版面解析的 RAGFlow、中文友好的 FastGPT）适合快速上线；代码框架（专为 RAG 设计、数据连接器丰富的 LlamaIndex，通用但学习曲线陡的 LangChain）适合深度定制。也可以混合：先用低代码验证，再用代码框架做生产级。</p>
+    <p class="go">走一遍企业级 RAG 的数据流。</p>
+  </div>
+  <div class="lab"><div id="entFlow"></div></div>
+  <div class="notes" id="n-ent"></div>
+</section>
+
+<section class="part" id="eval">
+  <div class="part-head"><h2>效果评测：检索准不准，生成忠不忠</h2><span class="meta">原教程 RAG 入门 第 5.3 节</span></div>
+  <div class="sec-lede">
+    <p>原教程说，企业落地 RAG 最大的挑战往往不是构建而是<strong>调优</strong>：检索和生成都是非确定性的，传统软件测试不适用，必须建立可量化的评测。入门做法是 <strong>LLM-as-a-Judge</strong>：让一个模型从知识库采样出“问题 + 参考答案”合成评测集，让 RAG 系统作答，再让另一个模型对照参考答案判分，形成“评测 → 优化 → 再评测”的循环。</p>
+    <p>指标分两组。<strong>检索</strong>：<strong>Recall@K</strong>（前 K 条里找回了多少比例的相关文档，覆盖面）、<strong>Precision@K</strong>（前 K 条里有多少是相关的，准确度）、F1；排序质量看 <strong>MRR</strong>（第一个相关文档排名的倒数，适合只要一个正确答案的问答）、<strong>NDCG@K</strong>（考虑相关程度分级和位置衰减，最全面）、MAP。原教程推荐工程上用 <strong>Recall@K + MRR@K</strong> 组合：如果 Recall@10 有 80% 而 MRR@10 只有 0.3，说明相关文档找到了但都埋在后面，该优化重排了。<strong>生成</strong>：EM 精确匹配（太严，“2020年1月1日”和“2020-01-01”算不匹配）、ROUGE / BLEU / METEOR（词汇重叠，只看表面）、BertScore 或向量相似度（语义层面）、以及最关键的 <strong>Faithfulness / 幻觉率</strong>：让模型逐句核查答案能否在检索文档里找到依据。评测框架有 RAGAS、ARES 等。</p>
+    <p class="go">下面是一次检索返回的前 8 条结果，知识库里一共有 3 篇相关文档。点击标出哪些是相关的，调 K，看指标怎么变。</p>
+  </div>
+  <div class="lab">
+    <label style="display:block;font-size:15px;color:var(--ink-2)">K = <b id="kV">5</b><input type="range" id="kR" min="1" max="8" step="1" value="5" style="width:100%;accent-color:var(--s1)"></label>
+    <div class="rank" id="rank"></div>
+    <div class="metrics" id="metrics"></div>
+    <p class="note" id="metNote"></p>
+  </div>
+  <div class="confuse">
+    <h4>易混辨析：Recall@K vs Precision@K vs MRR</h4>
+    <p><b>Recall@K</b> 的分母是知识库里<b>所有相关文档数</b>：3 篇相关、前 K 条找回 2 篇，就是 67%，问的是“漏了多少”。<b>Precision@K</b> 的分母是 <b>K</b>：前 5 条里 2 篇相关，就是 40%，问的是“混进了多少噪音”。<b>MRR</b> 只看<b>第一篇相关文档排第几</b>：排第 3 就是 1/3，问的是“用户要往下翻多久”。K 调大，Recall 只增不减，Precision 往往下降。</p>
+  </div>
+  <div class="notes" id="n-eval"></div>
+</section>
+
+<section class="part" id="comp">
+  <div class="part-head"><h2>从竞赛和开源教程里学什么</h2><span class="meta">原教程 RAG 入门 第 6–7 节</span></div>
+  <div class="sec-lede">
+    <p>原教程建议：遇到具体问题时，按关键词（PDF 解析、多模态检索、低延迟）去找相关竞赛，读获奖方案。它挑了几个。<strong>语义缓存</strong>（Hugging Face 教程）：生产环境里大量重复问题（“如何退款”）每次都检索加生成，又慢又贵；在用户查询和向量库之间加一层缓存，相似问题直接命中。一个细节值得记：它<strong>缓存的是检索结果，而不是最终回答</strong>，否则“用简单语言解释”这类个性化要求会失效。<strong>多格式解析</strong>（Unstructured）：PDF、PPT、EPUB、HTML 统一解析成带元素类型（正文、标题、表格）的结构，按标题分块。</p>
+    <p><strong>Enterprise RAG Challenge 冠军方案</strong>：2.5 小时内解析 100 份最长上千页的年报，回答 100 个必须给出页码引用的精确问题。几个做法很有代表性：用擅长复杂表格的 Docling 解析并修补表格结构；300 token 分块、50 重叠；<strong>每家公司单独建一个向量库</strong>，避免查 A 公司 CEO 时检索到 B 公司；检索 Top 30 块后<strong>回溯到父页面并去重</strong>，再用小模型对页面重排，向量分数与重排分数按 0.3 : 0.7 混合；按答案类型（数字、布尔、名称）用不同提示词，数字题走识别指标、定位表格、提取、核对单位、交叉验证五步；多公司比较题拆成单公司子查询。原教程提到它即使用 8B 小模型也能超过八成参赛者。<strong>AIOps 竞赛</strong>的经验是给每块加知识库路径等元信息，召回率提升了 2%；图片先 OCR 再用多模态模型生成描述。</p>
+    <p>未来方向上，原教程列了 Graph RAG（用关系网络做深度检索）、多模态 RAG、Late Chunking（先对长文档整体编码再切块，保留上下文）和 Agent 时代的 RAG（检索变成 Agent 可以按需调用的工具）。</p>
+    <p class="go">这些做法分别解决了什么问题？</p>
+  </div>
+  <div class="lab"><div id="compCards"></div></div>
+  <div class="notes" id="n-comp"></div>
+</section>
+
+<section class="part" id="cs">
+  <div class="part-head"><h2>用 LangGraph 做客服 Agent：补问、查询、升级</h2><span class="meta">原教程 企业级客服 Agent 实战</span></div>
+  <div class="sec-lede">
+    <p>原教程用一个在线教育平台的客服举例，开篇一句话：<strong>企业级客服 Agent 的目标不是“多回答一点”，而是“在该自动时自动，在不确定时补问，在高风险时转人工”。</strong>设计要从业务出发：哪些问题最高频、哪些规则明确最适合自动化、哪些风险太高不能自动决定、哪些必须接业务系统不能只靠知识库。用户晚上十点说“我明明付了钱，为什么课程还是打不开”，成熟的系统不会立刻编答案，而是先判断这是支付、权限、退款还是账号问题，订单号和账号是否齐全，该查知识库还是查业务系统，是普通请求还是高风险投诉。</p>
+    <p>LangGraph 适合客服，不是因为它更会聊天，而是因为<strong>客服本身就是状态流转问题</strong>。每个请求最终落到四种去向之一：<strong>补信息、查知识库、查业务系统、转人工</strong>。有两类信息要分开：知识规则（FAQ、SOP、退款规则）查知识库，实时状态（订单、权限、支付）查业务系统。用户明确要人工，或出现重复扣费、投诉、法务、隐私、情绪激烈，直接标记高风险转人工，并<strong>附带上下文</strong>，人工不必重问一遍。上线还要有审计追踪（事后能复盘为什么这样路由）和覆盖常见、边界、高风险问题的离线评测集。</p>
+    <p class="go">走一遍这张客服流程图。</p>
+  </div>
+  <div class="lab"><div id="csFlow"></div></div>
+  <div class="lab"><div id="routeCards"></div></div>
+  <div class="notes" id="n-cs"></div>
+</section>
+
+<section class="part" id="kb">
+  <div class="part-head"><h2>用 LlamaIndex 做企业知识库：持续治理的循环</h2><span class="meta">原教程 企业级知识库实战</span></div>
+  <div class="sec-lede">
+    <p>如果说 LangGraph 解决“Agent 应该怎么跑”，LlamaIndex 解决的是“企业知识应该怎样被接入、组织、检索和回答”。原教程的一句话：<strong>企业级知识库不是“把 PDF 塞给模型”，而是“把分散知识变成一个可维护、可检索、可追溯的入口”。</strong>场景是给客服、销售、实施团队用的内部产品知识助手，问题像“企业版能不能配置多个审批流”“为什么我记得以前写的是 100 人上限，现在好像不是了”。</p>
+    <p>真实企业知识有五个特点：来源多（不只 PDF）、更新频繁（旧答案很快过时）、可信度不同、有些在数据库或配置表里、有些要结合实时系统。所以要解决的不是“有没有文档”，而是：去哪里找、哪份最可信、怎么避免旧版本干扰、怎么稳定地组织成回答。原教程的结构是一个循环：知识来源 → 接入与解析 → <strong>按知识域拆分索引</strong> → 检索与重排 → <strong>证据化回答</strong> → 业务同学使用 → <strong>反馈与治理</strong> → 回到接入。它还点出一个容易忽视的事实：<strong>用户怎么问，和企业文档怎么写，往往不是同一种语言</strong>，所以第一步是做问题理解和知识路由，判断问题属于产品功能、套餐定价、FAQ、内部 SOP 还是版本更新，新旧版本冲突时优先最新版，超出能力就说明需要查系统或人工确认。</p>
+    <p class="go">这条路由提示词可以直接改用。</p>
+  </div>
+  <div class="pcard" data-t="问题理解与知识路由" data-k="原教程 LlamaIndex 一章"><pre>你是企业知识库系统里的“问题理解与知识路由助手”。
+你的任务：
+1. 判断用户问题属于哪个知识域：产品功能、套餐定价、FAQ、内部 SOP、版本更新。
+2. 判断问题更适合查文档、FAQ，还是需要结合业务系统。
+3. 如果问题涉及旧版本与新版本冲突，优先提醒系统关注最新版本文档。
+4. 如果问题超出知识库能力，不要编造，明确说明需要查业务系统或人工确认。
+输出格式：
+- 问题所属知识域：
+- 推荐查询来源：
+- 是否涉及版本冲突：
+- 是否需要人工确认：</pre></div>
+  <div class="lab"><div id="kbPipe"></div></div>
+  <div class="notes" id="n-kb"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 长上下文时代为什么还要 RAG？</summary><p class="ans">三类问题：成本与效率（上下文越长成本和延迟越高，大部分内容与问题无关是浪费）；注意力与聚焦（长上下文中早期信息被忽略，无关和冲突内容把回答带偏）；知识更新与可控性（知识在参数里要重训，在提示词里难维护，而且说不清依据哪条信息）。RAG 只检索必要知识、知识存在外部库便于更新、回答可附引用来源，解决时效、专业、幻觉、可审计和成本问题。</p></details>
+    <details><summary>2. 三代 RAG 各改进了什么？四种查询改写？</summary><p class="ans">Naive RAG：固定切块、向量 Top-K、简单拼接，验证了先查再答。Advanced RAG：检索前做语义分块、分层索引、元数据和查询改写，检索后做 Rerank、去重压缩和引用。Modular RAG：可插拔模块按需编排，查询路由、多源检索融合、记忆个性化、任务适配与治理，可多轮往返检索。四种改写：Query Rewrite（口语化问题标准化）、Multi-Query（多个角度的查询）、Sub-Query（复合问题拆成子问题）、Step-back（先问更宏观的上位问题再回推）。</p></details>
+    <details><summary>3. 检索评测看什么？Recall@10 高 MRR 低说明什么？</summary><p class="ans">覆盖面看 Recall@K，噪音看 Precision@K，排序看 MRR、NDCG@K、MAP，工程上常用 Recall@K + MRR@K 组合；生成侧看 EM、ROUGE 等文本相似度、BertScore，以及最关键的 Faithfulness / 幻觉率，也可以用 LLM-as-a-Judge 多维评分。Recall@10 高而 MRR 低说明相关文档找到了但排在后面，应优化重排序（交叉编码器 Rerank、调整多路召回权重）。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.cards($('#whyCards'), {
+  opts: ['成本与效率', '注意力与聚焦', '更新与可控'],
+  items: [
+    { t: '把 300 页产品手册全部放进每次请求，账单和延迟都上去了。', a: 0, why: '大部分内容与当前问题无关，推理成本随上下文增长。' },
+    { t: '价格政策上周改了，模型还在按旧价格回答。', a: 2, why: '知识在参数或旧提示词里，更新困难。' },
+    { t: '答案明明在资料第 20 页，模型却引用了后面一段不相关的内容。', a: 1, why: '长上下文中早期信息容易被忽略，无关内容会干扰。' },
+    { t: '审计要求说明这条结论依据的是哪条制度，说不出来。', a: 2, why: '可追溯性差；RAG 让回答附带具体来源。' }
+  ]
+});
+
+/* ---------- 苹果知识库 ---------- */
+var DOCS = { A: '苹果公司于 1976 年 4 月 1 日由乔布斯、沃兹尼亚克和韦恩创立，总部位于库比蒂诺。', B: '苹果是一种水果，富含维生素 C 和膳食纤维，有助于消化和免疫系统健康。', C: '苹果公司在 2007 年推出了第一款 iPhone，彻底改变了智能手机行业。' };
+var QS = [
+  { s: { A: 0.92, C: 0.68, B: 0.21 }, ans: '苹果公司于 1976 年 4 月 1 日创立（依据：文档 A）。', need: 'A' },
+  { s: { B: 0.89, A: 0.26, C: 0.19 }, ans: '吃苹果可以补充维生素 C 和膳食纤维，有助于消化和免疫（依据：文档 B）。', need: 'B' },
+  { s: { B: 0.18, C: 0.10, A: 0.08 }, ans: '根据现有资料无法回答“今天天气怎么样”，参考信息中没有天气相关内容。', need: null }
+];
+var qi = 0;
+function drawSim() {
+  var th = +$('#thR').value; $('#thV').textContent = th.toFixed(2);
+  var q = QS[qi], keys = Object.keys(q.s).sort(function (a, b) { return q.s[b] - q.s[a]; });
+  var top = keys.slice(0, 2), sent = top.filter(function (k) { return q.s[k] >= th; });
+  $('#simTbl').innerHTML = keys.map(function (k, i) {
+    var inTop = i < 2, ok = inTop && q.s[k] >= th;
+    return '<tr class="' + (ok ? 'in' : 'out') + '"><td>' + k + ' · ' + q.s[k].toFixed(2) + '</td><td>' + DOCS[k] + '</td><td>' + (ok ? '送进模型' : inTop ? '低于阈值，丢弃' : 'Top-2 之外') + '</td></tr>';
+  }).join('');
+  var msg;
+  if (q.need && sent.indexOf(q.need) < 0) msg = '<p style="color:var(--alert)"><b>阈值太高，把正确答案也挡掉了。</b>模型只能回答“根据现有资料无法回答”。</p>';
+  else if (!q.need && sent.length) msg = '<p style="color:var(--s2)"><b>阈值太低：</b>无关片段被送进了模型。好在系统提示词要求“没有答案就说无法回答”，模型最终回复：</p><p>' + q.ans + '</p><p class="note">但这些无关片段浪费了上下文，也增加了模型被带偏的风险。</p>';
+  else msg = '<p><b>模型回复：</b>' + q.ans + '</p>' + (!q.need ? '<p class="note">阈值过滤后召回为空，模型依照系统提示词直接拒答，这是最干净的结果。</p>' : '');
+  $('#simOut').innerHTML = msg;
+}
+S.seg($('#qSeg'), function (v) { qi = +v; drawSim(); });
+$('#thR').addEventListener('input', drawSim); drawSim();
+
+HB.layers($('#genLayers'), {
+  hint: '点一个组件，看它解决什么。',
+  layers: [
+    { t: 'Naive RAG', sub: '第一代：三步走', items: [
+      { t: '固定长度切块', d: '实现简单，但会把一段话拦腰截断，或把多个主题混在一块。' },
+      { t: '向量 Top-K', d: '只靠向量相似度排序，不看关键词、时间、来源可信度、访问权限。' },
+      { t: '简单拼接', d: '检索结果原样塞进提示词，噪音、重复、矛盾都进了上下文。' }
+    ] },
+    { t: 'Advanced RAG', sub: '第二代：检索前后精细化', items: [
+      { t: '语义分块 / 分层索引', tag: '检索前', d: '按章节、段落、句子边界切分，滑动窗口和多粒度索引。' },
+      { t: '元数据', tag: '检索前', d: '来源、时间、作者、主题、类型，用于过滤和排序。' },
+      { t: '查询改写', tag: '检索前', d: 'Query Rewrite、Multi-Query、Sub-Query、Step-back。' },
+      { t: 'Rerank', tag: '检索后', d: '用重排模型或 LLM 二次排序，最相关的先进上下文。' },
+      { t: '去重压缩与引用', tag: '检索后', d: '去掉无关和重复片段，缓解“中间被忽略”；让模型依据证据作答并给出处。' }
+    ] },
+    { t: 'Modular RAG', sub: '第三代：可插拔模块', items: [
+      { t: '查询理解与路由', d: '意图识别、拆解、选路径：查内部知识、外部搜索，还是调工具或数据库。' },
+      { t: '多源检索与融合', d: '向量库、全文检索、关系数据库、知识图谱、搜索引擎，结果统一融合排序。' },
+      { t: '记忆与个性化', d: '长期画像、短期会话记忆，比如记住用户偏好“先结论后细节”。' },
+      { t: '任务适配与治理', d: '同一批证据按受众输出不同格式，做事实核查和强制引用。' },
+      { t: '多轮与自我决策', d: '信息不足时主动再检索；有把握时不检索；问题模糊时先生成假设答案再去找证据。' }
+    ] }
+  ]
+});
+
+HB.cards($('#qtCards'), {
+  opts: ['Query Rewrite', 'Multi-Query', 'Sub-Query', 'Step-back'],
+  items: [
+    { t: '“咋查明天北京的天气啊” → “查询北京市明日全天实时天气”', a: 0, why: '去掉口语、补全关键限定，变成检索系统好理解的标准表述。' },
+    { t: '“北京到上海的高铁明天有哪些班次？票价多少？要坐多久？”', a: 2, why: '复合问题拆成班次、票价、时长三个独立子查询。' },
+    { t: '“如何给刚满月的宝宝拍嗝” → 分别从姿势、防吐奶、月龄、新手场景各生成一条查询', a: 1, why: '同一问题多个角度，避免单一查询遗漏。' },
+    { t: '“为什么某品牌今年销量突然下降” → 先问“影响新能源车销量波动的核心因素有哪些”', a: 3, why: '先生成更宏观的上位问题，再回推具体检索方向。' }
+  ]
+});
+
+EV.flow($('#entFlow'), {
+  nodes: [{ k: 'src', t: '原始资料', sub: 'PDF / PPT / 扫描件 / 录音' }, { k: 'parse', t: '版面分析', sub: 'OCR / ASR / 结构' }, { k: 'idx', t: '知识库构建', sub: '切分 + Embedding + 索引' }, { k: 'ret', t: '召回与精排', sub: 'Top N → Rerank → Top K' }, { k: 'llm', t: 'LLM 生成', sub: '附引用' }],
+  steps: [
+    { a: 'src', b: 'parse', m: '按格式解析', d: '区分标题、正文、表格、页眉页脚，恢复阅读顺序；扫描件 OCR、录音 ASR；保留文档名、章节、页码。' },
+    { a: 'parse', b: 'idx', m: '切分并向量化', d: '按段落或标题结构切分，保留来源元数据；Embedding 模型选型看维度和上下文长度；写入 Faiss / Milvus 等索引。' },
+    { a: 'ret', b: 'idx', m: '问题向量化，粗排 Top N', d: '在线阶段：用户问题转成向量，先召回一批最相似的块。' },
+    { a: 'ret', b: 'ret', m: 'Rerank 精排出 Top K', d: '用重排模型给（问题，文档）对打分；选型同时看精度和延迟。' },
+    { a: 'ret', b: 'llm', m: '系统提示词 + 证据 + 问题', d: '“请严格基于以下资料回答”，生成答案并附上引用和页码。' }
+  ]
+});
+
+/* ---------- 检索指标计算 ---------- */
+var RES = ['退款政策总则（第 3 章）', '会员权益说明', '7 天无理由退款条件', '常见支付问题', '退款到账时间说明', '发票开具流程', '课程有效期规定', '特殊商品不支持退款'];
+var rel = { 0: true, 2: true, 7: true };
+var TOTAL_REL = 3;
+var rankBox = $('#rank');
+RES.forEach(function (t, i) {
+  var b = h('button', { type: 'button', 'aria-pressed': rel[i] ? 'true' : 'false', html: '<em>#' + (i + 1) + '</em><span>' + t + '</span><em class="tag">' + (rel[i] ? '相关' : '—') + '</em>' }, rankBox);
+  b.addEventListener('click', function () { rel[i] = !rel[i]; b.setAttribute('aria-pressed', rel[i] ? 'true' : 'false'); $('.tag', b).textContent = rel[i] ? '相关' : '—'; drawMet(); });
+});
+function drawMet() {
+  var K = +$('#kR').value; $('#kV').textContent = K;
+  var hit = 0, first = 0;
+  $$('button', rankBox).forEach(function (b, i) { b.classList.toggle('cut', i >= K); if (i < K && rel[i]) { hit++; if (!first) first = i + 1; } });
+  var nrel = Object.keys(rel).filter(function (k) { return rel[k]; }).length;
+  var denom = Math.max(TOTAL_REL, nrel);
+  var R = hit / denom, P = hit / K, RR = first ? 1 / first : 0;
+  $('#metrics').innerHTML = '<div><b>' + S.pct(R, 0) + '</b>Recall@' + K + '（' + hit + ' / ' + denom + '）</div><div><b>' + S.pct(P, 0) + '</b>Precision@' + K + '（' + hit + ' / ' + K + '）</div><div><b>' + S.f(RR, 2) + '</b>RR（第一篇相关排第 ' + (first || '—') + '）</div>';
+  var note = '';
+  if (R >= 0.66 && RR < 0.5) note = '召回不错但第一篇相关文档排得靠后，正是“Recall 高、MRR 低”的情形：该加强重排。';
+  else if (R < 0.5) note = '漏掉了一半以上的相关文档：先查 Embedding 模型、切分方式和查询改写。';
+  else if (P < 0.4) note = 'K 偏大，噪音多；送进模型前要靠 Rerank 和阈值过滤。';
+  else note = '覆盖面和排序都还可以。知识库总相关数按 3 篇算；你标出的相关文档多于 3 篇时，按标出的数量算。';
+  $('#metNote').textContent = note;
+}
+$('#kR').addEventListener('input', drawMet); drawMet();
+
+HB.cards($('#compCards'), {
+  opts: ['降成本降延迟', '防止信息串台', '提高可追溯性', '提高召回'],
+  items: [
+    { t: '在用户查询和向量库之间加语义缓存，相似问题直接命中。', a: 0, why: '高频重复问题不再每次都检索；注意缓存检索结果而非最终回答。' },
+    { t: '每家公司单独建一个向量库。', a: 1, why: '避免查 A 公司的 CEO 时检索到 B 公司的信息。' },
+    { t: '答案必须给出年报页码，检索后回溯到父页面再重排。', a: 2, why: '以页面为单位组织证据，便于业务人员核对。' },
+    { t: '给每个文本块加上知识库路径、文件路径等元信息。', a: 3, why: 'AIOps 竞赛方案中这一改进让召回率提升了约 2%。' }
+  ]
+});
+
+EV.flow($('#csFlow'), {
+  nodes: [{ k: 'in', t: '识别与抽取', sub: '问题类型 + 关键字段' }, { k: 'ask', t: '补问', sub: '信息不全' }, { k: 'kb', t: '知识库', sub: 'FAQ / SOP / 退款规则' }, { k: 'sys', t: '业务系统', sub: '订单 / 权限 / 支付' }, { k: 'hum', t: '转人工', sub: '附带上下文' }],
+  steps: [
+    { a: 'in', b: 'in', m: '“我付了钱，课程还是打不开”', d: '识别为权限 / 支付类问题；抽取字段：订单号缺失。' },
+    { a: 'in', b: 'ask', m: '信息不全 → 先停下来补问', d: '“方便提供一下订单号或下单手机号吗？”拿到后回到抽取步骤。不要在缺信息时硬答。' },
+    { a: 'in', b: 'sys', m: '实时状态 → 查订单和权限', d: '支付成功但权限未开通，属于实时数据问题，查业务系统而不是知识库。' },
+    { a: 'in', b: 'kb', m: '规则问题 → 查知识库', d: '如果用户问“这种情况能退款吗”，退款规则在 SOP 里，走知识检索。' },
+    { a: 'in', b: 'hum', m: '命中高风险 → 转人工', d: '重复扣费、投诉、法务、隐私、情绪激烈或明确要求人工时，直接升级，并把已识别的类型、订单、查询结果一起交给人工，用户不必重说一遍。' }
+  ]
+});
+
+HB.cards($('#routeCards'), {
+  opts: ['补信息', '查知识库', '查业务系统', '转人工'],
+  items: [
+    { t: '“我这个订单能退款吗？”（没给订单号）', a: 0, why: '是否能退取决于订单状态，先补问订单号。' },
+    { t: '“你们的退款规则是什么？”', a: 1, why: '规则类问题，查 SOP 和 FAQ。' },
+    { t: '“订单 20261024xxx 扣款了，页面没显示成功。”', a: 2, why: '实时支付状态，查业务系统。' },
+    { t: '“你们同一笔扣了我两次钱！我要投诉！”', a: 3, why: '重复扣费 + 投诉 + 情绪激烈，高风险直接升级。' },
+    { t: '“我要找人工。”', a: 3, why: '用户明确要求人工。' }
+  ]
+});
+
+HB.pipe($('#kbPipe'), {
+  intro: '循环完整：知识接入有结构、按域索引、检索有重排、回答有证据、使用有反馈、问题回流治理。',
+  steps: [
+    { t: '接入与解析', d: '多来源、保留版本和来源信息', miss: '旧版文档和新版混在一起，没人知道哪份是最新的。' },
+    { t: '按知识域拆分索引', d: '产品功能 / 定价 / FAQ / SOP / 版本更新', miss: '问定价时检索到功能介绍，问题与文档语言不一致时更容易串。' },
+    { t: '检索与重排', d: '路由到对应知识域，再精排', miss: '相关内容找得到但排不到前面。' },
+    { t: '证据化回答', d: '附来源，冲突时优先最新版', miss: '回答说得像真的但无法核对，“以前写 100 人上限”这类冲突没人发现。' },
+    { t: '反馈与治理', d: '记录答不好的问题，回流补资料', miss: '知识库上线即过时，越用越不可信。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-why'), {
+  c: [
+    ['RAG', '生成前先检索相关资料，连同问题交给模型'],
+    ['两个阶段', '索引（切分、向量化、入库）；检索生成（问题向量化、Top-K、拼接、生成）']
+  ],
+  p: [
+    ['长上下文的三类问题', '成本效率、注意力聚焦、知识更新与可控'],
+    ['RAG 解决的五个问题', '时效、专业、幻觉、可解释可审计、算力成本']
+  ]
+});
+S.notes($('#n-how'), {
+  c: [
+    ['余弦相似度', '比较问题向量和片段向量的方向接近程度'],
+    ['相似度阈值', '低于阈值的片段不返回，无关问题得到空召回']
+  ],
+  p: [
+    ['Top-K 的陷阱', '总会返回 K 条，哪怕都不相关'],
+    ['两道防线', '阈值过滤 + 系统提示词要求无答案就拒答'],
+    ['结构化输入', '系统指令定规则、检索证据给素材、用户问题定任务']
+  ]
+});
+S.notes($('#n-gen'), {
+  c: [
+    ['Naive RAG', '固定切块、向量 Top-K、简单拼接'],
+    ['Advanced RAG', '检索前分块元数据和查询改写，检索后 Rerank 去重引用'],
+    ['Modular RAG', '路由、多源融合、记忆、治理，可多轮检索']
+  ],
+  p: [
+    ['Query Rewrite', '口语化问题标准化'],
+    ['Multi-Query', '同一问题多个角度'],
+    ['Sub-Query', '复合问题拆子问题'],
+    ['Step-back', '先问上位问题再回推']
+  ]
+});
+S.notes($('#n-ent'), {
+  c: [
+    ['三个模块', '版面分析与采集、知识库构建、在线问答'],
+    ['三类模型', 'Embedding 召回、Rerank 精排、LLM 生成']
+  ],
+  p: [
+    ['Embedding 选型', '看 MTEB；维度高更精细、低更快；上下文长度不足会截断'],
+    ['Rerank 选型', '精度和延迟一起看'],
+    ['框架', '低代码（Dify、RAGFlow、FastGPT）快；代码框架（LlamaIndex、LangChain）可定制']
+  ]
+});
+S.notes($('#n-eval'), {
+  c: [
+    ['LLM-as-a-Judge', '合成评测集 → 系统作答 → 另一个模型判分'],
+    ['Faithfulness', '答案每句话能否在检索文档里找到依据']
+  ],
+  p: [
+    ['Recall@K', '找回的相关数 / 所有相关数（漏了多少）'],
+    ['Precision@K', '前 K 条里相关的比例（噪音多少）'],
+    ['MRR', '第一篇相关文档排名的倒数'],
+    ['推荐组合', 'Recall@K + MRR@K；Recall 高 MRR 低 → 优化重排']
+  ]
+});
+S.notes($('#n-comp'), {
+  c: [
+    ['语义缓存', '相似问题命中缓存；缓存检索结果而非最终回答'],
+    ['按实体分库', '每家公司一个向量库，防止信息串台']
+  ],
+  p: [
+    ['冠军方案要点', 'Docling 解析表格、父页面回溯、0.3:0.7 混合重排、按答案类型分提示词'],
+    ['元信息', '加知识库路径等元信息可提升召回'],
+    ['未来方向', 'Graph RAG、多模态 RAG、Late Chunking、Agent 时代的 RAG']
+  ]
+});
+S.notes($('#n-cs'), {
+  c: [
+    ['客服 Agent 的目标', '该自动时自动，不确定时补问，高风险时转人工'],
+    ['状态流转', '客服本质是状态在几个模块间流转，适合 LangGraph']
+  ],
+  p: [
+    ['四种去向', '补信息、查知识库、查业务系统、转人工'],
+    ['两类信息', '规则查知识库，实时状态查业务系统'],
+    ['高风险', '重复扣费、投诉、法务、隐私、情绪激烈、要求人工；转人工附上下文'],
+    ['上线前', '审计追踪 + 覆盖高风险的离线评测集']
+  ]
+});
+S.notes($('#n-kb'), {
+  c: [
+    ['企业知识库', '把分散知识变成可维护、可检索、可追溯的入口'],
+    ['语言差异', '用户怎么问和文档怎么写往往不是同一种语言']
+  ],
+  p: [
+    ['五个特点', '来源多、更新频繁、可信度不同、部分在数据库、部分要实时系统'],
+    ['循环', '接入解析 → 按域索引 → 检索重排 → 证据化回答 → 使用 → 反馈治理'],
+    ['路由', '先判断知识域和查询来源，版本冲突优先最新版']
+  ]
+});
+
+EV.todo($('#todo'), '14', [
+  { t: '在自己的知识库上测三个问题：一个能答、一个部分能答、一个完全无关，观察召回和回答', d: '' },
+  { t: '给无关问题设好相似度阈值，并在系统提示词里写明“无答案就拒答”', d: '' },
+  { t: '为一个复合问题分别试 Sub-Query 和 Multi-Query，看召回是否变好', d: '' },
+  { t: '准备 20 条“问题 + 参考答案”，手工算一次 Recall@5 和 MRR', d: '' },
+  { t: '为你的客服或助手场景列出高风险条件和转人工时要附带的上下文', d: '' },
+  { t: '给知识库加上版本和来源元数据，并建立“答不好的问题”回流记录', d: '' }
+]);

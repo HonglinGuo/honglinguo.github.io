@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>规格驱动、Skills 与 MCP</title>
+<meta name="description" content="Easy-Vibe 学习笔记（十二）：Vibe Coding 的天花板与该转向 Spec 的七个信号；Spec 要回答的三个问题、四层结构，spec / plan / tasks 的区别；把模糊需求变成规格的四步，EARS 与 Given-When-Then；Specify → Plan → Tasks → Implement → Verify；Spec Kit、OpenSpec、Kiro、Matt Pocock Skills、Superpowers、BMAD 怎么选；Skills 的结构与渐进式加载；MCP 的配置与最佳实践；Skills 与 MCP 的分工。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+</head>
+<body data-series="easyvibe-series" data-part="12">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 12</span><span>对应原教程 三阶段 Spec Coding、Skills、MCP、Superpowers</span><span>约 40 分钟</span></p>
+  <h1>先把意图写成可以检查的规格，<em>再让 AI 写代码</em></h1>
+  <p class="lead">原教程第三阶段用一个通知中心的例子开场：一句话需求，十分钟页面就能打开；接着想到要分类型、能关闭、未读数实时变、推送不受影响，于是 AI 一轮轮改，数据结构被推翻，页面和接口字段名不一致，最后没人说得清“怎样才算完成”。这是 Vibe Coding 的天花板：适合快速探索，不擅长长期保存完整意图。这一篇讲它的解法 Spec Coding，以及让 AI 记住“怎么做”的 Skills、给 AI 接上“能用什么”的 MCP，和把两者组织成工程纪律的 Superpowers。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" aria-current="page" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#why">何时转向 Spec</a><a href="#spec">Spec 是什么</a><a href="#write">写规格四步</a><a href="#flow">五段式工作流</a><a href="#tools">Spec 工具怎么选</a><a href="#skills">Skills</a><a href="#mcp">MCP</a><a href="#sp">Superpowers</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>什么时候应该从 Vibe Coding 转向 Spec Coding？一份 Spec 至少要回答哪三个问题？</li>
+    <li>spec.md、plan.md、tasks.md 有什么区别？需求变化时为什么要先改 Spec？</li>
+    <li>Skills 和 MCP 各提供什么？Skills 为什么装一百个也不会撑爆上下文？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>Vibe 没有错，只是有适用范围</h2><span class="meta">原教程 Spec Coding 第 1 节</span></div>
+  <div class="sec-lede">
+    <p>Vibe Coding 的最大优点是快：你不必先知道正确答案，可以一边看结果一边找方向。半小时后就丢弃的界面草图、试探一个陌生框架能不能做到某个效果、一次性数据脚本、Hackathon 证明想法、调颜色间距文案，这些都适合直接 Vibe。原教程举的指令是“先做一个可点击的通知中心原型，用假数据，只验证列表、未读标记和筛选，暂时不接后端”。</p>
+    <p>原教程给了<strong>七个该转向 Spec 的信号</strong>，出现两三项就说明只靠聊天不够了：要改多个模块或很多文件；有权限、支付、隐私、数据安全要求；边界和失败情况很多；需要多人或多个 AI 会话接力；几周后还要维护；你开始频繁说“这个前面不是讲过了吗”；功能能跑，但没人知道是否完整实现。区别在于：只靠聊天时需求散落在多轮对话里、想到什么改什么、AI 凭感觉判断完成、换会话就丢上下文；用 Spec 时已确认的需求集中在仓库文档里、先确认变更影响再改、AI 逐条对照验收标准、新会话先读同一份规格。</p>
+    <p>原教程的结论是：从 Vibe 到 Spec 不是新方法淘汰旧方法，而是<strong>项目从探索阶段进入了交付阶段</strong>。</p>
+    <p class="go">勾出你当前任务符合的信号，看看该用哪种方式。</p>
+  </div>
+  <div class="lab"><div id="sigCheck"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="spec">
+  <div class="part-head"><h2>Spec 是一份关于预期行为的共同约定</h2><span class="meta">原教程 Spec Coding 第 2 节</span></div>
+  <div class="sec-lede">
+    <p>原教程的定义：<strong>Spec 是一份关于预期行为的共同约定</strong>，至少要让人和 AI 都能回答三个问题：<strong>要做什么</strong>（用户最终能完成哪些事）、<strong>边界在哪里</strong>（哪些规则、异常、非目标不能忽略）、<strong>怎样证明完成</strong>（能观察或测试到哪些结果）。好的 Spec 不等于长文档，一个小功能一页就够，关键是具体、一致、可验证。“做一个好用的通知中心，界面现代、速度快、支持各种通知、注意安全”看起来写了不少，AI 仍然要猜什么叫好用、多快算快、谁能读通知。</p>
+    <p>原教程给了一个四层结构：<strong>产品目标</strong>（为什么做）、<strong>用户行为</strong>（用户能做什么）、<strong>规则与边界</strong>（什么情况下怎么处理）、<strong>验收证据</strong>（怎样证明做完）。技术方案很重要，但应该建立在行为已经明确的基础上。不要一开始只写“创建 NotificationService.ts”，因为<strong>文件存在并不能证明用户问题已经解决</strong>。</p>
+    <p>还要分清三个经常被混在一起的文档：<code>spec.md</code> 写期望的行为和验收标准（“用户可以将单条通知标记为已读”）；<code>plan.md</code> 写技术方案（“通过 PATCH /notifications/:id 更新状态”）；<code>tasks.md</code> 写可以按顺序完成的工作（“先实现读取列表，再实现单条已读”）。技术栈变了 plan 可能要重写，但只要用户仍然需要“标记已读”，spec 里的行为就不该变。</p>
+    <p class="go">先看一段需求从愿望清单变成可观察行为；再把句子分到三份文档里。</p>
+  </div>
+  <div class="lab"><p class="lab-t">通知中心：从愿望清单到可观察行为（原教程 2.1 节）</p><div id="specEvo"></div></div>
+  <div class="lab"><div id="docSort"></div></div>
+  <div class="notes" id="n-spec"></div>
+</section>
+
+<section class="part" id="write">
+  <div class="part-head"><h2>把一句模糊需求变成规格：四步</h2><span class="meta">原教程 Spec Coding 第 3–4、6.7 节</span></div>
+  <div class="sec-lede">
+    <p><strong>第一步：先让 AI 提问，不要马上写代码。</strong>让它找出会影响产品范围、数据结构和验收方式的问题，每次最多问 4 个并给推荐。通知中心这一轮确认了来源（订单、安全、活动三类站内通知）、渠道（不做手机推送）、偏好（活动可关，订单和安全不可关）、保留周期（列表 30 天，数据 90 天），这些拖到写完代码才确认，数据模型和接口都要返工。<strong>第二步：写清做什么和不做什么。</strong>“不做什么”不是消极信息，它在保护第一版，防止 AI 看到“通知中心”四个字就顺手搭一整套消息平台。</p>
+    <p><strong>第三步：把形容词改成验收标准。</strong>“实时”“安全”“友好”都无法直接验证，要追问“发生什么操作后，用户应该看到什么”。“未读数实时变化”被定义为：标记单条已读后，列表状态和顶部未读数在同一次操作完成后更新，不要求跨设备同步。<strong>第四步：补上失败情况和数据边界</strong>，至少检查四类：<strong>空状态</strong>（一条都没有显示什么）、<strong>失败状态</strong>（异常时能否重试、不清空已有列表）、<strong>权限边界</strong>（能不能读改别人的数据）、<strong>重复操作</strong>（已读的再标记一次会怎样）。不确定的内容放进“未解决问题”，不要伪装成结论。</p>
+    <p>原教程还推荐了两种写验收标准的句式。<strong>EARS</strong>：<code>WHEN 发生事件 THE SYSTEM SHALL 产生结果</code>，减少需求句子的歧义。<strong>Given / When / Then</strong>：给定初始状态、当发生操作、那么应看到什么，几乎可以直接转成测试。其他可迁移的方法还有 ADR（保存技术选择的原因）、纵向切片（每张任务交付一小段完整价值）、验证关卡（不许只凭任务勾选宣布完成）。</p>
+    <p class="go">判断下面这些句子能不能直接当验收标准。</p>
+  </div>
+  <div class="lab"><div id="accCards"></div></div>
+  <div class="pcard" data-t="最小 Spec 模板" data-k="原教程第 4 节，保存为 specs/功能名/spec.md"><pre># 功能名称
+## 1. 背景与目标
+- 当前问题：
+- 希望带来的结果：
+- 目标用户：
+## 2. 第一版范围
+- 用户可以……
+- 系统在……时应该……
+## 3. 第一版不做
+- 暂不支持……
+## 4. 业务规则
+- 当……时……；只有……可以……
+## 5. 边界与异常
+- 空状态：
+- 失败状态：
+- 权限边界：
+- 重复操作：
+## 6. 验收标准
+1. 给定……，当……，那么……
+## 7. 已确认的技术约束
+- 必须兼容 / 不允许引入 / 性能隐私安全要求：
+## 8. 未解决问题
+- [ ] 仍需要确认……</pre></div>
+  <div class="confuse">
+    <h4>易混辨析：EARS vs Given / When / Then</h4>
+    <p><b>EARS</b> 是写<b>需求句子</b>的格式，强调触发条件和系统义务：“WHEN 用户点击全部已读，THE SYSTEM SHALL 只更新当前账号的未读通知”，Kiro 的 requirements.md 就用它。<b>Given / When / Then</b> 是写<b>具体场景</b>的格式，带着具体数据：“Given 有 3 条未读，When 标记 1 条，Then 顶部显示 2”，更接近一条测试用例。前者定义规则，后者举例验证规则，常常搭配使用。</p>
+  </div>
+  <div class="notes" id="n-write"></div>
+</section>
+
+<section class="part" id="flow">
+  <div class="part-head"><h2>五段式工作流，和需求变化时的顺序</h2><span class="meta">原教程 Spec Coding 第 5、7–8 节</span></div>
+  <div class="sec-lede">
+    <p>有了文档不等于进入了 Spec Coding，真正的变化是<strong>后续规划、实现、验收都要引用它</strong>。原教程建议的仓库结构是：<code>CLAUDE.md</code> 或 <code>AGENTS.md</code> 放整个项目长期遵守的规则（怎么跑测试、哪些目录不能改、金额怎么存）；<code>specs/功能名/</code> 下放 spec.md、plan.md、tasks.md；具体功能的需求不要全堆进项目总规则。</p>
+    <p>GitHub Spec Kit 把流程概括为 Specify → Plan → Tasks → Implement，原教程再加一步独立的 <strong>Verify</strong>。每一步你要检查的东西不同：Specify 看范围、规则、非目标对不对；Plan 看方案是否符合现有项目约束；Tasks 看每项能否独立完成和验证；Implement 看是否只做当前任务、是否持续测试；Verify 看有没有漏项、回归或未经确认的假设。最后一步有个要点：<strong>不要根据任务勾选状态判断完成</strong>，要重新读 spec 逐条核对，并给出每条要求对应的代码或测试证据。</p>
+    <p>需求一定会变。原教程的例子：上线后用户提出“安全提醒即使读过也不能被普通用户删除”。正确顺序是先在 spec 里加规则和验收标准，再看 plan 和 tasks 是否要新增任务，然后改代码和测试，最后对照完整 spec 验证旧行为没被破坏。只在聊天里说一句“顺手加上”，下次会话就不知道这条规则为什么存在。同时 Spec 也不是写完就冻结，<strong>过时的 Spec 会给 AI 错误上下文，比没有文档更危险</strong>。原教程列的常见误区：把 Spec 写成文件清单、让 AI 独自决定权限隐私付费这类关键问题、追求一次写出完美长文档。</p>
+    <p class="go">逐步走一遍五段式工作流；下面的提示词可以按顺序直接用。</p>
+  </div>
+  <div class="lab"><div id="specFlow"></div></div>
+  <div class="pcard" data-t="① 先澄清需求" data-k="原教程 5.3 节"><pre>我要实现【功能名称】。先不要写代码。
+请先阅读当前仓库和已有项目规则，然后通过提问帮我明确：
+1. 第一版范围和非目标；
+2. 关键业务规则；
+3. 空状态、失败状态和权限边界；
+4. 可以验证的验收标准。
+每次最多问 4 个真正会影响实现的问题，并说明你的推荐。</pre></div>
+  <div class="pcard" data-t="② 生成规格 → ③ 规划和拆任务" data-k="原教程 5.3 节"><pre>根据我们已经确认的讨论，生成 specs/&lt;feature&gt;/spec.md。文档必须包含：背景与目标、第一版范围、非目标、业务规则、边界与异常、验收标准、技术约束和未解决问题。不要把尚未确认的假设写成结论，也不要开始实现。
+（确认后）阅读 spec.md 和现有代码。先生成 plan.md，说明数据、接口、受影响模块、风险和验证方式；再生成 tasks.md，把工作拆成有顺序、可独立验证的小任务。现在不要修改实现代码。</pre></div>
+  <div class="pcard" data-t="④ 逐项实现 → ⑤ 最终检查" data-k="原教程 5.3 节"><pre>按照 tasks.md 的依赖顺序逐项实现。每次只处理一项：先补充能证明当前行为缺失的测试，再实现，运行相关检查，最后更新任务状态并说明对应的验收标准。如果发现 Spec 有矛盾或缺少关键决定，先停下来指出，不要自行扩展范围。
+（全部完成后）不要根据任务勾选状态判断完成。请重新阅读 spec.md，逐条核对范围、业务规则和验收标准；同时运行测试、类型检查和构建。列出每条要求对应的代码或测试证据，发现遗漏就修复并重新验证。</pre></div>
+  <div class="notes" id="n-flow"></div>
+</section>
+
+<section class="part" id="tools">
+  <div class="part-head"><h2>主流 Spec 工具怎么选</h2><span class="meta">原教程 Spec Coding 第 6 节（截至 2026 年 8 月的调研）</span></div>
+  <div class="sec-lede">
+    <p>原教程核对了六个项目的官方文档。它们都在讲“先明确意图再写代码”，但解决的问题不同。<strong>GitHub Spec Kit</strong>：Specify → Plan → Tasks → Implement，每步生成 Markdown 工件，还有 clarify、analyze、checklist 查模糊点和跨文档矛盾，适合新项目和正式团队流程；需求特别大时先写一份浅层路线图，再让每个子功能各走一轮（Spec of Specs）。<strong>OpenSpec</strong>：Explore → Propose → Apply → Archive，以“一次变更”为单位维护增量规格，完成后归档并合并回稳定规格，流程轻，适合已有代码库持续迭代。<strong>Kiro Specs</strong>：Requirements → Design → Tasks，在 IDE 里直接审阅三份文件，需求用 EARS 格式。</p>
+    <p><strong>Matt Pocock Skills</strong>：grill-with-docs → to-spec → to-tickets → implement → code-review，把对话、GitHub / Linear 任务和提交连成一条线，适合让 Agent 跨多个会话持续工作；它的官方说明也提醒，讨论清楚且一个上下文窗口就能完成的工作，直接 implement 即可，不必为形式生成 Spec。<strong>Superpowers</strong> 不是另一种 Spec 格式，而是用强制技能守住实现质量（见本篇最后一节）。<strong>BMAD Method</strong> 用产品经理、架构师、开发、测试等角色化技能产出产品简报、PRD、架构、Story，适合从零规划多模块大型产品，给小功能用就太重。</p>
+    <p>原教程还提醒要事先决定 <strong>Spec 的生命周期</strong>：Spec-first（开发前用，交付后可丢，Matt Pocock 的快照模式）、Spec-anchored（交付后继续维护作为长期锚点，OpenSpec 的归档接近这种）、Spec-as-source（人主要改 Spec，再重新生成实现）。最后一条警告：<strong>不要把几套框架一起装进同一个项目</strong>，三个工具各自维护 spec 和完成状态只会制造冲突；选一个做主流程，再借用 EARS、ADR、TDD 这些方法。</p>
+    <p class="go">回答两个问题，看原教程推荐哪种组合。</p>
+  </div>
+  <div class="lab"><div id="toolPick"></div></div>
+  <div class="notes" id="n-tools"></div>
+</section>
+
+<section class="part" id="skills">
+  <div class="part-head"><h2>Skills：给 AI 的操作手册</h2><span class="meta">原教程 Claude Code Skills 完全指南</span></div>
+  <div class="sec-lede">
+    <p>没有 Skills 时，每次都要重新解释代码风格、提交信息怎么写；团队经验无法沉淀；不同人用出来的结果不一样。<strong>Skills</strong> 把专业知识、工作流程和最佳实践打包成可复用的“技能包”：一个目录，里面必须有 <code>SKILL.md</code>，可选 scripts、templates、references、examples。SKILL.md 分两部分：开头的 YAML 元数据（<code>name</code> 只能用小写字母数字连字符，会变成 <code>/name</code> 命令；<code>description</code> 描述什么时候用，越具体越容易被自动匹配），后面是 Markdown 写的使用场景、执行步骤、注意事项。放在 <code>~/.claude/skills/</code> 是个人全局技能，放在项目的 <code>.claude/skills/</code> 是团队共享技能，可以用 Git 管理。</p>
+    <p>和直接发提示词相比：提示词是临时的、每次重复说、存在对话里占 token、难以共享和版本控制；Skills 写一次反复用、按需加载、团队共享。原教程在“深入阅读”里讲了它的机制：Skills 不是可执行代码，而是在需要时注入上下文的指令。关键是<strong>三层渐进式加载</strong>：启动时只加载每个技能的 name 和 description（原教程估算每个几十 token）；被触发时才加载完整的 SKILL.md；脚本、模板、参考文档按需从文件系统读取，不占上下文。路由也没有硬编码，所有技能的描述交给模型自己判断该用哪个，所以 <strong>description 写得好不好，直接决定会不会被触发</strong>。</p>
+    <p>原教程推荐先装 find-skills（帮你找技能），再试几个现成的；自己写技能可以直接让 Claude 按需求生成，或用官方的 skill-creator。它给的实例有代码审查、Git 自动提交、测试生成、文档生成四个。</p>
+    <p class="go">先估一下：装了 100 个技能，启动时要占多少上下文？</p>
+  </div>
+  <div class="lab"><div id="skGuess"></div></div>
+  <div class="lab"><p class="lab-t">三层加载（token 数为原教程的估算）</p><div id="skBars"></div></div>
+  <div class="pcard" data-t="SKILL.md 骨架" data-k="据原教程模板整理"><pre>---
+name: code-review
+description: 审查当前改动的代码质量与安全问题。当用户要求“审查代码 / review / 看看这次改动有没有问题”时使用。
+---
+# 代码审查
+## 使用场景
+提交前、合并 PR 前。
+## 执行步骤
+1. 运行 git diff 查看改动
+2. 按清单检查：安全（注入、XSS、密钥）、性能（N+1）、错误处理、命名与规范
+3. 每个问题标出文件和行号，并给出修改建议
+## 输出格式
+按“严重 / 建议 / 可选”三级列出
+## 注意事项
+- 只审查改动部分，不重写无关代码</pre></div>
+  <div class="notes" id="n-skills"></div>
+</section>
+
+<section class="part" id="mcp">
+  <div class="part-head"><h2>MCP：给 AI 接上工具</h2><span class="meta">原教程 Claude Code MCP 完全指南；Skills 指南 · Skills vs MCP</span></div>
+  <div class="sec-lede">
+    <p>没有 MCP 的 Claude Code 能读写本地文件、改代码、跑命令，但看不了你的 GitHub Issues、连不了云数据库、调不了外部 API。<strong>MCP（Model Context Protocol）</strong>是让它连接外部工具和服务的协议，接上之后可以查和建 Issue、PR，查 SQLite / PostgreSQL，访问 Notion、Slack，做浏览器自动化。原教程演示了直接用自然语言让 Claude Code 帮你添加、查看、诊断 MCP 服务器。</p>
+    <p>配置分两级：用户级（全局，所有项目可用）和项目级（只对当前项目，可以提交到 Git 让团队共享，原教程推荐优先用项目级）。传输方式三种：<strong>STDIO</strong>（本地进程，用 npx 启动一个服务器）、<strong>HTTP</strong>（远程服务，带 Authorization 头）、<strong>SSE</strong>（服务器推送）。四条最佳实践：项目级配置优先；<strong>敏感信息环境变量化</strong>，配置里只写 <code>$GITHUB_TOKEN</code> 而不是真实 token；<strong>版本锁定</strong>，<code>npx -y</code> 默认拉最新版，可能突然不兼容或下架，在包名后加 <code>@版本号</code>；在 <code>.claude/README.md</code> 里文档化每个服务器的用途和所需配置。</p>
+    <p>读后核对一处路径：原教程写的项目级配置文件是 <code>.claude/mcp.json</code>；按当前 Claude Code 官方文档，项目级 MCP 配置放在项目根目录的 <code>.mcp.json</code>（可以用 <code>claude mcp add --scope project</code> 生成）。工具更新很快，路径和命令以官方文档为准。</p>
+    <p class="go">这些需求，该用 Skill、MCP 还是两者配合？</p>
+  </div>
+  <div class="lab"><div id="skMcpCards"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：Skills vs MCP</h4>
+    <p>原教程的比喻：把 Claude 比作一个工作人员，<b>MCP 是给他配的工具</b>（扳手、电脑、访问权限），解决“能用什么”；<b>Skills 是给他的操作手册</b>（怎么做代码审查、怎么提交），解决“怎么做”。Skills 是 Markdown 文件，MCP 是一个运行着的服务器加 JSON 配置。两者互补：代码审查时，Skill 定义审查步骤、清单和输出格式，GitHub MCP 提供读取 PR 和 diff 的能力。</p>
+  </div>
+  <div class="notes" id="n-mcp"></div>
+</section>
+
+<section class="part" id="sp">
+  <div class="part-head"><h2>Superpowers：用技能强制工程纪律</h2><span class="meta">原教程 Claude Code Superpowers 工程级开发</span></div>
+  <div class="sec-lede">
+    <p><strong>Superpowers</strong> 是 Jesse Vincent（obra）开发的开源技能框架，要解决的是：怎样让 AI 写出工程级而不是玩具级的代码。原教程的比喻：普通编码助手像聪明的实习生，能写出能跑的代码，但可能没测试、没文档；Superpowers 给他配了一位资深导师，强制走完整流程。它列出的问题正是 Vibe Coding 的老毛病：没规划直接写、先写代码再补测试甚至不写、需求模糊就动手、质量看“心情”。</p>
+    <p>标准流程是：<strong>brainstorming</strong>（苏格拉底式提问澄清需求）→ 设计文档（分块展示、等你确认）→ <strong>writing-plans</strong>（拆成 2–5 分钟的小任务）→ 子代理开发（每个任务一个独立子代理，两阶段审查：是否符合规格 + 代码质量）→ <strong>test-driven-development</strong>（强制 RED-GREEN-REFACTOR：先看到测试失败，再写最小实现，再重构）→ 代码审查 → <strong>verification-before-completion</strong>（宣布完成前运行真实检查，不接受“应该已经好了”）。技能有三种触发方式：关键词（说“TDD”“先写测试”）、场景（需求模糊时自动提问，出 bug 时启动 systematic-debugging）、手动调用。</p>
+    <p>原教程强调它的价值是<strong>强化纪律，不是无中生有</strong>：不提 TDD 时，模型写不写测试看训练习惯；提了 TDD，就被强制走红绿重构。快速原型和一次性脚本不必强求，生产级、多人协作、长期维护的项目才值得。它和 Spec 工具的关系是：Spec 负责“要做什么”，Superpowers 负责“怎样可靠地实现并证明”。</p>
+    <p class="go">逐步走一遍 Superpowers 的标准流程。</p>
+  </div>
+  <div class="lab"><div id="spFlow"></div></div>
+  <div class="notes" id="n-sp"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 何时转向 Spec？Spec 要回答哪三个问题？</summary><p class="ans">出现两三项以下信号时：改多个模块、涉及权限支付隐私安全、边界和失败情况多、需要多人或多会话接力、几周后还要维护、频繁说“前面讲过了”、能跑但没人知道是否完整。本质是项目从探索进入交付。Spec 要回答：要做什么（用户能完成哪些事）、边界在哪里（规则、异常、非目标）、怎样证明完成（可观察可测试的结果）。</p></details>
+    <details><summary>2. spec / plan / tasks 的区别？为什么需求变化先改 Spec？</summary><p class="ans">spec.md 写期望行为和验收标准，plan.md 写技术方案，tasks.md 写有顺序可独立验证的工作；技术栈变了 plan 可能重写，但行为不变 spec 就不变。需求变化先改 spec，再看 plan 和 tasks，然后改代码，最后对照完整 spec 验证旧行为没被破坏；否则新规则只存在于某次聊天里，下次会话无从得知，而过时的 Spec 会给 AI 错误上下文。</p></details>
+    <details><summary>3. Skills 与 MCP 各提供什么？为什么装很多 Skills 也不撑爆上下文？</summary><p class="ans">Skills 是操作手册，告诉 AI 怎么做（流程、清单、格式），是 Markdown 文件；MCP 是工具接口，给 AI 能用的外部能力（GitHub、数据库、浏览器），是运行的服务器加配置。Skills 采用三层渐进式加载：启动时只加载每个技能的 name 和 description，被触发时才加载完整 SKILL.md，脚本和参考资料按需从文件读取，所以一百个技能启动时只占几千 token。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe-11/"><small>上一篇</small><span>11 · Claude Code 与终端工作流</span></a><a class="nx" href="../2026-10-24-easyvibe-13/"><small>下一篇</small><span>13 · 长任务、Agent Teams 与 GitHub 迭代</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+var SIG = ['要修改多个模块或很多文件', '有权限、支付、隐私或数据安全要求', '存在很多边界情况和失败情况', '需要多人或多个 AI 会话继续开发', '预计几周后还要维护', '开始频繁说“这个前面不是讲过了吗”', '功能能运行，但没人知道是否完整实现'];
+var sigBox = h('div', { class: 'hb-check' }, $('#sigCheck'));
+var sigOut = h('div', { class: 'hb-out', 'aria-live': 'polite' }, $('#sigCheck'));
+var sigCb = SIG.map(function (t) {
+  var lb = h('label', { class: 'hb-ci' }, sigBox);
+  var cb = h('input', { type: 'checkbox' }, lb);
+  h('span', { html: '<b>' + t + '</b>' }, lb);
+  cb.addEventListener('change', sigUpd);
+  return cb;
+});
+function sigUpd() {
+  var on = sigCb.filter(function (c) { return c.checked; }).length;
+  sigOut.innerHTML = on === 0 ? '<p><b>直接 Vibe。</b>还在探索阶段，快速做原型、看结果、找方向。可以附 3–5 条验收标准防止跑偏。</p>'
+    : on === 1 ? '<p><b>Vibe 为主，开始记录。</b>把已经确认的决定写进一页简单的 spec，避免下次会话丢失。</p>'
+    : '<p><b>转向 Spec Coding。</b>出现了 ' + on + ' 个信号，原教程的标准是“任意两三项”。先澄清并写出 spec，再规划、拆任务、实现、验证。</p>';
+}
+sigUpd();
+
+EV.evolve($('#specEvo'), {
+  vers: [
+    { t: '愿望清单', p: '做一个好用的通知中心。\n界面要现代，速度要快，支持各种通知，注意安全。', r: '<p>写了不少要求，但 AI 仍要猜：什么叫好用？有哪些通知？多快算快？谁能读取通知？</p>' },
+    { t: '可观察的行为', p: '- 用户打开通知中心时，默认看到[[最近 30 天]]的通知。\n- 通知类型包括[[订单、安全提醒和活动消息]]。\n- 未读通知显示蓝点，顶部显示[[未读总数]]。\n- 用户可以标记单条已读，也可以将[[当前账号]]的全部通知标记为已读。\n- 用户[[只能读取属于当前账号]]的通知。\n- 列表加载失败时保留页面结构，并显示[[“重新加载”按钮]]。', r: '<p>没有规定按钮放在哪个文件，却已经足够让 AI 设计界面、接口和测试。每一句都能被观察或测试。</p>' },
+    { t: '加上不做什么', p: '## 第一版范围\n- 展示最近 30 天的站内通知；订单、安全、活动三种类型\n- 单条已读和全部已读；按“全部 / 未读”筛选\n- 允许用户关闭活动消息\n## 第一版不做\n[[- 手机推送和邮件通知\n- 通知内容搜索\n- 管理员群发后台\n- 自定义保留时间]]', r: '<p>“不做什么”保护第一版，防止 AI 顺手搭出一整套消息平台。</p>' }
+  ]
+});
+
+S.sortGame($('#docSort'), {
+  bins: [{ k: 's', t: 'spec.md 行为与验收' }, { k: 'p', t: 'plan.md 技术方案' }, { k: 't', t: 'tasks.md 实现顺序' }],
+  items: [
+    { t: '用户可以将单条通知标记为已读', k: 's', why: '描述用户能做的事，技术栈变了也不变。' },
+    { t: '通过 PATCH /notifications/:id 更新状态', k: 'p', why: '具体的接口设计属于技术方案。' },
+    { t: '先实现读取列表，再实现单条已读', k: 't', why: '工作顺序。' },
+    { t: '关闭活动消息后，新的活动消息不再写入该用户的通知列表', k: 's', why: '业务规则和可验证的结果。' },
+    { t: '未读数用 SSE 推送，复用现有 HTTP 鉴权', k: 'p', why: '实现手段的选择（原因可以记进 ADR）。' },
+    { t: '任务 3：为“全部已读只影响当前账号”补权限测试（依赖任务 2）', k: 't', why: '带依赖关系的可执行任务。' }
+  ]
+});
+
+HB.cards($('#accCards'), {
+  opts: ['可以直接验证', '还要改写'],
+  items: [
+    { t: '未读数要实时变化。', a: 1, why: '“实时”无法验证。原教程改写为：标记已读后，列表和顶部未读数在同一次操作完成后更新，不要求跨设备同步。' },
+    { t: '当账号有 3 条未读通知时，导航栏显示数字 3。', a: 0, why: '给定状态和可观察结果都很明确。' },
+    { t: '代码要写得优雅，使用最佳实践。', a: 1, why: '主观判断，不描述用户或系统可观察的结果。' },
+    { t: '如果更新请求失败，页面恢复原状态，并显示“标记失败，请重试”。', a: 0, why: '失败状态的明确行为。' },
+    { t: '注意安全。', a: 1, why: '应改为具体规则，例如“读取和更新通知都必须校验当前账号归属”。' },
+    { t: 'WHEN 用户点击“全部已读” THE SYSTEM SHALL 只更新当前账号的未读通知。', a: 0, why: 'EARS 格式：触发条件 + 系统义务。' }
+  ]
+});
+
+EV.flow($('#specFlow'), {
+  nodes: [{ k: 'sp', t: 'Specify', sub: 'spec.md' }, { k: 'pl', t: 'Plan', sub: 'plan.md' }, { k: 'tk', t: 'Tasks', sub: 'tasks.md' }, { k: 'im', t: 'Implement', sub: '代码 + 测试' }, { k: 'vf', t: 'Verify', sub: '对照验收' }],
+  steps: [
+    { a: 'sp', b: 'sp', m: 'AI 提问澄清 → 写出规格', d: '<b>你检查：</b>范围、规则、非目标是否正确；未确认的内容是否放进“未解决问题”。' },
+    { a: 'sp', b: 'pl', m: '读 spec + 现有代码 → 设计方案', d: '<b>你检查：</b>数据、接口、受影响模块是否符合现有项目约束；风险是否列出。' },
+    { a: 'pl', b: 'tk', m: '拆成有依赖的小任务', d: '<b>你检查：</b>每项是否可以独立完成和验证；最好是纵向切片（一张任务同时含接口、页面和测试）。' },
+    { a: 'tk', b: 'im', m: '逐项：先写失败的测试 → 实现 → 检查', d: '<b>你检查：</b>是否只做当前任务、是否持续测试；遇到 spec 矛盾时 AI 应停下来问，而不是自行扩展。' },
+    { a: 'im', b: 'vf', m: '重新读 spec，逐条给出证据', d: '<b>你检查：</b>每条验收标准对应的代码或测试；测试、类型检查、构建是否通过。不以任务勾选状态判断完成。' },
+    { a: 'vf', b: 'sp', m: '发现偏差 → 回到 spec', d: '判断是实现偏离了规格，还是规格落后于真实需求；后者先改 spec 再改代码。' }
+  ]
+});
+
+HB.decide($('#toolPick'), {
+  qs: [
+    { id: 'stage', q: '你的情况？', opts: [['try', '快速试验想法'], ['iter', '现有项目持续加中小功能'], ['new', '新项目要完整可审查的工件'], ['big', '从零规划多模块大产品']], def: 'iter' },
+    { id: 'pain', q: '最缺的是？', opts: [['ide', '在 IDE 里看需求设计任务'], ['issue', '让 Agent 在 GitHub Issues 上连续开发'], ['test', 'Agent 老是跳过测试'], ['none', '没有特别的']], def: 'none' }
+  ],
+  decide: function (a) {
+    var m = { try: 'Vibe 原型 + 3–5 条验收标准', iter: 'OpenSpec + Given/When/Then + 自动化测试', new: 'GitHub Spec Kit + analyze + 人工阶段确认', big: 'BMAD Method，再为每个 Story 使用轻量 Spec' };
+    var x = { ide: '另外：喜欢在 IDE 里审阅三份文件，看 Kiro Specs + EARS。', issue: '另外：要跨会话持续开发，看 Matt Pocock Skills + ADR + Code Review。', test: '另外：已经有 Spec 但 Agent 跳过测试，叠加 Superpowers 的 TDD 与 Verification 技能。', none: '' };
+    return '<p><b>主流程：' + m[a.stage] + '</b></p>' + (x[a.pain] ? '<p>' + x[a.pain] + '</p>' : '') + '<p class="note">组合来自原教程 6.8 节。只选一个工具做主流程，别让几套框架同时维护 spec 和完成状态。</p>';
+  }
+});
+
+S.guess($('#skGuess'), {
+  q: '项目里装了 100 个 Skills，每个完整的 SKILL.md 约 5000 token。Claude Code 启动时，这些技能大约占多少 token 的上下文？',
+  unit: 'token',
+  ans: 4000,
+  hint: '你的估计',
+  fmt: function (x) { return S.f(x, 0); },
+  why: '启动时只加载每个技能的 name 和 description，原教程估算每个约 30–50 token，100 个约 3000–5000 token（这里取 4000）。如果全部加载完整内容会是 50 万 token，远超任何上下文窗口。被触发的技能才加载完整的 SKILL.md，脚本和参考资料按需读文件、不进上下文。'
+});
+
+S.magbars($('#skBars'), [
+  { label: '第 1 层：100 个技能的元数据', v: 4000, text: '约 4,000（启动时）' },
+  { label: '第 2 层：被触发的 1 个技能全文', v: 5000, text: '约 5,000（触发时）' },
+  { label: '若全部全文加载', v: 500000, text: '约 500,000（不会这样做）', cls: 'alt' },
+  { label: '第 3 层：脚本与参考资料', v: 1, text: '不进上下文，按需读文件' }
+], { log: true });
+
+HB.cards($('#skMcpCards'), {
+  opts: ['Skill', 'MCP', '两者配合'],
+  items: [
+    { t: '让 AI 每次提交都按 Conventional Commits 写信息、先跑测试再提交。', a: 0, why: '这是流程和规范，写成操作手册即可。' },
+    { t: '让 AI 能读取并创建 GitHub Issues。', a: 1, why: '需要访问外部系统的能力。' },
+    { t: '让 AI 按团队的审查清单审查 GitHub 上的 PR，并把意见评论回去。', a: 2, why: 'Skill 定义怎么审，GitHub MCP 提供读 PR 和写评论的能力。' },
+    { t: '让 AI 直接查询项目的 SQLite 数据库。', a: 1, why: '数据库连接是工具能力。' },
+    { t: '让 AI 生成演示文稿时始终用公司的配色和版式。', a: 0, why: '风格规范和模板，适合放进 Skill 的 templates / references。' }
+  ]
+});
+
+EV.flow($('#spFlow'), {
+  nodes: [{ k: 'b', t: 'brainstorming', sub: '提问澄清' }, { k: 'p', t: 'writing-plans', sub: '2–5 分钟小任务' }, { k: 's', t: '子代理开发', sub: '两阶段审查' }, { k: 't', t: 'TDD', sub: '红 → 绿 → 重构' }, { k: 'v', t: 'verification', sub: '完成前验证' }],
+  steps: [
+    { a: 'b', b: 'b', m: '“做一个登录功能” → 先问清需求', d: '需求模糊时自动触发：邮箱还是手机号？要不要第三方登录？会话多久过期？设计文档分块展示，等你确认。' },
+    { a: 'b', b: 'p', m: '设计确认 → 拆计划', d: '拆成 2–5 分钟的小任务，每个任务写明文件、测试和验证步骤。' },
+    { a: 'p', b: 's', m: '每个任务交给一个独立子代理', d: '子代理完成后做两阶段审查：先看是否符合规格，再看代码质量。' },
+    { a: 's', b: 't', m: '每个任务内部：RED → GREEN → REFACTOR', d: '先写测试并<b>看到它失败</b>，再写让它通过的最小实现，最后重构。不提 TDD 时模型写不写测试看习惯，这里是强制的。' },
+    { a: 't', b: 'v', m: '宣布完成前运行真实检查', d: '测试、构建、类型检查都要真跑一遍，不接受“应该已经好了”。之后再请求代码审查。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-why'), {
+  c: [
+    ['Vibe 天花板', '适合快速探索，不擅长长期保存完整意图'],
+    ['转向 Spec', '项目从探索阶段进入交付阶段']
+  ],
+  p: [
+    ['七个信号（出现两三项就转）', '多模块、权限支付隐私、边界多、多人多会话、要维护、反复说讲过了、不知是否完整'],
+    ['适合 Vibe', '草图、试框架、一次性脚本、Hackathon、调细节']
+  ]
+});
+S.notes($('#n-spec'), {
+  c: [
+    ['Spec', '关于预期行为的共同约定'],
+    ['三份文档', 'spec 行为与验收 / plan 技术方案 / tasks 实现顺序']
+  ],
+  p: [
+    ['三个问题', '要做什么、边界在哪、怎样证明完成'],
+    ['四层结构', '产品目标、用户行为、规则与边界、验收证据'],
+    ['反例', '只写文件清单：文件存在不证明问题解决']
+  ]
+});
+S.notes($('#n-write'), {
+  c: [
+    ['EARS', 'WHEN 事件 THE SYSTEM SHALL 结果'],
+    ['Given / When / Then', '给定状态、发生操作、应看到的结果，接近测试用例']
+  ],
+  p: [
+    ['四步', 'AI 先提问 → 做与不做 → 形容词改验收标准 → 补边界'],
+    ['四类边界', '空状态、失败状态、权限边界、重复操作'],
+    ['不确定的', '放进“未解决问题”，不伪装成结论']
+  ]
+});
+S.notes($('#n-flow'), {
+  c: [
+    ['五段式', 'Specify → Plan → Tasks → Implement → Verify'],
+    ['仓库结构', 'CLAUDE.md / AGENTS.md 放长期规则，specs/功能名/ 放三份文档']
+  ],
+  p: [
+    ['Verify', '不看勾选状态，逐条给出代码或测试证据'],
+    ['需求变化', '先改 spec → 看 plan / tasks → 改代码 → 全量验证'],
+    ['过时的 Spec', '比没有文档更危险']
+  ]
+});
+S.notes($('#n-tools'), {
+  c: [
+    ['Spec Kit', '工件最完整，clarify / analyze 查矛盾，适合新项目'],
+    ['OpenSpec', '以一次变更为单位的增量规格，适合已有项目'],
+    ['Kiro', 'IDE 内审阅 requirements / design / tasks，EARS'],
+    ['Matt Pocock Skills', '对话 → spec → tickets → 实现 → 审查，跨会话']
+  ],
+  p: [
+    ['生命周期', 'Spec-first 快照 / Spec-anchored 长期锚点 / Spec-as-source'],
+    ['警告', '只选一个主流程，不要几套框架并存'],
+    ['BMAD / Superpowers', '大型产品多角色规划 / 守住实现质量']
+  ]
+});
+S.notes($('#n-skills'), {
+  c: [
+    ['Skill', '目录 + SKILL.md（YAML 元数据 + Markdown 指令）+ 可选资源'],
+    ['渐进式加载', '启动只读 name / description，触发才读全文，资源按需读文件'],
+    ['路由', '没有硬编码，模型按 description 自己匹配']
+  ],
+  p: [
+    ['存放', '~/.claude/skills/ 个人；项目 .claude/skills/ 团队'],
+    ['vs 提示词', '持久、按需加载、可共享、可版本控制'],
+    ['关键字段', 'description 越具体越容易被触发']
+  ]
+});
+S.notes($('#n-mcp'), {
+  c: [
+    ['MCP', '让编码 Agent 连接外部工具和服务的协议'],
+    ['传输方式', 'STDIO 本地进程 / HTTP 远程 / SSE 推送'],
+    ['Skills vs MCP', '操作手册（怎么做）vs 工具（能用什么），互补']
+  ],
+  p: [
+    ['配置', '用户级全局；项目级可提交 Git（以官方文档路径为准，当前为 .mcp.json）'],
+    ['最佳实践', '项目级优先、密钥用环境变量、锁定版本、文档化']
+  ]
+});
+S.notes($('#n-sp'), {
+  c: [
+    ['Superpowers', 'obra 的开源技能框架，强制工程纪律'],
+    ['TDD', 'RED 先看到失败 → GREEN 最小实现 → REFACTOR']
+  ],
+  p: [
+    ['流程', 'brainstorming → 设计 → writing-plans → 子代理开发 → TDD → 审查 → verification'],
+    ['触发', '关键词、场景、手动调用'],
+    ['定位', '强化纪律，不是无中生有；原型和一次性脚本不必强求']
+  ]
+});
+
+EV.todo($('#todo'), '12', [
+  { t: '挑一个正在做的功能，用最小 Spec 模板写一份 spec.md', d: '重点写“不做什么”和至少 5 条验收标准。' },
+  { t: '让 AI 先提问澄清，再生成 plan.md 和 tasks.md，确认前不许改代码', d: '' },
+  { t: '最后一步要求 AI 逐条给出每条验收标准的证据', d: '' },
+  { t: '写一个自己的 Skill（例如代码审查），测试 description 能否被自动触发', d: '' },
+  { t: '为项目配置一个 MCP 服务器（GitHub 或数据库），token 用环境变量、版本锁定', d: '' },
+  { t: '（可选）装 Superpowers，用“用 TDD 方式实现……”跑一个小功能', d: '' }
+]);
+})();
+</script>
+</body>
+</html>

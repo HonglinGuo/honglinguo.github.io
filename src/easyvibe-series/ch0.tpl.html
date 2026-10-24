@@ -1,0 +1,335 @@
+---
+title: Easy-Vibe：学习笔记总览
+desc: Datawhale 开源教程《Easy-Vibe：Vibe Coding 产品实战教程》的十五篇互动学习笔记总览：从 Vibe Coding 到产品工程师，经过找点子、验证需求、做原型、接 AI，到全栈、部署、支付，再到 Claude Code、Spec、Skills、长任务、RAG 和多端发布；产品闭环地图、按问题反查、提示词库、动手清单进度、问答闪卡、易混辨析索引与全系列速记。
+kicker: <span>技术学习</span><span>系列 · 共 15 篇</span><span>覆盖原教程三阶段正文</span><span>CC BY-NC-SA 4.0</span>
+h1: 从做得出来，<em>到做得对、交得出去</em>
+lead: 这是 Datawhale 开源教程 Easy-Vibe 的学习笔记。原教程的主线是一条产品闭环：发现问题、验证需求、设计方案、构建产品、交付用户、说明价值、观察结果、持续迭代；写代码只是其中 AI 最能帮上忙的一环。十五篇笔记按原教程的三个阶段展开：第一阶段做出能交给别人用的原型，第二阶段补上全栈、部署和支付，第三阶段学会让编码 Agent 在规格、技能、工具和长任务的约束下稳定工作。这一页是复习工具：地图、反查、提示词库、清单进度、闪卡、易混辨析和全部速记都在这里。
+nav: why|这本教程;map|产品闭环地图;ask|按问题反查;prompts|提示词库;todo|动手清单进度;cards|问答闪卡;cf|易混辨析;recap|全系列速记;back|记下来
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.chap { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.chap a { display: block; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: inherit; text-decoration: none; transition: border-color .2s; }
+.chap a:hover { border-color: var(--s1); }
+.chap a.done { border-left: 4px solid var(--ok); }
+.chap b { display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.chap h3 { margin: 2px 0 4px; font-size: 19px; }
+.chap em { display: block; font-style: normal; font-size: 15px; color: var(--ink-3); margin-bottom: 6px; }
+.chap p { margin: 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.chap .tag { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--ink-3); line-height: 1.6; }
+.parthd { font-size: 15px; color: var(--ink-3); margin: 26px 0 0; }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin-top: 10px; }
+.qgrid button { font: inherit; font-size: 15px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; color: var(--ink-2); line-height: 1.55; }
+.qgrid button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); color: var(--ink); }
+.info { margin-top: 12px; border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 0 8px 8px 0; padding: 12px 16px; background: var(--panel); font-size: 16px; color: var(--ink-2); line-height: 1.7; min-height: 4em; }
+.info b { color: var(--ink); }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
+.mcard { font: inherit; text-align: left; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; color: var(--ink); cursor: pointer; min-height: 120px; display: flex; flex-direction: column; justify-content: flex-start; }
+.mcard small { display: block; font-size: 15px; color: var(--ink-3); }
+.mcard .q { display: block; font-size: 16px; margin: 4px 0 6px; line-height: 1.55; font-weight: 600; }
+.mcard .a { display: block; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+.mgrid.test .mcard:not(.open) .a { color: transparent; background: var(--dim-soft); border-radius: 4px; }
+.mgrid.test .mcard.open { border-color: var(--ok); }
+.cfl h4 { margin: 18px 0 4px; font-size: 17px; }
+.cfl h4 a { color: inherit; }
+.cfl p { margin: 6px 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.cfl p b { color: var(--ink); }
+.plist { margin-top: 10px; }
+.pdet { border-top: 1px solid var(--hair); }
+.pdet summary { cursor: pointer; padding: 9px 4px; font-size: 16px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.pdet summary b { color: var(--ink); font-weight: 600; }
+.pdet summary small { font-size: 15px; color: var(--ink-3); }
+.pdet .pcard { margin: 0 0 12px; }
+.todos { display: grid; gap: 8px; margin-top: 12px; }
+.todos a { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) 7em; gap: 10px; align-items: center; text-decoration: none; color: var(--ink-2); font-size: 15px; border: 1px solid var(--hair); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
+.todos a:hover { border-color: var(--s1); }
+.todos b { font-family: var(--f-num); color: var(--s1); }
+.todos .bar { height: 8px; border-radius: 4px; background: var(--dim-soft); overflow: hidden; }
+.todos .bar i { display: block; height: 100%; background: var(--ok); }
+.todos .t { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.todos .t span { color: var(--ink); }
+.todos em { font-style: normal; font-family: var(--f-num); text-align: right; }
+.tsum { font-size: 16px; margin-top: 10px; color: var(--ink-2); }
+.tsum b { font-family: var(--f-num); color: var(--ink); font-size: 20px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>这一页要回答的 3 个问题</h3>
+  <ol>
+    <li>这套教程想培养什么样的人？十五篇笔记怎样对应原教程的三个阶段？</li>
+    <li>遇到一个具体的问题（不知道做什么、AI 越改越乱、Key 放哪、怎么上线），该回看哪一篇？</li>
+    <li>哪些提示词可以直接拿去用？我的动手清单完成了多少？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>这本教程</h2><span class="meta">原教程 README、学习地图</span></div>
+  <div class="sec-lede">
+    <p>Easy-Vibe 是 Datawhale 社区的 Vibe Coding 产品实战教程，号称有数万名学习者，在真实教学和学员反馈中持续打磨（核心贡献者与测试者来自清华大学深圳国际研究生院）。它的立场很明确：<strong>Vibe Coding 是起点，不是终点</strong>。AI 把“做出一个能跑的 Demo”变得很容易，于是难点转移到“值不值得做、谁会用、怎么交付、怎么证明有效”。课程想培养的是初步的<strong>产品工程师</strong>：能发现问题、验证需求、亲手构建产品、交付真实用户，并根据结果继续迭代的人。</p>
+    <p>原教程分三个阶段，外加一个上百篇的附录知识库（计算机基础、开发工具、前后端、数据、架构、运维、AI、工程实践）。<strong>第一阶段</strong>从小游戏开始，学 AI IDE、找点子、用双钻 / JTBD / Mom Test 验证需求、做原型、接 AI 能力，最后把作品交给别人用；<strong>第二阶段</strong>补上设计到代码、Supabase 数据库与登录、部署、Stripe 支付、Dify 知识库，再用八个真实 PRD 做综合项目；<strong>第三阶段</strong>转向终端里的编码 Agent，学 Spec Coding、Skills、MCP、长任务、Agent Teams、GitHub Issues 驱动开发、RAG 进阶和多端发布。</p>
+    <p>笔记的写法：操作步骤压缩成要点，方法论和容易混的概念做成可以动手的互动（模拟器、分类、判断题、先估再算）；每篇都收了原教程里最值得留存的提示词，下面的提示词库汇总了全部；每篇末尾有一份动手清单，勾选状态只存在你的浏览器里，这里汇总进度。<strong>许可</strong>：原教程按 CC BY-NC-SA 4.0 发布，笔记依据 2026 年 10 月 22 日的仓库版本，同样按此协议共享。<strong>读后核对</strong>：工具的命令和路径变化很快，几处与当前官方文档不一致的地方（MCP 项目配置文件路径、回退能否恢复代码等）和一处原文的算术笔误（Agent Teams 成本例子），都在对应篇里单独标明。</p>
+  </div>
+  <p class="parthd">第一阶段 · 产品工程师入门：做出能交出去的原型</p>
+  <div class="chap" id="chA"></div>
+  <p class="parthd">第二阶段 · 全栈产品工程师：数据、登录、上线、收费</p>
+  <div class="chap" id="chB"></div>
+  <p class="parthd">第三阶段 · AI 产品工程师：让编码 Agent 稳定工作</p>
+  <div class="chap" id="chC"></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="map">
+  <div class="part-head"><h2>产品闭环地图</h2><span class="meta">原教程 学习地图 · 八步闭环</span></div>
+  <div class="sec-lede">
+    <p>整套教程都挂在这条闭环上：发现问题 → 验证需求 → 设计方案 → 构建产品 → 交付用户 → 说明价值 → 观察结果 → 持续迭代。点一个概念，看一句话的定义和它在哪一篇。</p>
+    <p class="go">点一个概念。</p>
+  </div>
+  <div class="lab"><div id="mapL"></div></div>
+</section>
+
+<section class="part" id="ask">
+  <div class="part-head"><h2>按问题反查</h2><span class="meta">遇到问题时回看哪里</span></div>
+  <div class="sec-lede">
+    <p>按“你正在遇到什么”来找，而不是按章节名找。答案给出原教程的关键做法和对应的笔记位置。</p>
+    <p class="go">选一个最接近你处境的问题。</p>
+  </div>
+  <div class="qgrid" id="aqQ"></div>
+  <div class="info" id="aqA">选一个问题。</div>
+</section>
+
+<section class="part" id="prompts">
+  <div class="part-head"><h2>提示词库</h2><span class="meta">各篇提示词卡汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇里收的提示词模板都在这里，可以按篇筛选或输入关键词查找，点标题展开，每张都能一键复制。方括号里是要换成你自己内容的地方。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="prQ" type="search" placeholder="关键词，如 Spec、审查、部署、RAG" aria-label="搜索提示词" style="max-width:280px"><select class="field" id="prC" aria-label="按篇筛选" style="max-width:240px"></select><span class="note" id="prN" style="margin:0"></span></div>
+  <div class="plist" id="prL"></div>
+</section>
+
+<section class="part" id="todo">
+  <div class="part-head"><h2>动手清单进度</h2><span class="meta">各篇末尾的动手清单</span></div>
+  <div class="sec-lede">
+    <p>每篇末尾都有一份可以勾选的动手清单。勾选状态只保存在这台机器的浏览器里，这里按篇汇总；点任意一行回到那一篇继续做。</p>
+  </div>
+  <div class="tsum" id="tSum"></div>
+  <div class="todos" id="tL"></div>
+</section>
+
+<section class="part" id="cards">
+  <div class="part-head"><h2>问答闪卡</h2><span class="meta">每篇开头三问的答案</span></div>
+  <div class="sec-lede">
+    <p>每篇开头都有“读完应该能回答的三个问题”，篇末给了参考答案。打开自测模式后答案被遮住：先在心里答，再点卡片翻开对照；答不上来的，回到对应那一篇。</p>
+    <p class="go">打开自测，或者打乱顺序再试一遍。</p>
+  </div>
+  <div class="ctrls"><button class="btn" id="mgT" type="button" aria-pressed="false">自测模式：遮住答案</button><button class="btn" id="mgS" type="button">打乱顺序</button><span class="note" id="mgC" style="margin:0"></span></div>
+  <div class="mgrid" id="mgG"></div>
+</section>
+
+<section class="part" id="cf">
+  <div class="part-head"><h2>易混辨析索引</h2><span class="meta">各篇“易混辨析”汇总</span></div>
+  <div class="sec-lede">
+    <p>各篇正文里的“易混辨析”框都收在这里，可以输入关键词查找，标题链接回原篇对应的位置。</p>
+  </div>
+  <div class="ctrls"><input class="field" id="cfQ" type="search" placeholder="关键词，如 RLS、Webhook、Skills" aria-label="搜索易混辨析" style="max-width:280px"><span class="note" id="cfN" style="margin:0"></span></div>
+  <div class="cfl" id="cfL"></div>
+</section>
+
+<section class="recap" id="recap">
+  <h2>全系列速记</h2>
+  <p>每篇各节末尾“记下来”的汇总，按篇折叠。右上角的自测开关对这里同样有效。</p>
+  <div id="rcL"></div>
+</section>
+
+<section class="part" id="back">
+  <div class="part-head"><h2>记下来</h2><span class="meta">总览小结</span></div>
+  <div class="notes" id="n-back"></div>
+</section>
+===SCRIPT===
+var P = '../2026-10-24-easyvibe-';
+var chs = __CHS__, CARDS = __CARDS__, CF = __CF__, NOTES = __NOTES__, PROMPTS = __PROMPTS__, TODOS = __TODOS__;
+var read = S.readList();
+function NN(n) { return (n < 10 ? '0' : '') + n; }
+var GRP = [[1, 6, '#chA'], [7, 10, '#chB'], [11, 15, '#chC']];
+chs.forEach(function (c) {
+  var n = c[0], g = GRP.filter(function (x) { return n >= x[0] && n <= x[1]; })[0], done = read.indexOf(String(n)) >= 0;
+  var a = h('a', { href: P + n + '/', class: done ? 'done' : '' }, $(g[2]));
+  a.innerHTML = '<b>' + NN(n) + '</b><h3>' + c[1] + '</h3><em>' + c[2] + '</em><p>' + c[3][0] + '</p><span class="tag">' + c[5] + (done ? ' · 已读' : '') + '</span>';
+});
+S.notes($('#n-why'), {
+  c: [
+    ['产品工程师', '能发现问题、验证需求、亲手构建、交付用户并按结果迭代的人'],
+    ['三个阶段', '原型（1–6）→ 全栈上线收费（7–10）→ 让编码 Agent 稳定工作（11–15）']
+  ],
+  p: [
+    ['核心立场', 'Vibe Coding 是起点不是终点；实现变便宜，判断、交付、验证变重要'],
+    ['笔记的三种练习', '互动判断、提示词模板、动手清单'],
+    ['许可', 'CC BY-NC-SA 4.0：署名、非商业、相同方式共享']
+  ]
+});
+
+/* ---------- 产品闭环地图 ---------- */
+function L(n, sec) { return '<a href="' + P + n + '/' + (sec ? '#' + sec : '') + '">' + NN(n) + ' ' + chs[n - 1][1] + '</a>'; }
+HB.layers($('#mapL'), {
+  hint: '点任意概念。',
+  layers: [
+    { t: '发现问题', sub: '值不值得做', items: [
+      { t: '真需求 vs 假需求', d: '没有你的产品，用户也在主动花时间精力钱解决的，才是真需求。见 ' + L(3, 'need') },
+      { t: '痛点 > 爽点 > 痒点', d: '用户买单的是解决恐惧、消除焦虑，而不是功能。见 ' + L(3, 'layers') },
+      { t: '横切纵挖', d: '把泛人群切细，描述一天找情绪触点，再把功能重构成解决方案。见 ' + L(3, 'slice') }
+    ] },
+    { t: '验证需求', sub: '别被客气话骗', items: [
+      { t: '双钻模型', d: 'Discover → Define 收敛出问题定义，Develop → Deliver 发散方案再验证。见 ' + L(4, 'dd') },
+      { t: 'JTBD', d: '场景、触发、进展、替代方案、成功标准；竞争对手不一定是同类应用。见 ' + L(4, 'jtbd') },
+      { t: 'The Mom Test', d: '谈经历不谈点子、问事实不问意见、看现做法不问方案。见 ' + L(4, 'mom') }
+    ] },
+    { t: '设计方案', sub: '先写清楚', items: [
+      { t: '一页需求说明', d: '六项，最关键的是“第一版不做什么”。见 ' + L(5, 'spec') },
+      { t: 'PRD', d: '定位、目标、MVP、角色、页面、链路、表、指标、接口、非功能、开发顺序。见 ' + L(10, 'prd') },
+      { t: 'Spec Coding', d: '要做什么、边界在哪、怎样证明完成；spec / plan / tasks 分开。见 ' + L(12, 'spec') }
+    ] },
+    { t: '构建产品', sub: 'AI 最能帮上忙的一环', items: [
+      { t: '对话节奏', d: '四要素说清需求；最小例子 → 补内容 → 美化；一次只加一件事。见 ' + L(2, 'talk') },
+      { t: 'Key 放服务端', d: '浏览器 → 自己的 /api → AI 平台；VITE_ 前缀也会被打包。见 ' + L(6, 'arch') },
+      { t: 'RLS', d: '前端直连 Supabase 时，每张表都要开行级安全。见 ' + L(8, 'rls') },
+      { t: '人和 AI 的分工', d: '你想清楚、做决策、把关质量；AI 执行、查找、发现明显问题。见 ' + L(11, 'task') },
+      { t: '外部完成标准', d: 'AI 判断不了自己是否完成；循环 + 完成标记 + 安全阀。见 ' + L(13, 'ralph') }
+    ] },
+    { t: '交付用户', sub: '别人打得开', items: [
+      { t: '四个时刻', d: '开始、等待、成功、失败都要有反馈。见 ' + L(5, 'states') },
+      { t: '部署平台三问', d: '要不要常驻、要不要 GPU、用户在哪。见 ' + L(9, 'choose') },
+      { t: '选平台三问', d: '从哪打开、要什么设备能力、谁来维护。见 ' + L(15, 'choose') },
+      { t: '发布上架', d: '打包、签名、分发、审核；版本号与构建号分开。见 ' + L(15, 'publish') }
+    ] },
+    { t: '说明价值与收费', sub: '让人看懂、愿意付钱', items: [
+      { t: '一分钟介绍', d: '谁的问题 → 怎么帮 → 什么 AI → 怎么用 → 试用后改了什么。见 ' + L(5, 'ship') },
+      { t: '支付三原则', d: '价格后端定、权限看 Webhook、状态存自己数据库。见 ' + L(9, 'pay') }
+    ] },
+    { t: '观察结果与迭代', sub: '知道有没有用', items: [
+      { t: '请人试用', d: '只说目标、只看不教；问题按五级排序。见 ' + L(5, 'test') },
+      { t: '留存、复访、推荐', d: '判断要不要继续投入的三个指标。见 ' + L(5, 'test') },
+      { t: 'RAG 评测', d: 'Recall@K + MRR；Faithfulness 查幻觉。见 ' + L(14, 'eval') }
+    ] }
+  ]
+});
+
+/* ---------- 按问题反查 ---------- */
+var AQ = [
+  ['有个想法，但不知道值不值得做。', '先问没有你的产品时用户是否已经在主动解决；判断属于痛点、爽点还是痒点；横切人群、纵挖一天；用五步法验证，定金比例是最硬的证据。', [3, 'verify']],
+  ['朋友都说我的想法好，但上线后没人用。', '“挺好的”是礼貌的意见。按 Mom Test 从最近一次真实经历问起，追问行为、成本、替代方案，从细节判断痛感。', [4, 'mom']],
+  ['需求一直在长，AI 越做越大。', '写一页需求说明，第 4 项“第一版不做什么”至少三条，交给 AI IDE 时一起给它。', [5, 'spec']],
+  ['跟 AI 聊了很多轮，前面定好的约定它忘了。', '对话只能保存“刚才说了什么”；已确认的需求写进 spec.md，项目长期规则写进 CLAUDE.md，必要时 /compact。', [12, 'flow']],
+  ['AI 改出来的页面总是一股“AI 味”。', 'AI 默认回到统计平均；按字体、颜色、布局、动画、细节五个维度给出偏离方向，或装设计 Skill、点名一个组件库。', [7, 'flavor']],
+  ['报错了，不知道该给 AI 看什么。', '先描述“做了什么、看到什么、想要什么”加截图；AI 要更多信息时再补 F12：白屏看 Console，数据看 Network，样式看 Elements。', [2, 'debug']],
+  ['要调大模型 API，Key 该放哪？', '只放服务端环境变量，浏览器调自己的 /api；VITE_、NEXT_PUBLIC_ 前缀的变量会被打包进前端。', [6, 'arch']],
+  ['前端直连 Supabase 安全吗？', '前提是每张表开 RLS 并写好 auth.uid() 策略；anon key 可以公开，service_role key 只能在服务端。', [8, 'rls']],
+  ['网站做好了，怎么让别人访问？', '先回答要不要常驻、要不要 GPU、用户在哪；静态站用 Cloudflare Pages / Vercel，常驻进程用 Railway / VPS。', [9, 'choose']],
+  ['自己买了 VPS，访问显示 502。', '502 是 Nginx 到应用这一跳失败：应用没启动、端口不对或 proxy_pass 写错；看 pm2 / docker 状态和 Nginx 错误日志。', [9, 'vps']],
+  ['接了支付，用户说付了钱却没开通。', '以 Webhook 为准而不是 success 页面；验签要用原始请求体；做幂等，防止重试导致重复开通。', [9, 'webhook']],
+  ['让 AI 跑长任务，它做一半就说完成了。', '模型判断不了自己是否完成；用 Ralph 循环（Stop Hook + 唯一完成标记 + 最大迭代），验收标准必须可客观验证。', [13, 'ralph']],
+  ['想让 AI 一直干到底，又怕失控。', '五道安全阀：最大迭代、时间上限、成本预警、死循环检测、人工检查点；删除数据、部署、权限必须人工确认。', [13, 'allin']],
+  ['知识库问答经常答非所问或编造。', '查切分和 Embedding，加相似度阈值和 Rerank，系统提示词要求无答案就拒答；用 Recall@K 和 MRR 量化。', [14, 'how']],
+  ['不知道产品该做成网页、小程序还是 App。', '能用链接解决先做 Web；用户在微信里先做小程序；要后台、硬件、系统权限再原生；多角色就多客户端共用一个后端。', [15, 'choose']],
+  ['App 要上架，第一次不知道从哪开始。', '先选用户最集中的一个渠道；固定包名，区分版本号和构建号，签名材料进团队密码库，先内测再审核再灰度。', [15, 'publish']]
+];
+AQ.forEach(function (q) {
+  var b = h('button', { type: 'button', text: q[0] }, $('#aqQ'));
+  b.addEventListener('click', function () {
+    S.$$('#aqQ button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    $('#aqA').innerHTML = '<b>' + q[0] + '</b><br>' + q[1] + '<br>回看：' + L(q[2][0], q[2][1]);
+  });
+});
+
+/* ---------- 提示词库 ---------- */
+var sel = $('#prC');
+h('option', { value: '0', text: '全部篇目' }, sel);
+chs.forEach(function (c) { if (PROMPTS.some(function (p) { return p[0] === c[0]; })) h('option', { value: String(c[0]), text: NN(c[0]) + ' ' + c[1] }, sel); });
+function drawPr() {
+  var q = ($('#prQ').value || '').trim().toLowerCase(), ch = +sel.value, n = 0, box = $('#prL');
+  box.innerHTML = '';
+  PROMPTS.forEach(function (p) {
+    if (ch && p[0] !== ch) return;
+    if (q && (p[2] + p[3] + p[4]).toLowerCase().indexOf(q) < 0) return;
+    n++;
+    var d = h('details', { class: 'pdet' }, box);
+    h('summary', { html: '<b>' + p[2] + '</b><small>' + NN(p[0]) + ' · ' + chs[p[0] - 1][1] + '</small>' }, d);
+    var c = h('div', { class: 'pcard', 'data-t': p[2], 'data-k': NN(p[0]) + ' · ' + chs[p[0] - 1][1] + (p[3] ? ' · ' + p[3] : '') }, d);
+    h('pre', { text: p[4] }, c);
+  });
+  EV.pcards(box);
+  $('#prN').textContent = n + ' / ' + PROMPTS.length + ' 条';
+}
+$('#prQ').addEventListener('input', drawPr); sel.addEventListener('change', drawPr); drawPr();
+
+/* ---------- 动手清单进度 ---------- */
+var tAll = 0, tDone = 0;
+TODOS.forEach(function (x) {
+  var n = x[0], items = x[1], saved = {};
+  try { saved = JSON.parse(S.store.get('easyvibe-todo-' + n) || '{}') || {}; } catch (e) { saved = {}; }
+  var d = 0; items.forEach(function (t, i) { if (saved[i]) d++; });
+  tAll += items.length; tDone += d;
+  var a = h('a', { href: P + n + '/#todo' }, $('#tL'));
+  a.innerHTML = '<b>' + NN(n) + '</b><span class="t"><span>' + chs[n - 1][1] + '</span><span class="bar"><i style="width:' + (items.length ? d / items.length * 100 : 0) + '%"></i></span></span><em>' + d + ' / ' + items.length + '</em>';
+  a.title = items.join('\n');
+});
+$('#tSum').innerHTML = '全系列共 <b>' + tAll + '</b> 项，已完成 <b>' + tDone + '</b> 项。';
+
+/* ---------- 闪卡 ---------- */
+var order = CARDS.map(function (c, i) { return i; });
+function drawCards() {
+  var g = $('#mgG'); g.innerHTML = '';
+  order.forEach(function (i) {
+    var c = CARDS[i];
+    var b = h('button', { type: 'button', class: 'mcard', html: '<small>' + NN(c[0]) + ' · ' + chs[c[0] - 1][1] + '</small><span class="q">' + c[1] + '</span><span class="a">' + c[2] + '</span>' }, g);
+    b.addEventListener('click', function () { if (g.classList.contains('test')) b.classList.toggle('open'); });
+  });
+  $('#mgC').textContent = '共 ' + CARDS.length + ' 张';
+}
+$('#mgT').addEventListener('click', function () {
+  var on = $('#mgG').classList.toggle('test');
+  this.setAttribute('aria-pressed', String(on)); this.textContent = on ? '显示全部答案' : '自测模式：遮住答案';
+  S.$$('#mgG .mcard').forEach(function (x) { x.classList.remove('open'); });
+});
+$('#mgS').addEventListener('click', function () {
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = order[i]; order[i] = order[j]; order[j] = t; }
+  drawCards();
+});
+drawCards();
+
+/* ---------- 易混辨析 ---------- */
+function drawCf() {
+  var q = ($('#cfQ').value || '').trim().toLowerCase(), n = 0, html = '';
+  CF.forEach(function (c) {
+    var txt = (c[2] + c[3].join('')).replace(/<.*?>/g, '').toLowerCase();
+    if (q && txt.indexOf(q) < 0) return;
+    n++;
+    html += '<h4><a href="' + P + c[0] + '/#' + c[1] + '">' + NN(c[0]) + ' · ' + c[2] + '</a></h4>' + c[3].map(function (p) { return '<p>' + p + '</p>'; }).join('');
+  });
+  $('#cfL').innerHTML = html || '<p class="note">没有匹配的条目。</p>';
+  $('#cfN').textContent = n + ' / ' + CF.length + ' 条';
+}
+$('#cfQ').addEventListener('input', drawCf); drawCf();
+
+/* ---------- 全系列速记 ---------- */
+NOTES.forEach(function (x) {
+  var n = x[0];
+  var d = h('details', null, $('#rcL'));
+  h('summary', { html: NN(n) + ' ' + chs[n - 1][1] + '<small>' + x[1].length + ' 个概念 · ' + x[2].length + ' 条要点</small>' }, d);
+  var box = h('div', null, d);
+  S.notes(box, { c: x[1], p: x[2] });
+});
+
+S.notes($('#n-back'), {
+  c: [
+    ['一句话', '做得出来不难了，难的是值不值得做、交不交得出去、知不知道有没有用'],
+    ['三条底线', '密钥只在服务端；数据靠 RLS 隔离；支付以 Webhook 为准'],
+    ['和 AI 协作', '你负责目标、边界和最终验收；AI 负责把已确认的事情稳定地执行下去']
+  ],
+  p: [
+    ['写清楚', '需求说明、PRD、Spec：先写行为和不做什么，再写代码'],
+    ['可验证', '验收标准写成可观察的结果；测试全过不等于需求没漏'],
+    ['复习方法', '先刷闪卡和易混辨析，遇到实际问题用“按问题反查”，动手时从提示词库复制模板']
+  ]
+});

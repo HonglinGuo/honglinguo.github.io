@@ -1,0 +1,364 @@
+---
+title: 给原型接上 AI 能力
+desc: Easy-Vibe 学习笔记（六）：不要为了 AI 而 AI 的两个问题，AI 当大脑、眼睛、手三种角色和不确定性三问；从页面的输入输出判断要找哪类模型；服务台四样东西与在线试格式；API Key 只能放服务端的调用链路；同步、流式、异步任务三种返回方式；文本、视觉、生图、语音、视频的提示词要点；错误码排查表；让 AI 写后端接口时的 RESTful 与状态码规范。
+kicker: <span>技术学习</span><span>Easy-Vibe · 06</span><span>对应原教程 初级四 为原型接入 AI 能力、产品思维基础 4、二阶段 大模型辅助编写接口代码</span><span>约 35 分钟</span>
+h1: 接 AI 不只是复制一段 API 代码，<em>还要放对位置</em>
+lead: 上一篇的原型里，“生成文案”按钮背后还是模拟数据。原教程这一章把它接到真实的模型服务上，并强调接入要同时处理三件事：怎样描述任务、怎样读懂官方文档、怎样把调用安全地放进产品流程。这一篇先回答“这里该不该用 AI、让它扮演什么角色”，再走一遍从服务台到页面的通用接法，最后整理各类模态的提示词要点和出错时的排查表。
+nav: why|该不该用 AI;pick|找哪类模型;console|服务台与试格式;arch|Key 放在哪;modes|三种返回方式;modal|各模态要点;errors|错误排查;api|后端接口规范;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>决定一个功能要不要用 AI 前，先问哪两个问题？AI 引入的不确定性怎么评估？</li>
+    <li>为什么 API Key 不能放在前端，哪怕变量名带 <code>VITE_</code>？正确的调用链路是什么？</li>
+    <li>视频生成这类接口为什么不马上返回结果？页面该怎么处理？</li>
+  </ol>
+</div>
+
+<section class="part" id="why">
+  <div class="part-head"><h2>先问该不该用 AI，让它扮演什么</h2><span class="meta">原教程 产品思维基础 第 4 节</span></div>
+  <div class="sec-lede">
+    <p>产品思维附录先泼了一盆冷水：<strong>不要为了 AI 而 AI</strong>。决定之前问两个问题。第一，<strong>不用 AI，这个应用是否也成立</strong>？把 AI 能力全部抹掉，这件事本身有没有价值，用户愿不愿意持续投入时间。第二，<strong>用了 AI 之后具体提升了什么</strong>？不接受“提升效率、智能升级”这种泛泛总结，要落到用户自己能感知的一两个维度。登录、支付、保存文件、页面跳转这类有明确规则的事，仍然用普通程序做。</p>
+    <p>AI 在产品里大致扮演三种角色。<strong>大脑</strong>：理解和生成文字、在复杂信息间推理，比如从长录音里抓出核心讨论点，或判断学生是没理解概念还是粗心写错；你要做的是把问题问清、上下文喂准。<strong>眼睛</strong>：处理图像视频，把发票合同变成可搜索文字、看懂草图指出构图问题，让应用开始接触实物世界。<strong>手</strong>：执行一连串动作，比如读邮件附件、总结、发群、存云盘、建任务，并根据上下文动态决定下一步。</p>
+    <p>最后要评估 AI 带来的<strong>不确定性</strong>，原教程给了三问：<strong>用户和系统能不能承受</strong>（客服理解错了用户能马上纠正，自动财务审批误判就不可接受）；<strong>准确率能否达到这个场景的及格线</strong>（相册按人脸分类 80% 可以接受，安防漏掉 20% 就是隐患；社交文案 60 分够用，合同条款 95 分都不够）；<strong>出错时有没有办法补救</strong>（流程确定时可以在关键节点放人工审核，流程本身不确定时风险会急剧上升）。</p>
+    <p class="go">先把这些功能里 AI 的角色归类；再判断每个场景的不确定性能否承受。</p>
+  </div>
+  <div class="lab"><div id="roleSort"></div></div>
+  <div class="lab"><div id="riskCards"></div></div>
+  <div class="notes" id="n-why"></div>
+</section>
+
+<section class="part" id="pick">
+  <div class="part-head"><h2>看页面的输入和输出，决定找哪类模型</h2><span class="meta">原教程 初级四 第 1 节</span></div>
+  <div class="sec-lede">
+    <p>原教程的判断方法很朴素：看一遍页面，<strong>用户会提交什么，最后希望看到什么</strong>。填商品名称、材质、卖点，返回一段文案，输入输出都是文字，找文本生成模型；上传商品照片识别颜色款式，要图片理解；根据资料做海报，要图片生成；录音整理成纪要，要先语音转文字再交给文本模型；文章做成音频，要文字转语音；让商品图动起来，要图生视频。</p>
+    <p>不是每个功能都能交给一个模型一次完成。“上传商品照片并生成卖点”要先读懂照片再写文案；“根据公司资料回答问题”要先找到相关内容再组织答案。拆的时候不从模型名出发，顺着用户操作看：<strong>哪一步在理解现有内容，哪一步在生成新内容，哪一步只是查资料</strong>，需要时把两三种能力串起来。原教程还建议先让用户确认识别出的商品信息，再生成文案，这比直接从图片生成最终文案更容易发现错误。</p>
+    <p>服务台里还会看到 Embedding、Rerank、Function Calling、OCR、内容审核等接口：做知识库用前两个（第 10、14 篇）、读 PDF 票据用 OCR、让模型调搜索和数据库用 Function Calling。第一次不用学完，先接通一个和页面直接相关的。</p>
+    <p class="go">下面每个功能，第一步该找哪类能力？</p>
+  </div>
+  <div class="lab"><div id="capCards"></div></div>
+  <div class="notes" id="n-pick"></div>
+</section>
+
+<section class="part" id="console">
+  <div class="part-head"><h2>服务台四样东西，先在线试格式</h2><span class="meta">原教程 初级四 第 1.2、2–4 节</span></div>
+  <div class="sec-lede">
+    <p>打开 DeepSeek、SiliconFlow、火山方舟、MiniMax 这类平台，第一次只找四样：<strong>API Key</strong>（调用凭证）、<strong>Model ID</strong>（代码里用的准确名字，可能和页面显示的中文名不同）、<strong>官方最小示例</strong>（curl 或 JS/Python）、<strong>额度、价格和调用限制</strong>。要分清三个东西：服务平台名称、Model ID、API 地址不是一回事，填代码时以官方示例里的地址和 ID 为准，别把在线体验页的网址复制进去。有的平台还要先选 Region 或创建一个 Deployment 才给 Base URL。</p>
+    <p>写代码前先到在线体验页试一试，要确认的不是“模型会不会写文案”，而是<strong>它能不能按页面需要的格式返回</strong>。原教程区分了两类信息：用户只需填商品名称、材质、颜色然后点按钮；<strong>固定要求由程序在请求里补上</strong>：不要编造价格和销量、标题不要太长、按 <code>title</code>、<code>summary</code>、<code>selling_points</code> 三个 JSON 字段返回，页面才能稳定读取。测试时换几组资料，再故意少填一个字段，看模型会不会擅自补信息。格式不稳就调程序附加的要求，<strong>而不是让用户学怎么写提示词</strong>。</p>
+    <p>然后按官方示例在终端发出第一次请求，只替换模型 ID 和测试内容。终端能拿到正常响应，就证明账号、Key、模型本身可用，之后页面报错就能排除这些。发完去 Usage 或 Billing 页面确认出现了调用记录：<strong>页面显示了文字不代表它真的来自 API</strong>，原型里残留的模拟数据也会产生相似效果。文档太长就把链接交给 AI，让它只按文档写明的参数告诉你最简单的写法。</p>
+    <p class="go">切换看看：用户输入了什么，程序又替他补了什么。</p>
+  </div>
+  <div class="lab"><p class="lab-t">一次文本生成请求的两层内容（据原教程第 2、6 节）</p><div id="layerEvo"></div></div>
+  <div class="pcard" data-t="把官方示例交给 AI IDE 接到页面" data-k="原教程 2.2 节"><pre>我想给商品详情页加一个“生成文案”按钮。
+用户点击以后，把当前商品的信息发给下面这个 API，再把生成的文案显示在页面上。
+API Key 不要放在前端。等待和失败时，也请在页面上给出提示。
+做好后告诉我需要配置什么，以及怎样启动和测试。
+这是官方提供的 API 示例：
+【粘贴官方 curl / JS 示例】</pre></div>
+  <div class="pcard" data-t="让 AI 帮你读长文档" data-k="原教程 3.1 节"><pre>帮我看一下这个 API 文档：【文档链接】
+我想用 JavaScript 调用它。请告诉我最简单的写法、API Key 和 model 填在哪里，以及怎样拿到生成结果。
+只使用文档里写明的参数。</pre></div>
+  <div class="notes" id="n-console"></div>
+</section>
+
+<section class="part" id="arch">
+  <div class="part-head"><h2>API Key 放在哪：调用链路</h2><span class="meta">原教程 初级四 第 4.1、5 节</span></div>
+  <div class="sec-lede">
+    <p>API Key 是应用调用模型的凭证，等同于你的钱包。原教程的规矩：放进本地环境变量文件（如 <code>.env.local</code>，并确保它不会被提交到 Git），不要贴进截图、聊天记录或前端代码；怀疑泄露就立即到服务台撤销重建。</p>
+    <p>最关键的一条：<strong>不要把 Key 写进 Vue、React 或普通 HTML 的前端代码</strong>。前端代码最终会下载到每个访问者的浏览器里，任何人打开开发者工具都能看到。正确的链路是三段：浏览器只把业务输入发给<strong>你自己的 <code>/api/...</code> 接口</strong>；这个接口跑在服务端或 Serverless Function 里，从服务端环境变量读 Key，再去调 AI 平台；平台返回文字、JSON、文件或任务编号，再由你的接口转给页面。</p>
+    <p>原教程总结的接入顺序是五步：Key 写进不提交的环境文件 → 在服务端或 Serverless Function 里调用模型 → 页面调自己的接口而不是直接带第三方 Key → 给按钮补上等待、成功、失败状态 → 回到 Usage 页面确认产生了真实调用。</p>
+    <p class="go">逐步走一遍一次“生成文案”请求经过的路径。</p>
+  </div>
+  <div class="lab"><div id="keyFlow"></div></div>
+  <div class="confuse">
+    <h4>易混辨析：VITE_ / NEXT_PUBLIC_ 前缀的环境变量也不安全</h4>
+    <p>很多人以为“写在 .env 里就是安全的”。但 Vite 会把以 <code>VITE_</code> 开头的变量、Next.js 会把以 <code>NEXT_PUBLIC_</code> 开头的变量，在构建时<b>直接替换进前端代码</b>，打包后照样出现在浏览器里。这些前缀的含义恰恰是“允许暴露给前端”。能保密的只有<b>只在服务端读取</b>的变量（不带这些前缀，由后端或 Serverless Function 使用）。原教程原话：准备公开部署时，应由后端、Serverless Function 或受保护的网关调用模型。</p>
+  </div>
+  <div class="notes" id="n-arch"></div>
+</section>
+
+<section class="part" id="modes">
+  <div class="part-head"><h2>三种返回方式：同步、流式、异步任务</h2><span class="meta">原教程 初级四 第 3、4.3、5.1、10 节</span></div>
+  <div class="sec-lede">
+    <p>发请求前要先看清<strong>接口实际返回什么</strong>，页面写法取决于它：文本通常藏在某个 JSON 字段里，图片可能返回一个 URL（往往有有效期），语音合成可能直接返回音频二进制或十六进制编码，视频则常常先返回一个任务编号。</p>
+    <p>按返回节奏分三类。<strong>同步</strong>：短文本、图片理解、短音频识别，一次请求直接拿到结果，页面显示“生成中”即可。<strong>流式</strong>：对话或实时语音，内容一段一段到达（打开 <code>stream</code> 参数），页面边收边显示。<strong>异步任务</strong>：图片和视频生成常常要几十秒，第一次请求只拿到 <code>task_id</code>，之后要反复查询状态（排队中、生成中、成功、失败），成功后拿到 <code>file_id</code> 再换下载地址。查询可以由你的程序<strong>轮询</strong>（要设间隔和停止条件），也可以提供 <code>callback_url</code> / Webhook 让平台完成后<strong>主动通知</strong>你的服务端。临时下载地址会过期，正式上线要考虑转存。</p>
+    <p>用量限制也要看：文本接口常标 <strong>RPM</strong>（每分钟请求数）和 <strong>TPM</strong>（每分钟 token 数），图片、语音、视频还会限并发。超了通常返回 <code>429</code>，应该稍后重试，而不是不停点。<code>max_tokens</code>、<code>temperature</code>、<code>stream</code> 这些参数第一版先沿用官方示例，输出被截断时再调 <code>max_tokens</code>，需要边生成边显示时再开 <code>stream</code>。</p>
+    <p class="go">走一遍一次视频生成的异步流程。</p>
+  </div>
+  <div class="lab"><p class="lab-t">异步任务：以原教程的 MiniMax 视频生成为例</p><div id="asyncFlow"></div></div>
+  <div class="lab"><div id="modeCards"></div></div>
+  <div class="notes" id="n-modes"></div>
+</section>
+
+<section class="part" id="modal">
+  <div class="part-head"><h2>各模态的提示词要点</h2><span class="meta">原教程 初级四 第 6–10 节</span></div>
+  <div class="sec-lede">
+    <p>原教程把每种模态都接了一遍，示例模型会更新，但提示词的写法是稳定的。<strong>文本</strong>：在 system 里规定返回字段和禁止编造的内容，用户消息只放业务信息。<strong>图片理解</strong>（示例用 Qwen3-VL）：页面需要什么就直接问什么，只问“图里有什么”只会得到宽泛描述；还要加一句“看不清的地方直接说看不清，不要猜品牌、价格或销量”。<strong>图片生成和修改</strong>（示例用 Seedream）：商品图最怕“看起来很好但商品本身变了”，除了背景、构图、光线，要写明<strong>哪些地方不能改变</strong>（拉链、肩带、口袋），并且不要一上来堆风格词。</p>
+    <p><strong>语音</strong>至少是两条接口：ASR/STT 把音频变文字（上传用 <code>multipart/form-data</code>，和 JSON 请求不同），TTS 把文字变语音（返回音频，不一定是 JSON）。TTS 的“提示词”是朗读脚本和声音参数：先把数字、英文缩写、停顿改成适合朗读的文本，别把 Markdown、URL、按钮文字整段送去读；页面要有试听、停止、重新生成、下载。<strong>视频</strong>还要说明接下来几秒发生什么：初始位置、运动顺序、镜头方向、时长；动作多时先只保留一个镜头一个主要动作，同时要求旋转、开合、变焦、切场景很难保持商品外观一致。</p>
+    <p>合规提醒贯穿全章：上传录音前告诉用户用途、保存时间和删除方式；声音克隆必须得到音色拥有者明确授权；用真人照片、声音、商标或版权素材生成视频要确认授权，有些平台的人脸验证和素材登记不是能从前端绕过的技术步骤。</p>
+    <p class="go">这几条提示词，复制去改一改就能用。</p>
+  </div>
+  <div class="pcard" data-t="图片理解：问具体、不许猜" data-k="原教程第 7 节"><pre>帮我看看这张商品图。告诉我它是什么、主要是什么颜色，还能看出哪些材质和结构。图里有文字也请抄出来。
+看不清的地方直接说看不清，不要猜品牌、价格或销量。
+请用 JSON 返回，方便我把结果显示在页面上。</pre></div>
+  <div class="pcard" data-t="商品图生成：写清不能改变的部分" data-k="原教程第 8 节"><pre>把参考图里的黑色双肩包做成一张竖版商品海报。
+背包放在浅灰色台面中央，光线柔和，上方留一点放标题的位置。
+不要添加文字、Logo 或价格，也不要改变拉链、肩带和口袋。</pre></div>
+  <div class="pcard" data-t="视频生成：一个镜头一个动作" data-k="原教程第 10.1 节"><pre>让这只黑色双肩包在浅灰色展台上展示 6 秒。
+镜头从正面慢慢绕到右侧，再稍微拉近，画面保持竖屏。
+不要改变背包的样子，也不要添加人物、文字或 Logo。</pre></div>
+  <div class="lab"><div id="modalQuiz"></div></div>
+  <div class="notes" id="n-modal"></div>
+</section>
+
+<section class="part" id="errors">
+  <div class="part-head"><h2>出错了先看状态码</h2><span class="meta">原教程 初级四 第 11 节</span></div>
+  <div class="sec-lede">
+    <p>原教程把接入 AI 时最常见的现象整理成了一张表：<code>401/403</code> 查 Key 是否正确、有无权限、是否放错请求头；<code>404</code> 查 Base URL、Endpoint 或 Model ID 是否变了；<code>429</code> 查 RPM、TPM、并发或账号等级；<code>400</code> 查必填参数、文件格式、JSON 结构、尺寸限制；<code>5xx</code> 或超时查平台状态、超时设置和重试策略；一直排队查并发、状态查询和额度；页面显示成功却没内容，查响应字段路径、二进制处理、临时 URL 是否过期；<strong>本地能用、上线失败</strong>，查环境变量、跨域、Serverless 超时和区域网络。</p>
+    <p>请求失败时先分清三种情况：代码根本没发出去、平台拒绝了、还是账号没额度了。调试时保存四样东西：<strong>发生时间、请求类型、HTTP 状态码、Request ID / Trace ID</strong>（同一时间请求很多，这个编号能帮你在日志里找到那一次）。日志里不要写 API Key、完整用户音频或敏感业务数据。</p>
+    <p class="go">看现象，判断最该先查什么。</p>
+  </div>
+  <div class="lab"><div id="errCards"></div></div>
+  <div class="notes" id="n-errors"></div>
+</section>
+
+<section class="part" id="api">
+  <div class="part-head"><h2>让 AI 写后端接口时，你要把关什么</h2><span class="meta">原教程 二阶段 大模型辅助编写接口代码与接口文档</span></div>
+  <div class="sec-lede">
+    <p>上面的 <code>/api/...</code> 就是一个后端接口。原教程第二阶段专门讲了怎样让大模型写接口，用餐厅打比方：前端是菜单和点餐桌，数据库是后厨仓库，<strong>后端 API 是服务员</strong>，客人不能冲进后厨自己拿，要把点单（HTTP 请求）交给服务员，服务员核对（参数校验、权限）后去后厨取，再把菜（通常是 JSON 响应）端回来。</p>
+    <p>AI 写的接口质量取决于你给的上下文：<strong>大模型不怕需求复杂，最怕需求模糊</strong>。要给出字段定义和约束（商品名和价格必填、价格不能为负、分类只能是汉堡小食饮料、输入不对要提示），还要心里有一个分层结构：路由层定义路径和方法，控制器层处理请求参数，服务层封装数据库交互和业务逻辑，中间件负责鉴权和全局错误捕获，别全塞进一个 <code>server.js</code>。写完还可以让 AI 逆向生成 OpenAPI（Swagger）接口文档、Postman 测试集合（含正常和错误请求）、Jest 单元测试。</p>
+    <p>即使有 AI，你仍是把关人，原教程列了三条必须审核的准则：<strong>RESTful 命名</strong>（URL 是资源名词，动作交给 HTTP 方法：<code>GET /api/users</code>、<code>POST /api/users</code>，而不是 <code>POST /api/getUser</code>）；<strong>规范的状态码</strong>（200/201 成功，400 参数错，401/403 未登录或无权限，404 不存在，500 服务端错，且不要把调用栈直接暴露给前端）；<strong>永远不信任用户的输入</strong>，所有核心校验在后端再做一次。</p>
+    <p class="go">这些接口设计，哪个符合 RESTful？</p>
+  </div>
+  <div class="lab"><div id="restCards"></div></div>
+  <div class="notes" id="n-api"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 要不要用 AI 先问哪两个问题？不确定性怎么评估？</summary><p class="ans">两个问题：不用 AI 这个应用是否也成立；用了 AI 之后具体提升了什么（落到用户能感知的一两个维度）。不确定性三问：出错时用户和系统能否承受；准确率能否达到这个场景的及格线（及格线由用途决定）；出错时有没有补救办法，例如在流程确定的关键节点放人工审核。</p></details>
+    <details><summary>2. 为什么 Key 不能放前端？正确链路是什么？</summary><p class="ans">前端代码会下载到每个访问者的浏览器，任何人都能看到；VITE_、NEXT_PUBLIC_ 前缀的变量会在构建时被替换进前端代码，同样暴露。正确链路：浏览器只把业务输入发给自己的 /api 接口；接口跑在服务端或 Serverless Function，从服务端环境变量读 Key 去调 AI 平台；平台结果由接口转回页面。Key 放在不提交到 Git 的环境文件里，泄露就立即撤销重建。</p></details>
+    <details><summary>3. 视频生成为什么不马上返回？页面怎么处理？</summary><p class="ans">视频生成耗时几十秒甚至更久，接口采用异步任务：创建任务先返回 task_id，之后查询状态（Preparing、Queueing、Processing、Success、Fail），成功后用 file_id 换下载地址。页面要显示这些阶段而不是停在一个不变的“加载中”；程序轮询要设间隔和停止条件，正式产品可以用 callback_url 让平台主动通知服务端；临时下载地址会过期，上线时考虑转存。</p></details>
+  </div>
+</section>
+===SCRIPT===
+S.sortGame($('#roleSort'), {
+  bins: [{ k: 'brain', t: '大脑：理解、生成、推理' }, { k: 'eye', t: '眼睛：看懂图像视频' }, { k: 'hand', t: '手：执行一串动作' }],
+  items: [
+    { t: '从一小时会议录音里抓出三个核心决定', k: 'brain', why: '理解长内容并生成有结构的输出。' },
+    { t: '拍一张发票，自动变成可搜索的文字和金额', k: 'eye', why: '把实物世界的图像变成机器可理解的描述。' },
+    { t: '读邮件附件 → 总结 → 发群 → 存云盘 → 建跟进任务', k: 'hand', why: '串起多个步骤，并根据内容决定下一步。' },
+    { t: '判断学生是没理解概念还是粗心算错', k: 'brain', why: '原教程的例子：基于回答做推理，给出不同反馈。' },
+    { t: '看用户画的草图，指出构图和线条问题', k: 'eye', why: '原教程的例子：一双会分析的眼睛。' },
+    { t: '识别一封邮件是不是投诉，是就转给售后并建工单', k: 'hand', why: '在流程中动态决定触发哪条后续操作。' }
+  ]
+});
+
+HB.cards($('#riskCards'), {
+  opts: ['可以直接用', '加人工复核', '暂不宜交给 AI'],
+  items: [
+    { t: '给用户头像做 AI 美化，不满意可以重新生成。', a: 0, why: '试错成本低，用户一眼能判断，重来即可。' },
+    { t: '客服机器人理解用户意图，理解错了用户可以马上纠正。', a: 0, why: '不确定性可控，原教程的正例。' },
+    { t: '根据合同草稿自动生成正式条款直接发给客户。', a: 1, why: '合同的及格线极高（95 分都不够），起草可以交给 AI，定稿必须由人审。' },
+    { t: '自动执行财务审批并直接打款。', a: 2, why: '一次误判可能造成严重后果，原教程明确说这种不确定性不可接受。' },
+    { t: '医学影像上自动标出异常位置给医生参考。', a: 1, why: 'AI 标错了医生可能很难发现，只能作为辅助并保留医生判断与复核流程。' }
+  ]
+});
+
+HB.cards($('#capCards'), {
+  opts: ['文本生成', '图片理解', '图片生成', '语音转文字', '文字转语音', '视频生成'],
+  items: [
+    { t: '用户填商品名称和材质，返回标题和卖点。', a: 0, why: '输入输出都是文字。' },
+    { t: '上传商品照片，识别颜色、款式和图上的文字。', a: 1, why: '理解现有图像内容，用视觉模型。' },
+    { t: '录音整理成会议纪要。', a: 3, why: '第一步先语音转文字，第二步再交给文本模型整理，是两种能力串联。' },
+    { t: '把一篇文章做成可以播放的音频。', a: 4, why: 'TTS，返回的是音频而不是 JSON。' },
+    { t: '根据商品资料做一张竖版海报。', a: 2, why: '生成新图片，还要写明哪些部分不能改变。' },
+    { t: '让一张商品图动起来，展示 6 秒。', a: 5, why: '图生视频，通常是异步任务。' }
+  ]
+});
+
+EV.evolve($('#layerEvo'), {
+  vers: [
+    { t: '用户在页面上填的', p: '商品名称：通勤双肩包\n材质：黑色尼龙\n适用人群：日常通勤\n[点击 生成文案]', r: '<p>用户只填业务字段，不需要会写提示词，也不需要知道返回格式。</p>' },
+    { t: '程序补上的固定要求', p: '{"role": "system", "content": "[[请返回 JSON，字段为 title、summary 和 selling_points。selling_points 包含三条内容，不要编造价格、销量或功效。]]"}', r: '<p>格式和禁止项由程序在每次请求里统一附加，页面才能稳定地把三个字段放到对应位置。格式不稳时调整的是这里。</p>' },
+    { t: '最终发出的请求', p: 'curl https://api.deepseek.com/chat/completions \\\n  -H "Authorization: Bearer ${DEEPSEEK_API_KEY}" \\\n  -d \'{\n  "model": "[[从模型列表复制当前 ID]]",\n  "messages": [\n    {"role": "system", "content": "请返回 JSON，字段为 title、summary 和 selling_points……"},\n    {"role": "user", "content": "[[我想上架一款黑色尼龙通勤双肩包。请帮我写一个简短标题、一段介绍和三条卖点。]]"}\n  ],\n  "stream": false\n}\'', r: '<p>用户字段被拼成 user 消息，固定要求放在 system 消息，Key 从服务端环境变量读取。先在终端用 curl 跑通，再交给 AI IDE 接进页面。模型 ID 会更新，原教程提醒每次从官方列表复制。</p>' }
+  ]
+});
+
+EV.flow($('#keyFlow'), {
+  nodes: [{ k: 'b', t: '浏览器页面', sub: '用户看到的' }, { k: 'api', t: '自己的 /api', sub: '服务端 / Serverless' }, { k: 'env', t: '服务端环境变量', sub: '.env（不提交）' }, { k: 'ai', t: 'AI 服务平台', sub: 'DeepSeek 等' }],
+  steps: [
+    { a: 'b', b: 'api', m: 'POST 商品名称、材质', d: '页面只发送业务输入，<b>不带任何第三方 Key</b>。按钮同时切到“生成中”。' },
+    { a: 'api', b: 'env', m: '读取 DEEPSEEK_API_KEY', d: 'Key 只存在于服务端。这个变量<b>不能</b>带 VITE_ 或 NEXT_PUBLIC_ 前缀。' },
+    { a: 'api', b: 'ai', m: '带 Key + 固定要求调用模型', d: '服务端拼好 system 和 user 消息，带上 Authorization 头发给平台。' },
+    { a: 'ai', b: 'api', m: '返回 JSON / URL / task_id', d: '平台按接口类型返回。出错时记录状态码和 Request ID，但不把 Key 写进日志。' },
+    { a: 'api', b: 'b', m: '只返回页面需要的字段', d: '接口把 title、summary、selling_points 交给页面，页面显示结果并恢复按钮；失败时返回友好的错误信息，不暴露调用栈。' }
+  ]
+});
+
+EV.flow($('#asyncFlow'), {
+  nodes: [{ k: 'p', t: '页面', sub: '显示阶段' }, { k: 's', t: '你的服务端', sub: '/api/video' }, { k: 'v', t: '视频平台', sub: '异步任务' }],
+  steps: [
+    { a: 'p', b: 's', m: '提交提示词和参考图', d: '用户点“生成视频”，页面进入 <b>Preparing</b>。' },
+    { a: 's', b: 'v', m: 'POST /video_generation', d: '创建任务：带上模型、提示词、时长、分辨率。' },
+    { a: 'v', b: 's', m: '立即返回 task_id', d: '这时视频还没开始做，只拿到一个任务编号。' },
+    { a: 's', b: 'v', m: 'GET /query?task_id=…（每隔几秒）', d: '轮询任务状态：<b>Queueing → Processing</b>。要设轮询间隔和最长等待时间；也可以提供 callback_url，让平台完成后主动通知。' },
+    { a: 's', b: 'p', m: '推送当前阶段', d: '页面显示“排队中 / 生成中”，而不是一个不会变化的转圈，更不编造百分比。' },
+    { a: 'v', b: 's', m: 'Success + file_id', d: '任务完成，拿到 file_id。失败则返回 <b>Fail</b>，页面给出重试入口。' },
+    { a: 's', b: 'v', m: '用 file_id 换下载地址', d: '下载地址是临时的，会过期；正式上线考虑转存到自己的存储。' },
+    { a: 's', b: 'p', m: '返回视频地址', d: '页面播放视频，并提供下载和重新生成。' }
+  ]
+});
+
+HB.cards($('#modeCards'), {
+  opts: ['同步', '流式', '异步任务'],
+  items: [
+    { t: '识别一张商品图的颜色和材质。', a: 0, why: '图片理解通常一次请求直接返回。' },
+    { t: '聊天助手的回答一个字一个字地出现。', a: 1, why: '打开 stream，内容分段到达，边收边显示。' },
+    { t: '生成一段 6 秒的商品展示视频。', a: 2, why: '先拿 task_id，再查询状态，最后取文件。' },
+    { t: '把 30 秒的语音留言转成文字。', a: 0, why: '短音频识别通常同步返回文本。' }
+  ]
+});
+
+S.quiz($('#modalQuiz'), [
+  { q: '视觉模型识别商品图，哪种问法更好？', o: ['这张图里有什么？', '告诉我商品类别、颜色、材质和图中文字，看不清的直接说看不清，用 JSON 返回'], a: 1, why: '页面需要什么就问什么；“图里有什么”只会得到宽泛描述，还可能猜品牌价格。' },
+  { q: '用 TTS 朗读一段商品介绍，送进去的文本应该是？', o: ['页面上的原文，包括 Markdown 和链接', '改写成适合朗读的脚本：数字、缩写、停顿都处理过'], a: 1, why: '原教程：不要把 Markdown、URL 和按钮文字整段送去朗读。' },
+  { q: '商品海报生成后背包的拉链位置变了，最可能是提示词缺了什么？', o: ['更多风格词', '明确写出哪些结构不能改变'], a: 1, why: '商品图最怕商品本身被改；原教程提示词里专门写了“不要改变拉链、肩带和口袋”。' },
+  { q: '视频里要旋转、开合、变焦、切场景，效果很差，怎么办？', o: ['把每个动作写得更详细', '先只保留一个镜头和一个主要动作'], a: 1, why: '动作越多越难保持商品外观一致。' }
+]);
+
+HB.cards($('#errCards'), {
+  opts: ['Key 与权限', '地址或模型 ID', '限流额度', '参数格式', '平台或超时', '上线环境'],
+  items: [
+    { t: '接口返回 401 Unauthorized。', a: 0, why: 'Key 错误、没权限或放错了请求头。' },
+    { t: '昨天还好好的，今天返回 404。', a: 1, why: 'Base URL、Endpoint 或 Model ID 可能更新了，回官方文档重新复制。' },
+    { t: '用户一多就频繁返回 429。', a: 2, why: '超过 RPM、TPM 或并发限制；稍后重试，必要时升级账号等级。' },
+    { t: '上传图片返回 400，提示参数无效。', a: 3, why: '检查必填参数、文件格式、JSON 结构和尺寸限制。' },
+    { t: '本地开发一切正常，部署后一直失败。', a: 5, why: '查服务器上的环境变量是否配置、跨域、Serverless 超时和区域网络。' },
+    { t: '偶发 502，或请求等了很久超时。', a: 4, why: '查平台状态页、超时设置和重试策略。' }
+  ]
+});
+
+HB.cards($('#restCards'), {
+  opts: ['符合规范', '不符合'],
+  items: [
+    { t: 'GET /api/menu_items 获取菜单列表', a: 0, why: 'URL 是资源名词，动作由 GET 表达。' },
+    { t: 'POST /api/createMenuItem 新增菜品', a: 1, why: '动词写进了 URL；应改为 POST /api/menu_items。' },
+    { t: '参数缺失时返回 500 和完整报错堆栈', a: 1, why: '参数错误应返回 400；而且不要把调用栈暴露给前端。' },
+    { t: '未登录访问时返回 401', a: 0, why: '401 / 403 表示未登录或无权限。' },
+    { t: '价格校验只在前端做，后端直接入库', a: 1, why: '永远不信任用户输入，核心校验必须在后端再做一次。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-why'), {
+  c: [
+    ['不为 AI 而 AI', '不用 AI 是否成立？用了具体提升什么？'],
+    ['三种角色', '大脑（理解生成推理）、眼睛（看懂图像）、手（执行动作）']
+  ],
+  p: [
+    ['不确定性三问', '能否承受、准确率是否过及格线、出错能否补救'],
+    ['及格线看用途', '相册 80% 可接受，安防不行；文案 60 分够，合同 95 分不够'],
+    ['规则交给程序', '登录、支付、存文件、跳转不用 AI']
+  ]
+});
+S.notes($('#n-pick'), {
+  c: [
+    ['选能力', '看用户提交什么、希望看到什么'],
+    ['能力串联', '理解现有内容 / 生成新内容 / 查资料，按用户操作拆步']
+  ],
+  p: [
+    ['先确认再生成', '先让用户确认识别结果，再生成文案，更容易发现错误'],
+    ['以后再学', 'Embedding、Rerank（知识库）、OCR、Function Calling、审核']
+  ]
+});
+S.notes($('#n-console'), {
+  c: [
+    ['服务台四样', 'API Key、Model ID、官方最小示例、额度价格限制'],
+    ['三者不同', '平台名、Model ID、API 地址；以官方示例为准']
+  ],
+  p: [
+    ['先试格式', '在线体验确认能按页面要的 JSON 字段返回'],
+    ['固定要求', '格式和禁止编造由程序附加，不让用户写提示词'],
+    ['先终端后页面', 'curl 跑通再接页面；去 Usage 确认真实调用']
+  ]
+});
+S.notes($('#n-arch'), {
+  c: [
+    ['调用链路', '浏览器 → 自己的 /api（服务端读 Key）→ AI 平台 → 回传'],
+    ['前缀陷阱', 'VITE_、NEXT_PUBLIC_ 变量会被打包进前端']
+  ],
+  p: [
+    ['Key 存放', '.env.local 等不提交的文件；不进截图、聊天、前端'],
+    ['接入五步', 'Key 入环境文件 → 服务端调用 → 页面调自己接口 → 补三种状态 → 看 Usage'],
+    ['泄露处理', '立即撤销并重建']
+  ]
+});
+S.notes($('#n-modes'), {
+  c: [
+    ['同步', '一次请求直接返回：短文本、图片理解、短音频识别'],
+    ['流式', 'stream 打开后分段到达，边收边显示'],
+    ['异步任务', '先 task_id，再查状态，成功后 file_id 换临时地址']
+  ],
+  p: [
+    ['轮询 vs 回调', '轮询设间隔和停止条件；callback_url 让平台主动通知'],
+    ['RPM / TPM', '每分钟请求数 / token 数；超限返回 429，稍后重试'],
+    ['参数', '先用官方默认；截断调 max_tokens，要边显示开 stream']
+  ]
+});
+S.notes($('#n-modal'), {
+  c: [
+    ['ASR / STT', '音频 → 文字，常用 multipart 上传'],
+    ['TTS', '文字 → 音频，返回不一定是 JSON']
+  ],
+  p: [
+    ['视觉', '问具体字段，看不清就说看不清，不猜'],
+    ['生图', '写清用途、位置、风格，以及不能改变的结构'],
+    ['TTS 脚本', '改成适合朗读的文本，不读 Markdown 和链接'],
+    ['视频', '说清几秒内的变化；一个镜头一个动作'],
+    ['合规', '录音告知用途；声音克隆和真人素材需授权']
+  ]
+});
+S.notes($('#n-errors'), {
+  c: [
+    ['三种失败', '没发出去 / 平台拒绝 / 没额度'],
+    ['调试四样', '时间、请求类型、状态码、Request ID']
+  ],
+  p: [
+    ['401/403', 'Key、权限、请求头'],
+    ['404', 'Base URL、Endpoint、Model ID 变了'],
+    ['429', 'RPM、TPM、并发、等级'],
+    ['400', '参数、格式、JSON、尺寸'],
+    ['本地好上线坏', '环境变量、跨域、Serverless 超时、区域网络']
+  ]
+});
+S.notes($('#n-api'), {
+  c: [
+    ['后端 API', '餐厅服务员：校验、鉴权后去后厨取数据，以 JSON 返回'],
+    ['分层结构', 'routes 路由 / controllers 控制器 / services 服务 / middlewares 中间件']
+  ],
+  p: [
+    ['给 AI 的上下文', '字段定义 + 约束条件；不怕复杂只怕模糊'],
+    ['RESTful', 'URL 用资源名词，动作交给 GET/POST/PUT/DELETE'],
+    ['状态码', '200/201、400、401/403、404、500，不暴露调用栈'],
+    ['输入', '永远不信任用户输入，后端再校验一次']
+  ]
+});
+
+EV.todo($('#todo'), '6', [
+  { t: '对你的产品回答两个问题：不用 AI 是否成立？用了具体提升什么？', d: '' },
+  { t: '在一个平台创建 API Key，复制 Model ID，用 curl 在终端跑通一次最小请求', d: 'Key 放环境变量，不要直接写进命令历史可见的位置。' },
+  { t: '在在线体验页测试：换两组资料、少填一个字段，看模型会不会编造', d: '' },
+  { t: '让 AI IDE 按“页面 → 自己的 /api → 平台”接入一个按钮，Key 只在服务端', d: '检查打包后的前端代码里搜不到 Key。' },
+  { t: '去 Usage 页面确认真实调用记录，再故意填错 Key 看页面失败提示', d: '' },
+  { t: '（可选）接一个异步能力（图片或视频生成），页面显示真实的任务阶段', d: '' }
+]);

@@ -1,0 +1,360 @@
+---
+title: 前端：从设计稿到界面
+desc: Easy-Vibe 学习笔记（七）：前端设计从临摹开始，抄规则不抄结果；用结构、视觉四要素、组件三层拆解一个页面；AI 默认界面为什么有“AI 味”以及描述风格的五个维度；参考大厂规范时看主次层级和按钮语义；两条设计工具路线与设计转代码的三条路径；组件库与 DESIGN.md 设计系统；用 Agent 把“理解”和“执行”拆开生产素材。
+kicker: <span>技术学习</span><span>Easy-Vibe · 07</span><span>对应原教程 二阶段前端 UI 设计、Figma 与 MasterGo、设计转代码、LLM 与 Skills 美化、设计规范、组件库、素材生产</span><span>约 35 分钟</span>
+h1: “好看”可以被量化，<em>所以可以被描述</em>
+lead: 第二阶段从前端开始。原教程的核心问题是：面对一款设计精美的页面，如何分析它是怎么设计出来的，并借助 AI 把它临摹到以假乱真？答案落在一个事实上：色值、字号、间距、圆角、阴影全是数字。会拆，就会描述；会描述，AI 就抄得像。这一篇把原教程前端部分的八章压成一条线：怎么看、怎么说、参考什么规范、用什么工具、怎样沉淀成自己的设计系统。
+nav: copy|从临摹开始;see|拆解页面;flavor|去掉 AI 味;rules|大厂规范;tools|工具与转代码;system|设计系统;assets|素材生产;recap|回扣三问
+---
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.tkn { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 16px; margin-top: 10px; }
+.tkn-ctl label { display: block; font-size: 15px; color: var(--ink-2); margin: 8px 0; }
+.tkn-ctl input[type="range"] { width: 100%; accent-color: var(--s1); }
+.tkn-ctl .sw { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.tkn-ctl .sw button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--rule); cursor: pointer; }
+.tkn-ctl .sw button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--ink); }
+.pv { border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: #F8FAFC; color: #0F172A; font-size: 15px; }
+.pv-nav { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid #E2E8F0; }
+.pv-nav b { font-size: 16px; }
+.pv-hero { text-align: center; }
+.pv-hero h4 { margin: 0 0 6px; line-height: 1.2; }
+.pv-hero p { margin: 0 auto 12px; color: #475569; max-width: 30em; }
+.pv-btn { display: inline-block; color: #fff; padding: 8px 18px; font-weight: 600; }
+.pv-btn2 { display: inline-block; padding: 7px 16px; border: 1px solid #CBD5E1; color: #0F172A; margin-left: 8px; background: #fff; }
+.pv-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pv-card { background: #fff; border: 1px solid #E2E8F0; padding: 12px; }
+.pv-card i { display: block; width: 22px; height: 22px; border-radius: 6px; margin-bottom: 6px; }
+@media (max-width: 760px) { .tkn { grid-template-columns: minmax(0, 1fr); } .pv-cards { grid-template-columns: minmax(0, 1fr); } }
+.btnrow2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.b-pri { background: var(--s1); color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 15px; }
+.b-sec { background: transparent; color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 13px; font: inherit; font-size: 15px; }
+.b-txt { background: none; border: 0; color: var(--s1); font: inherit; font-size: 15px; padding: 6px 4px; }
+.b-dan { background: transparent; color: var(--alert); border: 1px solid var(--alert); border-radius: 6px; padding: 5px 13px; font: inherit; font-size: 15px; }
+</style>
+===BODY===
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>拆解一个页面看哪三层？视觉上哪四个要素可以量化？</li>
+    <li>AI 生成的界面为什么常常“很普通”？描述设计风格要覆盖哪五个维度？</li>
+    <li>设计转代码有哪三条路径，各适合什么情况？DESIGN.md 里装的是什么？</li>
+  </ol>
+</div>
+
+<section class="part" id="copy">
+  <div class="part-head"><h2>前端设计的第一课是临摹</h2><span class="meta">原教程 UI 设计 第 1 章</span></div>
+  <div class="sec-lede">
+    <p>原教程说：<strong>前端设计的第一课，不是创造，而是复刻。</strong>就像学书法先临帖。理由有三：设计的“好”可以被量化，色值、字号、间距、圆角、阴影全是数字；逐像素复刻一套成熟设计，会逼你搞懂它背后的每个决策（留白怎样制造呼吸感、配色为什么协调、主次怎样排出来）；抄到像了，下次遇到类似场景就知道往哪个方向抄。一句话：<strong>能临摹出一款好产品，说明有了基本功；能在此基础上改动，说明出师了。</strong></p>
+    <p>参考本来就是设计师的日常（Pinterest 找灵感、Dribbble 看趋势、竞品分析看结构），AI 时代只是把参考变成了可执行能力：Claude Design 能导入参考网站按风格出稿，Open Design 内置上百套开源设计系统，UI design Skill 把大厂规范打包成 AI 指令。所以问题不是能不能抄，而是怎么抄得专业、合法、抄出自己的东西。原教程推荐先建一个参考库，按落地页、组件、配色、动效分类存截图和链接：Awwwards（顶级创意）、Godly、Landbook 和 Lapa Ninja（落地页）、Mobbin（真实 App 界面和流程）、Dribbble、Behance。</p>
+    <p>边界是一句话：<strong>抄“规则”可以，抄“结果”危险。</strong>布局结构、视觉风格、设计规范可以学，理解后重做；品牌 Logo、专属图标、原创插画、文案不要直接复制。商用前还要确认素材版权、字体授权（商用字体要买）、AI 生成内容的平台条款，品牌和广告物料必须人工把关。</p>
+    <p class="go">这些做法，属于参考还是抄袭？</p>
+  </div>
+  <div class="lab"><div id="copyCards"></div></div>
+  <div class="notes" id="n-copy"></div>
+</section>
+
+<section class="part" id="see">
+  <div class="part-head"><h2>会看才会设计：三层拆解</h2><span class="meta">原教程 UI 设计 第 2、4 章</span></div>
+  <div class="sec-lede">
+    <p>原教程的拆解框架分三层。<strong>结构</strong>：绝大多数现代网页可以拆成导航栏（Logo、菜单、登录或 CTA）、首屏 Hero（主标题、副标题、主按钮、产品图）、内容区（特性卡片、数据、评价、定价）、页脚四块，先用眼睛画出骨架。<strong>视觉</strong>：四个可量化的要素，色彩（主色、背景、文字色的 Hex 值）、字体（标题和正文的字体、字号、字重）、间距（区块之间、卡片内部，常见 8 / 16 / 24 / 48 px 的节奏）、圆角与阴影。<strong>组件</strong>：把按钮、卡片这类可复用零件的样式参数逐个记下来，拆完三五个页面就有了自己的组件样式库。</p>
+    <p>原教程特别提醒：<strong>开发者天生就有设计分析仪</strong>。浏览器里右键“检查”，任何页面的色值、字号、间距、圆角都暴露无遗；也可以把截图交给多模态模型让它提取规范。拆完之后把“看到的设计”翻译成 AI 听得懂的结构化描述，看得越细，翻译得越准，AI 抄得越像。临摹的验收标准很客观：原图和临摹版并排放大逐区块对比，色值、字号、间距、圆角肉眼看不出差异，缩到 50% 仍分不清。第一版通常“神似而形不似”，这不是失败，正好告诉你该调哪里。</p>
+    <p class="go">调一调下面的设计令牌，看同一个页面的气质怎么变；右下角会实时生成一段可以交给 AI 的规范描述。</p>
+  </div>
+  <div class="lab">
+    <p class="lab-t">设计令牌调节器（数值是示意）</p>
+    <div class="tkn">
+      <div class="tkn-ctl">
+        <label>主色<div class="sw" id="tkColor"></div></label>
+        <label>圆角 <b id="tkRv">8</b> px<input type="range" id="tkR" min="0" max="24" step="2" value="8"></label>
+        <label>区块间距 <b id="tkSv">24</b> px<input type="range" id="tkS" min="8" max="48" step="8" value="24"></label>
+        <label>标题字号 <b id="tkFv">28</b> px · 字重 <b id="tkWv">700</b><input type="range" id="tkF" min="20" max="40" step="2" value="28"></label>
+        <label>阴影强度 <b id="tkHv">弱</b><input type="range" id="tkH" min="0" max="2" step="1" value="1"></label>
+      </div>
+      <div class="pv" id="pv">
+        <div class="pv-nav"><b>Mist Notes</b><span style="color:#64748B">功能 · 定价 · 登录</span></div>
+        <div class="pv-hero" id="pvHero"><h4 id="pvH">会后十分钟，纪要就绪</h4><p>自动整理待办、责任人和截止时间，直接发给团队。</p><span class="pv-btn" id="pvB">免费试用</span><span class="pv-btn2" id="pvB2">看演示</span></div>
+        <div class="pv-cards" id="pvC"><div class="pv-card"><i></i>待办提取</div><div class="pv-card"><i></i>一键分享</div><div class="pv-card"><i></i>多人协作</div></div>
+      </div>
+    </div>
+    <pre class="ev-p" id="tkOut"></pre>
+  </div>
+  <div class="notes" id="n-see"></div>
+</section>
+
+<section class="part" id="flavor">
+  <div class="part-head"><h2>AI 默认回到“统计平均”</h2><span class="meta">原教程 用 LLM 和 Skills 让界面变好看 第 1–3 节</span></div>
+  <div class="sec-lede">
+    <p>为什么 AI 生成的界面常常“很普通”？训练数据里海量的前端代码大多做了“安全”的选择：字体是 Inter、Roboto，颜色是紫色渐变和蓝色主色，布局是对称网格加卡片堆叠，动画是淡入淡出，背景是纯色或简单渐变。单看都不错，但所有 AI 页面都这么做，就成了“AI 味”。原教程的关键洞察：<strong>AI 不是不会设计，而是默认回到统计平均，你要明确告诉它偏离平均值的方向。</strong></p>
+    <p>描述风格要覆盖<strong>五个维度</strong>：<strong>字体</strong>（标题用有个性的展示字体，正文用易读字体）、<strong>颜色</strong>（主色加点缀色，避免平均分布）、<strong>布局</strong>（不对称、重叠、Bento Grid、打破网格）、<strong>动画</strong>（编排过的加载顺序、微交互）、<strong>细节</strong>（背景纹理、阴影、边框）。第二种办法是装 <strong>Skills</strong>，让 AI 每次自动加载一套设计规范，原教程介绍了 UI/UX Pro Max 和 Anthropic 官方的 frontend-design 等，还演示了把自己的设计系统做成一个 Skill（第 12 篇细讲 Skills）。</p>
+    <p>还有一个更省事的升级：<strong>在提示词里点名一个组件库</strong>。原教程用同一个仪表盘需求做了对比，唯一区别是加上“用 shadcn/ui 组件库来做”，结果在一致性、交互细节和打磨程度上明显不同。</p>
+    <p class="go">切换三版提示词，看信息量差在哪。</p>
+  </div>
+  <div class="lab"><p class="lab-t">同一个落地页的三种说法（据原教程 2.2 节与组件库一章）</p><div id="flavorEvo"></div></div>
+  <div class="notes" id="n-flavor"></div>
+</section>
+
+<section class="part" id="rules">
+  <div class="part-head"><h2>参考大厂规范：先看主次，再看按钮</h2><span class="meta">原教程 参考 UI 设计规范设计页面和按钮</span></div>
+  <div class="sec-lede">
+    <p>原教程建议参考 Apple（定义得足够细、层级和克制感）、Material（清晰的页面结构）、Fluent（组件边界和按钮层级）、Atlassian（系统化管理页面和按钮）这些设计规范，但看的时候别先问“好不好看”，先问三个问题：<strong>页面第一眼主次是否明确</strong>（主信息、辅助信息、次级操作三层要拉开，否则“都重要”等于“都不重要”）；<strong>布局是否服务任务而不是堆模块</strong>（标题说明页面目标、操作按钮贴近相关内容）；<strong>操作是否有优先级</strong>。</p>
+    <p>按钮最容易被随手设计，也最能暴露系统成不成熟。原则是<strong>先分语义，再分样式</strong>：Primary 是当前区域最关键的动作（实心、高对比）；Secondary 是支持性动作（描边或低一级）；Tertiary 是弱操作（文字按钮）；Destructive 是删除、停用、清空等风险操作（警示色）；Icon button 是局部工具操作。<strong>一个区域通常只保留一个主按钮</strong>，页面上有四个主按钮等于没有主按钮；取消、返回不和确认抢同级；风险动作不要和主动作长得一样。按钮还要有默认、悬停、聚焦、禁用、加载、危险六种状态；文案也是设计：“保存”“保存更改”“立即发布”“移到回收站”传达的预期完全不同。</p>
+    <p class="go">给一个“编辑项目”页面的按钮分配语义；下面是按规范处理后的一排按钮。</p>
+  </div>
+  <div class="lab">
+    <div id="btnSort"></div>
+    <div class="btnrow2" aria-hidden="true"><button class="b-pri" type="button" tabindex="-1">保存更改</button><button class="b-sec" type="button" tabindex="-1">预览</button><button class="b-txt" type="button" tabindex="-1">取消</button><span style="flex:1"></span><button class="b-dan" type="button" tabindex="-1">删除项目</button></div>
+  </div>
+  <div class="pcard" data-t="页面与按钮自查清单" data-k="原教程第 5 节"><pre>【页面】标题是否说明当前任务？首屏最重要的信息是否一眼可见？是否按任务流程组织？同一区域是否只有一个主要动作？次要内容是否被弱化？
+【按钮】这是主动作还是次动作？它凭什么比别的更显眼？页面里主按钮是不是太多？危险操作是否明确标识？文案是否足够具体？</pre></div>
+  <div class="notes" id="n-rules"></div>
+</section>
+
+<section class="part" id="tools">
+  <div class="part-head"><h2>两条工具路线，三条转代码路径</h2><span class="meta">原教程 UI 设计 第 3、5 章；Figma 与 MasterGo 入门；从设计原型到项目代码；组件库</span></div>
+  <div class="sec-lede">
+    <p>原教程把设计工具分成两条路线。<strong>路线一：Figma / MasterGo</strong>，专业设计稿工具，产出可编辑、可协作、像素级可控的设计稿，适合严谨交付和复杂交互。入门要掌握两个概念：<strong>Auto Layout</strong> 把一组元素变成带规则的容器（横排还是竖排、间距、内边距），按钮设成 Hug contents 后文字变长按钮自动变宽；<strong>组件</strong>是可复用的母版，改母版的颜色圆角，所有实例同步更新。<strong>路线二：Claude Design / Open Design</strong>，对话式设计画布，一句话产出可交互的 HTML 原型（Claude Design 默认给三个方向的变体，可在画布上圈选评论局部修改，定稿后交给 Claude Code 写成代码；Open Design 是本地优先、自带模型 Key 的开源平替）。现实中常混用：对话式工具出方向 → Figma 精修 → 交给编码 Agent。</p>
+    <p>设计稿变代码有<strong>三条路径</strong>：① 截图交给多模态模型直接还原，灵活、无需特定工具，还原精度中等，适合快速验证和简单页面；② 平台自身能力或插件导出（Figma Make、MasterGo AI），还原度高，适合团队主用 Figma 或 MasterGo、需要频繁协作；③ 平台结合 <strong>MCP</strong> 导出，编码 Agent 直接读取设计文件里的图层、样式和组件信息，还原度和自动化程度最高，但要配置环境，适合频繁从设计迭代到代码的标准化流程。</p>
+    <p><strong>组件库</strong>是前端的“宜家”：样式、交互、响应式、无障碍都已打磨好，全局风格统一。原教程介绍了四个：Ant Design（企业级中后台的事实标准）、shadcn/ui（不装 npm 包，把组件代码复制进项目，基于 Tailwind，定制最自由）、HeroUI（默认样式精美，适合落地页）、Material UI（最老牌，生态最成熟）；Vue 有 Element Plus、Ant Design Vue、Naive UI。选一个顺手的就够了。</p>
+    <p class="go">回答几个问题，看设计转代码该走哪条路径。</p>
+  </div>
+  <div class="lab"><div id="pathPick"></div></div>
+  <div class="lab"><div id="libCards"></div></div>
+  <div class="notes" id="n-tools"></div>
+</section>
+
+<section class="part" id="system">
+  <div class="part-head"><h2>把规范沉淀成 DESIGN.md</h2><span class="meta">原教程 UI 设计 第 6 章；LLM 与 Skills 第 6 节</span></div>
+  <div class="sec-lede">
+    <p>临摹三个页面后会发现：好看的页面背后都有一套稳定的设计系统。原教程把它概括为一个公式：<strong>DESIGN.md = 颜色 Token + 字体规范 + 间距节奏 + 组件样式 + 使用约定（Do / Don't）</strong>。Open Design 把 Linear、Vercel、Stripe、Apple 等的设计系统做成了这样的文件，Claude Design 则会从你的代码仓库或设计文件里自动提取。</p>
+    <p>建立自己的设计系统分三步：<strong>选基底</strong>（套一个你认可的大厂系统，比如 Linear 的克制暗色、Apple 的留白）→ <strong>改参数</strong>（换成品牌色，调圆角和间距）→ <strong>沉淀成文件</strong>（保存为 DESIGN.md 或封装成 Skill，让 AI 每次生成都自动遵守）。之后一句“使用 my-brand 的设计规范生成三个功能页的首屏”就能保持风格一致。商业交付时，原教程建议把“参考”变成“自己设计系统的再创作”，并保留生成记录。</p>
+    <p class="go">这是一份可以直接改的模板。</p>
+  </div>
+  <div class="pcard" data-t="DESIGN.md 模板" data-k="据原教程 6.1 节的 Linear 示例结构"><pre># Design System: 我的产品
+## Colors
+- background: #08090A
+- primary: #5E6AD2
+- text: #F7F7F8
+## Typography
+- heading: 22px / 600, letter-spacing -0.4px
+- body: 14px / 400
+## Radius
+- card: 8px
+- button: 6px
+## Spacing
+- 4 / 8 / 12 / 16 / 24 / 32 px
+## Do / Don't
+- Do: 大量留白，克制用色；一个区域只有一个主按钮
+- Don't: 不使用渐变、不堆叠阴影</pre></div>
+  <div class="confuse">
+    <h4>易混辨析：设计规范、设计系统、组件库</h4>
+    <p><b>设计规范</b>（Apple HIG、Material、Fluent）是写给人看的原则和标准：层级怎么排、按钮怎么分、状态怎么定义。<b>设计系统</b>是一个产品自己的一整套可执行约定，DESIGN.md 就是它的文字版：具体到色值、字号、间距和 Do / Don't。<b>组件库</b>（Ant Design、shadcn/ui）是把一套设计系统实现成代码的零件，拿来就能用。从规范里学原则，写成自己的系统，再用组件库或 Skill 落到代码里。</p>
+  </div>
+  <div class="notes" id="n-system"></div>
+</section>
+
+<section class="part" id="assets">
+  <div class="part-head"><h2>素材生产：把“理解”和“执行”拆开</h2><span class="meta">原教程 从 NanoBanana 出发，搭建自己的素材生产 Agent</span></div>
+  <div class="sec-lede">
+    <p>页面里还需要图标、Logo、头像、配图。原教程观察到，生图模型在实际工作中更多用于<strong>高效产出设计素材</strong>，而非创作单张艺术品，主要两类：<strong>文生图（从 0 到 1）</strong>，当作即时生成的图库，填补空状态、头像、配图（毛玻璃 3D 图标、极简线条 Logo、SaaS 官网常用的 3D 虚拟头像以规避真人版权、扁平风文章插画）；<strong>有图参考生图（从 1 到 N）</strong>，基于已有素材做变体和系列。</p>
+    <p>直接把一篇长文章丢给画图模型要配图，效果通常很差。原因不在“画得不行”，而在<strong>图像模型只有执行能力，不擅长理解长文本</strong>，判断不出哪些内容才是画面要表达的。原生 API 是指令式的：让它画一个具体对象可以，让它“策划一套完整的游戏素材”它不会主动拆解。Lovart 这类产品的差异就在中间加了一层 Agent：先识别意图、拆解任务、重写提示词，再执行生成。原教程带着自己搭了一个最简单的版本：<strong>语言模型做决策核心</strong>（理解文章、判断意图、写视觉提示词），<strong>图像模型只做执行</strong>，用户可以中途改提示词或加参考图，Gradio 和后端 API 负责承载。</p>
+    <p class="go">走一遍这个素材 Agent 的处理流程。</p>
+  </div>
+  <div class="lab"><div id="agentFlow"></div></div>
+  <div class="notes" id="n-assets"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. 拆解页面看哪三层？哪四个视觉要素可量化？</summary><p class="ans">结构（导航、首屏 Hero、内容区、页脚四块）、视觉、组件（按钮、卡片等可复用零件的样式参数）。可量化的视觉要素：色彩（Hex 值）、字体（字体、字号、字重）、间距（8 / 16 / 24 / 48 的节奏）、圆角与阴影。浏览器开发者工具就是分析仪，拆完翻译成结构化描述交给 AI。</p></details>
+    <details><summary>2. AI 界面为什么普通？描述风格的五个维度？</summary><p class="ans">训练数据中大多数前端代码选择安全的默认值（Inter 字体、紫蓝渐变、对称卡片、淡入淡出），AI 默认回到统计平均，于是千篇一律。要明确给出偏离方向，覆盖字体、颜色、布局、动画、细节五个维度；或者装设计类 Skill、在提示词里点名组件库。</p></details>
+    <details><summary>3. 设计转代码三条路径？DESIGN.md 装什么？</summary><p class="ans">① 截图交给多模态模型直接还原：灵活、上手最简单，精度中等，适合快速验证；② 平台能力或插件导出：还原度高，适合主用 Figma / MasterGo 的团队；③ 平台结合 MCP 让编码 Agent 直接读设计文件：精度和自动化最高但需配置，适合频繁迭代的标准化流程。DESIGN.md 是颜色 Token、字体规范、间距节奏、组件样式和 Do / Don't 使用约定。</p></details>
+  </div>
+</section>
+===SCRIPT===
+HB.cards($('#copyCards'), {
+  opts: ['参考', '抄袭'],
+  items: [
+    { t: '学 Linear 官网的克制暗色和大留白，用在自己的产品落地页。', a: 0, why: '学的是视觉风格和规则，内容是自己的。' },
+    { t: '把某 App 的 Logo 和图标直接下载下来用。', a: 1, why: 'Logo、专属图标属于“结果”，有版权和商业风险。' },
+    { t: '照着某 SaaS 首屏的“导航 + Hero + 三张特性卡”结构重新做一个页面。', a: 0, why: '布局结构可以参考，理解后重做。' },
+    { t: '复制别人落地页的全部文案，只换掉产品名。', a: 1, why: '文案是原创内容，连文案都一样就是抄袭。' },
+    { t: '把 Apple 规范里“一个区域只有一个主按钮”的原则用到自己的设置页。', a: 0, why: '设计规范正是用来学习和遵循的。' }
+  ]
+});
+
+/* ---------- 设计令牌调节器 ---------- */
+var COLORS = ['#4F46E5', '#0F766E', '#E11D48', '#0F172A', '#D97706'];
+var tk = { c: COLORS[0], r: 8, s: 24, f: 28, h: 1 };
+var swb = $('#tkColor');
+COLORS.forEach(function (c, i) {
+  var b = h('button', { type: 'button', 'aria-label': '主色 ' + c, style: 'background:' + c, 'aria-pressed': i === 0 ? 'true' : 'false' }, swb);
+  b.addEventListener('click', function () { $$('button', swb).forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); }); tk.c = c; drawTk(); });
+});
+function drawTk() {
+  var sh = ['none', '0 4px 12px rgba(15,23,42,0.08)', '0 10px 30px rgba(15,23,42,0.18)'][tk.h];
+  var w = tk.f >= 32 ? 800 : tk.f >= 26 ? 700 : 600;
+  $('#tkRv').textContent = tk.r; $('#tkSv').textContent = tk.s; $('#tkFv').textContent = tk.f; $('#tkWv').textContent = w; $('#tkHv').textContent = ['无', '弱', '强'][tk.h];
+  $('#pvHero').style.padding = (tk.s * 1.25) + 'px 16px';
+  $('#pvH').style.fontSize = tk.f + 'px'; $('#pvH').style.fontWeight = w;
+  var b = $('#pvB'); b.style.background = tk.c; b.style.borderRadius = Math.min(tk.r, 999) + 'px';
+  $('#pvB2').style.borderRadius = Math.min(tk.r, 999) + 'px';
+  var cs = $('#pvC'); cs.style.gap = (tk.s / 2) + 'px'; cs.style.padding = '0 ' + (tk.s / 1.5) + 'px ' + tk.s + 'px';
+  $$('.pv-card', cs).forEach(function (c) { c.style.borderRadius = (tk.r * 1.5) + 'px'; c.style.boxShadow = sh; $('i', c).style.background = tk.c; });
+  $('#tkOut').textContent = '参考这个风格，帮我做一个同构的页面：\n- 结构：导航 + 首屏(Hero) + 3 个特性卡片\n- 配色：主色 ' + tk.c + '，背景 #F8FAFC，文字 #0F172A\n- 字体：标题 ' + tk.f + 'px / ' + w + '，正文 15px / 400\n- 间距：区块 ' + Math.round(tk.s * 1.25) + 'px，卡片间距 ' + (tk.s / 2) + 'px\n- 圆角：卡片 ' + (tk.r * 1.5) + 'px，按钮 ' + tk.r + 'px\n- 阴影：' + sh;
+}
+[['#tkR', 'r'], ['#tkS', 's'], ['#tkF', 'f'], ['#tkH', 'h']].forEach(function (x) { $(x[0]).addEventListener('input', function (e) { tk[x[1]] = +e.target.value; drawTk(); }); });
+drawTk();
+
+EV.evolve($('#flavorEvo'), {
+  vers: [
+    { t: '普通', p: '请帮我做一个 AI 写作助手的落地页，包含导航栏、首屏、功能展示、定价、页脚', r: '<p>结构说清了，风格全交给模型：大概率得到紫蓝渐变、Inter 字体、三张对称卡片的“AI 味”页面。</p>' },
+    { t: '五维描述风格', p: '请帮我做一个 AI 写作助手的落地页，要求：\n美学风格：新野兽派（Neubrutalism）\n[[字体]]：标题 Space Grotesk 700-900，正文 IBM Plex Sans 400\n[[颜色]]：主色 #000000，强调色 #FF6B00，背景 #FFFDF0，边框 3px 黑色实线\n[[布局]]：不对称布局，粗黑线分隔；卡片硬阴影 8px 8px 0 #000；大胆的留白对比\n[[动画]]：加载时元素从下方弹入；hover 时按钮上移 2px\n[[细节]]：圆角全部 0px；按钮有强烈 3D 效果；背景微妙噪点纹理', r: '<p>原教程 2.2 节的美化提示词：五个维度各给一个明确偏离平均值的方向，结果风格鲜明。</p>' },
+    { t: '点名组件库', p: '请帮我做一个 AI 写作助手的数据仪表盘页面，[[用 shadcn/ui 组件库来做]]，包含：\n- 顶部标题栏和导出按钮\n- 四张统计卡片（用户数、活跃用户、文档数、收入）及涨跌趋势\n- 一个折线图和一个饼图\n- 用户列表表格，带分页\n- 左侧导航侧边栏', r: '<p>原教程组件库一章的对比：唯一区别是多写了组件库名字，视觉一致性和交互细节就上了一个台阶。适合不想自己调风格、要快速得到“像样”结果的时候。</p>' }
+  ]
+});
+
+S.sortGame($('#btnSort'), {
+  bins: [{ k: 'p', t: 'Primary 主动作' }, { k: 's', t: 'Secondary 次动作' }, { k: 't', t: 'Tertiary 文字按钮' }, { k: 'd', t: 'Destructive 风险操作' }],
+  items: [
+    { t: '保存更改', k: 'p', why: '这个页面最关键的动作，一个区域只留这一个主按钮。' },
+    { t: '预览', k: 's', why: '支持性动作，描边或低一级强调。' },
+    { t: '取消', k: 't', why: '取消、返回不和确认抢同级，用文字按钮弱化。' },
+    { t: '删除项目', k: 'd', why: '风险操作用警示样式，不要和主动作长得一样，还要和它拉开距离。' },
+    { t: '复制链接', k: 's', why: '有用但不是本页主任务。' }
+  ]
+});
+
+HB.decide($('#pathPick'), {
+  qs: [
+    { id: 'tool', q: '你的设计稿在哪里？', opts: [['shot', '只有截图或参考图'], ['figma', 'Figma / MasterGo 文件']], def: 'shot' },
+    { id: 'need', q: '对还原精度的要求？', opts: [['low', '差不多就行，先验证'], ['high', '要高度还原']], def: 'low' },
+    { id: 'freq', q: '设计到代码会频繁迭代吗？', opts: [['once', '偶尔一次'], ['often', '经常，想标准化']], def: 'once' }
+  ],
+  decide: function (a) {
+    var r;
+    if (a.tool === 'shot') r = ['路径一：截图交给多模态模型还原', '无需特定工具、最灵活。没有源文件时这是唯一选择；精度不够就逐区块对照，用具体的修改指令逼近。'];
+    else if (a.freq === 'often') r = ['路径三：平台结合 MCP', '让编码 Agent 直接读取设计文件的图层、样式和组件信息，还原度和自动化程度最高；需要先配置 MCP 环境，适合建立标准化的设计开发流程。'];
+    else if (a.need === 'high') r = ['路径二：平台能力或插件导出', 'Figma Make、MasterGo AI 或导出插件，还原度高、可编辑性强，适合设计师和开发频繁协作的团队。'];
+    else r = ['路径一或二都可以', '偶尔一次、精度要求不高，直接截图给多模态模型最快；想更准再用平台导出。'];
+    return '<p><b>' + r[0] + '</b></p><p>' + r[1] + '</p>';
+  }
+});
+
+HB.cards($('#libCards'), {
+  opts: ['Ant Design', 'shadcn/ui', 'HeroUI', 'Material UI'],
+  items: [
+    { t: '做一个有表格、表单、权限菜单的企业中后台。', a: 0, why: '企业级中后台的事实标准，组件覆盖面极广（还有 Ant Design Pro 脚手架）。' },
+    { t: '想把组件源码放进自己项目，样式随便改，配合 Tailwind。', a: 1, why: '不装 npm 包，按需把组件代码复制进项目，定制自由度最高。' },
+    { t: '产品落地页，默认样式要好看、动画要流畅。', a: 2, why: '原名 NextUI，默认视觉精美，适合对品质有要求的展示页。' },
+    { t: '团队熟悉 Google Material Design，想要最成熟的生态。', a: 3, why: '最老牌的 React 组件库，实现 Material Design 规范。' }
+  ]
+});
+
+EV.flow($('#agentFlow'), {
+  nodes: [{ k: 'u', t: '用户', sub: '长文 / 一句话' }, { k: 'llm', t: '语言模型', sub: '决策核心' }, { k: 'img', t: '图像模型', sub: '只做执行' }, { k: 'ui', t: 'Gradio 界面', sub: '承载与展示' }],
+  steps: [
+    { a: 'u', b: 'llm', m: '提交一篇 2000 字的文章', d: '直接丢给图像模型会抓不住重点，所以先交给“思考层”。' },
+    { a: 'llm', b: 'llm', m: '判断意图：无效 / 直接生图 / 长文要理解', d: '原教程设了三种意图。这篇是长文，需要先提炼要表达的核心画面。' },
+    { a: 'llm', b: 'ui', m: '生成视觉提示词，展示给用户', d: '把“文章想说什么”翻译成简短明确的视觉描述：主体、场景、风格、构图。' },
+    { a: 'u', b: 'ui', m: '可选：改提示词或加参考图', d: '用户是可介入的引导者，在执行前微调方向。' },
+    { a: 'ui', b: 'img', m: '发送整理好的视觉指令', d: '图像模型不参与理解和判断，只专注渲染。' },
+    { a: 'img', b: 'ui', m: '返回图片', d: '界面展示结果，可以重新生成或继续调整提示词。这个“理解与执行分离”的结构，就是 Lovart 这类设计 Agent 的核心。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-copy'), {
+  c: [
+    ['临摹入门', '设计的好可量化；逐像素复刻逼你搞懂每个决策'],
+    ['参考库', '按落地页 / 组件 / 配色 / 动效存截图和链接']
+  ],
+  p: [
+    ['边界', '抄规则（布局、风格、规范）可以，抄结果（Logo、图标、插画、文案）危险'],
+    ['商用前', '素材版权、字体授权、AI 平台条款、人工把关'],
+    ['参考站', 'Awwwards、Godly、Landbook、Lapa Ninja、Mobbin、Dribbble、Behance']
+  ]
+});
+S.notes($('#n-see'), {
+  c: [
+    ['三层拆解', '结构（导航 / Hero / 内容 / 页脚）、视觉、组件'],
+    ['设计分析仪', '浏览器开发者工具：右键检查看色值、字号、间距、圆角']
+  ],
+  p: [
+    ['视觉四要素', '色彩、字体、间距（8 / 16 / 24 / 48）、圆角与阴影'],
+    ['验收“像”', '并排放大逐区块对比；缩到 50% 仍分不清'],
+    ['第一版', '神似而形不似是正常的，正好知道调哪里']
+  ]
+});
+S.notes($('#n-flavor'), {
+  c: [
+    ['AI 味', '训练数据的安全默认值：Inter、紫蓝渐变、对称卡片、淡入淡出'],
+    ['统计平均', 'AI 会设计，但默认回到平均，要告诉它偏离方向']
+  ],
+  p: [
+    ['风格五维', '字体、颜色、布局、动画、细节'],
+    ['Skills', 'UI/UX Pro Max、frontend-design：自动加载设计规范'],
+    ['最省事', '提示词里点名一个组件库']
+  ]
+});
+S.notes($('#n-rules'), {
+  c: [
+    ['页面三层', '主信息、辅助信息、次级操作要拉开'],
+    ['按钮语义', 'Primary / Secondary / Tertiary / Destructive / Icon']
+  ],
+  p: [
+    ['先语义后样式', '先定按钮的角色，再定颜色形状'],
+    ['一个主按钮', '一个区域只留一个 Primary；四个主按钮等于没有'],
+    ['六种状态', '默认、悬停、聚焦、禁用、加载、危险'],
+    ['文案', '“移到回收站”比“删除”更明确']
+  ]
+});
+S.notes($('#n-tools'), {
+  c: [
+    ['两条路线', 'Figma / MasterGo 设计稿；Claude Design / Open Design 对话式原型'],
+    ['Auto Layout', '带规则的容器：方向、间距、内边距，Hug contents 自适应'],
+    ['组件母版', '改母版，所有实例同步']
+  ],
+  p: [
+    ['转代码三路径', '截图多模态还原 / 平台或插件导出 / MCP 读设计文件'],
+    ['选路径', '只有截图走一；主用 Figma 要精度走二；频繁迭代要标准化走三'],
+    ['组件库', 'Ant Design 中后台、shadcn/ui 可定制、HeroUI 好看、MUI 成熟']
+  ]
+});
+S.notes($('#n-system'), {
+  c: [
+    ['DESIGN.md', '颜色 Token + 字体 + 间距节奏 + 组件样式 + Do / Don\'t'],
+    ['规范 / 系统 / 组件库', '原则 → 自己的可执行约定 → 代码零件']
+  ],
+  p: [
+    ['三步建系统', '选基底 → 改参数 → 沉淀成文件或 Skill'],
+    ['商用', '把参考变成自己系统的再创作，保留生成记录']
+  ]
+});
+S.notes($('#n-assets'), {
+  c: [
+    ['两类素材', '文生图（0 到 1，即时图库）；有图参考生图（1 到 N）'],
+    ['理解与执行分离', '语言模型理解意图写提示词，图像模型只渲染']
+  ],
+  p: [
+    ['长文配图失败的原因', '图像模型不擅长理解长文本，判断不出重点'],
+    ['原生 API 的局限', '指令式，不会主动拆解复杂任务'],
+    ['素材 Agent 分工', '语言模型决策、图像模型执行、用户可介入、Gradio 承载']
+  ]
+});
+
+EV.todo($('#todo'), '7', [
+  { t: '建一个参考库：至少收藏 10 个页面，按落地页 / 组件 / 配色 / 动效分类', d: '' },
+  { t: '挑一个落地页，用开发者工具拆出结构、色彩、字体、间距、圆角', d: '原教程第 4 章 Step 2 的记录格式。' },
+  { t: '把拆解结果交给 AI 生成同构页面，逐区块迭代到“缩到 50% 分不清”', d: '' },
+  { t: '用五维风格描述重做一次你项目的首页，对比普通提示词的结果', d: '' },
+  { t: '按按钮语义检查你项目的一个页面：主按钮是否只有一个？', d: '' },
+  { t: '写一份自己项目的 DESIGN.md，之后每次生成页面都附上它', d: '' }
+]);

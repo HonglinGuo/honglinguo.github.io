@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>长任务、Agent Teams 与 GitHub 迭代</title>
+<meta name="description" content="Easy-Vibe 学习笔记（十三）：AI 为什么会过早停止，循环加外部检查的解法；Ralph Wiggum 的 Stop Hook、完成标记与最大迭代次数，适合与不适合的任务，五道安全阀；Agent Teams 与 Subagent 的区别、四个组件、七条实践和一笔重算的成本账；用 GitHub Issues 驱动开发：五个命令、纵向切片、任务前沿与依赖、两遍审查；什么时候可以“梭哈”；Agent SDK 和基础 SDK、CLI 怎么选。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 17l5-5-5-5' fill='none' stroke='%2313171C' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='11' y='15' width='9' height='3' rx='1.5' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../study-shared/series.css">
+<script src="../../assets/site.js"></script>
+<script src="../study-shared/series.js"></script>
+<link rel="stylesheet" href="../study-shared/handbook.css">
+<script src="../study-shared/handbook.js"></script>
+<link rel="stylesheet" href="../study-shared/easyvibe.css">
+<script src="../study-shared/easyvibe.js"></script>
+<style>
+.dag { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; align-items: center; }
+.dag button { font: inherit; font-size: 15px; text-align: left; border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; background: var(--bg); color: var(--ink-2); cursor: pointer; line-height: 1.5; min-height: 70px; }
+.dag button b { display: block; color: var(--ink); font-size: 15px; }
+.dag button small { font-family: var(--f-num); font-size: 15px; color: var(--ink-3); }
+.dag button.ready { border-color: var(--s1); background: var(--s1-soft); }
+.dag button.done { border-color: var(--ok); background: var(--panel); color: var(--ink-3); }
+.dag button.done b { text-decoration: line-through; color: var(--ink-3); }
+.dag button.blocked { opacity: .6; cursor: not-allowed; }
+.dag .col { display: grid; gap: 10px; }
+@media (max-width: 680px) { .dag { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-series="easyvibe-series" data-part="13">
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>技术学习</span><span>Easy-Vibe · 13</span><span>对应原教程 三阶段 让 Claude Code 长时间工作、Agent Teams、GitHub Issues 驱动开发、Claude Agent SDK</span><span>约 40 分钟</span></p>
+  <h1>让 AI 一直干到真的做完，<em>但完成与否不由它说了算</em></h1>
+  <p class="lead">对话式的编码助手说一句回一句，写完几个文件就说“我完成了”。真正的开发任务需要它持续工作：重构整个项目、修到测试全部通过、过夜干活。原教程第三阶段的这一组章节讲的就是这件事，从一个五行的 bash 循环开始，到官方插件、多代理团队，再到用 GitHub Issues 让 Agent 跨多个会话接力开发。贯穿始终的一条原则是：AI 判断不了自己是否真的完成，完成标准必须是外部的、客观的。</p>
+  <p class="credit">本系列是开源教程《<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">Easy-Vibe：Vibe Coding 产品实战教程</a>》（Datawhale 社区编写的开源教程，CC BY-NC-SA 4.0 协议；本笔记依据 2026 年 10 月 22 日的仓库版本（f2239c6））的学习笔记。原教程分“新手入门、第一阶段产品原型、第二阶段全栈、第三阶段进阶”三段，加一个上百篇的附录知识库，图文和操作截图很多。这里只取三阶段正文，重排成十五篇，用自己的话重讲：操作步骤压缩成要点，把方法论和容易混的概念做成可以动手的互动；每篇配原教程里最值得留存的提示词模板，以及一份可以勾选的动手清单。每节标出对应的原教程章节，演示数值标“示意”。笔记同样按 CC BY-NC-SA 4.0 共享。</p>
+<nav class="series" aria-label="系列目录">
+  <a href="../2026-10-24-easyvibe/"><b>总览</b>复习台</a>
+  <a href="../2026-10-24-easyvibe-1/" data-part="1"><b>01</b>产品工程师</a>
+  <a href="../2026-10-24-easyvibe-2/" data-part="2"><b>02</b>AI IDE</a>
+  <a href="../2026-10-24-easyvibe-3/" data-part="3"><b>03</b>找点子</a>
+  <a href="../2026-10-24-easyvibe-4/" data-part="4"><b>04</b>验证需求</a>
+  <a href="../2026-10-24-easyvibe-5/" data-part="5"><b>05</b>原型到作品</a>
+  <a href="../2026-10-24-easyvibe-6/" data-part="6"><b>06</b>接 AI 能力</a>
+  <a href="../2026-10-24-easyvibe-7/" data-part="7"><b>07</b>前端设计</a>
+  <a href="../2026-10-24-easyvibe-8/" data-part="8"><b>08</b>数据库</a>
+  <a href="../2026-10-24-easyvibe-9/" data-part="9"><b>09</b>上线与支付</a>
+  <a href="../2026-10-24-easyvibe-10/" data-part="10"><b>10</b>知识库与 PRD</a>
+  <a href="../2026-10-24-easyvibe-11/" data-part="11"><b>11</b>Claude Code</a>
+  <a href="../2026-10-24-easyvibe-12/" data-part="12"><b>12</b>Spec 与 Skills</a>
+  <a href="../2026-10-24-easyvibe-13/" aria-current="page" data-part="13"><b>13</b>长任务与团队</a>
+  <a href="../2026-10-24-easyvibe-14/" data-part="14"><b>14</b>RAG</a>
+  <a href="../2026-10-24-easyvibe-15/" data-part="15"><b>15</b>跨平台</a>
+</nav>
+</section>
+
+<nav class="secnav" aria-label="本篇小节">
+  <div class="wrap"><a href="#stop">过早停止</a><a href="#ralph">Ralph 循环</a><a href="#safety">安全阀</a><a href="#teams">Agent Teams</a><a href="#cost">成本账</a><a href="#issues">Issues 驱动</a><a href="#allin">何时梭哈</a><a href="#sdk">Agent SDK</a><a href="#recap">回扣三问</a></div>
+</nav>
+<div class="wrap">
+<div class="ask3">
+  <h3>读完这一篇，你应该能回答</h3>
+  <ol>
+    <li>AI 为什么会“过早停止”？Ralph 循环靠什么判断任务真的完成？什么任务不适合交给它？</li>
+    <li>Agent Teams 和 Subagent 有什么区别？用 Agent Teams 前最该先做哪件事？</li>
+    <li>用 GitHub Issues 驱动开发时，为什么任务要纵向切片？测试全部通过为什么还不够？</li>
+  </ol>
+</div>
+
+<section class="part" id="stop">
+  <div class="part-head"><h2>AI 为什么会过早停止</h2><span class="meta">原教程 让 Claude Code 长时间工作 · 引言、核心原理、方法一</span></div>
+  <div class="sec-lede">
+    <p>原教程讲了一个故事：2025 年夏天，澳大利亚开发者 Geoffrey Huntley 写了一个只有五行的 bash 脚本，不断重启 Claude Code 并喂给它同一个任务，取名 Ralph Wiggum（《辛普森一家》里那个屡败屡试的角色）。相关项目两周内拿到几千星，流传着“一晚上生成六个完整项目”“几百美元 API 成本完成几万美元合同”这类故事（这些是原教程转述的社区案例）。</p>
+    <p>它要解决的根本问题是：<strong>大模型无法准确判断自己的工作是否真正完成</strong>。人的完成标准是客观的（测试全过、功能可用、质量达标），模型只能凭感觉，觉得“差不多了”“输出够多了”或者“不知道接下来干什么”就停。所以要有一个<strong>外部系统</strong>来判断：让 AI 在循环里工作，每次它想退出时检查“真的完成了吗、符合客观标准吗、还有遗漏吗”，没完成就重新注入任务进入下一轮。</p>
+    <p>最原始的实现就是 <code>while true; do cat PROMPT.md | claude; done</code>：读任务、启动、干活、退出、重启。极其简单，但它<strong>无法判断任务是否真的完成</strong>，可能无限空转、浪费调用。原教程给的安全改进版是加最大迭代次数和每轮间隔。</p>
+    <p class="go">对比两版循环脚本。</p>
+  </div>
+  <div class="lab"><div id="loopEvo"></div></div>
+  <div class="notes" id="n-stop"></div>
+</section>
+
+<section class="part" id="ralph">
+  <div class="part-head"><h2>Ralph 循环：Stop Hook 加完成标记</h2><span class="meta">原教程 方法二、方法三、方法五</span></div>
+  <div class="sec-lede">
+    <p>官方插件市场里的 Ralph Wiggum 插件把这个思路做成了正式机制，核心是 <strong>Stop Hook</strong>：Claude 想退出时，钩子拦截退出信号，检查输出里有没有约定的<strong>完成标记</strong>；没有就重新注入原始任务开始下一轮，有才允许退出。两个关键参数：<code>--completion-promise</code> 指定完成标记（要明确唯一，如 <code>TODO_API_COMPLETE</code>），<code>--max-iterations</code> 是兜底的最大迭代次数（原教程建议 20–100）。</p>
+    <p><strong>Prompt 写得好不好决定成败。</strong>“写一个 todo API”没有完成标准，AI 写个框架就宣布完成；好的 prompt 分阶段写清要求（CRUD 端点、输入验证、测试覆盖率），列出<strong>可以客观验证</strong>的验收标准（测试全过、lint 通过、README 有 API 文档），再指定唯一的完成标记。原教程给了测试迁移、UI 统一、批量加类型、TDD 开发、代码风格统一等模板，以及一个用 150 次迭代从零构建 BBS 论坛的完整示例。社区还有增强版：要求完成标记加显式退出信号双重条件、每小时速率限制、连续多次检测到完成就强制退出的熔断器、实时成本仪表盘。</p>
+    <p>判断一个任务适不适合交给 Ralph，原教程给了三个问题：<strong>能定义明确的完成标准吗？有客观的验证方法吗（测试、构建、类型检查）？需要我持续给反馈吗？</strong>前两个是、第三个否，才适合。另一个更轻量的工具是<strong>后台任务</strong>：任务开始后按 Ctrl+B 推到后台，同时让它做别的，用 <code>/tasks</code> 查看。它没有循环机制，只是不阻塞。</p>
+    <p class="go">走一遍 Stop Hook 的判断；再看哪些任务适合交给 Ralph。</p>
+  </div>
+  <div class="lab"><div id="hookFlow"></div></div>
+  <div class="lab"><div id="ralphCards"></div></div>
+  <div class="pcard" data-t="Ralph 循环 prompt 模板" data-k="据原教程模板 1 改写"><pre>/ralph-wiggum:ralph-loop "
+将项目中所有测试从 Jest 迁移到 Vitest：
+- 保持所有测试逻辑不变
+- 更新配置文件；替换 Jest 特有的 API（jest.mock → vi.mock）
+- 移除 Jest 相关依赖
+验收标准：
+- npm test 全部通过
+- package.json 中无 jest 依赖
+- 项目能正常构建
+完成后输出：&lt;promise&gt;VITEST_MIGRATION_COMPLETE&lt;/promise&gt;
+" --max-iterations 40 --completion-promise "VITEST_MIGRATION_COMPLETE"</pre></div>
+  <div class="notes" id="n-ralph"></div>
+</section>
+
+<section class="part" id="safety">
+  <div class="part-head"><h2>五道安全阀</h2><span class="meta">原教程 安全机制：防止无限循环</span></div>
+  <div class="sec-lede">
+    <p>任何自动循环系统都必须有保护，否则会失控。原教程列了几层：<strong>最大迭代次数</strong>是必须的，不管完成没有都停；<strong>时间上限</strong>（比如最长四小时）；<strong>成本预警</strong>，花费到 10、50、100 美元时暂停并通知；<strong>死循环检测</strong>，比如最近五次提交几乎没有代码变化，说明在原地打转，应该停下报警；<strong>人工检查点</strong>，每十轮停下来问你是否继续。</p>
+    <p>原教程在 BBS 示例后面也提醒：Prompt 越详细迭代越少；复杂项目要给足迭代次数；TDD 能大幅减少调试；<strong>最终必须人工验证</strong>，AI 可能漏掉边界情况，尤其是安全相关功能。</p>
+    <p class="go">拿掉一道安全阀，看会出什么事。</p>
+  </div>
+  <div class="lab"><div id="safePipe"></div></div>
+  <div class="notes" id="n-safety"></div>
+</section>
+
+<section class="part" id="teams">
+  <div class="part-head"><h2>Agent Teams：从一个助手到一个团队</h2><span class="meta">原教程 Claude Agent Teams 完全指南</span></div>
+  <div class="sec-lede">
+    <p>单个实例处理复杂项目有四个瓶颈：<strong>串行</strong>（互不相关的模块也只能一个个分析）、<strong>上下文拥挤</strong>（对话越长早期决策越容易被淹没）、<strong>单一视角</strong>（没有“同事”辩论）、<strong>效率天花板</strong>。<strong>Agent Teams</strong> 让多个独立实例像开发团队一样协作：每个成员有完整独立的上下文，可以并行工作、直接互相通信。它在原教程写作时是<strong>实验性功能</strong>，默认关闭，开启方式以官方文档为准。</p>
+    <p>它和 <strong>Subagent</strong> 的区别在拓扑：Subagent 是<strong>星型</strong>，主代理给每个子代理写任务单，子代理完成后只把结果交回主代理，彼此不交流；Agent Teams 是<strong>网状</strong>，成员之间可以直接讨论、自主认领任务。团队由四部分组成：<strong>Team Lead</strong>（拆任务、建团队、分配、综合结果，不直接写代码）、<strong>Teammates</strong>（独立实例，有完整工具权限）、<strong>TaskList</strong>（共享任务板，有状态、依赖、完成后自动解锁后续任务、文件锁防冲突）、<strong>消息系统</strong>（点对点或广播，以 JSON 文件存在本地目录里，状态完全透明）。</p>
+    <p>原教程总结了七条实践，最重要的是第一条<strong>合同优先</strong>：并行开工前先定好接口契约（请求响应格式、状态码、错误约定、字段校验），否则后端收 <code>{username, password}</code>、前端发 <code>{user, pass}</code>，只能返工。其余是：Team Lead 用强模型、成员用性价比模型；每个任务 15–30 分钟粒度；不同成员负责不同文件，必须改同一文件时设串行阶段；成员启动时对话是空的，要给足初始上下文；先研究再实现；用分屏或 <code>/tasks</code> 主动监控、及时干预。</p>
+    <p class="go">先翻开对照表，再点开团队的四个组件。</p>
+  </div>
+  <div class="lab"><div id="teamVs"></div></div>
+  <div class="lab"><div id="teamLayers"></div></div>
+  <div class="lab"><p class="lab-t">该不该用 Agent Teams？（据原教程决策流程图）</p><div id="teamPick"></div></div>
+  <div class="notes" id="n-teams"></div>
+</section>
+
+<section class="part" id="cost">
+  <div class="part-head"><h2>一笔成本账，顺便验算一下</h2><span class="meta">原教程 Agent Teams · 成本和性能</span></div>
+  <div class="sec-lede">
+    <p>原教程给的规律是：token 消耗大致随团队规模线性增长（2 人约 2–2.5 倍，3 人约 3–4 倍），再加上每个成员接收初始上下文的启动开销、成员间通信开销、Team Lead 用更贵模型的开销，大致是单实例的 2–4 倍。换来的是时间：它引用的 Anthropic 内部测试是大型重构效率提升约 50%，以及 16 个并行代理约两周写出一个能编译 Linux 内核的 C 编译器的案例。</p>
+    <p>原教程还算了一个具体例子：Team Lead 用 Opus（50K 输入 + 20K 输出），三个成员用 Sonnet（各 30K 输入 + 15K 输出），对比单实例 Sonnet（100K 输入 + 50K 输出），单价按 Sonnet 每百万 token 输入 3 美元、输出 15 美元，Opus 按原文结果反推为输入 15、输出 75。这里值得自己算一遍：原文写每个成员约 2.7 美元、总计约 10 倍，但按它自己给的单价，每个成员只有约 0.3 美元。数值本身会随价格变化，重要的是练习这个估算方法。</p>
+    <p>原教程的省钱策略是：混用模型（Lead 用强模型、成员用中等、简单任务用最便宜的）；分阶段调整团队规模；只在最适合并行的阶段（多方案架构设计、多维度代码审查、并行写文档）用 Agent Teams，其余阶段单实例。</p>
+    <p class="go">先估再算：这次团队协作总共花多少钱？</p>
+  </div>
+  <div class="lab"><div id="costGuess"></div></div>
+  <div class="notes" id="n-cost"></div>
+</section>
+
+<section class="part" id="issues">
+  <div class="part-head"><h2>用 GitHub Issues 驱动开发</h2><span class="meta">原教程 用 GitHub Issues 驱动 AI 全流程开发</span></div>
+  <div class="sec-lede">
+    <p>上一篇讲了为什么要 Spec，原教程的这一章用一次真实开发演示怎样落地：起点只有一句“我想做一个 macOS 上的 CRM，用来管理联系人关系，可以先用假数据”，终点是一个原生 macOS 应用 Relationship Compass（搜索筛选、关系档案、CSV 导入、互动记录、自动计算下次跟进），公开仓库里保留了 Spec、Issues、提交和测试。用的是 Matt Pocock 的五个技能：<code>grill-with-docs</code>（讨论到双方理解一致，同步写下项目用词和重要 ADR）→ <code>to-spec</code>（写成需求文档并建一张总 Issue）→ <code>to-tickets</code>（拆成有优先级和依赖的实现 Issues）→ <code>implement</code>（从第一张未被阻塞的任务开始，TDD，每张一个提交）→ <code>code-review</code>（两遍审查）。</p>
+    <p>这里 GitHub 承担三个角色：<strong>项目档案室</strong>（Spec、项目用词、技术决定）、<strong>任务看板</strong>（Issues、优先级、Blocked by 依赖）、<strong>完成记录</strong>（提交、测试、关闭状态）。聊天结束后这些都还在，下次 AI 不必从头猜，可以沿着记录接着干。拆任务时最容易犯的错是<strong>横向切</strong>（先建所有模型 → 所有 Store → 所有 UI → 最后补测试），前几张做完用户什么都看不到；应该<strong>纵向切片</strong>，像切蛋糕每块都有胚、奶油和水果，每张 Issue 同时包含必要的数据、界面和测试，关一张就多一个能演示的小功能。还要分清<strong>优先级和依赖</strong>：P0 表示重要，依赖表示现在能不能做；所有前置都完成、当前可以开始的那几张叫<strong>任务前沿</strong>。</p>
+    <p>最后的两遍审查值得记住。第一遍看代码健康；第二遍重新打开 Spec 和所有 Issues 逐条核对：有没有漏、有没有只做一半、界面在但行为对不对、有没有擅自加功能。这一遍真的抓出了测试没覆盖的问题：CSV 有重复表头时运行时报错、没邮箱的联系人无法按“姓名 + 组织”去重、待跟进列表没用上筛选条件、数据能保存但启动时不恢复。原教程的结论是：<strong>测试全部通过，只能证明已经写进测试的行为没出错，不能证明需求一条没漏。</strong></p>
+    <p class="go">按依赖关系推进任务：点“完成”看哪些任务进入任务前沿（依赖取自原教程的五张 Issue）。</p>
+  </div>
+  <div class="lab"><div id="dag"></div><p class="note" id="dagNote"></p></div>
+  <div class="lab"><div id="sliceCards"></div></div>
+  <div class="pcard" data-t="五步命令（可直接复制）" data-k="原教程第 10 节"><pre>/grill-with-docs
+我要做【一句话想法】。请和我讨论范围、失败情况、权限边界和验收方式，暂时不要写代码。
+/to-spec
+把刚才确认的需求整理成规格，并发布到项目任务系统。
+/to-tickets
+根据需求文档拆分 GitHub Issues。每张任务都要交付一个可以独立演示的小功能，写清楚优先级、完成标准和前置任务。
+/implement
+根据优先级和依赖关系逐个实现所有 ready-for-agent Issues，从第一个未被阻塞的开始。每张票使用 TDD，完成后运行检查和测试并提交。
+/code-review
+分别检查代码质量和需求覆盖情况，发现问题后修复并重新验证。</pre></div>
+  <div class="notes" id="n-issues"></div>
+</section>
+
+<section class="part" id="allin">
+  <div class="part-head"><h2>什么时候可以“梭哈”</h2><span class="meta">原教程 GitHub Issues 驱动开发 第 11 节</span></div>
+  <div class="sec-lede">
+    <p>原教程说的“梭哈”不是完全不看过程，而是<strong>需求和安全边界确认后，让 AI 沿着任务清单连续工作</strong>，不必每写一个函数都停下来等指令。适合：范围能通过讨论收敛的 MVP；有明确用户行为和验收标准的后台、App、网站；能用测试或构建命令验证的仓库；希望 Agent 跨多个会话持续工作的项目。不适合：需求每小时都在变、无法用测试或构建验证、会直接操作生产数据的任务。</p>
+    <p>即使连续实现，有四个节点仍然要你亲自确认：<strong>需求讨论结束时</strong>确认第一版范围没理解错；<strong>创建 Issues 前</strong>确认没漏项、顺序合理；<strong>涉及付费、生产部署、删除数据、账号权限和隐私时</strong>确认具体外部操作；<strong>完成后</strong>亲自打开真实界面，检查构建产物和审查结果。原教程的总结：可靠的自动开发不是把所有决定都交出去，而是你负责目标、边界和最终验收，AI 负责把已确认的事情稳定执行下去。</p>
+    <p class="go">这些时刻，该让 AI 继续还是停下来等你？</p>
+  </div>
+  <div class="lab"><div id="allinCards"></div></div>
+  <div class="notes" id="n-allin"></div>
+</section>
+
+<section class="part" id="sdk">
+  <div class="part-head"><h2>Agent SDK：把 Claude Code 的能力变成一个库</h2><span class="meta">原教程 Claude Agent SDK 完全指南</span></div>
+  <div class="sec-lede">
+    <p>基础的 Anthropic SDK 是“你问它答”：要让模型调用工具，你得自己定义工具、自己执行、自己把结果喂回去、自己写循环。<strong>Claude Agent SDK</strong> 把 Claude Code 的能力（读写文件、执行命令、搜索代码、编辑、浏览网页）封装成可编程的库，内置 agent 循环和上下文管理，原教程的说法是“你下单它干活”。它的运行逻辑一句话：<strong>收集上下文 → 执行动作 → 验证结果 → 重复</strong>。</p>
+    <p>两种用法：<code>query()</code> 无状态，适合单次任务；需要多轮时保存 session ID 再 resume（或用有状态的客户端）。通过 <code>allowed_tools</code> 控制能力边界，比如只读 Agent 只给 Read、Glob、Grep，全能 Agent 再加 Edit、Bash。高级功能有 Hooks（在关键节点插入你的逻辑，比如每次改文件都写审计日志）、子 Agent（把大任务拆给专家）、MCP（接 Playwright 操作浏览器、接数据库）。典型场景：自动修 Bug、代码审查、CI/CD 里自动修复、技术调研报告、带浏览器的全栈 Agent。</p>
+    <p>原教程的选择表：简单对话、生成、翻译、单次工具调用用<strong>基础 SDK</strong>；自主完成多步骤开发、嵌进 CI/CD、构建能操作文件系统的应用用 <strong>Agent SDK</strong>；日常交互式开发和一次性快速任务直接用 <strong>Claude Code CLI</strong>。</p>
+    <p class="go">按需求选工具。</p>
+  </div>
+  <div class="lab"><div id="sdkCards"></div></div>
+  <div class="xlink"><b>和已学系列对照：</b>智能体循环、工具调用、子代理的原理在<a href="../2026-10-16-agent/">《深入理解 AI Agent》</a>与<a href="../2026-10-22-helloagents/">《Hello-Agents》</a>里讲得更深；Subagents 和后台任务的配置见<a href="../2026-10-22-claudehowto-5/">《Claude How To》05 篇</a>和<a href="../2026-10-22-claudehowto-11/">11 篇</a>。</div>
+  <div class="notes" id="n-sdk"></div>
+</section>
+
+<div id="todo"></div>
+
+<section class="part" id="recap">
+  <div class="part-head"><h2>回扣开头的三个问题</h2><span class="meta">先自己答，再点开</span></div>
+  <div class="ask3" style="margin-top:0">
+    <details><summary>1. AI 为什么过早停止？Ralph 靠什么判断完成？什么任务不适合？</summary><p class="ans">模型无法准确判断自己是否真正完成，只能凭感觉停下。Ralph 用 Stop Hook 拦截退出，检查输出里是否有约定的唯一完成标记，没有就重新注入任务；最大迭代次数兜底。完成标记必须配合客观验收标准（测试、构建、类型检查）。不适合的是：无法定义明确完成标准、没有客观验证方法、需要人持续反馈的任务，如架构决策、安全相关代码、需求模糊的探索、创意设计，以及简单的一次性任务。</p></details>
+    <details><summary>2. Agent Teams 与 Subagent 的区别？用之前最该先做什么？</summary><p class="ans">Subagent 是星型：主代理派任务单，子代理只把结果交回，彼此不交流；Agent Teams 是网状：每个成员有独立上下文，可以直接通信、从共享任务板自主认领任务，由 Team Lead 拆分和综合。用之前最该先做“合同优先”：定好接口契约（请求响应格式、状态码、错误约定、字段校验），再让成员并行开工；同时按文件划分职责、给足初始上下文。</p></details>
+    <details><summary>3. 为什么要纵向切片？为什么测试全过还不够？</summary><p class="ans">横向切（先所有模型、再所有 UI、最后补测试）时中间任务完成后都无法单独使用，到最后才知道各层能不能连起来；纵向切片让每张 Issue 都包含数据、界面和测试，关一张就多一个可演示的功能，也便于逐张验证。测试只能证明写进测试的行为没出错，不能证明需求没漏，所以最后要重新打开 Spec 和 Issues 逐条核对，原教程这一步就抓出了测试没覆盖的五个问题。</p></details>
+  </div>
+</section>
+<nav class="pager" aria-label="翻页"><a href="../2026-10-24-easyvibe-12/"><small>上一篇</small><span>12 · 规格驱动、Skills 与 MCP</span></a><a class="nx" href="../2026-10-24-easyvibe-14/"><small>下一篇</small><span>14 · RAG：从入门到进阶</span></a></nav>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>学习笔记 · 原书：<a href="https://github.com/datawhalechina/easy-vibe" rel="noopener">datawhalechina/easy-vibe</a></span>
+  </div>
+</footer>
+<script>
+(function () {
+'use strict';
+var $ = S.$, $$ = S.$$, h = S.h;
+EV.evolve($('#loopEvo'), {
+  vers: [
+    { t: '最原始的五行', p: '#!/bin/bash\nwhile true; do\n    cat PROMPT.md | claude\ndone', r: '<p>读任务 → 启动 → 干活 → 退出 → 重启，除非你按 Ctrl+C。它<b>不知道任务是否已经完成</b>，可能无限空转、白白消耗调用额度。</p>' },
+    { t: '加上安全限制', p: '#!/bin/bash\n[[MAX_ITERATIONS=50]]\niteration=0\nwhile true; do\n    iteration=$((iteration + 1))\n    echo "=== 迭代 $iteration/$MAX_ITERATIONS ==="\n    cat PROMPT.md | claude\n    [[if [ $iteration -ge $MAX_ITERATIONS ]; then break; fi]]\n    [[sleep 5]]  # 避免 API 限流\ndone', r: '<p>有了上限和间隔，但仍然只能靠次数停下，<b>没有完成检测</b>。下一步就是 Ralph 的 Stop Hook + 完成标记。</p>' }
+  ]
+});
+
+EV.flow($('#hookFlow'), {
+  nodes: [{ k: 'c', t: 'Claude', sub: '按 PROMPT 干活' }, { k: 'h', t: 'Stop Hook', sub: '拦截退出' }, { k: 'v', t: '外部检查', sub: '完成标记 + 次数' }],
+  steps: [
+    { a: 'c', b: 'c', m: '写代码、跑测试', d: '第 7 轮：迁移了大部分测试，还有 3 个失败。' },
+    { a: 'c', b: 'h', m: '“我完成了”，尝试退出', d: '模型凭感觉觉得差不多了。' },
+    { a: 'h', b: 'v', m: '输出里有 VITEST_MIGRATION_COMPLETE 吗？', d: '没有。prompt 要求的是 npm test 全部通过后才输出这个标记。' },
+    { a: 'v', b: 'c', m: '未完成且未达 40 次 → 重新注入原始任务', d: '第 8 轮开始。Claude 读到失败的测试，继续修。' },
+    { a: 'c', b: 'h', m: '测试全过，输出完成标记，尝试退出', d: '第 11 轮。' },
+    { a: 'h', b: 'v', m: '找到完成标记 → 允许退出', d: '循环结束。如果一直找不到标记，到第 40 轮也会强制停下。最后仍要你亲自验证。' }
+  ]
+});
+
+HB.cards($('#ralphCards'), {
+  opts: ['适合交给 Ralph', '不适合'],
+  items: [
+    { t: '把所有测试从 Jest 迁到 Vitest。', a: 0, why: '目标明确，npm test 全过即可客观验证。' },
+    { t: '决定系统该拆成微服务还是保持单体。', a: 1, why: '架构决策需要权衡和人的判断。' },
+    { t: '给 src 下所有函数补上 TypeScript 类型。', a: 0, why: 'typecheck 通过就是完成标准。' },
+    { t: '实现支付回调和权限校验。', a: 1, why: '安全相关代码漏洞可能很隐蔽，不能只靠循环到测试通过。' },
+    { t: '“随便试试，看看这个产品可以怎么做得更有意思。”', a: 1, why: '需求模糊、要不断调整方向，没有完成标准。' },
+    { t: '把测试覆盖率从 40% 提到 80%。', a: 0, why: '覆盖率是客观指标。' }
+  ]
+});
+
+HB.pipe($('#safePipe'), {
+  intro: '五道阀都在：有上限、有时限、有预算、能发现原地打转、关键时刻有人看。',
+  steps: [
+    { t: '最大迭代次数', d: '--max-iterations，必须设', miss: '完成标记永远不出现时，循环无限进行，账单失控。' },
+    { t: '时间上限', d: '如最长 4 小时', miss: '过夜任务卡在某个慢操作上，跑了一整天。' },
+    { t: '成本预警', d: '10 / 50 / 100 美元暂停并通知', miss: '直到月底账单才发现花了几百美元。' },
+    { t: '死循环检测', d: '最近 5 次提交几乎没有变化就停', miss: 'AI 反复改同一处又改回来，次数用完也没有进展。' },
+    { t: '人工检查点', d: '每 10 轮确认一次是否继续', miss: '方向早在第 3 轮就偏了，跑到第 50 轮才发现。' }
+  ]
+});
+
+HB.vs($('#teamVs'), {
+  a: 'Subagent（子代理）', b: 'Agent Teams（团队）',
+  rows: [
+    ['拓扑', '星型：都向主代理汇报', '网状：成员可以互相通信'],
+    ['通信', '主代理写任务单，子代理只交回结果', '成员直接讨论、协调'],
+    ['任务协调', '主代理统一派发', '成员从共享任务板自主认领'],
+    ['适合', '快速明确、互不依赖的单一任务（搜索、分析一个文件）', '多模块重构、多角度审查、前后端并行、需要频繁协调'],
+    ['成本', '不低，多个并行时叠加', '更高，成员独立运行且通信频繁']
+  ]
+});
+
+HB.layers($('#teamLayers'), {
+  hint: '点一个组件看它负责什么。',
+  layers: [
+    { t: '协调', sub: '大脑', items: [{ t: 'Team Lead', d: '分析需求、拆任务、决定成员数量和职责、分配和调度、综合结果和质量把控。不直接写代码。原教程建议用推理更强的模型。' }] },
+    { t: '执行', sub: '开发者', items: [{ t: 'Teammates', d: '每个都是独立的实例，有自己完整的上下文和全部工具权限；启动时对话是空的，需要给足初始上下文；可以自主认领任务、直接与其他成员通信。' }] },
+    { t: '任务', sub: '看板', items: [{ t: 'TaskList', d: '共享任务板：pending / in_progress / completed 三态；任务可声明依赖，前置完成后自动解锁；认领时创建锁文件，防止多人同时改同一文件。' }] },
+    { t: '通信', sub: '聊天工具', items: [{ t: '消息系统', d: '点对点或广播；消息以 JSON 文件存在本地团队目录的收件箱里，不需要网络或端口，随时可查。成员之间不共享上下文，只通过消息交流。' }] }
+  ]
+});
+
+HB.decide($('#teamPick'), {
+  qs: [
+    { id: 'multi', q: '有多个相互独立的子任务吗？', opts: [['0', '没有'], ['1', '有']], def: '1' },
+    { id: 'files', q: '子任务能分配到不同的文件吗？', opts: [['0', '不能'], ['1', '能']], def: '1' },
+    { id: 'cost', q: '能接受数倍的 token 成本吗？', opts: [['0', '不能'], ['1', '能']], def: '1' }
+  ],
+  decide: function (a) {
+    if (a.multi === '0') return '<p><b>用单实例。</b>任务高度串行，没有并行空间；启动团队的开销比干活还长。</p>';
+    if (a.files === '0') return '<p><b>先拆分或串行执行。</b>多个成员改同一个文件会冲突；可以先并行分析和设计，再由一个成员统一修改。</p>';
+    if (a.cost === '0') return '<p><b>用单实例</b>，或者只在最适合并行的阶段（多维度审查、并行写文档）短暂用团队。</p>';
+    return '<p><b>用 Agent Teams。</b>开工前先做合同优先：定好接口契约；按目录划分成员职责；给足初始上下文；任务粒度 15–30 分钟。</p>';
+  }
+});
+
+S.guess($('#costGuess'), {
+  q: 'Team Lead（Opus，输入 $15 / 输出 $75 每百万 token）用了 50K 输入 + 20K 输出；3 个成员（Sonnet，输入 $3 / 输出 $15）各用 30K 输入 + 15K 输出。整个团队花了多少美元？',
+  unit: '美元',
+  ans: 3.195,
+  hint: '单位：美元',
+  fmt: function (x) { return S.f(x, 2); },
+  why: 'Lead：0.05M×15 + 0.02M×75 = 0.75 + 1.50 = 2.25；每个成员：0.03M×3 + 0.015M×15 = 0.09 + 0.225 = 0.315，三人 0.945；合计约 3.2 美元。单实例 Sonnet（100K 输入 + 50K 输出）是 0.3 + 0.75 = 1.05 美元，所以团队约是 <b>3 倍</b>，和原教程“2–4 倍”的经验规律一致。原文这个例子把每个成员写成约 2.7 美元、总计约 10 倍，按它自己给的单价算不出来，应是笔误。单价会变，记住的是方法：分角色算输入输出，再看倍数和省下的时间是否划算。'
+});
+
+/* ---------- 任务依赖 ---------- */
+var TK = [
+  { id: 2, t: 'Browse sample Contacts', p: 'P0', dep: [] },
+  { id: 3, t: 'Import and persist', p: 'P0', dep: [2] },
+  { id: 4, t: 'Organize Profiles', p: 'P1', dep: [2] },
+  { id: 5, t: 'Interactions and Follow-ups', p: 'P1', dep: [4] },
+  { id: 6, t: 'Polish and verify', p: 'P2', dep: [3, 5] }
+];
+var done = {};
+var cols = [[2], [3, 4], [5], [6]];
+var dagBox = $('#dag');
+dagBox.className = 'dag';
+var btns = {};
+cols.forEach(function (c) {
+  var col = h('div', { class: 'col' }, dagBox);
+  c.forEach(function (id) {
+    var t = TK.filter(function (x) { return x.id === id; })[0];
+    var b = h('button', { type: 'button' }, col);
+    btns[id] = b;
+    b.addEventListener('click', function () {
+      if (done[id]) { done[id] = false; Object.keys(done).forEach(function (k) { if (done[k] && !ready(+k)) done[k] = false; }); }
+      else if (ready(id)) done[id] = true;
+      drawDag();
+    });
+  });
+});
+function ready(id) { return TK.filter(function (x) { return x.id === id; })[0].dep.every(function (d) { return done[d]; }); }
+function drawDag() {
+  var front = [];
+  TK.forEach(function (t) {
+    var b = btns[t.id], r = ready(t.id), d = !!done[t.id];
+    b.className = d ? 'done' : r ? 'ready' : 'blocked';
+    if (!d && r) front.push('#' + t.id);
+    b.innerHTML = '<small>#' + t.id + ' · ' + t.p + '</small><b>' + t.t + '</b>' + (d ? '已关闭（点击撤销）' : r ? '点击：完成' : '等待 ' + t.dep.map(function (x) { return '#' + x; }).join('、'));
+  });
+  $('#dagNote').innerHTML = front.length ? '当前任务前沿：<b>' + front.join('、') + '</b>。' + (front.length > 1 ? '这几张都没被阻塞，可以并行，也可以按优先级先做 P0。' : '') : '<b>全部完成。</b>接下来做两遍审查，再关闭总 Issue #1。';
+}
+drawDag();
+
+HB.cards($('#sliceCards'), {
+  opts: ['纵向切片', '横向切片'],
+  items: [
+    { t: '任务 1：创建所有数据模型；任务 2：创建所有界面；任务 3：最后补测试。', a: 1, why: '前两张做完用户什么都看不到，到最后才知道各层能否连起来。' },
+    { t: '任务 1：让“浏览样例联系人”从模型到界面完整可用并通过测试。', a: 0, why: '关掉这张就能演示一个完整的小功能。' },
+    { t: '任务：实现 CSV 导入，包含解析、校验去重、界面入口和对应测试。', a: 0, why: '数据、界面、测试一起交付。' },
+    { t: '任务：把所有 API 路由一次写完。', a: 1, why: '只覆盖一个技术层，单独无法使用和验证。' }
+  ]
+});
+
+HB.cards($('#allinCards'), {
+  opts: ['让 AI 继续', '停下等你确认'],
+  items: [
+    { t: '需求讨论结束，准备写 Spec。', a: 1, why: '原教程节点 1：确认第一版范围没有理解错。' },
+    { t: 'Issue #3 完成，前沿上还有 #4 可以开始。', a: 0, why: '需求和边界已确认，沿着任务清单继续即可。' },
+    { t: '准备执行数据库迁移，会删除一张旧表。', a: 1, why: '删除数据属于必须亲自确认的外部操作。' },
+    { t: '某张任务的测试失败，需要再改一轮。', a: 0, why: '在任务内部迭代，属于 AI 应该自己完成的部分。' },
+    { t: '所有 Issues 已关闭，准备宣布完成。', a: 1, why: '原教程节点 4：亲自打开真实界面，检查构建产物和审查结果。' },
+    { t: '准备把应用部署到生产环境。', a: 1, why: '生产部署需要你确认。' }
+  ]
+});
+
+HB.cards($('#sdkCards'), {
+  opts: ['基础 SDK', 'Agent SDK', 'Claude Code CLI'],
+  items: [
+    { t: '在自己的应用里做一个翻译功能。', a: 0, why: '简单的一问一答，用基础 SDK。' },
+    { t: '每次 PR 提交后，自动审查、修复、跑测试并生成报告。', a: 1, why: '嵌入 CI/CD 的多步骤自主任务。' },
+    { t: '今天下午自己在项目里改几个 bug。', a: 2, why: '日常交互式开发，直接用 CLI。' },
+    { t: '做一个能自己读文件、改代码、跑命令的内部工具。', a: 1, why: '需要操作文件系统、内置 agent 循环。' },
+    { t: '查一下今天的天气（一次工具调用）。', a: 0, why: '单次 tool use，基础 SDK 就够。' }
+  ]
+});
+
+EV.pcards();
+
+S.notes($('#n-stop'), {
+  c: [
+    ['过早停止', '模型无法准确判断自己是否完成，只能凭感觉'],
+    ['解法', '在循环里工作 + 外部系统判断是否完成']
+  ],
+  p: [
+    ['while true', '五行即可，但无完成检测，可能空转'],
+    ['安全版', '加最大迭代次数和每轮间隔']
+  ]
+});
+S.notes($('#n-ralph'), {
+  c: [
+    ['Stop Hook', '拦截退出，查完成标记，没有就重新注入任务'],
+    ['完成标记', '--completion-promise，明确唯一'],
+    ['后台任务', 'Ctrl+B 推到后台、/tasks 查看，不阻塞但无循环']
+  ],
+  p: [
+    ['三个判断问题', '能定义完成标准？有客观验证？需要持续反馈？'],
+    ['好 prompt', '分阶段要求 + 可客观验证的验收标准 + 唯一标记'],
+    ['适合', '迁移、批量类型、覆盖率、有复现步骤的 bug'],
+    ['不适合', '架构决策、安全代码、模糊需求、探索、创意、简单一次性任务']
+  ]
+});
+S.notes($('#n-safety'), {
+  c: [
+    ['五道安全阀', '最大迭代、时间上限、成本预警、死循环检测、人工检查点']
+  ],
+  p: [
+    ['必须设', '最大迭代次数'],
+    ['死循环信号', '最近几次提交几乎没变化'],
+    ['最后一步', '人工验证，尤其安全相关功能']
+  ]
+});
+S.notes($('#n-teams'), {
+  c: [
+    ['Agent Teams', '多个独立实例并行、直接通信的网状团队（实验性功能）'],
+    ['Subagent', '星型：主代理派单，子代理只交回结果'],
+    ['四组件', 'Team Lead、Teammates、TaskList、消息系统']
+  ],
+  p: [
+    ['合同优先', '并行前先定接口契约'],
+    ['其他实践', '强模型做 Lead、15–30 分钟粒度、按文件分工、给足上下文、先研究后实现、主动监控'],
+    ['决策', '有独立子任务 + 能分文件 + 能接受成本']
+  ]
+});
+S.notes($('#n-cost'), {
+  c: [
+    ['成本规律', '大致随团队规模线性增长，2–4 倍'],
+    ['额外开销', '启动上下文、成员通信、Lead 用贵模型']
+  ],
+  p: [
+    ['估算方法', '分角色算输入 × 单价 + 输出 × 单价，再比倍数'],
+    ['验算结论', '按原教程单价约 3 倍（原文“10 倍”应是笔误）'],
+    ['省钱', '混用模型、分阶段调规模、只在并行收益大的阶段用']
+  ]
+});
+S.notes($('#n-issues'), {
+  c: [
+    ['五个技能', 'grill-with-docs → to-spec → to-tickets → implement → code-review'],
+    ['GitHub 三角色', '项目档案室、任务看板、完成记录'],
+    ['任务前沿', '所有前置都完成、当前可以开始的任务']
+  ],
+  p: [
+    ['纵向切片', '每张 Issue 同时含数据、界面、测试'],
+    ['优先级 ≠ 依赖', '重要不等于现在能做'],
+    ['两遍审查', '代码健康 + 逐条核对需求'],
+    ['底线', '测试全过不等于需求没漏']
+  ]
+});
+S.notes($('#n-allin'), {
+  c: [
+    ['梭哈', '需求和边界确认后，让 AI 沿任务清单连续工作']
+  ],
+  p: [
+    ['适合', '可收敛的 MVP、有验收标准、能测试构建验证、跨会话'],
+    ['不适合', '需求常变、无法验证、直接操作生产数据'],
+    ['四个必须亲自确认', '范围确认、建 Issues 前、付费部署删数据权限隐私、完成后看真实界面']
+  ]
+});
+S.notes($('#n-sdk'), {
+  c: [
+    ['Agent SDK', '把 Claude Code 能力封装成库，内置 agent 循环'],
+    ['运行逻辑', '收集上下文 → 执行动作 → 验证结果 → 重复']
+  ],
+  p: [
+    ['两种用法', 'query() 单次；保存 session 再 resume 多轮'],
+    ['控制边界', 'allowed_tools 决定只读还是能改能跑'],
+    ['选择', '问答用基础 SDK；自主多步骤和 CI 用 Agent SDK；日常开发用 CLI']
+  ]
+});
+
+EV.todo($('#todo'), '13', [
+  { t: '挑一个有客观完成标准的任务（迁移、补类型、提覆盖率），写 Ralph prompt 并设好最大迭代', d: '' },
+  { t: '给循环加上成本预警或人工检查点', d: '' },
+  { t: '用 Ctrl+B 把一个长测试推到后台，同时做别的事', d: '' },
+  { t: '（可选）开启 Agent Teams，先做合同优先，再让 2–3 个成员按目录分工', d: '开启方式以官方文档为准。' },
+  { t: '用 GitHub Issues 走一遍五步流程：讨论 → Spec → 纵向切片 Issues → 实现 → 两遍审查', d: '' },
+  { t: '完成后亲自打开真实界面，逐条核对 Spec', d: '' }
+]);
+})();
+</script>
+</body>
+</html>
