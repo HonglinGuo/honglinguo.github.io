@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读 GSMA 智能体网络信任白皮书</title>
+<meta name="description" content="GSMA《面向智能体网络的信任范式演进》（Trust Paradigm Evolution for Agentic Networks）中文导读：为什么零信任不够、M-Trust 的三个维度、三层架构与信任闭环、技术考量与五个研究方向，附演进链、易混辨析和自测。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3L21 19H3Z' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Ccircle cx='12' cy='13' r='3' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/site.js"></script>
+<style>
+/* ---------- 首屏 ---------- */
+.hero { padding-top: 64px; padding-bottom: 32px; }
+.kicker { color: var(--ink-3); font-size: 15px; margin: 0 0 18px; }
+.kicker span + span::before { content: "·"; margin: 0 10px; color: var(--rule); }
+.hero h1 { font-size: clamp(36px, 6.2vw, 78px); line-height: 1.1; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 24px; max-width: 13em; }
+.hero h1 em { font-style: normal; color: var(--s1); }
+.hero .lead { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 40em; margin: 0; }
+
+.quote { margin: 0; padding: 4px 0 4px 22px; border-left: 4px solid var(--s1); }
+.quote p { margin: 0; font-size: clamp(19px, 2.1vw, 25px); line-height: 1.55; font-weight: 650; color: var(--ink); }
+.quote cite { display: block; margin-top: 8px; font-size: 15px; font-style: normal; color: var(--ink-3); }
+.hero .quote { margin-top: 40px; max-width: 46em; }
+
+.tldr { margin-top: 56px; border-top: 2px solid var(--ink); }
+.tldr h2 { font-size: 20px; margin: 14px 0 4px; }
+.tldr ol { list-style: none; margin: 0; padding: 0; counter-reset: t; display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 32px; }
+.tldr li { counter-increment: t; padding: 14px 0 14px 40px; position: relative; border-top: 1px solid var(--hair); font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.tldr li::before { content: counter(t); position: absolute; left: 0; top: 14px; width: 26px; height: 26px; border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--f-num); font-size: 15px; text-align: center; line-height: 26px; }
+.tldr li b { color: var(--ink); font-weight: 650; }
+.tldr li a { color: inherit; text-decoration: none; display: block; }
+.tldr li a:hover b { color: var(--s1); }
+
+.caveat { margin-top: 28px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; font-size: 16px; color: var(--ink-2); max-width: 54em; }
+.caveat p { margin: 0 0 8px; }
+.caveat p:last-child { margin: 0; }
+.caveat b { color: var(--ink); }
+
+/* 章节导航 */
+.secnav { position: sticky; top: 0; z-index: 20; margin-top: 56px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.secnav .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.secnav .wrap::-webkit-scrollbar { display: none; }
+.secnav a { flex: none; padding: 12px 14px; color: var(--ink-3); text-decoration: none; font-size: 15px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.secnav a:first-child { padding-left: 0; }
+.secnav a.on { color: var(--ink); border-bottom-color: var(--s1); }
+
+/* 节 */
+.sec { padding-top: 88px; scroll-margin-top: 40px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+.sec-head h2 { margin: 0; font-size: clamp(28px, 4.2vw, 48px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.sec-head .meta { color: var(--ink-3); font-size: 15px; }
+.sec-lede { max-width: 46em; margin: 22px 0 28px; }
+.sec-lede p { font-size: 17px; line-height: 1.85; color: var(--ink-2); margin: 0 0 12px; }
+.sec-lede p strong { color: var(--ink); font-weight: 650; }
+.sec-lede p.go { color: var(--ink); font-weight: 500; }
+.view { background: var(--ink); color: var(--bg); border-radius: 8px; padding: 14px 20px; margin: 0 0 28px; max-width: 54em; font-size: 17px; line-height: 1.7; }
+.view b { color: var(--bg); font-weight: 700; margin-right: 8px; }
+.sub { font-size: clamp(22px, 2.6vw, 28px); font-weight: 750; margin: 52px 0 12px; letter-spacing: -0.01em; }
+.sub small { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-left: 10px; letter-spacing: 0; }
+.p { color: var(--ink-2); max-width: 46em; margin: 0 0 14px; font-size: 17px; line-height: 1.85; }
+.p strong { color: var(--ink); font-weight: 650; }
+.pg { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+
+.viz { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 20px 22px 18px; margin: 0; min-width: 0; }
+.viz-title { font-weight: 650; font-size: 16px; line-height: 1.5; margin: 0 0 4px; }
+.viz-sub { color: var(--ink-3); font-size: 15px; margin: 0 0 12px; line-height: 1.5; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 880px) { .two, .three { grid-template-columns: minmax(0, 1fr); } }
+
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 8px; padding: 3px; gap: 3px; margin: 2px 0 14px; }
+.seg button { font: inherit; font-size: 15px; color: var(--ink-2); background: none; border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+
+.btn { font: inherit; font-size: 15px; background: var(--s1); color: #fff; border: 0; border-radius: 8px; padding: 7px 16px; cursor: pointer; }
+.btn.ghost { background: none; color: var(--ink-2); border: 1px solid var(--rule); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* 卡片 */
+.card { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 18px; }
+.card h4 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0 0 8px; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.card p:last-child { margin-bottom: 0; }
+.card .tag { display: inline-block; font-size: 15px; color: var(--s1); margin-bottom: 4px; }
+
+/* 三阶段 */
+.stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.stages button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 8px; padding: 12px 14px; cursor: pointer; font-size: 15px; line-height: 1.4; }
+.stages button b { display: block; font-size: 19px; color: var(--ink); }
+.stages button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.stages button[aria-pressed="true"] b { color: #fff; }
+.stage-cap { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hair); min-height: 6em; }
+.stage-cap p { margin: 0 0 8px; font-size: 16px; color: var(--ink); line-height: 1.75; }
+
+/* 场景 */
+.scen { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.scen .card { border-top: 4px solid var(--s1); }
+.scen .card.b { border-top-color: var(--s2); }
+@media (max-width: 880px) { .scen { grid-template-columns: minmax(0, 1fr); } }
+
+/* 挑战 ↔ 回应 */
+.cr { display: grid; grid-template-columns: 250px minmax(0, 1fr); border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.cr-list { display: flex; flex-direction: column; border-right: 1px solid var(--hair); }
+.cr-list button { font: inherit; font-size: 16px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--hair); padding: 13px 16px; cursor: pointer; color: var(--ink-2); line-height: 1.45; }
+.cr-list button:last-child { border-bottom: 0; }
+.cr-list button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.cr-list button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+.cr-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.cr-body > div { padding: 18px 22px; }
+.cr-body > div + div { border-left: 1px solid var(--hair); background: color-mix(in srgb, var(--s1-soft) 35%, transparent); }
+.cr-body h4 { margin: 0 0 8px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.cr-body p { margin: 0 0 10px; font-size: 16px; color: var(--ink); line-height: 1.75; }
+@media (max-width: 880px) { .cr { grid-template-columns: minmax(0, 1fr); } .cr-list { border-right: 0; border-bottom: 1px solid var(--hair); } .cr-body { grid-template-columns: minmax(0, 1fr); } .cr-body > div + div { border-left: 0; border-top: 1px solid var(--hair); } }
+
+/* 原则三列 */
+.prin { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 24px; border-top: 1px solid var(--rule); }
+.prin div { padding: 14px 0; }
+.prin b { display: block; font-size: 17px; margin-bottom: 4px; }
+.prin span { font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.prin i { font-style: normal; font-family: var(--f-num); color: var(--s1); font-size: 15px; display: block; }
+@media (max-width: 880px) { .prin { grid-template-columns: minmax(0, 1fr); } .prin div { border-bottom: 1px solid var(--hair); } }
+
+/* 三角图 */
+.tri { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: center; }
+.tri svg { width: 100%; height: auto; display: block; }
+.tri .v { cursor: pointer; }
+.tri .v circle { fill: var(--bg); stroke: var(--ink-3); stroke-width: 3; transition: fill .2s ease; }
+.tri .v.on circle { fill: var(--s1); stroke: var(--s1); }
+.tri .v text { fill: var(--ink); font-size: 15px; font-weight: 650; pointer-events: none; }
+.tri .core { fill: var(--s1-soft); stroke: var(--s1); stroke-width: 2; }
+.tri .core-t { fill: var(--ink); font-size: 14px; font-weight: 650; }
+.tri-cap h4 { margin: 0 0 2px; font-size: 21px; }
+.tri-cap .en { color: var(--ink-3); font-size: 15px; margin: 0 0 10px; }
+.tri-cap p { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; line-height: 1.75; }
+.tri-cap ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+@media (max-width: 880px) { .tri { grid-template-columns: minmax(0, 1fr); } }
+
+/* 证据持有方 */
+.holders { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.holders button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 10px 8px; cursor: pointer; line-height: 1.4; }
+.holders button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.holder-cap { margin-top: 14px; padding: 14px 16px; border-radius: 8px; background: var(--bg); border: 1px solid var(--hair); min-height: 4.5em; font-size: 16px; color: var(--ink); line-height: 1.7; }
+@media (max-width: 640px) { .holders { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.chips li { font-size: 15px; border: 1px solid var(--rule); border-radius: 999px; padding: 2px 12px; color: var(--ink-2); }
+.chips li.k { border-color: var(--s1); color: var(--s1); }
+.chips li.w { border-color: var(--s2); color: var(--s2); }
+
+/* 表格 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 16px; }
+.tbl th { text-align: left; font-size: 15px; color: var(--ink-3); font-weight: 600; padding: 8px 12px 8px 0; border-bottom: 2px solid var(--ink); }
+.tbl td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--hair); vertical-align: top; color: var(--ink-2); line-height: 1.65; }
+.tbl td:first-child { color: var(--ink); font-weight: 650; }
+.tbl-wrap { overflow-x: auto; }
+@media (max-width: 640px) { .tbl.stack thead { display: none; } .tbl.stack tr { display: block; border-bottom: 1px solid var(--hair); padding: 8px 0; } .tbl.stack td { display: block; border: 0; padding: 2px 0; } }
+
+/* 三层架构 */
+.layers { display: flex; flex-direction: column; gap: 10px; }
+.layer { border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.layer > b { display: block; background: var(--ink); color: var(--bg); text-align: center; font-size: 15px; padding: 6px; }
+.layer .comps { display: flex; gap: 8px; padding: 10px; }
+.layer .comps button { flex: 1; font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 10px 8px; cursor: pointer; line-height: 1.4; }
+.layer .comps button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.layer-arrow { text-align: center; color: var(--ink-3); font-size: 15px; line-height: 1; }
+.arch { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: start; }
+.arch-cap h4 { margin: 0 0 2px; font-size: 20px; }
+.arch-cap .role { color: var(--s1); font-size: 15px; margin: 0 0 10px; }
+.arch-cap p { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; line-height: 1.75; }
+.arch-cap ul { margin: 0 0 10px; padding-left: 18px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+@media (max-width: 880px) { .arch { grid-template-columns: minmax(0, 1fr); } }
+
+/* 闭环 */
+.loop { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; }
+.loop .st { font: inherit; font-size: 15px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.loop .st[aria-pressed="true"] { background: var(--s1); color: #fff; border-color: var(--s1); }
+.loop .st.fast { border-color: var(--s2); color: var(--s2); }
+.loop .st.fast[aria-pressed="true"] { background: var(--s2); color: #fff; }
+.loop .ar { color: var(--ink-3); }
+.loop-cap { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hair); min-height: 6em; }
+.loop-cap .who { font-size: 15px; color: var(--s1); font-weight: 600; }
+.loop-cap p { margin: 4px 0 0; font-size: 16px; color: var(--ink); line-height: 1.75; }
+.loop-ctl { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+/* fail */
+.fail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
+.fail > div { padding: 16px 18px; }
+.fail > div:first-child { background: color-mix(in srgb, var(--s2-soft) 45%, transparent); }
+.fail > div:last-child { background: color-mix(in srgb, var(--s1-soft) 45%, transparent); border-left: 1px solid var(--hair); }
+.fail h4 { margin: 0 0 4px; font-size: 17px; }
+.fail .k { font-family: var(--f-num); font-size: 15px; color: var(--ink-3); }
+.fail p { margin: 6px 0 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+@media (max-width: 640px) { .fail { grid-template-columns: minmax(0, 1fr); } .fail > div:last-child { border-left: 0; border-top: 1px solid var(--hair); } }
+
+/* 情景练习 */
+.drill { display: flex; flex-direction: column; gap: 12px; }
+.dq { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 18px; }
+.dq .q { font-size: 16px; color: var(--ink); font-weight: 600; margin: 0 0 10px; line-height: 1.6; }
+.dq .q i { font-style: normal; font-family: var(--f-num); color: var(--s1); margin-right: 8px; }
+.dq .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.dq .opts button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.dq .opts button.ok { background: var(--s1); border-color: var(--s1); color: #fff; }
+.dq .opts button.no { background: var(--s2-soft); border-color: var(--s2); color: var(--s2); }
+.dq .opts button:disabled { cursor: default; }
+.dq .ans { margin: 10px 0 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; display: none; }
+.dq.done .ans { display: block; }
+.dq .ans b { color: var(--ink); }
+.score { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+
+/* 不等于 */
+.neq { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.neq div { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; }
+.neq b { display: block; font-size: 17px; line-height: 1.5; }
+.neq b s { text-decoration: none; color: var(--s2); margin: 0 6px; }
+.neq span { display: block; margin-top: 6px; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.neq em { font-style: normal; font-size: 15px; color: var(--ink-3); }
+
+/* 生命周期 */
+.life { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.life span { font-size: 15px; background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px; color: var(--ink); }
+.life i { font-style: normal; color: var(--ink-3); }
+
+/* 研究方向 */
+.dirs { list-style: none; margin: 0; padding: 0; counter-reset: d; }
+.dirs li { counter-increment: d; border-top: 1px solid var(--hair); }
+.dirs li:last-child { border-bottom: 1px solid var(--hair); }
+.dirs button { font: inherit; width: 100%; text-align: left; background: none; border: 0; padding: 14px 0 14px 44px; cursor: pointer; position: relative; font-size: 17px; font-weight: 650; color: var(--ink); line-height: 1.5; }
+.dirs button::before { content: "0" counter(d); position: absolute; left: 0; top: 14px; font-family: var(--f-num); color: var(--s1); font-size: 16px; }
+.dirs button::after { content: "+"; position: absolute; right: 4px; top: 12px; font-size: 20px; color: var(--ink-3); }
+.dirs button[aria-expanded="true"]::after { content: "−"; }
+.dirs .body { padding: 0 0 16px 44px; font-size: 16px; color: var(--ink-2); line-height: 1.75; max-width: 50em; }
+
+/* 演进链对照 */
+.evo-pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.evo { width: 100%; border-collapse: collapse; font-size: 16px; }
+.evo th, .evo td { text-align: left; padding: 10px 12px 10px 0; border-bottom: 1px solid var(--hair); vertical-align: top; line-height: 1.65; }
+.evo th { font-size: 15px; color: var(--ink-3); font-weight: 600; border-bottom: 2px solid var(--ink); }
+.evo td:first-child { color: var(--ink); font-weight: 650; width: 7.5em; }
+.evo td { color: var(--ink-2); }
+.evo .hl { background: color-mix(in srgb, var(--s1-soft) 55%, transparent); color: var(--ink); }
+.evo .dim { opacity: .35; }
+
+/* 易混辨析（与系列页同样的写法，便于全站搜索收录） */
+.confuses { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 0 20px; }
+@media (max-width: 640px) { .confuses { grid-template-columns: minmax(0, 1fr); } }
+.confuse { margin-top: 18px; border: 1px dashed var(--s2); border-radius: 10px; padding: 14px 18px; background: color-mix(in srgb, var(--s2-soft) 35%, transparent); }
+.confuse h4 { margin: 0 0 8px; font-size: 16px; color: var(--s2); }
+.confuse p { margin: 6px 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.confuse p b { color: var(--ink); }
+
+/* 自测 */
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.quiz details { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 18px; }
+.quiz summary { cursor: pointer; font-size: 16px; font-weight: 600; color: var(--ink); line-height: 1.6; }
+.quiz summary span { font-family: var(--f-num); color: var(--s1); margin-right: 8px; }
+.quiz details p { margin: 10px 0 2px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.quiz details p em { font-style: normal; color: var(--ink-3); font-size: 15px; }
+
+.qa { margin: 0; }
+.qa dt { font-weight: 650; font-size: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink); }
+.qa dt:first-child { border-top: 0; padding-top: 0; }
+.qa dd { margin: 4px 0 12px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.gloss { columns: 2; column-gap: 40px; }
+.gloss dt { break-after: avoid; }
+.gloss dd { break-inside: avoid; }
+@media (max-width: 880px) { .gloss { columns: 1; } }
+
+.quotes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 28px 40px; }
+
+.mine { background: var(--panel); border: 1px dashed var(--ink-3); border-radius: 8px; padding: 20px 24px; }
+.mine h3 { margin: 0 0 4px; font-size: 20px; }
+.mine .hint { margin: 0 0 12px; font-size: 15px; color: var(--ink-3); }
+.mine ol { margin: 0; padding-left: 22px; }
+.mine li { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.mine li b { color: var(--ink); }
+
+.about { margin-top: 64px; padding: 28px 0 0; border-top: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px 56px; }
+.about h2 { margin: 0; font-size: 24px; }
+.about p { margin: 0 0 12px; color: var(--ink-2); font-size: 16px; }
+@media (max-width: 880px) { .about { grid-template-columns: minmax(0, 1fr); } }
+
+@media (prefers-reduced-motion: reduce) { .tri .v circle { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>报告解读</span><span>GSMA 白皮书 · 2026 年 11 月</span><span>约 30 分钟读完</span></p>
+  <h1>不只问智能体<em>是谁</em>，还要问它<em>在做什么</em></h1>
+  <p class="lead">GSMA 大中华区牵头编制的《面向智能体网络的信任范式演进》（Trust Paradigm Evolution for Agentic Networks），正文 26 页。前言说它承接今年 3 月 GSMA 与 GTI 发布的《移动 AI 白皮书》，据发布报道是这一系列的第二本。原作的判断是：当智能体开始拆任务、委托别的智能体、调用网络能力时，只看身份和访问权限的零信任实现已经覆盖不了新的风险。它提出 MAIC-Trust（简称 M-Trust）框架，在零信任之上补三个维度：多方信任、智能体意图感知信任、跨域信任。同时全文反复强调一件事：最终决定权始终在运营商手里。</p>
+
+  <blockquote class="quote">
+    <p>生成式 AI 的风险主要在于它“说了什么”，而智能体 AI 的风险则越来越多地在于它“做了什么”。</p>
+    <cite>原文第 01 页 · 前言（GSMA 首席技术官 Alex Sinclair）</cite>
+  </blockquote>
+
+  <div class="tldr">
+    <h2>一页读懂：原作的七个观点</h2>
+    <ol>
+      <li><a href="#why"><b>网络正在从连接人、连接物，走到连接智能。</b>这有两个方向：网络赋能 AI（Networks for AI）和 AI 赋能网络（AI for Networks），两者的信任需求不同又相互关联。</a></li>
+      <li><a href="#why"><b>全文只盯两类场景。</b>一是第三方 AI 智能体通过 Open Gateway 等接口调用运营商开放的网络能力；二是运营商内部的网络 AI 智能体参与网络运行、管理和编排。</a></li>
+      <li><a href="#zt"><b>零信任的三项原则仍然有效，但面对智能体有三处短板。</b>高频交互下持续评估的开销过大；静态规则难以约束概率性的行为；只能在单一信任域里用。</a></li>
+      <li><a href="#core"><b>M-Trust = 零信任 + 三个新维度。</b>多方信任管“证据来自多方”，意图感知信任管“它被授权做什么、实际在做什么”，跨域信任管“证据怎么跨管理边界传递”。</a></li>
+      <li><a href="#arch"><b>三层架构加一个闭环。</b>信任采集与评估层（DTIC、DTE）、策略决策层（PA）、策略执行层（PEA）；证据采集到重新评估构成闭环，异常时可以跳过常规周期直接告警。</a></li>
+      <li><a href="#tech"><b>运营商保留最终决定权，不设通用信任权威。</b>外部证据只是本地决策的输入；信任评估结果本身不构成授权；在一个域里建立的信任不会被另一个域自动继承。</a></li>
+      <li><a href="#future"><b>它是参考框架和研究方向，不是标准。</b>技术中立、协议中立，不强制任何新兴技术；原作列出五个需要继续验证的方向。</a></li>
+    </ol>
+  </div>
+
+  <div class="caveat">
+    <p><b>读的时候留意：</b>原作把自己定位为参考框架和研究方向，不是标准规范，也不是强制实现（摘要页）；免责声明写明本文件不是 GSMA 的行业规范，也不代表 GSMA 的官方立场。这是一份概念框架类白皮书，<b>没有统计数据，也没有实验结果</b>，引用的都是 NIST、3GPP、ITU-R、TM Forum 和 GSMA 自己的指南等文献，所以本文没有“数字来源”标签，而是在需要时注明原文引用的文献编号。</p>
+    <p><b>页码说明：</b>本文按 PDF 上印刷的页码标注（前言为第 01 页，正文到第 26 页）；摘要和免责声明所在的那一页没有页码，记作“摘要页”。PDF 本身是跨页排版，共 17 个物理页。本文依据中文版。</p>
+  </div>
+</section>
+
+<nav class="secnav" aria-label="章节">
+  <div class="wrap" id="secnav">
+    <a href="#why">为什么要变</a><a href="#zt">零信任的短板</a><a href="#core">三个维度</a><a href="#arch">架构与闭环</a><a href="#drill">情景练习</a><a href="#tech">技术考量</a><a href="#future">结论与展望</a><a href="#learn">演进链与辨析</a><a href="#quiz">自测</a><a href="#quotes">原文金句</a><a href="#glossary">术语速查</a><a href="#after">读后</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ======================= 1 ======================= -->
+<section class="sec" id="why">
+  <div class="sec-head"><h2>信任为什么要换一种范式</h2><span class="meta">原文第 01–04 页 · 前言与第 1.1–1.4 节</span></div>
+  <div class="sec-lede">
+    <p>前言先用一段历史开场：1865 年英国的《机车法》（俗称“红旗法案”）要求自行驱动的车辆前面必须有人举着红旗步行开道。原作借它说明，治理要和创新一起演进：规则跟不上会拖慢发展，创新没有保障也走不到规模化。前言的结尾把这句话落到本书主题上：信任不该是挡在创新前面的那面红旗，创新也不该在没有保障的情况下冒进。</p>
+    <p>正文从网络使命的变化讲起。原作把移动通信的演进分成三个阶段，<strong>当前正在进入的是“连接智能”</strong>。</p>
+    <p class="go">点三个阶段，看原文对每一阶段的描述。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">从连接人与物到连接智能</p>
+    <p class="viz-sub">按原文第 02 页 1.1 节整理</p>
+    <div class="stages" id="stages" role="group" aria-label="网络演进三阶段"></div>
+    <div class="stage-cap" id="stage-cap" aria-live="polite"></div>
+  </figure>
+  <p class="pg">原文第 02 页 · “AI 赋能网络 / 网络赋能 AI”两个维度出自 GSMA《Mobile AI 白皮书》[19]</p>
+
+  <h3 class="sub">全文只讨论两类场景</h3>
+  <p class="p">原作明确说，后面各章的信任需求分析和框架设计都围绕下面两类场景展开。读后面的章节时，可以随时拿这两类场景去套：哪条机制是为外部智能体准备的，哪条是为运营商内部智能体准备的。</p>
+  <div class="scen">
+    <div class="card"><span class="tag">场景一 · 对应“网络赋能 AI”</span><h4>外部 AI 智能体调用运营商网络能力</h4><p>第三方 AI 智能体通过 GSMA Open Gateway 这类开放接口，请求访问运营商开放出来的网络能力。原文称这是智能体与运营商网络交互的典型形态。</p></div>
+    <div class="card b"><span class="tag" style="color:var(--s2)">场景二 · 对应“AI 赋能网络”</span><h4>运营商内部的 AI 赋能网络</h4><p>网络 AI 智能体，以及用了 AI 的网络功能，参与网络本身的运行、管理和编排。这时智能是网络运维能力的一部分，而不只是跑在网络上的应用。</p></div>
+  </div>
+  <p class="pg">原文第 02 页 · 摘要页也有同样的表述</p>
+
+  <h3 class="sub">两股推力：新架构和新业务</h3>
+  <p class="p">原作把信任需求的来源分成技术和业务两类。技术这一侧，三个趋势一起动摇了“边界固定、身份静态验证”的传统安全假设；业务这一侧，原作从 ITU 为 IMT-2030 定义的六大场景里挑了三个（六个场景中三个是 IMT-2020 的延伸，三个是全新的）。</p>
+  <div class="seg" role="group" aria-label="推力类型" id="drive-mode">
+    <button type="button" aria-pressed="true" data-m="tech">技术驱动（1.2）</button>
+    <button type="button" aria-pressed="false" data-m="biz">业务驱动（1.3）</button>
+  </div>
+  <div class="three" id="drive-box"></div>
+  <p class="pg" id="drive-pg">原文第 02–03 页</p>
+
+  <h3 class="sub">自智网络之后，还缺什么</h3>
+  <p class="p">这一段很关键，因为它划清了 M-Trust 和自智网络（Autonomous Networks）的分工。原作承认，自智网络已经有了意图驱动运行、AI 辅助决策和闭环自动化，M-Trust 不打算取代或重复这些能力。新问题出在“智能体化”之后：一个授权目标会被拆成很多步自主操作，包括分解任务、委托给其他智能体、调用网络能力、在不断变化的上下文里交互。</p>
+  <div class="view"><b>原作观点</b>安全问题不再只是“自智系统能不能达成预期结果”。运营商还要持续判断：参与的实体是否一直可信，执行中选的每个操作是否一直落在授权目标、运营商策略和已授予权限的范围内。M-Trust 补的就是这块。</div>
+  <p class="pg">原文第 04 页 · 1.4 节</p>
+</section>
+
+<!-- ======================= 2 ======================= -->
+<section class="sec" id="zt">
+  <div class="sec-head"><h2>零信任做对了什么，又差在哪</h2><span class="meta">原文第 04–07 页 · 第 1.5、1.6 节与第 2 章开头</span></div>
+  <div class="sec-lede">
+    <p>原作先回顾传统模型。<strong>基于边界的信任</strong>靠划分安全域，用防火墙、VPN、网络分段和接入控制守住边界；进了可信域的实体，往往被默认给一定程度的隐式信任。移动网络的信任也长期建立在明确的身份、凭证、预先配置的安全关系和运营商管理边界上：用户和设备靠签约关系、凭证和接入认证；运营商之间靠漫游和互联关系；网络功能之间靠既定的安全关系和策略。</p>
+    <p>在架构封闭、边界清楚的年代，这套机制够用。但云化、服务化、能力开放和多方协作让边界变得复杂。原作点出两个问题：攻击者一旦突破边界或拿到合法凭证，就可能横向移动；传统模型偏重接入那一刻的认证授权，对会话建立之后行为、上下文和风险的变化考虑得不够。</p>
+    <p>零信任就是在这个背景下出现的。原作给的脉络是：Forrester 分析师 John Kindervag 在 2010 年系统提出这一概念，NIST 在 2020 年发布 SP 800-207《零信任架构》[5]。</p>
+  </div>
+
+  <h3 class="sub" style="margin-top:8px">零信任的三项基本原则</h3>
+  <div class="prin">
+    <div><i>原则一</i><b>以身份为中心的安全</b><span>访问决策要对主体、设备或工作负载做认证和授权，并结合上下文。原作特别指出这条也适用于网络自身：5G 服务化架构里网络功能之间的通信已有认证授权和接口安全保护，还可以延伸到运营商间互联、网管运维访问和设备保障。</span></div>
+    <div><i>原则二</i><b>最小权限</b><span>只给完成任务所需的最低权限，以减少横向移动、缩小事件影响。风险和上下文可以用来收缩权限或加条件；任何放宽都要留在明确的策略和授权边界内。</span></div>
+    <div><i>原则三</i><b>持续监测</b><span>持续观察系统行为、流量模式和运行状态，通过实时监测和自适应访问控制，及时识别异常和新威胁。</span></div>
+  </div>
+  <p class="pg">原文第 05 页 · 原作的概括：零信任把安全从“守边界”变成了“由身份和行为验证驱动的持续防护”</p>
+
+  <h3 class="sub">电信网络里，零信任走到了哪一步</h3>
+  <p class="p">原作引用了两份 3GPP 研究：TR 33.894 研究零信任原则在移动网络中的适用性 [6]，TR 33.794 研究相关使能技术，比如如何开放数据支撑安全评估与监测、如何执行动态策略 [7]。原作的判断是，这些工作说明零信任对电信网络有现实意义，但<strong>还停留在研究和使能机制层面，零信任还不是 5G 系统完整的规范性安全架构</strong>。</p>
+  <p class="p">更大的问题在于，现有零信任主要是为用户、设备、工作负载和资源访问设计的。原作列出智能体环境的七个特征：自主决策、动态协作、工具调用、权限委托、持久记忆、概率推理、跨域交互。在这些特征面前，零信任暴露出三处局限。</p>
+  <p class="p" style="color:var(--ink);font-weight:500">点左边的局限，右边对照看原作给出的方向。</p>
+
+  <div class="cr" id="cr">
+    <div class="cr-list" role="group" aria-label="三处局限"></div>
+    <div class="cr-body">
+      <div><h4>局限在哪</h4><div id="cr-c"></div></div>
+      <div><h4>原作认为该往哪走</h4><div id="cr-r"></div></div>
+    </div>
+  </div>
+  <p class="pg">原文第 06 页 · 1.6 节</p>
+
+  <div class="view" style="margin-top:28px"><b>原作观点</b>电信网络是关键基础设施，智能体带来的自主性必须在清晰的安全、策略和治理边界内运行。由此产生的额外信任需求是：在守住确定性授权边界、最小权限、可归责性和运营商控制的前提下，持续评估智能体的身份、意图、上下文和风险。原作还提到，GSMA 的安全工作已经把生成式 AI 和智能体 AI 列为移动生态需要持续关注的新兴领域 [16]。</div>
+  <p class="pg">原文第 07 页 · 第 2 章开头</p>
+</section>
+
+<!-- ======================= 3 ======================= -->
+<section class="sec" id="core">
+  <div class="sec-head"><h2>M-Trust 的三个维度</h2><span class="meta">原文第 07–11 页 · 第 2 章</span></div>
+  <div class="sec-lede">
+    <p>原文图 1 是全书的核心图：一个三角形，三个顶点分别是多方信任、智能体意图感知信任、跨域信任，中间写着“面向智能体交互的额外信任与授权治理”。原作说这三个维度协同起来，为下一代智能通信网络提供<strong>可扩展、自适应、协同</strong>的信任保障。</p>
+    <p class="go">点三角形的顶点，看每个维度管什么、补的是零信任的哪处短板。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">图 1：M-Trust 对零信任的扩展</p>
+    <p class="viz-sub">按原文第 07 页重绘；“补哪处短板”是按第 06 页三处局限对照整理的</p>
+    <div class="tri">
+      <svg viewBox="0 0 420 360" id="tri" role="group" aria-label="M-Trust 三个维度"></svg>
+      <div class="tri-cap" id="tri-cap" aria-live="polite"></div>
+    </div>
+  </figure>
+  <p class="pg">原文摘要页、第 07–08 页</p>
+
+  <!-- 2.1 -->
+  <h3 class="sub">多方信任：证据分散在多方手里<small>原文第 08 页 · 2.1 节</small></h3>
+  <p class="p">多方信任针对的情形是：相关的信任证据分别握在多个获授权方手里，或者没有哪一方能掌握完整的信任关系。原作把它定义为两部分的结合：<strong>联邦式多方信任证据与评估</strong>，加上<strong>上下文感知的信任建立</strong> [9]。</p>
+  <p class="p">原作举了一个多运营商环境的例子，说明证据可能分散在哪些人手里。点一下各方，看原文说它可能持有什么证据。</p>
+  <figure class="viz">
+    <div class="holders" id="holders" role="group" aria-label="证据持有方"></div>
+    <div class="holder-cap" id="holder-cap" aria-live="polite"></div>
+  </figure>
+  <p class="pg">原文第 08 页</p>
+
+  <div class="view" style="margin-top:24px"><b>原作观点</b>多方评估不是要所有参与方得出同一个判断，也不是用一个全局聚合的结果去替代某个单一权威。各方提供可独立验证、限定用途、有时效的证据，每个运营商仍按自己的业务、策略、监管义务、风险偏好和与请求方的关系来评估。外部证据是本地策略决策的输入，而不是替代。</div>
+
+  <div class="two">
+    <div>
+      <p class="viz-title">证据怎么加权</p>
+      <p class="p" style="font-size:16px">原作列了六个维度：来源、完整性、时效性、相关性、独立性，以及来源本身的保障等级。按请求操作的风险高低，证据可以触发受限访问、额外验证、人工或运营商审批、隔离或拒绝。</p>
+    </div>
+    <div>
+      <p class="viz-title">证据提供方多了，风险也多了</p>
+      <ul class="chips">
+        <li class="w">评估者被攻破</li><li class="w">协同或串通操纵证据</li><li class="w">证据彼此相关</li><li class="w">信息滞后</li><li class="w">操纵聚合机制</li><li class="w">泄露竞争敏感信息</li><li class="w">借共享机制排斥第三方</li>
+      </ul>
+      <p class="p" style="font-size:16px;margin-top:10px">对应要求：保证证据真实、完整、及时、独立，支持撤销和审计，并保留可靠的本地策略执行能力。共识机制只在参与方、故障假设、决策范围和治理规则都已明确时才可能适用，原作提醒不要以为它能在所有运营商之间产生普遍适用的结论。</p>
+    </div>
+  </div>
+  <p class="pg">原文第 08 页</p>
+
+  <p class="viz-title" style="margin-top:28px">上下文感知的信任建立：不同交互，用不同的建立方式</p>
+  <div class="tbl-wrap">
+  <table class="tbl stack">
+    <thead><tr><th>交互情形</th><th>原作建议主要依靠什么</th></tr></thead>
+    <tbody>
+      <tr><td>单一运营商域内，AI 智能体与网络功能交互</td><td>主要依靠运营商控制的身份、策略和授权机制</td></tr>
+      <tr><td>第三方 AI 智能体请求开放网络能力</td><td>可能还需要获授权的外部方提供额外证据或背书，并满足运营商的安全、策略和监管要求</td></tr>
+      <tr><td>多运营商或其他联邦场景</td><td>没有哪个运营商掌握完整信任关系，可能需要联邦式或分布式机制，在参与域之间建立可验证的信任</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="pg">原文第 08 页 · 原作强调这不等于动态替换底层运营商安全架构，而是按实体、边界、风险和监管要求选合适的建立方式</p>
+
+  <!-- 2.2 -->
+  <h3 class="sub">智能体意图感知信任：看它被授权做什么、实际在做什么<small>原文第 09–10 页 · 2.2 节</small></h3>
+  <p class="p">这是三个维度里最“新”的一个，也最贴近智能体的特点。它的基础是两样东西：<strong>身份验证</strong>加<strong>意图感知授权</strong>。原作先给“意图”下了定义：明确表达的目标或任务预期，包括相关的目标设定和约束条件。紧接着补了一句很重要的限定：<strong>智能体为实现意图而衍生出来的操作，仍然要单独接受授权和策略约束</strong>。也就是说，批准了意图，不等于批准了它为此做的每一步。</p>
+  <p class="p">原作也不假设智能体的未来操作能被完全预测，而是持续评估可观测的信任信号、声明的意图、执行上下文和风险。智能体始终处在预定义且可执行的边界之内；证据不足或风险超阈值时，就加验证、收权限、上报或拒绝。</p>
+
+  <div class="two">
+    <div class="card">
+      <span class="tag">能力一</span>
+      <h4>意图感知授权</h4>
+      <p>在现有访问控制之上，再看智能体特有的上下文：授权目标、委托链与调用链、执行上下文、观测到的行为。</p>
+      <p>智能体可以随情况调整执行计划，有效权限也可以在预定义的策略、任务、风险边界内自动调整，<b>但它不能自己把权限扩到边界之外</b>。</p>
+      <p>预授权范围内的低风险操作，系统可以自动给出时间和范围都受限的最小权限；超出预定义范围的操作（原作点名了跨域访问敏感数据、核心网配置变更等高影响操作）要触发一次新的授权决策，结果可能是明确批准、附加约束或拒绝。</p>
+    </div>
+    <div class="card">
+      <span class="tag">能力二</span>
+      <h4>自动化与自适应策略管理</h4>
+      <p>在运营商定义的治理、安全和监管边界内，让策略执行自动化、可动态调整。原作特意说明，<b>这不是让整个策略生命周期完全自治</b>，策略权限和治理始终由运营商掌握。</p>
+      <p>和传统“人工配置 + 定期更新”不同，它持续采集两类信息，汇成动态的信任与风险评估（见下表），再在预定义边界内自动选择、应用或调整访问控制条件和风险缓解措施。</p>
+      <p>低风险操作走简化验证；涉及敏感能力或跨域的高风险操作，可能触发增强验证、细粒度授权、持续审计或运营商审批。风险上升或出现异常时，自动加强监测、收窄授权。</p>
+    </div>
+  </div>
+  <p class="pg">原文第 09–10 页</p>
+
+  <div class="tbl-wrap" style="margin-top:20px">
+  <table class="tbl stack">
+    <thead><tr><th>输入类别</th><th>原文列举的内容</th></tr></thead>
+    <tbody>
+      <tr><td>环境信息</td><td>风险状况、数据敏感等级、任务紧迫程度</td></tr>
+      <tr><td>智能体行为信息</td><td>合规历史、任务完成记录、任务执行表现、历史行为一致性、异常活动频次、网络资源使用模式</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="pg">原文第 09 页</p>
+
+  <!-- 2.3 -->
+  <h3 class="sub">跨域信任：证据可以过境，决定权不过境<small>原文第 10–11 页 · 2.3 节</small></h3>
+  <p class="p">跨域信任针对的是在允许范围内、跨管理域或安全域边界的智能体交互。它分两块讲。</p>
+  <div class="two">
+    <div class="card">
+      <h4>异构信任锚与信任证据</h4>
+      <p>原作先定调：UICC/eUICC 凭证、安全元件、硬件信任根、PKI 这些由运营商控制的机制，<b>仍然是移动网络安全的根本</b>，智能体网络不会取消它们，只是可能需要在既有认证授权之外，再评估更多形式的证据。</p>
+      <p>因此 M-Trust 支持“异构”的信任基础：按实体、管理域、保障等级、风险、策略和监管要求，组合不同的信任锚、凭证和验证机制。硬件信任锚保护力最强；在策略允许的场景，有适当保障的软件机制可以补充，但需要硬件级保护的地方不能拿它替代。数字签名等密码学机制也不能脱离底层的软硬件信任基础单独成立。</p>
+      <p>最后一句是底线：<b>用哪种信任基础，由运营商的安全架构和交互要求决定，而不是由 AI 智能体自己选或换。</b></p>
+    </div>
+    <div class="card">
+      <h4>跨域信任建立</h4>
+      <p>跨越边界不等于各域可以不再施加自己的控制。难点在于让信任和授权的上下文能够在允许的边界之间安全传递和评估，而不必每个域都从头重建。</p>
+      <p>原作列了三项互补的能力：</p>
+      <ul class="chips"><li class="k">可互操作的信任凭证与证据</li><li class="k">跨域信任验证机制</li><li class="k">信任与授权上下文的连续性</li></ul>
+      <p style="margin-top:10px">例子：请求开放能力的第三方智能体，可以出示另一可信域签发或背书的身份、授权或合规证据；接收方运营商按自己的策略、安全控制、风险评估和监管义务来评估。保留上下文能减少重复建立信任，但<b>在一个域建立的信任不会被另一个域自动继承，授权也不能在全局转移</b>。</p>
+    </div>
+  </div>
+  <p class="pg">原文第 10–11 页</p>
+
+  <!-- 2.4 -->
+  <h3 class="sub">与零信任的关系：补充，不是替代<small>原文第 11 页 · 2.4 节</small></h3>
+  <p class="p">原作说 M-Trust 建立在零信任原则之上（不默认信任、最小权限、持续验证、基于策略的授权），引入智能体也不会取代现有的用户、设备、应用或网络功能，只是带来了新的交互模式：规划和执行操作、委托任务、调用其他智能体、代表用户或应用行事。所以运营商除了评估身份、设备和资源访问，还要评估授权目标、委托链与调用链、请求的能力、观测到的行为、信任证据和风险。原作归纳了三处补充：</p>
+  <div class="prin">
+    <div><i>01</i><b>把持续评估延伸到操作本身</b><span>在可能多步的调用链中，判断智能体请求和执行的操作是否始终与授权目标一致。</span></div>
+    <div><i>02</i><b>自适应授权和策略执行</b><span>基于智能体特有的上下文、信任证据、观测到的行为和风险调整授权，同时守住最小权限和运营商策略约束。</span></div>
+    <div><i>03</i><b>证据在允许的边界间受控交换</b><span>各参与运营商或管理域保留自己的信任决策、网络能力和安全控制权限。</span></div>
+  </div>
+  <p class="pg">原文第 11 页 · 原作也强调跨域信任不意味着普遍信任、把授权从一个域转到另一个域，或依赖单一信任权威</p>
+</section>
+
+<!-- ======================= 4 ======================= -->
+<section class="sec" id="arch">
+  <div class="sec-head"><h2>三层架构与信任闭环</h2><span class="meta">原文第 12–17 页 · 第 3 章</span></div>
+  <div class="sec-lede">
+    <p>第 3 章把三个维度落成一个功能架构。原作先讲<strong>这套框架自己的安全</strong>（3.1）：不应把它理解成需要一个集中式信任权威或单一决策点；评估和执行可以按网络、业务和管理边界分开部署，每个域内运营商的安全控制有最终决定权。M-Trust 的功能和它处理的信任信息本身就是安全关键资产，要防篡改、相互认证、职责分离、最小权限、接口安全、可审计，单个组件失效时要有韧性；一个功能或信任域被攻破，不能自动让别的域也信任它，故障要被限制在有限范围内，避免级联。</p>
+    <p>然后是三项架构原则（3.2）：</p>
+  </div>
+  <div class="prin">
+    <div><i>原则一</i><b>分层协同</b><span>各信任功能独立运行，同时在整个架构中保持紧密协调。</span></div>
+    <div><i>原则二</i><b>有边界的自动化</b><span>信任评估和策略调整可以自动化，但只在预定义的治理、安全和授权边界内。</span></div>
+    <div><i>原则三</i><b>闭环反馈</b><span>评估和执行通过监测与基于风险的调整持续互动。常规调整可自动完成，高风险、异常或策略敏感的决策可能要额外验证或上报人工。</span></div>
+  </div>
+  <div class="view" style="margin-top:20px"><b>原作观点</b>人工监督要按风险来设。预定义边界内的常规操作，不宜每次都插一道同步人工审批，而是用异步监测、审计和抽查；人工审批放在策略边界变更、高影响或异常操作这些关键节点，免得人工环节成为智能体交互的性能瓶颈。需要时，人始终可以审查、否决、暂停或批准安全相关决策。</div>
+  <p class="pg">原文第 12–13 页</p>
+
+  <h3 class="sub">三层、四个功能</h3>
+  <p class="p">点任一功能，看原作对它的职责说明。原作还提到，为了让网络功能、网络 AI 智能体和不同管理域之间能互操作，可能需要标准化的接口定义、信任信息交换格式，以及统一的证据分类和语义；任何信任信息交换都要遵守数据保护、数据传输和竞争法方面的要求。</p>
+  <figure class="viz">
+    <div class="arch">
+      <div class="layers" id="layers"></div>
+      <div class="arch-cap" id="arch-cap" aria-live="polite"></div>
+    </div>
+  </figure>
+  <p class="pg">原文第 13–16 页 · 架构图见原文第 13 页</p>
+
+  <h3 class="sub">信任闭环</h3>
+  <p class="p">原作在第 17 页写出了闭环的七个环节；3.6 节又描述了一条异常时的快速路径。两种模式切换着看，点“下一步”走一遍。</p>
+  <figure class="viz">
+    <div class="seg" role="group" aria-label="闭环模式" id="loop-mode">
+      <button type="button" aria-pressed="true" data-m="norm">常规闭环（3.5 节末）</button>
+      <button type="button" aria-pressed="false" data-m="fast">异常快速路径（3.6 节）</button>
+    </div>
+    <div class="loop" id="loop" role="group" aria-label="闭环环节"></div>
+    <div class="loop-cap" id="loop-cap" aria-live="polite"></div>
+    <div class="loop-ctl"><button class="btn" type="button" id="loop-next">下一步</button><button class="btn ghost" type="button" id="loop-reset">回到开头</button></div>
+  </figure>
+  <p class="pg">原文第 16–17 页</p>
+
+  <h3 class="sub">出故障时：两种“失效”要分开</h3>
+  <p class="p">这是第 3 章里最具体、最工程化的一条要求：设计失效处理时，要把“智能体访问网络能力的控制”和“网络本身承载的业务”区分开。</p>
+  <div class="fail">
+    <div><span class="k">fail-closed · 默认拒绝</span><h4>智能体新增或扩大的访问请求</h4><p>M-Trust 相关功能异常或不可用时，对智能体新增或扩大网络能力访问的请求，按默认拒绝处理。</p></div>
+    <div><span class="k">fail-safe · 保持连续</span><h4>已有的网络服务，尤其是公众通信</h4><p>已有服务在既有运营商安全机制和策略保护下保持连续，不应仅仅因为 M-Trust 这个附加功能失效就中断。</p></div>
+  </div>
+  <p class="p" style="margin-top:16px">对智能体的异常循环调用或类似拒绝服务的流量，原作建议用限流、熔断等自动保护，但阈值要审慎设定、持续校准，最好结合智能体的授权目标、行为和信任信号，而不是只看原始流量，免得误触发把自己的服务打断，或者让运营商管理员失去对关键系统的访问。另外，从限制性措施中恢复要重新评估，<strong>不能因为某个信任或风险指标回到了原来的水平，就默认恢复之前的授权</strong>。</p>
+  <p class="pg">原文第 16–17 页 · 微隔离等隔离措施见原文引用的 GSMA FS.61 [14]</p>
+</section>
+
+<!-- ======================= 练习 ======================= -->
+<section class="sec" id="drill">
+  <div class="sec-head"><h2>情景练习：按原文，这种情况怎么处理</h2><span class="meta">依据原文第 09–21 页</span></div>
+  <div class="sec-lede">
+    <p>前面几节的规则散在不同章节里。这里把它们改写成八个情景，每题先选你认为原文会怎么处理，再看原文依据。选项是统一的八种处理方式，每题只有一个与原文对应的答案。</p>
+  </div>
+  <div class="drill" id="drill-box"></div>
+  <p class="score" id="drill-score" aria-live="polite"></p>
+</section>
+
+<!-- ======================= 5 ======================= -->
+<section class="sec" id="tech">
+  <div class="sec-head"><h2>技术考量：框架反复划下的界线</h2><span class="meta">原文第 18–21 页 · 第 4 章</span></div>
+  <div class="sec-lede">
+    <p>第 4 章开头先表明立场：<strong>M-Trust 是技术中立的</strong>，用来增强而不是取代现有的认证、授权、策略执行、信任锚和特定域安全控制；没有哪一种技术、部署模式或信任建立机制是所有场景都必须用的。所以这一章讲的是实现层面的考量，而不是一套固定的技术栈。</p>
+    <p>读这一章会发现，原作花了大量篇幅说明“什么不等于什么”。这些界线是理解 M-Trust 最好的抓手，下面按章节顺序整理成八条。</p>
+  </div>
+
+  <div class="neq">
+    <div><b>M-Trust<s>≠</s>新的身份体系</b><span>不建替代性的身份体系或通用信任权威，不要求替换接入安全、网络功能安全、凭证管理或策略控制。原作还引用 GSMA 指南，说明 SIM 已被定为物联网设备到云安全场景中的标准化硬件信任根 [12]，M-Trust 应建在这类机制之上。</span><em>第 18 页 · 4.1</em></div>
+    <div><b>分布式部署<s>≠</s>更安全</b><span>集中、分层、分布、联邦四种部署都可能适用。多出来的节点、接口、凭证和同步安排也会扩大攻击面，选哪种要看规模、时延、韧性、保障和故障隔离目标。</span><em>第 18 页 · 4.1；第 14 页同样提到</em></div>
+    <div><b>证明（attestation）<s>≠</s>可信结论</b><span>证明能提供平台或工作负载状态的证据，但依赖它的运营商仍要判断签发方、证据、度量值和相关声明是否符合自己的策略。硬件密钥保护、安全执行环境、远程证明、签名、受保护日志提供的是不同形式的保障，不能互相替代。</span><em>第 19 页 · 4.2</em></div>
+    <div><b>技术上能交换<s>≠</s>法律上允许交换</b><span>信任证据可能含身份属性、行为、调用历史、访问记录等敏感信息。要按数据保护、数据传输和竞争法要求做最小化、访问控制、留存和隐私保护 [15]。计算开销大的隐私增强技术是特定用例的可选项，不是架构的通用要求。</span><em>第 19 页 · 4.2</em></div>
+    <div><b>信任评分<s>≠</s>授权</b><span>评估结果或风险指标本身不构成授权，只是给运营商控制的策略和授权功能提供参考。用 AI 做评估或决策时，输出要受规则约束，配输入输出验证、测试、监测、审计、回退和必要的人工监督；AI 不能自己扩大授权、改写策略或给智能体加权限。</span><em>第 19 页 · 4.3</em></div>
+    <div><b>智能体身份<s>≠</s>网络接入认证</b><span>3GPP 定义的接入安全继续保护网络接入关系；智能体的身份、委托和调用安全是额外的考量，不意味着 5G-AKA、网络功能安全或成熟的 PKI 已经过时。</span><em>第 20 页 · 4.4</em></div>
+    <div><b>密码学验证通过<s>≠</s>必须接受</b><span>签名验证能证明证据确实出自某个来源且没被篡改，但不要求接收方接受它或授予访问。一个域作出的授权，不能自动授权访问另一个域控制的资源，这样才不会形成通用信任权威或单点故障。</span><em>第 20–21 页 · 4.5</em></div>
+    <div><b>新兴技术<s>≠</s>必选组件</b><span>机密计算、先进隐私增强技术、后量子密码、分布式或账本式证据记录、联邦评估、AI 辅助安全都可能有用，但都不是必选项。原作给的评估维度：与现有架构的兼容性、保障收益、性能与运行开销、攻击面、治理要求、成熟度、互操作性、适用法规。</span><em>第 21 页 · 4.6</em></div>
+  </div>
+
+  <h3 class="sub">智能体身份、委托与安全调用<small>原文第 20–21 页 · 4.4 节</small></h3>
+  <p class="p">这一节是第 4 章里信息量最大的部分，按对象分三层来读。</p>
+  <p class="viz-title" style="margin-top:16px">网络 AI 智能体：纳入运营商控制的全生命周期</p>
+  <div class="life" aria-label="生命周期环节">
+    <span>创建或部署授权</span><i>→</i><span>入网（onboarding）</span><i>→</i><span>身份与凭证分配</span><i>→</i><span>允许的功能与授权范围</span><i>→</i><span>软件或模型变更</span><i>→</i><span>监测</span><i>→</i><span>权限撤销或停用</span>
+  </div>
+  <p class="pg">原文第 20 页 · 环节为原文所列，箭头顺序是按常理排的</p>
+  <div class="two" style="margin-top:20px">
+    <div class="card">
+      <h4>代他人行事的智能体与第三方智能体</h4>
+      <p>代表用户、应用、网络功能或其他智能体行事的智能体，要有可验证的委托关系和明确的授权范围；<b>受委托智能体的身份和权限，不能只从原始请求方的身份推出来</b>。</p>
+      <p>第三方智能体要经运营商认可的机制认证和授权，遵循设计即安全、最小权限、默认拒绝：只有策略明确授权的能力才开放。</p>
+    </div>
+    <div class="card">
+      <h4>多步调用链与可归责性</h4>
+      <p>调用链上的安全控制要做到：保证请求完整、识别调用方和被委托方、核验授权目标和范围、审计安全相关操作；每个接收方仍要自己判断操作是否获授权。</p>
+      <p>可归责性方面，原作引用 GSMA 负责任 AI 成熟度路线图 [17]，要求以防篡改、可审计的方式记录授权目标、委托链与调用链、信任证据、策略决策和执行结果，以便事后重建决策、明确责任、纠正或回滚，并能较快判断异常是来自模型推理、输入数据、工具或跨域调用，还是别的因素。</p>
+    </div>
+  </div>
+  <div class="view" style="margin-top:20px"><b>原作观点</b>智能体可以在授权边界内自主执行，但自主性不能造成责任真空，相应的责任和治理义务要落到明确的人或组织身上。</div>
+  <p class="p">关于协议，原作说明：当前 3GPP 把基于 UE 的智能体、网络 AI 智能体、第三方 AI 智能体以及 6G 核心网内部智能体之间的通信列为研究领域，还不是完成的规范性协议框架。因此 M-Trust 保持协议中立，要能和 5G、未来 6G 以及多代混合部署共存。</p>
+  <p class="pg">原文第 20–21 页</p>
+
+  <h3 class="sub">跨域证据交换：接收域独立审查三件事<small>原文第 20–21 页 · 4.5 节</small></h3>
+  <p class="p">跨域交互可能涉及运营商、企业、云或边缘提供商、服务提供商和第三方智能体。交换的证据可能是凭证、证明、授权声明、来源信息或其他安全断言。原作要求每个接收域独立评估：</p>
+  <div class="three">
+    <div class="card"><span class="tag">一</span><h4>谁签发的</h4><p>签发方的身份、权限、来源，以及证据的时效性和完整性。</p></div>
+    <div class="card"><span class="tag">二</span><h4>证明了什么</h4><p>范围、主体、目标、能力和保障等级。</p></div>
+    <div class="card"><span class="tag">三</span><h4>合不合我的规矩</h4><p>是否符合接收域自己的策略、授权、安全和监管要求。</p></div>
+  </div>
+  <p class="pg">原文第 21 页 · 没有单一参与方掌握完整关系时可考虑联邦式或分布式验证，但要求参与方、治理安排、故障假设、证据语义、决策范围和收益都已明确</p>
+</section>
+
+<!-- ======================= 6 ======================= -->
+<section class="sec" id="future">
+  <div class="sec-head"><h2>结论与五个待验证方向</h2><span class="meta">原文第 22–23 页 · 第 5 章</span></div>
+  <div class="sec-lede">
+    <p>结论部分把定位又说了一遍：M-Trust 不取代零信任、现有运营商安全机制或当前的自智网络运行方式，它以显式授权、最小权限、持续验证、分层安全、基于策略的控制为基础。原作把它关注的问题浓缩成一个：<strong>当智能体分解任务、委托操作、调用网络能力，并在变化的上下文中交互时，运营商怎样持续判断参与方是否可信、操作是否始终在授权目标之内？</strong></p>
+    <p>未来展望从标准进展说起：3GPP 正在研究 6G 如何支持 AI 和智能体能力，相关架构、协议、安全机制和部署模式都还在发展中，所以 M-Trust 要和这些工作同步演进，不预设某种特定架构。原作列出五个值得继续研究的方面。</p>
+    <p class="go">点开每一条看原文的具体说法。</p>
+  </div>
+  <ol class="dirs" id="dirs"></ol>
+  <p class="pg">原文第 22–23 页</p>
+  <div class="view" style="margin-top:24px"><b>原作观点</b>随着智能体网络概念和相关标准演进，M-Trust 可以作为一个结构化的讨论基础，帮助产业界讨论信任与授权治理如何随网络自治程度提升而演进。下一步要结合具体的运营商场景和新兴标准逐步验证，细化功能边界，分清哪些地方需要新机制、哪些地方现有移动网络安全机制已经够用。</div>
+  <p class="pg">原文第 23 页</p>
+</section>
+
+<!-- ======================= 学 ======================= -->
+<section class="sec" id="learn">
+  <div class="sec-head"><h2>演进链与易混辨析</h2><span class="meta">按原文第 04–11 页整理的学习材料</span></div>
+  <div class="sec-lede">
+    <p>原作的论证本身就是一条演进链：<strong>边界信任 → 零信任 → M-Trust</strong>。每一站都解决了上一站的问题，又在新环境里卡住。下面的对照表把原作分散在第 1、2 章里的描述按同一组维度排在一起，内容都来自原文；表格结构是我整理的。</p>
+    <p class="go">点按钮高亮某一站，对照看它和前后两站的差别。</p>
+  </div>
+
+  <figure class="viz">
+    <div class="seg evo-pick" role="group" aria-label="演进阶段" id="evo-pick">
+      <button type="button" aria-pressed="false" data-c="1">边界信任</button>
+      <button type="button" aria-pressed="false" data-c="2">零信任</button>
+      <button type="button" aria-pressed="true" data-c="3">M-Trust</button>
+      <button type="button" aria-pressed="false" data-c="0">全部</button>
+    </div>
+    <div class="tbl-wrap">
+    <table class="evo" id="evo">
+      <thead><tr><th>维度</th><th>边界信任</th><th>零信任</th><th>M-Trust</th></tr></thead>
+      <tbody>
+        <tr><td>信任依据</td><td>网络位置和边界；进入可信域即获得一定隐式信任</td><td>身份：对主体、设备或工作负载认证授权，结合上下文</td><td>身份 + 意图：授权目标、委托链与调用链、执行上下文、观测到的行为、多方证据</td></tr>
+        <tr><td>何时评估</td><td>偏重初始接入或连接建立时</td><td>持续监测，按策略和上下文重新认证或授权</td><td>贯穿目标分解、委托和执行全过程，形成闭环；异常可跳过常规周期</td></tr>
+        <tr><td>评估对象</td><td>访问是否跨越边界</td><td>用户、设备、工作负载和资源访问</td><td>智能体请求和执行的每个操作是否仍与授权目标一致</td></tr>
+        <tr><td>跨域方式</td><td>运营商间靠漫游和互联关系</td><td>通常在既定组织或信任域内，由该域权威管理</td><td>证据在允许边界间受控交换，接收域独立评估、保留决定权</td></tr>
+        <tr><td>典型机制</td><td>防火墙、VPN、网络分段、接入控制</td><td>以身份为中心、最小权限、持续监测（NIST SP 800-207）</td><td>多方 / 意图感知 / 跨域三维度；DTIC、DTE、PA、PEA 三层</td></tr>
+        <tr><td>卡在哪</td><td>突破边界或拿到合法凭证后可横向移动；对会话后的变化考虑有限</td><td>高频交互评估开销大；静态规则难管概率性行为；跨信任域能力有限</td><td>原作自认是参考框架，需在五个方向上继续验证（见上一节）</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </figure>
+  <p class="pg">原文第 04–06、11、22–23 页</p>
+
+  <h3 class="sub">易混辨析</h3>
+  <div class="confuses">
+    <div class="confuse"><h4>易混辨析：意图 vs 衍生操作</h4><p><b>意图</b>是明确表达的目标或任务预期，含目标设定和约束条件。<b>衍生操作</b>是智能体为实现意图而产生的具体动作。原作要求衍生操作仍要单独接受授权和策略约束：批准了意图，不等于批准了每一步（第 09 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：身份验证 vs 意图感知授权</h4><p><b>身份验证</b>回答“它是谁”。<b>意图感知授权</b>在身份之外，再看所请求的操作是否仍与授权目标、委托链与调用链、执行上下文和策略一致；超出预授权范围的操作要触发新的授权决策（第 09、25 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：自智网络 vs M-Trust</h4><p><b>自智网络</b>用意图驱动运行、AI 辅助决策和闭环自动化来改进网络与业务管理，关心“能不能达成预期结果”。<b>M-Trust</b>不重复这些能力，只管信任与授权治理：实体是否始终可信、操作是否始终在授权范围内（第 04、22 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：多方信任 vs 跨域信任</h4><p><b>多方信任</b>讲的是证据来自多个获授权方、没有一方掌握完整关系时怎么评估。<b>跨域信任</b>讲的是交互跨越管理域或安全域边界时，证据和上下文怎么受控传递。两者都坚持一点：外部证据是输入，各方保留自己的决定权（第 08、10–11 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：信任评估结果 vs 授权</h4><p><b>信任评估结果</b>（含风险指标）由 DTE 产出，是参考。<b>授权</b>由运营商控制的策略和授权功能作出，还要结合授权目标、请求的能力、调用链、管理域和监管约束。评分高不等于自动获权（第 19 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：fail-closed vs fail-safe</h4><p>M-Trust 功能失效时，<b>fail-closed</b> 用于智能体新增或扩大的访问请求：默认拒绝。<b>fail-safe</b> 用于已有网络服务、尤其是公众通信：保持连续。两者不矛盾，对象不同（第 17 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：“分布式信任评估”里的“分布式”</h4><p>只表示证据采集或评估功能<b>可以</b>分布式部署，运营商也可以选集中、分层或联邦式。原作明确说不应假定分布式部署本身就能提升安全性，也不强制 DLT、联邦学习或去中心化共识（第 14 页）。</p></div>
+    <div class="confuse"><h4>易混辨析：网络 AI 智能体 vs 第三方 AI 智能体</h4><p><b>网络 AI 智能体</b>部署在运营商网络内或代表运营商行事，按运营商控制的生命周期管理。<b>第三方 AI 智能体</b>由运营商以外的主体提供，比如通过 API 访问开放网络能力，要经运营商认可的机制认证授权、默认拒绝（第 20、25 页）。</p></div>
+  </div>
+</section>
+
+<!-- ======================= 自测 ======================= -->
+<section class="sec" id="quiz">
+  <div class="sec-head"><h2>自测</h2><span class="meta">先自己答，再点开对照原文</span></div>
+  <div class="sec-lede"><p>十道题覆盖全书主线。答案都按原文整理，并注明页码。</p></div>
+  <div class="quiz">
+    <details><summary><span>Q1</span>本白皮书聚焦哪两类场景？各对应“连接智能”的哪个维度？</summary><p>一是第三方 AI 智能体通过 Open Gateway 等开放接口调用运营商网络能力，对应网络赋能 AI；二是运营商内部网络 AI 智能体和 AI 赋能的网络功能参与网络运行、管理和编排，对应 AI 赋能网络。<em>第 02 页</em></p></details>
+    <details><summary><span>Q2</span>零信任的三项基本原则是什么？</summary><p>以身份为中心的安全、最小权限、持续监测。概念由 Forrester 的 John Kindervag 于 2010 年系统提出，NIST 于 2020 年发布 SP 800-207。<em>第 05 页</em></p></details>
+    <details><summary><span>Q3</span>原作说零信任在智能体环境里有哪三处局限？</summary><p>持续信任评估的可扩展性与效率；对概率性的智能体行为施加确定性安全控制；跨移动网络信任域的适应能力有限。<em>第 06 页</em></p></details>
+    <details><summary><span>Q4</span>M-Trust 的三个维度分别是什么？图 1 三角形中间写的是什么？</summary><p>多方信任、智能体意图感知信任、跨域信任；中间是“面向智能体交互的额外信任与授权治理”（Additional Trust and Authorisation Governance for Agentic Interactions）。<em>第 07 页</em></p></details>
+    <details><summary><span>Q5</span>智能体意图感知信任靠哪两项能力实现？</summary><p>意图感知授权，以及自动化与自适应策略管理。后者不是让策略生命周期完全自治，策略权限始终在运营商手里。<em>第 09 页</em></p></details>
+    <details><summary><span>Q6</span>M-Trust 架构分哪三层？各层包含哪些功能？</summary><p>信任采集与评估层：数据信任指标采集（DTIC）、分布式信任评估（DTE）；策略决策层：策略智能体（PA，策略决策与验证功能）；策略执行层：策略执行智能体（PEA）。<em>第 13 页</em></p></details>
+    <details><summary><span>Q7</span>DTIC 从哪四类来源采集信任信息？</summary><p>智能体行为记录、系统运行状态、策略执行日志、安全事件与异常报告。<em>第 13 页</em></p></details>
+    <details><summary><span>Q8</span>写出信任闭环的七个环节。</summary><p>信任证据采集 → 信任与风险评估 → 策略与授权决策 → 执行前验证 → 执行 → 监测与反馈 → 重新评估。<em>第 17 页</em></p></details>
+    <details><summary><span>Q9</span>跨域证据到达后，接收域要独立评估哪三方面？</summary><p>签发方的身份、权限、来源以及证据的时效性和完整性；证据的范围、主体、目标、能力和保障等级；是否符合接收域的策略、授权、安全和监管要求。<em>第 21 页</em></p></details>
+    <details><summary><span>Q10</span>原作列出的五个未来研究方向是什么？</summary><p>M-Trust 更精确地映射到移动网络架构和现有安全机制；智能体交互的信任与授权治理；跨域信任需要清晰界定的管理与安全边界；M-Trust 自身的安全性和韧性；安全保障、响应能力与运行复杂度之间的平衡。<em>第 22–23 页</em></p></details>
+  </div>
+</section>
+
+<!-- ======================= 金句 ======================= -->
+<section class="sec" id="quotes">
+  <div class="sec-head"><h2>原文金句</h2><span class="meta">摘自中文版原文，按出现顺序</span></div>
+  <div class="sec-lede"><p>这几句最能代表作者的立场，引用时可以直接用。都是中文版原文的句子，个别做了截取。</p></div>
+  <div class="quotes">
+    <blockquote class="quote"><p>但仅仅知道智能体“是谁”或“是什么”已经不够。</p><cite>第 01 页 · 前言</cite></blockquote>
+    <blockquote class="quote"><p>外部证据应被视为运营商本地策略决策的输入，而非替代。</p><cite>第 08 页 · 2.1 节</cite></blockquote>
+    <blockquote class="quote"><p>在一个域中建立的信任不会被另一个域自动继承。</p><cite>第 11 页 · 2.3 节</cite></blockquote>
+    <blockquote class="quote"><p>信任评估结果或风险指标本身并不构成授权。</p><cite>第 19 页 · 4.3 节</cite></blockquote>
+    <blockquote class="quote"><p>智能体的自主性不应造成责任真空。</p><cite>第 21 页 · 4.4 节</cite></blockquote>
+  </div>
+</section>
+
+<!-- ======================= 术语 ======================= -->
+<section class="sec" id="glossary">
+  <div class="sec-head"><h2>术语速查</h2><span class="meta">按原文第 24–25 页的缩略语和术语定义改写</span></div>
+  <dl class="qa gloss" style="margin-top:20px">
+    <dt>智能体网络（Agentic Network）</dt><dd>网络功能、网络 AI 智能体和第三方智能体自主协作，通过目标分解、委托和能力调用来实现授权目标的未来网络形态。</dd>
+    <dt>M-Trust（MAIC-Trust 框架）</dt><dd>本书提出的信任框架，在零信任上扩展多方、意图感知、跨域三个维度；定位为参考框架和研究方向，不是标准或强制架构。原文未展开 MAIC 的全称。</dd>
+    <dt>多方信任（Multi-party Trust）</dt><dd>由多个获授权方提供可独立验证、限定用途、有时效的证据，结合与上下文相适应的建立方式来评估信任。</dd>
+    <dt>智能体意图感知信任（Agentic Intent-aware Trust）</dt><dd>以身份验证和意图感知授权为基础，可按风险和上下文在运营商定义的边界内有限度地调整策略。</dd>
+    <dt>跨域信任（Cross-domain Trust）</dt><dd>在允许的管理域或安全域边界之间受控交换和评估信任证据，同时各域保留信任锚、策略权限、安全控制和监管义务。</dd>
+    <dt>意图感知授权（Intent-aware Authorization）</dt><dd>身份验证之外，再判断请求的操作是否仍与授权目标、委托链与调用链、执行上下文和策略一致；超出预授权范围就触发新的授权决策。</dd>
+    <dt>授权目标（Authorized Objective）</dt><dd>智能体被允许实现的任务目标及其权限边界。</dd>
+    <dt>委托链与调用链（Delegation and Invocation Chain）</dt><dd>任务在智能体之间逐级委托、智能体调用其他智能体、工具或网络能力所形成的链路，是意图感知授权要评估的上下文。</dd>
+    <dt>信任证据（Trust Evidence）</dt><dd>支撑信任评估的可验证信息，如身份与签约数据、观测到的网络行为、工作负载或平台证明、软件完整性、受委托权限。</dd>
+    <dt>信任锚（Trust Anchor）</dt><dd>验证凭证和证据所依据的根，如 UICC/eUICC 凭证、安全元件、硬件信任根、PKI。</dd>
+    <dt>管理域（Administrative Domain）</dt><dd>由单一实体（如运营商、服务提供商）行使策略、安全和管理权限的网络或系统范围。</dd>
+    <dt>DTIC（Data Trust Indicator Collection，数据信任指标采集）</dt><dd>信任感知组件，从异构来源采集并保护信任相关数据。</dd>
+    <dt>DTE（Distributed Trust Evaluation，分布式信任评估）</dt><dd>对交互相关证据做评估，产出上下文相关的信任与风险结果，供策略和授权功能使用。</dd>
+    <dt>PA（Policy Agent，策略智能体）</dt><dd>策略决策与验证功能，负责上下文感知的策略决策和执行前验证、运行中监督。</dd>
+    <dt>PEA（Policy Enforcement Agent，策略执行智能体）</dt><dd>部署在网络或业务执行点的逻辑执行功能，按已验证的决策执行，不自行扩大授权或制定策略。</dd>
+    <dt>证明（attestation）</dt><dd>关于平台或工作负载状态的证据；依赖方仍要判断签发方、度量值和声明是否符合自己的策略。</dd>
+    <dt>fail-closed / fail-safe</dt><dd>M-Trust 失效时：对智能体新增或扩大的访问默认拒绝；已有服务（尤其是公众通信）保持连续。</dd>
+    <dt>GSMA Open Gateway</dt><dd>GSMA 推动的通用、可编程的网络能力调用方式，原作视为第三方智能体访问运营商开放能力的典型接口。</dd>
+  </dl>
+</section>
+
+<!-- ======================= 读后 ======================= -->
+<section class="sec" id="after">
+  <div class="sec-head"><h2>读后</h2><span class="meta">以下是我的整理，不是原文内容</span></div>
+  <div class="two" style="margin-top:24px">
+    <div class="mine">
+      <h3>从这份白皮书看到的行业动向</h3>
+      <p class="hint">只做归纳，不做延伸。</p>
+      <ol>
+        <li><b>智能体安全的重心从“认身份”转到“管行为”。</b>授权目标、委托链与调用链、执行上下文被当作授权的一等输入，而不只是日志里的附加信息。</li>
+        <li><b>运营商把自己定位为智能体时代的信任锚。</b>前言把 SIM 的全球身份体系、漫游的跨运营商信任、Open Gateway 的可编程能力列为可以延续的经验；全文的底线始终是“运营商保留最终决定权”。</li>
+        <li><b>和 6G 标准同步，但刻意不抢跑。</b>原作引用了 3GPP TR 23.801-01（6G 架构研究，Rel-20）和 TR 22.870（6G 用例），并说明智能体间通信仍处于研究阶段，所以框架保持协议中立、技术中立。</li>
+        <li><b>中国产业界主导编制。</b>第 26 页列出的编制单位有华为、中国电信集团、中国联通、中国移动集团、中国电信股份研究院、北京邮电大学、国家信息中心、中国移动研究院、中国移动设计院、北京神州绿盟，支持单位有中广电移动和中移（杭州）。</li>
+        <li><b>后续节奏（来自报道）。</b>据通信产业网报道，GSMA 下一步按“评测先行、开放传播”推进 M-Trust 验证，系列第三本将是《具身智能联网化》白皮书。</li>
+      </ol>
+    </div>
+    <div class="mine">
+      <h3>引用前要核对的地方</h3>
+      <p class="hint">来自原文与发布报道的对照。</p>
+      <ol>
+        <li><b>发布时间和地点不在正文里。</b>“2026 年 11 月 3 日、乌镇‘互联网之光’博览会发布”来自通信产业网的报道；白皮书正文没有写发布日期。</li>
+        <li><b>报道里的部分提法在正文中找不到。</b>报道说白皮书在“智能体信用”“按次授权”等机制上有原创思考；中文版正文没有这两个词，相关内容是动态授权、权限收缩或撤销、超范围操作触发新授权决策。引用时以正文为准。</li>
+        <li><b>编制单位的说法不同。</b>报道写“联合中国移动、中国电信、中国联通、华为等”；正文第 26 页列了 10 家编制单位和 2 家支持单位。</li>
+        <li><b>MAIC 没有展开。</b>缩略语表只写了“MAIC-Trust Framework”，没有给出 MAIC 四个字母的含义，不要自行补全。</li>
+        <li><b>本文依据中文版。</b>英文版 PDF 本次没有下载成功，金句只附中文原句，没有核对英文措辞。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="about" aria-labelledby="about-h">
+  <h2 id="about-h">关于这篇解读</h2>
+  <div>
+    <p>内容来自 GSMA 发布的白皮书《面向智能体网络的信任范式演进》（Trust Paradigm Evolution for Agentic Networks，© GSMA 2026，由 GSMA 大中华区牵头编制，GSMA 首席技术官 Alex Sinclair 作序）。原文可从 GSMA 官网获取：<a href="https://www.gsma.com/about-us/regions/greater-china/wp-content/uploads/2026/11/Trust-Paradigm-Evolution-for-Agentic-Networks_CN.pdf" rel="noopener">中文版 PDF</a>、<a href="https://www.gsma.com/about-us/regions/greater-china/wp-content/uploads/2026/11/Trust-Paradigm-Evolution-for-Agentic-Networks_EN.pdf" rel="noopener">英文版 PDF</a>。发布背景参考了通信产业网的报道。</p>
+    <p>本文以转述原文观点为主，每一节都标了原文页码；“原作观点”框是对作者立场的转述，“原文金句”是原句摘录。“演进链与易混辨析”“情景练习”“自测”是按原文内容做的学习材料；“读后”一节是我的归纳，与原文区分开。概念与表述以原文为准。</p>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>原文：GSMA《面向智能体网络的信任范式演进》</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+function $(s, r) { return (r || document).querySelector(s); }
+function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function press(group, btn) { group.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); }); }
+
+/* ---------- 三阶段 ---------- */
+var stages = [
+  ['连接人', '早期移动通信', ['网络主要是信息传输基础设施，使命是实现人与人之间的语音、文本和多媒体通信，打破地理阻隔。']],
+  ['连接物', '5G 与物联网', ['网络开始连接设备和物理环境：传感器、工业系统、智能终端互联，物理实体可以实时映射到数字系统，支撑大规模态势感知。']],
+  ['连接智能', '6G 与 AI 原生', ['网络与 AI 的交互沿两个互补维度演进。<b>网络赋能 AI</b>：让分布在云、边、端的算力、模型和自主智能体互相通信协作，网络为分布式 AI 负载提供连接和服务。<b>AI 赋能网络</b>：在网络自身的设计、运行、管理和编排中使用 AI，智能成为网络运维能力的一部分。',
+    '两者的信任需求不同又相关：前者要把信任从身份和信道延伸到模型、智能体、数据和算力之间的交互；后者还要覆盖 AI 在网络运行和决策中的使用。']]
+];
+var stBox = $('#stages'), stCap = $('#stage-cap');
+stages.forEach(function (s, i) {
+  var b = h('button', '', '<b>' + s[0] + '</b>' + s[1]); b.type = 'button';
+  b.addEventListener('click', function () { press(stBox, b); stCap.innerHTML = s[2].map(function (t) { return '<p>' + t + '</p>'; }).join(''); });
+  stBox.appendChild(b);
+  if (i === 2) b.click();
+});
+
+/* ---------- 技术 / 业务驱动 ---------- */
+var drives = {
+  tech: [['分布式云与边缘架构', '算力越来越多地分布在云和边缘 [1]，安全与信任边界的位置和性质随之变化。但去中心化程度因网络层级和场景而异，网络互联等领域仍需要清晰边界。所以信任机制要同时支持基于边界的控制和更分布式、持续自适应的控制。'],
+         ['智能化架构', '智能体预计会成为网络功能和用户设备的重要组成部分 [2]，网络实体从被动执行单元变成有感知、推理、协作和自主决策能力的智能实体。身份验证仍然必要，但可能要补上对智能体行为、授权决策、执行上下文、计算完整性和多智能体协作的评估。'],
+         ['异构融合网络', '陆地、空中、卫星和海洋一体化网络会融合不同的通信系统、协议、治理模式和信任域。信任架构可能需要支持证据在允许的管理边界之间受控交换和评估，并在多变的运行条件下保持连续性和韧性。']],
+  biz: [['人工智能与通信', '信任关系延伸到 AI 赋能的网络功能、服务和自主智能体，包括智能体之间、人与智能体之间的交互。系统要在不需要人工介入每次交互的前提下，支持异构智能体之间的身份识别和意图对齐。AI 模型可能不透明，所以关键的自主决策要能被追溯、评估和审查。'],
+        ['通感一体化', '网络不仅传输信息，还能观察和理解物理环境 [4]。信任框架要覆盖感知数据从采集、存储、处理、共享到销毁的全生命周期，支持授权、目的限定、访问控制和数据治理，在多方使用数据的同时保护敏感信息 [15]。'],
+        ['泛在连接', '陆地、卫星、空中、海洋和专用网络之间无缝交互，用户、设备和智能体跨越组织、技术和地理边界移动。一个域的证据可以给另一个域参考，但采不采纳取决于接收域。基于 SIM / eSIM 凭证和网络认证的运营商锚定身份，可通过 Open Gateway API 等接口扩展，必要时辅以联邦身份框架。']]
+};
+var dvBox = $('#drive-box'), dvMode = $('#drive-mode'), dvPg = $('#drive-pg');
+function drawDrive(m) {
+  dvBox.innerHTML = '';
+  drives[m].forEach(function (d) { dvBox.appendChild(h('div', 'card', '<h4>' + d[0] + '</h4><p>' + d[1] + '</p>')); });
+  dvPg.textContent = m === 'tech' ? '原文第 02–03 页 · 1.2 节；方括号为原文引用的文献编号' : '原文第 04 页 · 1.3 节；ITU-R M.2160 [3]';
+}
+dvMode.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(dvMode, b); drawDrive(b.dataset.m); });
+drawDrive('tech');
+
+/* ---------- 三处局限 ---------- */
+var lims = [
+  ['持续信任评估的可扩展性与效率',
+   ['零信任支持持续监测和策略评估，必要时重新认证或授权，这些在智能体环境里依然重要，因为智能体会与很多服务、工具和其他智能体动态交互。', '问题在于：对智能体的每一次高频交互都统一套用传统的验证和策略评估，会带来计算和通信开销，时延敏感场景里难以高效扩展。'],
+   ['原作强调，挑战<b>不在于放宽最小权限或验证要求</b>。', '而在于让信任评估更自适应、更能感知上下文和风险：根据身份、授权目标、执行上下文、所请求的网络能力和相关风险，动态施加合适强度的控制。']],
+  ['对概率性的智能体行为施加确定性安全控制',
+   ['AI 智能体依赖概率推理，受模型特性、数据、任务上下文和外部工具与环境的影响，具体决策和执行路径往往无法事先预测。', '仅靠身份和预定义访问条件的静态规则，可能缺乏足够上下文来评估动态生成的操作和变化的风险。'],
+   ['不确定性<b>没有降低、反而凸显了</b>对确定性控制的需要：清晰的授权边界、最小权限，以及对智能体行为的“可约束能力”。', '方向是把确定性的策略执行，和持续的、感知上下文、意图和风险的信任评估结合起来：用自适应信号决定授予、受限、上报待审批还是拒绝，而最终决策始终可执行、可审计，并受预定义治理边界约束。']],
+  ['跨移动网络信任域的适应能力有限',
+   ['传统零信任通常用在一个既定的组织或信任域里，策略由负责该域的权威管理。', '而自主智能体会在网络功能、边缘与云、服务平台以及多个管理域之间运行，在运营商、企业、云和服务提供商的环境之间交互，跨边界建立和评估信任变得复杂。'],
+   ['对运营商来说，这类交互必须在清晰的安全、策略、监管和管理边界内进行。', '方向是建立相应机制，在允许的域边界之间建立和传递<b>可验证的信任上下文</b>，同时保留每个参与域的策略权限、监管义务和安全控制。']]
+];
+var crList = $('#cr .cr-list'), crC = $('#cr-c'), crR = $('#cr-r');
+lims.forEach(function (l, i) {
+  var b = h('button', '', l[0]); b.type = 'button';
+  b.addEventListener('click', function () {
+    press(crList, b);
+    crC.innerHTML = l[1].map(function (t) { return '<p>' + t + '</p>'; }).join('');
+    crR.innerHTML = l[2].map(function (t) { return '<p>' + t + '</p>'; }).join('');
+  });
+  crList.appendChild(b);
+  if (i === 0) b.click();
+});
+
+/* ---------- 三角图 ---------- */
+var dims = [
+  { k: '多方信任', en: 'Multi-party Trust', x: 210, y: 50, lx: 210, ly: 22, anc: 'middle',
+    def: '支持涉及多个相关实体、多个证据来源的信任评估，并按运行场景采用不同的信任建立方式；为协同评估与治理打基础，同时保留相关运营商和管理域的安全与策略权限。',
+    fix: '第 06 页的三处局限没有与它一一对应；原作把它用在“证据分散在多方、没有一方掌握完整关系”的情形（第 08 页）。',
+    pts: ['组成：联邦式多方证据与评估 + 上下文感知的信任建立', '外部证据是本地决策的输入，不是替代', '不追求各方得出同一判断'] },
+  { k: '意图感知信任', en: 'Agentic Intent-aware Trust', x: 70, y: 290, lx: 70, ly: 336, anc: 'middle',
+    def: '聚焦智能体自身是否可信。把传统身份验证扩展成“身份验证 + 意图感知授权”的一体化模型，授权时综合考虑授权目标、执行上下文、资源请求和风险状况，做自适应授权，在增强安全的同时避免不必要的运行开销。',
+    fix: '回应第 06 页前两处局限：高频交互下评估的效率问题，以及如何约束概率性的行为。',
+    pts: ['组成：意图感知授权 + 自动化与自适应策略管理', '衍生操作要单独授权', '智能体不能自己把权限扩到边界之外'] },
+  { k: '跨域信任', en: 'Cross-domain Trust', x: 350, y: 290, lx: 350, ly: 336, anc: 'middle',
+    def: '面向跨异构网络和管理域的交互，在运营商策略和安全要求下支持信任证据的受控交换与评估；参与方据此为跨域交互建立和评估信任，同时保留自己的信任与授权决定权。',
+    fix: '回应第 06 页第三处局限：传统零信任跨移动网络信任域的适应能力有限。',
+    pts: ['组成：异构信任锚与信任证据 + 跨域信任建立', '一个域建立的信任不被另一个域自动继承', '信任基础由运营商决定，不由智能体选择'] }
+];
+var svg = $('#tri'), NS = 'http://www.w3.org/2000/svg', triCap = $('#tri-cap');
+function sv(tag, attrs, text) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+svg.appendChild(sv('polygon', { points: '210,50 70,290 350,290', fill: 'none', stroke: 'var(--rule)', 'stroke-width': 3 }));
+svg.appendChild(sv('polygon', { 'class': 'core', points: '210,130 125,250 295,250' }));
+['额外的信任与', '授权治理', '（面向智能体交互）'].forEach(function (t, i) { svg.appendChild(sv('text', { 'class': 'core-t', x: 210, y: 200 + i * 20, 'text-anchor': 'middle' }, t)); });
+var vs = [];
+dims.forEach(function (d, i) {
+  var g = sv('g', { 'class': 'v', tabindex: 0, role: 'button', 'aria-label': d.k });
+  g.appendChild(sv('circle', { cx: d.x, cy: d.y, r: 18 }));
+  g.appendChild(sv('text', { x: d.lx, y: d.ly, 'text-anchor': d.anc }, d.k));
+  function go() {
+    vs.forEach(function (x) { x.classList.toggle('on', x === g); });
+    triCap.innerHTML = '<h4>' + d.k + '</h4><p class="en">' + d.en + '</p><p>' + d.def + '</p><p><b>补哪处短板：</b>' + d.fix + '</p><ul>' + d.pts.map(function (p) { return '<li>' + p + '</li>'; }).join('') + '</ul>';
+  }
+  g.addEventListener('click', go);
+  g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  svg.appendChild(g); vs.push(g);
+  if (i === 1) go();
+});
+
+/* ---------- 证据持有方 ---------- */
+var holders = [
+  ['归属运营商（Home MNO）', '可能持有身份及签约相关的证据。'],
+  ['拜访运营商（Visited MNO）', '可能观察到本地的网络行为。'],
+  ['边缘提供商', '可能提供工作负载或平台的证明（attestation）。'],
+  ['应用提供商', '可能提供智能体的软件完整性、受委托权限，以及所执行任务的信息。']
+];
+var hBox = $('#holders'), hCap = $('#holder-cap');
+holders.forEach(function (x, i) {
+  var b = h('button', '', x[0]); b.type = 'button';
+  b.addEventListener('click', function () { press(hBox, b); hCap.innerHTML = '<b>' + x[0] + '</b>：' + x[1] + ' 原作同时列出的证据持有方还有漫游与互联合作伙伴、边缘服务提供商、企业客户等。'; });
+  hBox.appendChild(b);
+  if (i === 0) b.click();
+});
+
+/* ---------- 三层架构 ---------- */
+var comps = {
+  DTIC: { n: '数据信任指标采集（DTIC）', role: '信任采集与评估层 · 信任感知组件', body: [
+    '从异构来源采集信任相关信息，并负责保护这些数据。原作列出的四类来源：',
+    ['智能体行为记录', '系统运行状态', '策略执行日志', '安全事件与异常报告'],
+    'M-Trust 决策的可靠性取决于证据的质量：证据要经过认证、有完整性保护、必要时可追溯来源，并且足够及时。按保障等级，可以加上硬件支撑的保护、远程证明、数字签名等机制。',
+    '跨域时还要验证证据的来源和生成它的权限。原作特别强调：不能因为外域证据能通过密码学验证就视为可信，接不接受仍取决于接收方的策略。证据可能含敏感信息，要做数据保护和最小化；隐私增强技术只在收益足以抵消开销的特定场景考虑。' ], pg: '第 13–14 页' },
+  DTE: { n: '分布式信任评估（DTE）', role: '信任采集与评估层 · 评估组件', body: [
+    '评估与某次智能体交互相关的证据，产出上下文相关的信任与风险结果，交给运营商控制的策略和授权功能使用。证据可能包括身份与凭证状态、证明或保障信息、授权目标、委托链与调用链、请求的网络能力、执行上下文、观测到的行为和风险指标。',
+    '“分布式”只指采集或评估功能可以分布部署；运营商可按需选集中、分层、分布或联邦式。原作明确说不应假定分布式部署本身就更安全。',
+    'AI、统计和规则方法都可以用，选择要匹配保障等级、可解释性、鲁棒性、响应能力和运行约束。M-Trust 不强制 DLT、联邦学习、去中心化共识或任何特定机器学习模型。' ], pg: '第 14 页' },
+  PA: { n: '策略智能体（PA）', role: '策略决策层 · 策略决策与验证功能', body: [
+    '把信任与风险评估结果转成策略和授权决策。它是一项逻辑功能，不是取代现有策略、认证、授权功能的集中式权威。两项能力：',
+    ['上下文感知的策略决策', '策略验证与监督'],
+    '决策：在预定义策略范围内确定授权范围和安全条件。低风险操作可用简化控制；敏感能力、高风险或跨域交互可能要增强验证、额外证据、更严格条件或运营商审批。这些调整不允许智能体自授权，也不允许在治理边界之外修改底层策略。M-Trust 不规定特定决策算法，用 AI 时输出要受策略约束。',
+    '验证与监督：新的或实质修改的决策执行前要验证，不合规就拒绝、受限、加验证或上报；执行后由运行时监测反馈，依据变化时重新评估、收缩或撤销授权。决策、验证结果和授权变更都要可审计。' ], pg: '第 15 页' },
+  PEA: { n: '策略执行智能体（PEA）', role: '策略执行层 · 逻辑执行功能', body: [
+    '部署在合适的网络或业务执行点，执行策略决策层下发并经过验证的决策，执行时可利用本地上下文。遵循设计即安全、最小权限和默认拒绝。<b>PEA 不会自行扩大授权范围或制定安全策略。</b>',
+    '自适应执行：信任、风险或行为变化时，可要求额外验证、收窄授权、暂停或撤销访问。原作的例子：执行明显偏离授权目标时收缩或暂停授权；敏感能力授予前要求更强认证或运营商审批；底层架构支持时，可在虚拟化 5G 核心网场景采用微隔离 [14]。',
+    '自动响应要与影响相称：常规动作可自动执行，可能显著影响网络可用性、特权管理或关键网络功能的动作，可能要额外保障、上报或人工干预。' ], pg: '第 16–17 页' }
+};
+var layers = [['信任采集与评估层', ['DTIC', 'DTE']], ['策略决策层', ['PA']], ['策略执行层', ['PEA']]];
+var lBox = $('#layers'), aCap = $('#arch-cap'), allBtns = [];
+layers.forEach(function (l, i) {
+  if (i) lBox.appendChild(h('div', 'layer-arrow', '↓'));
+  var d = h('div', 'layer'); d.appendChild(h('b', '', l[0]));
+  var c = h('div', 'comps');
+  l[1].forEach(function (k) {
+    var b = h('button', '', comps[k].n); b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', function () {
+      allBtns.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      var m = comps[k], html = '<h4>' + m.n + '</h4><p class="role">' + m.role + '</p>';
+      m.body.forEach(function (p) { html += Array.isArray(p) ? '<ul>' + p.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul>' : '<p>' + p + '</p>'; });
+      aCap.innerHTML = html + '<p class="pg">原文' + m.pg + '</p>';
+    });
+    c.appendChild(b); allBtns.push(b);
+  });
+  d.appendChild(c); lBox.appendChild(d);
+});
+lBox.appendChild(h('div', 'layer-arrow', '↺ 执行结果反馈回采集与评估层'));
+allBtns[0].click();
+
+/* ---------- 闭环 ---------- */
+var loops = {
+  norm: [
+    ['信任证据采集', 'DTIC', '从智能体行为记录、系统运行状态、策略执行日志、安全事件与异常报告等来源采集证据，并保证其真实、完整、及时。'],
+    ['信任与风险评估', 'DTE', '针对这次交互评估证据，生成上下文相关的信任与风险结果。结果只是参考，本身不构成授权。'],
+    ['策略与授权决策', 'PA', '在运营商定义的策略边界内，结合授权目标、请求的能力、调用链、管理域等，决定授权范围和安全条件。'],
+    ['执行前验证', 'PA', '新的或实质修改的决策，先核对是否符合授权目标、运营商策略、授权约束、安全和监管要求；不符合的不执行，可能被拒绝、受限、附加验证或上报审查。'],
+    ['执行', 'PEA', '在执行点按已验证的决策实施控制，遵循最小权限和默认拒绝，不自行扩大授权。'],
+    ['监测与反馈', 'PEA → DTIC', '执行结果本身成为新证据：控制是否成功实施、执行行为的变化、运行影响和其他安全观测。'],
+    ['重新评估', 'PA / DTE', '当变化影响到原决策的依据时，重新评估并在边界内加强验证、收缩或撤销授权、附加条件或上报。经验证和变更控制后，反馈也可用于离线改进评估模型或策略，但不允许执行层或智能体自主修改底层策略。']
+  ],
+  fast: [
+    ['异常证据或外部告警', 'DTIC', 'DTIC 收到表明异常行为或数据可能被操纵的证据或外部告警，不等常规评估周期，直接发出跨层告警。'],
+    ['异常特征实时推送', 'DTIC → DTE', '把异常数据特征推送给 DTE，原作举的例子是伪造凭证的签名痕迹、异常行为的时间序列模式。'],
+    ['应急重新评估', 'DTE', 'DTE 启动应急流程，基于异常数据优先重估主体的信任状态和风险等级，产出更新后的结果。'],
+    ['判断是否调整', 'PA', '策略决策层在运营商定义的约束内，判断是否要调整授权范围或安全条件。'],
+    ['执行前验证', 'PA', '任何新的或实质修改的决策，执行前仍要按授权目标、运营商策略、授权约束和安全要求验证。快速路径不跳过这一步。'],
+    ['执行并监测', 'PEA', 'PEA 按策略执行相应动作，监测结果，为后续评估提供反馈；经验证、变更控制和运营商管控，反馈可用于离线改进模型或策略配置。']
+  ]
+};
+var lpBox = $('#loop'), lpCap = $('#loop-cap'), lpMode = $('#loop-mode'), mode = 'norm', cur = 0;
+function drawLoop() {
+  lpBox.innerHTML = '';
+  loops[mode].forEach(function (s, i) {
+    if (i) lpBox.appendChild(h('span', 'ar', '→'));
+    var b = h('button', 'st' + (mode === 'fast' ? ' fast' : ''), s[0]); b.type = 'button';
+    b.setAttribute('aria-pressed', i === cur ? 'true' : 'false');
+    b.addEventListener('click', function () { cur = i; drawLoop(); });
+    lpBox.appendChild(b);
+  });
+  if (mode === 'norm') lpBox.appendChild(h('span', 'ar', '↺'));
+  var s = loops[mode][cur];
+  lpCap.innerHTML = '<span class="who">第 ' + (cur + 1) + ' 步 · ' + s[1] + '</span><p>' + s[2] + '</p>';
+}
+lpMode.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(lpMode, b); mode = b.dataset.m; cur = 0; drawLoop(); });
+$('#loop-next').addEventListener('click', function () { cur = (cur + 1) % loops[mode].length; drawLoop(); });
+$('#loop-reset').addEventListener('click', function () { cur = 0; drawLoop(); });
+drawLoop();
+
+/* ---------- 情景练习 ---------- */
+var OPTS = { A: '在边界内自动放行（限时限范围的最小权限）', B: '收缩或暂停授权、加强验证', C: '触发新的授权决策', D: '默认拒绝', E: '保持现有服务连续', F: '由接收方按自身策略独立评估', G: '不自动恢复，先重新评估', H: '限流、熔断等自动保护' };
+var drills = [
+  ['网络 AI 智能体在预授权策略范围内，执行一个低风险操作。', 'A', '原文第 09 页：预授权范围内的低风险操作，系统可自动授予执行所需的、时间和范围都受限的最小权限；之后随信任和风险变化，权限仍可能被收缩或撤销。'],
+  ['智能体调整了执行计划，新计划需要一次核心网配置变更，超出了它现有的授权范围。', 'C', '原文第 09 页：超出预定义授权范围的操作，特别是跨域访问敏感数据、核心网配置变更等高影响操作，应触发新的授权决策，结果可能是明确批准、附加约束或拒绝。智能体不能自己扩大权限。'],
+  ['运行中观测到，某智能体的执行明显偏离了它的授权目标。', 'B', '原文第 16 页：执行明显偏离授权目标，或信任和风险状况变化时，可对现有授权进行收缩或暂停。'],
+  ['第三方智能体出示了另一运营商签发、签名验证通过的授权声明，请求访问本运营商开放的网络能力。', 'F', '原文第 14、20–21 页：密码学验证只证明证据来自特定来源且未被篡改，不要求接收方必须接受；接收域要独立评估签发方、证据范围以及是否符合自身策略，一个域的授权不自动授权访问另一个域的资源。'],
+  ['M-Trust 的评估功能暂时不可用，此时一个智能体申请新增一项网络能力的访问。', 'D', '原文第 17 页：M-Trust 相关功能异常或不可用时，对智能体新增或扩大的网络能力访问请求，应遵循默认拒绝（fail-closed）。'],
+  ['同一时刻，网络上承载公众通信的已有连接怎么处理？', 'E', '原文第 17 页：已有网络服务，尤其是承载公众通信的连接，应在既有运营商安全机制和策略保障下保持连续（fail-safe），不应仅因 M-Trust 这一附加功能失效而中断。'],
+  ['某智能体之前因风险升高被收缩了权限，现在它的信任指标回到了原来的水平。权限是否自动恢复？', 'G', '原文第 16 页：从限制性措施中恢复须重新评估并遵循运营商策略，不应仅因某一信任或风险指标恢复到先前状态，就默认恢复之前的授权。'],
+  ['某智能体陷入异常的循环调用，产生类似拒绝服务的流量。', 'H', '原文第 17 页：可采用限流、熔断等自动保护措施；阈值要审慎设定并持续校准，可结合智能体的授权目标、行为表现和信任信号，而不只看原始流量，避免误触发导致自身服务中断，或让管理员失去对关键系统的访问。']
+];
+var dBox = $('#drill-box'), dScore = $('#drill-score'), done = 0, right = 0;
+drills.forEach(function (d, i) {
+  var q = h('div', 'dq');
+  q.appendChild(h('p', 'q', '<i>' + (i + 1 < 10 ? '0' : '') + (i + 1) + '</i>' + d[0]));
+  var o = h('div', 'opts');
+  Object.keys(OPTS).forEach(function (k) {
+    var b = h('button', '', k + ' ' + OPTS[k]); b.type = 'button';
+    b.addEventListener('click', function () {
+      if (q.classList.contains('done')) return;
+      q.classList.add('done'); done++;
+      if (k === d[1]) right++; else b.classList.add('no');
+      o.querySelectorAll('button').forEach(function (x) { x.disabled = true; if (x.textContent.charAt(0) === d[1]) x.classList.add('ok'); });
+      dScore.textContent = '已答 ' + done + ' / ' + drills.length + '，与原文一致 ' + right + ' 题' + (done === drills.length ? '。刷新页面可以重做。' : '');
+    });
+    o.appendChild(b);
+  });
+  q.appendChild(o);
+  q.appendChild(h('p', 'ans', '<b>原文依据：</b>' + d[2]));
+  dBox.appendChild(q);
+});
+
+/* ---------- 研究方向 ---------- */
+var dirs = [
+  ['M-Trust 需要更精确地映射到移动网络架构和现有安全机制', '要明确信任证据在哪里生成、在哪里评估，M-Trust 功能如何与现有认证、授权和策略控制交互，以及网络 AI 智能体和第三方智能体如何做全生命周期管理。重点关注与现有 5G 部署的兼容和向 6G 的演进，而不是假定现有安全架构会被替换。'],
+  ['智能体交互的信任与授权治理需要进一步研究', '自智网络框架已经支持意图驱动和闭环运行，M-Trust 应聚焦智能体在追求授权目标时分解任务、委托权限、调用其他智能体或网络能力、改变执行路径所带来的额外要求。还要研究如何在不预测所有未来操作的前提下表示和评估授权范围、委托、调用链和证据，例如用结构化、机器可读的方式表达意图和对应的授权范围，让策略执行依据明确的约束，而不是依赖 AI 模型对意图的主观理解。原作引用 TM Forum 把意图驱动决策和闭环管理定为 L4 自智网络能力 [11]，以此说明 M-Trust 应聚焦治理维度、不重复网络自动化工作。'],
+  ['跨域信任需要清晰界定的管理边界和安全边界', '研究信任证据如何在运营商、企业、云或边缘提供商和第三方 AI 服务之间交换和验证，同时各方保留对自身网络能力和授权决策的权限。不应假定信任可以普遍传播，或授权可以在域之间自动转移。'],
+  ['M-Trust 自身的安全性和韧性需要进一步验证', '信任证据、评估功能、策略决策和接口都可能成为安全关键资产。要评估攻击面、入侵遏制、可用性、职责分离、可审计性，以及评估结果出错或被操纵的后果；按具体场景比较集中、分层、分布和联邦式部署，而不是假定哪种天然更安全。'],
+  ['安全保障、响应能力与运行复杂度之间的平衡需要进一步验证', '信任评估和授权控制的强度应与所保护的网络能力相匹配；对新兴实现技术，要从性能开销、成熟度、互操作性和与现有运营商安全机制的兼容性等方面评估。']
+];
+var dl = $('#dirs');
+dirs.forEach(function (d, i) {
+  var li = h('li'), b = h('button', '', d[0]), body = h('div', 'body', d[1]);
+  b.type = 'button'; b.setAttribute('aria-expanded', i === 0 ? 'true' : 'false'); body.hidden = i !== 0;
+  b.addEventListener('click', function () { var o = b.getAttribute('aria-expanded') === 'true'; b.setAttribute('aria-expanded', String(!o)); body.hidden = o; });
+  li.appendChild(b); li.appendChild(body); dl.appendChild(li);
+});
+
+/* ---------- 演进链对照 ---------- */
+var evo = $('#evo'), ep = $('#evo-pick');
+function hl(c) {
+  evo.querySelectorAll('tr').forEach(function (tr) {
+    Array.prototype.forEach.call(tr.children, function (td, j) {
+      if (j === 0) return;
+      td.classList.toggle('hl', c > 0 && j === c && td.tagName === 'TD');
+      td.classList.toggle('dim', c > 0 && j !== c && Math.abs(j - c) > 1 && td.tagName === 'TD');
+    });
+  });
+}
+ep.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(ep, b); hl(+b.dataset.c); });
+hl(3);
+
+/* ---------- 章节导航高亮 ---------- */
+var links = document.querySelectorAll('#secnav a');
+if ('IntersectionObserver' in window) {
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id); });
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  document.querySelectorAll('.sec').forEach(function (s) { io.observe(s); });
+}
+})();
+</script>
+</body>
+</html>

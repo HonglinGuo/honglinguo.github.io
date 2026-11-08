@@ -159,11 +159,22 @@
   </div>
 
   <section class="view" id="v-time" aria-labelledby="list-h">
-    <div class="list-head"><h2 id="list-h">最近发布</h2><span id="count">共 16 项</span></div>
+    <div class="list-head"><h2 id="list-h">最近发布</h2><span id="count">共 17 项</span></div>
     <div class="filter" role="group" aria-label="按类型筛选" id="filter">
     </div>
     <ul class="posts">
       <!-- 新文章加在最上面；data-kind 的取值和名称见页尾 KINDS，新类型先在那里登记 -->
+      <li class="post" data-kind="report">
+        <a href="posts/2026-11-08-gsma-mtrust/">
+          <time datetime="2026-11-08">2026.11.08</time>
+          <div>
+            <h3>不只问智能体是谁，还要问它在做什么：读 GSMA 智能体网络信任白皮书</h3>
+            <p>GSMA《面向智能体网络的信任范式演进》（2026 年 11 月）导读：零信任在智能体面前的三处短板，M-Trust 的多方信任、意图感知信任、跨域信任三个维度，DTIC / DTE / PA / PEA 三层架构与信任闭环，fail-closed 与 fail-safe 的区分，以及第 4 章反复划下的八条“不等于”。每节标原文页码；附边界信任 → 零信任 → M-Trust 演进链、易混辨析、八道情景练习和十道自测。</p>
+            <div class="tags"><span class="cat rep">报告解读</span><span>单篇</span><span>6G</span><span>智能体</span><span>安全</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><path class="thin" d="M110 14L40 106H180Z"/><path d="M110 50L80 92H140Z"/><circle cx="110" cy="14" r="9"/><circle cx="40" cy="106" r="9" class="hi"/><circle cx="180" cy="106" r="9"/></svg>
+        </a>
+      </li>
       <li class="post" data-kind="learn">
         <a href="posts/2026-10-30-rsi/">
           <time datetime="2026-10-30">2026.10.30</time>
@@ -381,13 +392,17 @@
       ['设计模式', [{ h: 'posts/2026-10-16-adp/', t: '智能体设计模式', n: 7, k: 'adp-series' }]],
       ['从零构建', [{ h: 'posts/2026-10-22-helloagents/', t: 'Hello-Agents', n: 13, k: 'helloagents-series' }]],
       ['协议', [{ h: 'posts/2026-10-15-agent-ui-protocols/', t: 'AG-UI、A2UI、MCP Apps', n: 1 }]],
-      ['可信与前沿', [{ h: 'posts/2026-10-30-rsi/', t: '可信递归自我改进', n: 8, k: 'rsi-series' }]]] },
+      ['可信与前沿', [
+        { h: 'posts/2026-10-30-rsi/', t: '可信递归自我改进', n: 8, k: 'rsi-series' },
+        { h: 'posts/2026-11-08-gsma-mtrust/', t: 'GSMA 智能体网络信任白皮书', n: 1, r: 1 }]]] },
     { id: 'coding', t: 'AI 编程', d: '用 AI 写代码：工具怎么用，工程上怎么做，出事了怎么兜底。', s: [
       ['工具上手', [{ h: 'posts/2026-10-22-claudehowto/', t: 'Claude How To', n: 12, k: 'claudehowto-series' }]],
       ['工程方法', [{ h: 'posts/2026-10-24-easyvibe/', t: 'Easy-Vibe', n: 15, k: 'easyvibe-series' }]],
       ['版本控制兜底', [{ h: 'posts/2026-git-playground/', t: '一张能点的 Git 地图', n: 1 }]]] },
     { id: 'g6', t: '6G 与通信', d: 'AI 进入无线网络：白皮书、通信大模型、仿真与标准。', s: [
-      ['白皮书', [{ h: 'posts/2026-10-16-viavi-agentic-ran/', t: 'VIAVI 智能体 RAN 白皮书', n: 1, r: 1 }]],
+      ['白皮书', [
+        { h: 'posts/2026-10-16-viavi-agentic-ran/', t: 'VIAVI 智能体 RAN 白皮书', n: 1, r: 1 },
+        { h: 'posts/2026-11-08-gsma-mtrust/', t: 'GSMA 智能体网络信任白皮书', n: 1, r: 1 }]],
       ['通信大模型', []],
       ['仿真', []],
       ['3GPP 标准', []]] },
