@@ -159,11 +159,22 @@
   </div>
 
   <section class="view" id="v-time" aria-labelledby="list-h">
-    <div class="list-head"><h2 id="list-h">最近发布</h2><span id="count">共 17 项</span></div>
+    <div class="list-head"><h2 id="list-h">最近发布</h2><span id="count">共 18 项</span></div>
     <div class="filter" role="group" aria-label="按类型筛选" id="filter">
     </div>
     <ul class="posts">
       <!-- 新文章加在最上面；data-kind 的取值和名称见页尾 KINDS，新类型先在那里登记 -->
+      <li class="post" data-kind="report">
+        <a href="posts/2026-11-09-agent-memory/">
+          <time datetime="2026-11-09">2026.11.09</time>
+          <div>
+            <h3>记忆，是写给未来那次会话的一张便条：读 Anthropic《智能体记忆的组成部分》</h3>
+            <p>Anthropic 工程博客《The components of agent memory》（Lance Martin，2026-11-06）导读：记忆的定义与边界（不含 compaction 和 in-context learning）、转录 → 笔记 → wiki → 注入上下文四层层级、“记忆是对未来的预测”与 CL-Bench 结果、《宝可梦》里的显著性判断、“说用途不定规则”的引导经验，以及 dreaming 的五种用途（修正、建 wiki、提到顶层、围绕目标、补空白）和三个开放问题。配哑铃图、Mt. Moon 步进、该不该记小练习、易混辨析和十道自测；读后对照 Claude Code 的 MEMORY.md。</p>
+            <div class="tags"><span class="cat rep">报告解读</span><span>单篇</span><span>智能体</span><span>记忆</span></div>
+          </div>
+          <svg class="thumb-agent" viewBox="0 0 220 120" aria-hidden="true"><rect x="86" y="14" width="48" height="18" rx="4" class="hi"/><rect x="66" y="40" width="88" height="18" rx="4"/><rect x="46" y="66" width="128" height="18" rx="4"/><path class="thin" d="M26 100H194"/></svg>
+        </a>
+      </li>
       <li class="post" data-kind="report">
         <a href="posts/2026-11-08-gsma-mtrust/">
           <time datetime="2026-11-08">2026.11.08</time>
@@ -388,7 +399,8 @@
     { id: 'agent', t: '智能体', hub: ['posts/topic-agent/', '看智能体能力链：五本书按 13 项能力对齐'], d: '从原理和设计模式，到动手搭建，再到协议与可信。', s: [
       ['全景与原理', [
         { h: 'posts/2026-10-16-agent/', t: '深入理解 AI Agent', n: 10, k: 'agent-series' },
-        { h: 'posts/2026-10-22-handbook/', t: 'AI Agent Handbook', n: 15, k: 'handbook-series' }]],
+        { h: 'posts/2026-10-22-handbook/', t: 'AI Agent Handbook', n: 15, k: 'handbook-series' },
+        { h: 'posts/2026-11-09-agent-memory/', t: 'Anthropic：智能体记忆的组成部分', n: 1, r: 1 }]],
       ['设计模式', [{ h: 'posts/2026-10-16-adp/', t: '智能体设计模式', n: 7, k: 'adp-series' }]],
       ['从零构建', [{ h: 'posts/2026-10-22-helloagents/', t: 'Hello-Agents', n: 13, k: 'helloagents-series' }]],
       ['协议', [{ h: 'posts/2026-10-15-agent-ui-protocols/', t: 'AG-UI、A2UI、MCP Apps', n: 1 }]],

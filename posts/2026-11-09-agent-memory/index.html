@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读 Anthropic《智能体记忆的组成部分》</title>
+<meta name="description" content="Anthropic 工程博客《The components of agent memory》（Lance Martin，2026-11-06）中文导读：记忆是什么、四层记忆层级、记忆是对未来的预测、显著性判断、怎么引导 Claude 写记忆、dreaming 的五种用途与开放问题，附易混辨析和自测。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='4' width='16' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='4' y='10' width='16' height='4' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='4' y='16' width='16' height='4' rx='1' fill='%232340D6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/site.js"></script>
+<style>
+/* ---------- 首屏 ---------- */
+.hero { padding-top: 64px; padding-bottom: 32px; }
+.kicker { color: var(--ink-3); font-size: 15px; margin: 0 0 18px; }
+.kicker span + span::before { content: "·"; margin: 0 10px; color: var(--rule); }
+.hero h1 { font-size: clamp(36px, 6.2vw, 78px); line-height: 1.1; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 24px; max-width: 13em; }
+.hero h1 em { font-style: normal; color: var(--s1); }
+.hero .lead { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 40em; margin: 0; }
+
+.quote { margin: 0; padding: 4px 0 4px 22px; border-left: 4px solid var(--s1); }
+.quote p { margin: 0; font-size: clamp(19px, 2.1vw, 25px); line-height: 1.55; font-weight: 650; color: var(--ink); }
+.quote p.zh { font-size: 16px; font-weight: 400; color: var(--ink-2); margin-top: 6px; }
+.quote cite { display: block; margin-top: 8px; font-size: 15px; font-style: normal; color: var(--ink-3); }
+.hero .quote { margin-top: 40px; max-width: 46em; }
+
+.tldr { margin-top: 56px; border-top: 2px solid var(--ink); }
+.tldr h2 { font-size: 20px; margin: 14px 0 4px; }
+.tldr ol { list-style: none; margin: 0; padding: 0; counter-reset: t; display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 32px; }
+.tldr li { counter-increment: t; padding: 14px 0 14px 40px; position: relative; border-top: 1px solid var(--hair); font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.tldr li::before { content: counter(t); position: absolute; left: 0; top: 14px; width: 26px; height: 26px; border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--f-num); font-size: 15px; text-align: center; line-height: 26px; }
+.tldr li b { color: var(--ink); font-weight: 650; }
+.tldr li a { color: inherit; text-decoration: none; display: block; }
+.tldr li a:hover b { color: var(--s1); }
+
+.caveat { margin-top: 28px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; font-size: 16px; color: var(--ink-2); max-width: 54em; }
+.caveat p { margin: 0 0 8px; }
+.caveat p:last-child { margin: 0; }
+.caveat b { color: var(--ink); }
+
+.secnav { position: sticky; top: 0; z-index: 20; margin-top: 56px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.secnav .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.secnav .wrap::-webkit-scrollbar { display: none; }
+.secnav a { flex: none; padding: 12px 14px; color: var(--ink-3); text-decoration: none; font-size: 15px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.secnav a:first-child { padding-left: 0; }
+.secnav a.on { color: var(--ink); border-bottom-color: var(--s1); }
+
+/* ---------- 节 ---------- */
+.sec { padding-top: 88px; scroll-margin-top: 40px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+.sec-head h2 { margin: 0; font-size: clamp(28px, 4.2vw, 48px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.sec-head .meta { color: var(--ink-3); font-size: 15px; }
+.sec-lede { max-width: 46em; margin: 22px 0 28px; }
+.sec-lede p { font-size: 17px; line-height: 1.85; color: var(--ink-2); margin: 0 0 12px; }
+.sec-lede p strong { color: var(--ink); font-weight: 650; }
+.sec-lede p.go { color: var(--ink); font-weight: 500; }
+.view { background: var(--ink); color: var(--bg); border-radius: 8px; padding: 14px 20px; margin: 24px 0 0; max-width: 54em; font-size: 17px; line-height: 1.7; }
+.view b { color: var(--bg); font-weight: 700; margin-right: 8px; }
+.sub { font-size: clamp(22px, 2.6vw, 28px); font-weight: 750; margin: 56px 0 12px; letter-spacing: -0.01em; scroll-margin-top: 60px; }
+.sub small { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-left: 10px; letter-spacing: 0; }
+.p { color: var(--ink-2); max-width: 46em; margin: 0 0 14px; font-size: 17px; line-height: 1.85; }
+.p strong { color: var(--ink); font-weight: 650; }
+.pg { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+.src { display: inline-block; font-size: 15px; color: var(--s2); border: 1px solid var(--s2); border-radius: 999px; padding: 0 9px; margin-left: 6px; vertical-align: 1px; line-height: 1.6; }
+
+.viz { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 20px 22px 18px; margin: 0; min-width: 0; }
+.viz-title { font-weight: 650; font-size: 16px; line-height: 1.5; margin: 0 0 4px; }
+.viz-sub { color: var(--ink-3); font-size: 15px; margin: 0 0 14px; line-height: 1.5; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 880px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 8px; padding: 3px; gap: 3px; margin: 2px 0 14px; }
+.seg button { font: inherit; font-size: 15px; color: var(--ink-2); background: none; border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+.btn { font: inherit; font-size: 15px; background: var(--s1); color: #fff; border: 0; border-radius: 8px; padding: 7px 16px; cursor: pointer; }
+.btn.ghost { background: none; color: var(--ink-2); border: 1px solid var(--rule); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.card { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 18px; }
+.card h4 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0 0 8px; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.card p:last-child { margin-bottom: 0; }
+.card .tag { display: inline-block; font-size: 15px; color: var(--s1); margin-bottom: 4px; }
+.card.b { border-top: 4px solid var(--s2); }
+.card.a { border-top: 4px solid var(--s1); }
+.big { font-family: var(--f-num); font-size: 30px; font-weight: 700; color: var(--ink); line-height: 1.2; }
+.big small { font-size: 15px; color: var(--ink-3); font-weight: 400; font-family: inherit; margin-left: 4px; }
+.nums { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 8px 0 12px; }
+
+/* 是不是记忆 */
+.sortq { display: flex; flex-direction: column; gap: 10px; }
+.sq { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; }
+.sq .t { font-size: 16px; color: var(--ink); line-height: 1.6; }
+.sq .opts { display: flex; gap: 6px; }
+.sq .opts button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+.sq .opts button.ok { background: var(--s1); border-color: var(--s1); color: #fff; }
+.sq .opts button.no { background: var(--s2-soft); border-color: var(--s2); color: var(--s2); }
+.sq .ans { grid-column: 1 / -1; font-size: 15px; color: var(--ink-2); line-height: 1.7; display: none; }
+.sq.done .ans { display: block; }
+@media (max-width: 640px) { .sq { grid-template-columns: minmax(0, 1fr); } }
+
+/* 记忆层级 */
+.mh { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: start; }
+.stack { display: flex; flex-direction: column; gap: 6px; }
+.stack button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 8px; padding: 12px 16px; cursor: pointer; font-size: 15px; line-height: 1.45; position: relative; }
+.stack button b { display: block; font-size: 18px; color: var(--ink); }
+.stack button i { font-style: normal; position: absolute; right: 14px; top: 12px; font-family: var(--f-num); color: var(--ink-3); font-size: 15px; }
+.stack button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.stack button[aria-pressed="true"] b, .stack button[aria-pressed="true"] i { color: #fff; }
+.stack .l4 { margin: 0 34%; } .stack .l3 { margin: 0 22%; } .stack .l2 { margin: 0 11%; }
+@media (max-width: 640px) { .stack .l4, .stack .l3, .stack .l2 { margin: 0; } }
+.stack-axis { display: flex; justify-content: space-between; font-size: 15px; color: var(--ink-3); margin-top: 6px; }
+.mh-cap h4 { margin: 0 0 2px; font-size: 21px; }
+.mh-cap .en { color: var(--ink-3); font-size: 15px; margin: 0 0 12px; }
+.mh-cap dl { margin: 0; }
+.mh-cap dt { font-size: 15px; color: var(--s1); font-weight: 600; margin-top: 10px; }
+.mh-cap dd { margin: 2px 0 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+@media (max-width: 880px) { .mh { grid-template-columns: minmax(0, 1fr); } }
+
+/* 哑铃图 */
+.db { width: 100%; height: auto; display: block; }
+.db text { font-size: 15px; fill: var(--ink-2); }
+.db .lbl { fill: var(--ink); font-weight: 600; }
+.db .grid line { stroke: var(--hair); }
+.db .grid text { fill: var(--ink-3); font-family: var(--f-num); font-size: 14px; }
+.db .row { cursor: pointer; }
+.db .row rect.hit { fill: transparent; }
+.db .row.on rect.hit { fill: var(--s1-soft); opacity: .45; }
+.db .bar { stroke: var(--rule); stroke-width: 4; stroke-linecap: round; }
+.db .b0 { fill: var(--bg); stroke: var(--s2); stroke-width: 3; }
+.db .b1 { fill: var(--s1); }
+.db .v { font-family: var(--f-num); font-size: 14px; }
+.db .gain { font-family: var(--f-num); font-size: 14px; fill: var(--s1); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 15px; color: var(--ink-2); margin: 0 0 8px; }
+.legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.legend .k0::before { border: 3px solid var(--s2); box-sizing: border-box; }
+.legend .k1::before { background: var(--s1); }
+.db-cap { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink); line-height: 1.75; min-height: 4.5em; }
+.db-cap b { color: var(--s1); }
+
+/* 横条 */
+.hb { display: flex; flex-direction: column; gap: 10px; }
+.hb-row { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) 4.2em; gap: 10px; align-items: center; font-size: 15px; }
+.hb-row .n { color: var(--ink); }
+.hb-row .track { height: 18px; background: var(--dim-soft); border-radius: 4px; overflow: hidden; }
+.hb-row .fill { height: 100%; background: var(--s1); border-radius: 4px; transition: width .5s ease; }
+.hb-row .fill.neg { background: var(--s2); }
+.hb-row .fill.mut { background: var(--ink-3); }
+.hb-row .val { font-family: var(--f-num); color: var(--ink-2); text-align: right; }
+@media (max-width: 520px) { .hb-row { grid-template-columns: 7em minmax(0, 1fr) 3.8em; } }
+
+/* 该不该记 */
+.keep { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.kc { background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; }
+.kc .t { font-size: 16px; color: var(--ink); line-height: 1.55; margin: 0 0 10px; font-weight: 600; }
+.kc .opts { display: flex; gap: 6px; }
+.kc .opts button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+.kc .opts button.ok { background: var(--s1); border-color: var(--s1); color: #fff; }
+.kc .opts button.no { background: var(--s2-soft); border-color: var(--s2); color: var(--s2); }
+.kc .ans { margin: 10px 0 0; font-size: 15px; color: var(--ink-2); line-height: 1.65; display: none; }
+.kc.done .ans { display: block; }
+.score { font-size: 15px; color: var(--ink-3); margin: 12px 0 0; }
+
+/* 文件夹 */
+.tree { font-family: var(--f-num); font-size: 15px; line-height: 1.75; color: var(--ink-2); background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 14px; margin: 8px 0 0; white-space: pre; overflow-x: auto; }
+.tree b { color: var(--s1); font-weight: 600; }
+
+/* dreaming 五件事 */
+.five { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: f; }
+.five li { counter-increment: f; }
+.five a { display: block; height: 100%; text-decoration: none; border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; background: var(--panel); color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+.five a::before { content: "0" counter(f); display: block; font-family: var(--f-num); color: var(--s1); font-size: 15px; }
+.five a b { display: block; color: var(--ink); font-size: 17px; margin: 2px 0 4px; }
+.five a:hover { border-color: var(--s1); }
+@media (max-width: 880px) { .five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 步进 */
+.steps-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.track-map { width: 100%; height: auto; display: block; margin: 6px 0 4px; }
+.track-map text { font-size: 15px; fill: var(--ink-2); }
+.track-map .town { fill: var(--bg); stroke: var(--ink-3); stroke-width: 2; }
+.track-map .town.goal { stroke: var(--s1); }
+.track-map .cave { fill: var(--dim-soft); stroke: var(--rule); }
+.track-map .path { stroke: var(--rule); stroke-width: 3; fill: none; stroke-dasharray: 6 6; }
+.track-map .me { fill: var(--s2); transition: cx .5s ease; }
+.track-map .me.good { fill: var(--s1); }
+.step-cap { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--hair); min-height: 6.5em; }
+.step-cap .k { font-size: 15px; color: var(--ink-3); font-family: var(--f-num); }
+.step-cap p { margin: 4px 0 0; font-size: 16px; color: var(--ink); line-height: 1.75; }
+.step-cap code { font-family: var(--f-num); font-size: 15px; background: var(--bg); border: 1px solid var(--hair); border-radius: 4px; padding: 0 5px; }
+.step-ctl { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.step-ctl .pos { font-family: var(--f-num); font-size: 15px; color: var(--ink-3); }
+
+/* 表格 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 16px; }
+.tbl th { text-align: left; font-size: 15px; color: var(--ink-3); font-weight: 600; padding: 8px 12px 8px 0; border-bottom: 2px solid var(--ink); }
+.tbl td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--hair); vertical-align: top; color: var(--ink-2); line-height: 1.65; }
+.tbl td:first-child { color: var(--ink); font-weight: 650; }
+.tbl-wrap { overflow-x: auto; }
+@media (max-width: 640px) { .tbl.stack thead { display: none; } .tbl.stack tr { display: block; border-bottom: 1px solid var(--hair); padding: 8px 0; } .tbl.stack td { display: block; border: 0; padding: 2px 0; } }
+
+/* 前后对比 */
+.ba { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.ba > div { background: var(--bg); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; }
+.ba > div.after { border-color: var(--s1); }
+.ba h4 { margin: 0 0 6px; font-size: 15px; color: var(--ink-3); font-weight: 600; }
+.ba p { margin: 6px 0 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.ba .arrow { align-self: center; color: var(--ink-3); font-size: 22px; background: none; border: 0; padding: 0; }
+@media (max-width: 640px) { .ba { grid-template-columns: minmax(0, 1fr); } .ba .arrow { transform: rotate(90deg); justify-self: center; } }
+
+/* 开放问题 */
+.dirs { list-style: none; margin: 0; padding: 0; counter-reset: d; }
+.dirs li { counter-increment: d; border-top: 1px solid var(--hair); }
+.dirs li:last-child { border-bottom: 1px solid var(--hair); }
+.dirs button { font: inherit; width: 100%; text-align: left; background: none; border: 0; padding: 14px 0 14px 44px; cursor: pointer; position: relative; font-size: 17px; font-weight: 650; color: var(--ink); line-height: 1.5; }
+.dirs button::before { content: "0" counter(d); position: absolute; left: 0; top: 14px; font-family: var(--f-num); color: var(--s1); font-size: 16px; }
+.dirs button::after { content: "+"; position: absolute; right: 4px; top: 12px; font-size: 20px; color: var(--ink-3); }
+.dirs button[aria-expanded="true"]::after { content: "−"; }
+.dirs .body { padding: 0 0 16px 44px; font-size: 16px; color: var(--ink-2); line-height: 1.75; max-width: 50em; }
+
+/* 易混辨析 */
+.confuses { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 0 20px; }
+@media (max-width: 640px) { .confuses { grid-template-columns: minmax(0, 1fr); } }
+.confuse { margin-top: 18px; border: 1px dashed var(--s2); border-radius: 10px; padding: 14px 18px; background: color-mix(in srgb, var(--s2-soft) 35%, transparent); }
+.confuse h4 { margin: 0 0 8px; font-size: 16px; color: var(--s2); }
+.confuse p { margin: 6px 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.confuse p b { color: var(--ink); }
+
+/* 自测 */
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.quiz details { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 18px; }
+.quiz summary { cursor: pointer; font-size: 16px; font-weight: 600; color: var(--ink); line-height: 1.6; }
+.quiz summary span { font-family: var(--f-num); color: var(--s1); margin-right: 8px; }
+.quiz details p { margin: 10px 0 2px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.quiz details p em { font-style: normal; color: var(--ink-3); font-size: 15px; }
+
+.qa { margin: 0; }
+.qa dt { font-weight: 650; font-size: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink); }
+.qa dt:first-child { border-top: 0; padding-top: 0; }
+.qa dd { margin: 4px 0 12px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.gloss { columns: 2; column-gap: 40px; }
+.gloss dt { break-after: avoid; }
+.gloss dd { break-inside: avoid; }
+@media (max-width: 880px) { .gloss { columns: 1; } }
+
+.quotes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 28px 40px; }
+
+.mine { background: var(--panel); border: 1px dashed var(--ink-3); border-radius: 8px; padding: 20px 24px; }
+.mine h3 { margin: 0 0 4px; font-size: 20px; }
+.mine .hint { margin: 0 0 12px; font-size: 15px; color: var(--ink-3); }
+.mine ol { margin: 0; padding-left: 22px; }
+.mine li { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.mine li b { color: var(--ink); }
+.mine code { font-family: var(--f-num); font-size: 15px; }
+
+.about { margin-top: 64px; padding: 28px 0 0; border-top: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px 56px; }
+.about h2 { margin: 0; font-size: 24px; }
+.about p { margin: 0 0 12px; color: var(--ink-2); font-size: 16px; }
+@media (max-width: 880px) { .about { grid-template-columns: minmax(0, 1fr); } }
+
+@media (prefers-reduced-motion: reduce) { .hb-row .fill, .track-map .me { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>报告解读</span><span>Anthropic 工程博客 · 2026-11-06</span><span>约 25 分钟读完</span></p>
+  <h1>记忆，是写给<em>未来那次会话</em>的一张便条</h1>
+  <p class="lead">Anthropic 的 Lance Martin 在工程博客发表《The components of agent memory》（智能体记忆的组成部分）。文章不是一篇“记忆该怎么分类”的综述，而是一份实验笔记：用 CL-Bench、《宝可梦 红》、Stainless 内部文档和 Harvey LAB 法律任务，观察 Claude 怎么写记忆、哪里写错、怎么修。主线有两条：<strong>写记忆是在预测未来</strong>，而模型预测不准；所以要有 <strong>dreaming（做梦）</strong>，在会话之外回看转录，修正、重组、提炼记忆。</p>
+
+  <blockquote class="quote">
+    <p>Life can only be understood backward, but it must be lived forward.</p>
+    <p class="zh">生活只能向后理解，却必须向前过。文章用克尔凯郭尔这句话开头：写记忆的时候只能向前猜，dreaming 让智能体有机会向后看。</p>
+    <cite>原文开头 · 引言</cite>
+  </blockquote>
+
+  <div class="tldr">
+    <h2>一页读懂：原作的七个观点</h2>
+    <ol>
+      <li><a href="#what"><b>记忆 = 从经验得来、跨会话保留、以后能读回的知识。</b>权重变化、单次对话内的 in-context learning、compaction（用摘要替换旧轮次）都不算。</a></li>
+      <li><a href="#what"><b>记忆有层级。</b>从下到上：可搜索的转录 → Claude 写的笔记 → wiki 等表示 → 每次会话自动注入的顶层上下文。越往上越常用、越要小。</a></li>
+      <li><a href="#predict"><b>写下一条记忆，就是押注它将来还用得上。</b>CL-Bench 上，新模型能闭合“犯错—记录—验证—复用”的学习环，Opus 5.5 有记忆后从 0.655 到 0.838。</a></li>
+      <li><a href="#salience"><b>该记的是自己推导出来的东西。</b>屏幕上每回合都能读到的状态不用记；策略、计划、试出来的规则不写下来就没了。Sonnet 3.7 写了 413 个文件拿 1 枚徽章，Fable 5 写 9 个文件拿 4 枚。</a></li>
+      <li><a href="#steer"><b>告诉 Claude 记忆是干什么的，别规定怎么用。</b>给强模型加“只记录失败”的规则反而让 Opus 5 的增益掉了 0.234；旧模型则需要明确流程。</a></li>
+      <li><a href="#dream"><b>dreaming 做五件事。</b>对照转录修正错笔记、构建 wiki 等新表示、把关键笔记提到顶层、围绕目标重组、补齐单次会话留下的空白。</a></li>
+      <li><a href="#open"><b>还没解决的：</b>什么时候写记忆、怎么保持更新、怎么在转录搜索之上维护表示又不让错误累积。结论：没有模型能预知未来，所以要给它向后看的机会。</a></li>
+    </ol>
+  </div>
+
+  <div class="caveat">
+    <p><b>读的时候留意：</b>这是 Anthropic 工程团队的博客文章，不是论文。文中所有数字都来自 Anthropic 自己的实验（本文标为 <span class="src" style="margin:0">作者自测</span>），CL-Bench 的总题数和评分细则文中没有给出，《宝可梦》和 Mt. Moon 是单次运行的案例。原文是网页，没有页码，本文按原文小节标注出处。</p>
+    <p><b>和转述里的说法不一样：</b>有的新闻摘要把这篇文章概括成“工作上下文、外部存储与检索、跨会话持久化状态”三类组件。原文的层级其实是<b>转录 → 笔记 → 表示（wiki）→ 注入上下文</b>，而且明确把单次会话内的上下文管理（in-context learning、compaction）排除在“记忆”之外。本文以原文为准。</p>
+  </div>
+</section>
+
+<nav class="secnav" aria-label="章节">
+  <div class="wrap" id="secnav">
+    <a href="#what">记忆是什么</a><a href="#predict">预测未来</a><a href="#salience">什么值得记</a><a href="#steer">怎么引导</a><a href="#dream">Dreaming</a><a href="#open">开放问题</a><a href="#learn">易混辨析</a><a href="#quiz">自测</a><a href="#quotes">原文金句</a><a href="#glossary">术语速查</a><a href="#after">读后</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ======================= 1 ======================= -->
+<section class="sec" id="what">
+  <div class="sec-head"><h2>记忆是什么，不是什么</h2><span class="meta">原文 · 引言、Memory notes、记忆层级图</span></div>
+  <div class="sec-lede">
+    <p>文章先拿人脑做类比。海马体很快记下经历，但只有一部分会在睡眠和安静休息时被“回放”，巩固进新皮层成为长期知识；某些化学信号会给重要的经历打上标记，让它们更常被回放。智能体这边，经历就是会话日志和转录；Letta 与 UC Berkeley 提出的 sleep-time compute，是让模型利用空闲时间整理上下文。作者把“回看日志、修正错误、产生新笔记和新表示”这件事叫作 <strong>dreaming</strong>。</p>
+    <p>在这个类比之前，作者先把“记忆”的范围划窄：<strong>只算 Claude 从经验中得到、在会话之间保留、之后能读取的知识</strong>。经验包括和用户的互动、被分配的任务。很多人平时说的“记忆”其实是上下文管理，原文把它们排除在外。</p>
+    <p class="go">先判断一下：下面这些按原文的定义，算不算“智能体记忆”？</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">按原文定义，这算不算记忆？</p>
+    <p class="viz-sub">依据原文 Memory notes 一节开头的定义</p>
+    <div class="sortq" id="sortq"></div>
+    <p class="score" id="sort-score"></p>
+  </figure>
+
+  <h3 class="sub">四层记忆层级</h3>
+  <p class="p">原文用一张图把记忆分成四层，<strong>注入上下文在每次会话开始时自动加载，下面几层在 Claude 需要时再去读或搜</strong>。越往上越精炼、越常被用到，也越贵；越往下越完整、越便宜，但要花力气找。后面讲的 dreaming，大部分工作就是在层与层之间搬东西。</p>
+
+  <figure class="viz">
+    <p class="viz-title">点一层，看它装什么、谁来写、什么时候读</p>
+    <p class="viz-sub">层级按原文图注；“谁来写 / 何时读 / 原文例子”按全文内容整理</p>
+    <div class="mh">
+      <div>
+        <div class="stack" id="stack" role="group" aria-label="记忆层级"></div>
+        <div class="stack-axis"><span>↑ 更小、更常用、更贵</span><span>↓ 更全、要搜</span></div>
+      </div>
+      <div class="mh-cap" id="mh-cap" aria-live="polite"></div>
+    </div>
+  </figure>
+  <p class="pg">原文记忆层级图注：transcripts (a searchable event log) → memory notes written by Claude → memory representations such as wikis → injected context loaded into every session</p>
+</section>
+
+<!-- ======================= 2 ======================= -->
+<section class="sec" id="predict">
+  <div class="sec-head"><h2>记忆是对未来需求的预测</h2><span class="meta">原文 · Memory is a prediction</span></div>
+  <div class="sec-lede">
+    <p>这一节是全文的核心论点。写下一条规则，等于预测它描述的模式以后还会出现；记下一条已核实的事实，等于预测以后的会话可以直接用它、不必再核实一遍。难点在于：<strong>写的时候并不知道以后会发生什么</strong>，Claude 只能凭当下判断什么重要。</p>
+    <p>作者用 CL-Bench 1.0 的数据库任务观察不同模型能不能把这个“预测”做好。设置很干净：Claude 依次答题，每题答完会被告知正确答案，可以往记忆里写东西；<strong>每道题都在全新会话里做，唯一能延续的是一个持久化的记忆目录</strong>。所以分数提升只能来自记忆。</p>
+    <p class="go">点每个模型，看它的笔记长什么样。注意差距不在“有没有写”，而在“写的东西能不能被下一次会话直接信任”。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">CL-Bench 1.0 数据库任务：无记忆 vs 有记忆 <span class="src">作者自测</span></p>
+    <p class="viz-sub">平均奖励（mean reward）。题数与评分细则原文未给出</p>
+    <div class="legend"><span class="k0">无记忆基线</span><span class="k1">有记忆</span></div>
+    <svg class="db" id="db" viewBox="0 0 640 300" role="img" aria-label="六个模型有无记忆的得分对比"></svg>
+    <div class="db-cap" id="db-cap" aria-live="polite"></div>
+  </figure>
+
+  <div class="view"><b>原作观点</b>不同模型“闭合学习环”的能力差别很大。Opus 5 是第一个闭合的：多数条目同时写了规则、为什么认为规则成立、之前题目的答案，以及对踩过的坑的明确警告。分数的跃升（0.564 → 0.828）来自笔记质量，而不是笔记数量。</div>
+  <p class="pg">原文 Memory is a prediction 一节；“闭合学习环”指犯错 → 记录 → 验证 → 下次直接复用</p>
+</section>
+
+<!-- ======================= 3 ======================= -->
+<section class="sec" id="salience">
+  <div class="sec-head"><h2>Claude 学会判断什么值得记</h2><span class="meta">原文 · Claude is learning salience</span></div>
+  <div class="sec-lede">
+    <p>“显著性”（salience）就是判断什么值得记。作者用《宝可梦 红》测：每个模型开局拿到一个可读写的记忆文件夹，然后自己玩。游戏状态一直在变，正好检验“记了会不会过时”。</p>
+    <p>两个极端很说明问题。<strong>Sonnet 3.7 认为什么都可能有用，什么都写</strong>，结果记忆跟不上游戏变化，大量时间花在整理记忆上：在大约 17 步里，它新建了 6 个文件、删了 9 个，游戏里一个操作都没做。<strong>Fable 5 只写很少的文件</strong>，顶层一个像仪表盘的 <code>global.md</code>。</p>
+    <p class="go">先看两者对比，再自己判断几条信息该不该写进记忆。</p>
+  </div>
+
+  <div class="two">
+    <div class="card b">
+      <span class="tag" style="color:var(--s2)">什么都记</span>
+      <h4>Sonnet 3.7（约第 10,000 步）</h4>
+      <div class="nums"><div class="big">413<small>个文件</small></div><div class="big">225<small>个文件夹</small></div><div class="big">1<small>枚徽章</small></div></div>
+      <p>记忆随游戏状态变化迅速过时，忙着维护记忆而不是玩游戏。</p>
+    </div>
+    <div class="card a">
+      <span class="tag">只记推导出来的</span>
+      <h4>Fable 5</h4>
+      <div class="nums"><div class="big">9<small>个文件</small></div><div class="big">2<small>个文件夹</small></div><div class="big">4<small>枚徽章</small></div></div>
+      <div class="tree"><b>global.md</b>     当前目标 · 道馆攻略计划 · 自己用记忆的规则
+<b>locations/</b>    路线规划
+<b>gameplay/</b>     游戏机制与策略</div>
+    </div>
+  </div>
+  <p class="pg">原文 Claude is learning salience 一节 <span class="src">作者自测</span> · Opus 5.5 用类似做法（很小的笔记文件夹，记当前目标和下一步，边玩边改写）并最终通关</p>
+
+  <h3 class="sub">轮到你：这条该不该写进记忆？</h3>
+  <p class="p">原文的判断标准一句话：<strong>每回合都能从屏幕读到的，存下来是冗余；只有自己推导出来的，不写下来就会消失</strong>。下面几条都出自原文提到的例子。</p>
+  <figure class="viz">
+    <div class="keep" id="keep"></div>
+    <p class="score" id="keep-score"></p>
+  </figure>
+
+  <div class="view"><b>原作观点</b>记忆不是录像，是“只有我知道”的东西的备忘。环境能随时告诉你的，交给环境；只有经历过才知道的规则、计划、教训，才是记忆该装的。</div>
+</section>
+
+<!-- ======================= 4 ======================= -->
+<section class="sec" id="steer">
+  <div class="sec-head"><h2>怎么引导 Claude 写记忆</h2><span class="meta">原文 · Steering Claude's memory</span></div>
+  <div class="sec-lede">
+    <p>作者的经验是一句话：<strong>告诉 Claude 记忆是干什么的，但不要规定怎么用</strong>。在 CL-Bench 上，只告诉 Opus 4.7 和 Opus 5“有一个记忆文件夹可用”，就足以让它们有效利用记忆、显著提分。</p>
+    <p>反过来，给它们加一条看似合理的规则“只记录失败”，增益反而下降了。原因是强模型自己判断显著性比固定规则准，规则把它本来会记的东西挡在了外面。但对旧模型，明确的流程帮助很大。</p>
+    <p class="go">切换看两组结果：规则对强模型是负担，对弱模型是拐杖。</p>
+  </div>
+
+  <figure class="viz">
+    <div class="seg" role="group" aria-label="切换实验" id="steer-mode">
+      <button type="button" aria-pressed="true" data-m="rule">加“只记录失败”规则</button>
+      <button type="button" aria-pressed="false" data-m="guide">给 Sonnet 4.6 明确流程</button>
+    </div>
+    <p class="viz-title" id="steer-title"></p>
+    <p class="viz-sub" id="steer-sub"></p>
+    <div class="hb" id="steer-box"></div>
+  </figure>
+  <p class="pg">原文 Steering Claude's memory 一节 <span class="src">作者自测</span> · 另一个观察：Sonnet 5 在 10 次运行中有 9 次自发先读记忆，Sonnet 4.6 不到一半</p>
+
+  <div class="view"><b>原作观点</b>对前沿模型，作者通常只给一句简单指引：用户要求时、或内容明显值得记住时才建笔记，其余交给 Claude 判断。</div>
+</section>
+
+<!-- ======================= 5 ======================= -->
+<section class="sec" id="dream">
+  <div class="sec-head"><h2>Dreaming：向后看的五件事</h2><span class="meta">原文 · Dreaming 相关五节</span></div>
+  <div class="sec-lede">
+    <p>前面说过，写记忆是在会话中凭当下判断做的预测。笔记可能一开始就写错，也可能随环境变化而失效；下一次会话读到它，往往会直接信任。<strong>dreaming 是在会话之外回看原始转录和已有记忆，修正、重组、提炼</strong>。原文给了 dreaming 的五种用途，每种配一个实验。</p>
+    <p class="go">按顺序看，也可以点下面直接跳。</p>
+  </div>
+  <ol class="five">
+    <li><a href="#d-fix"><b>修正笔记</b>对照转录找出写错的笔记</a></li>
+    <li><a href="#d-wiki"><b>构建新表示</b>把散笔记织成互相链接的 wiki</a></li>
+    <li><a href="#d-top"><b>提到顶层</b>关键笔记每次会话自动加载</a></li>
+    <li><a href="#d-goal"><b>围绕目标</b>按任务需要重组记忆</a></li>
+    <li><a href="#d-gap"><b>补齐空白</b>跨会话补上缺页和断链</a></li>
+  </ol>
+
+  <!-- 5.1 -->
+  <h3 class="sub" id="d-fix">① 修正笔记：Mt. Moon 的故事<small>原文 Dreaming can fix memories</small></h3>
+  <p class="p">Mt. Moon 是游戏里的一个坑：入口在西侧，出口在东侧，入口附近有一段单向悬崖，掉下去会回到来时的路。Claude 拿入口处的宝可梦中心当地标，却在笔记里把它的位置<strong>写成了东侧</strong>。这一处记错，让它之后的推理全都建立在错的地图上。</p>
+  <figure class="viz">
+    <div class="steps-head">
+      <div class="seg" role="group" aria-label="笔记版本" id="moon-mode" style="margin:0">
+        <button type="button" aria-pressed="true" data-m="raw">原始笔记</button>
+        <button type="button" aria-pressed="false" data-m="dream">dreaming 修正后</button>
+      </div>
+    </div>
+    <svg class="track-map" id="moon-map" viewBox="0 0 640 110" role="img" aria-label="Pewter、Mt. Moon、Cerulean 位置示意">
+      <path class="path" d="M60 60H580"/>
+      <circle class="town" cx="60" cy="60" r="14"/><text x="60" y="100" text-anchor="middle">Pewter</text>
+      <rect class="cave" x="250" y="38" width="140" height="44" rx="10"/><text x="320" y="65" text-anchor="middle">Mt. Moon</text>
+      <text x="320" y="24" text-anchor="middle" style="font-size:14px;fill:var(--ink-3)">西入口（宝可梦中心） → 东出口</text>
+      <circle class="town goal" cx="580" cy="60" r="14"/><text x="580" y="100" text-anchor="middle">Cerulean</text>
+      <circle class="me" id="moon-me" cx="200" cy="60" r="9"/>
+    </svg>
+    <div class="step-cap" id="moon-cap" aria-live="polite"></div>
+    <div class="step-ctl">
+      <button class="btn ghost" type="button" id="moon-prev">上一步</button>
+      <button class="btn" type="button" id="moon-next">下一步</button>
+      <span class="pos" id="moon-pos"></span>
+    </div>
+  </figure>
+  <p class="pg">位置示意不按比例。结果：dreaming 修正的运行在第 1,935 步到达 Cerulean；原始笔记的运行退回 Pewter；无记忆的运行始终没到 <span class="src">作者自测</span></p>
+
+  <!-- 5.2 -->
+  <h3 class="sub" id="d-wiki">② 构建新表示：wiki<small>原文 Dreaming can build new representations</small></h3>
+  <p class="p">wiki 是 Claude 写并维护的一组页面，<strong>一个主题一页，页面互相链接，像一张地图</strong>，帮 Claude 快速找到该看什么。作者在 Stainless 的内部文档上做实验：约 35 万个文件、约 4.2 亿 token，出 25 道题。Opus 5 智能体在 128 个会话里探索文件，写或修正互链的 wiki 页面、合并重复、核对来源，会话之间通过共享日志协调。</p>
+  <div class="two">
+    <figure class="viz">
+      <p class="viz-title">Stainless 语料，25 道题 <span class="src">作者自测</span></p>
+      <p class="viz-sub">按评分标准计分；“早期 / 后期”指 dreaming 轮次少 / 多（原文横轴 2M 到 128M dreaming tokens）</p>
+      <div class="seg" role="group" aria-label="dreaming 进度" id="wiki-mode">
+        <button type="button" aria-pressed="false" data-m="0">早期</button>
+        <button type="button" aria-pressed="true" data-m="1">后期</button>
+      </div>
+      <div class="hb" id="wiki-box"></div>
+    </figure>
+    <figure class="viz">
+      <p class="viz-title">Harvey LAB 并购任务：wiki 什么时候有用 <span class="src">作者自测</span></p>
+      <p class="viz-sub">24 道并购问题，过半要跨多份文档综合，很多还要判断或计算</p>
+      <div class="hb">
+        <div class="hb-row"><span class="n">问 wiki</span><span class="track"><span class="fill" style="width:87%;display:block"></span></span><span class="val">87%</span></div>
+        <div class="hb-row"><span class="n">只用搜索</span><span class="track"><span class="fill mut" style="width:73%;display:block"></span></span><span class="val">73%</span></div>
+      </div>
+      <p class="viz-sub" style="margin:16px 0 8px">另一个 LAB 任务：wiki 比原文还大，没做任何抽象</p>
+      <div class="hb">
+        <div class="hb-row"><span class="n">10 份原文</span><span class="track"><span class="fill mut" style="width:56.6%;display:block"></span></span><span class="val">115KB</span></div>
+        <div class="hb-row"><span class="n">生成的 wiki</span><span class="track"><span class="fill neg" style="width:100%;display:block"></span></span><span class="val">203KB</span></div>
+      </div>
+      <p class="pg">68 页、255 条链接，是原文的 1.77 倍，有些页面没有任何链接</p>
+    </figure>
+  </div>
+  <div class="view"><b>原作观点</b>wiki 和搜索是组合关系：wiki + 搜索最好，而且每题约省 2 万 token。早期的 Claude 像新员工，wiki 不全，单靠它答不好；dreaming 多了以后，它像熟练员工一样手里有一张更丰富的知识地图。但答案能在单份文档里文本搜到时，wiki 没有明显帮助；wiki 写得和原文一样大时，就成了博尔赫斯笔下“与帝国等大的地图”，失去意义。</div>
+
+  <!-- 5.3 -->
+  <h3 class="sub" id="d-top">③ 提到顶层：自动注入<small>原文 Dreaming can promote notes to the top</small></h3>
+  <p class="p">dreaming 可以把关键笔记提升到层级最顶，由 harness 在每次会话开始时直接加载进上下文。好处是 Claude 不用去搜，<strong>甚至不需要知道这条记忆存在</strong>，就已经在用它了。但代价同样明显，作者列了三条：</p>
+  <div class="two">
+    <div class="card b"><h4>顶层太大的代价</h4><p>① 每条注入的记忆都占宝贵的 token，每次会话都要付。</p><p>② 一条错笔记被提到顶层，会被带进<strong>每一个</strong>会话。</p><p>③ 加载了不等于会照做：作者引用 Claude Code 文档，指令文件越长，遵循得越差。</p></div>
+    <div class="card a"><h4>所以顶层要小</h4><p>dreaming 的一项重要工作是<strong>把细节往下层搬，在顶层只留链接</strong>。</p><p>Claude Code 的 auto memory 就是这么做的：会话开始只加载 <code>MEMORY.md</code> 的前 200 行或 25KB，它是一份索引，告诉 Claude 自己知道什么、去哪里找。</p></div>
+  </div>
+  <p class="pg">原文 “So the top layer of the memory hierarchy has to stay relatively small … by moving some details down the hierarchy and leaving links behind.”</p>
+
+  <!-- 5.4 -->
+  <h3 class="sub" id="d-goal">④ 围绕目标重组<small>原文 Dreaming can focus memory on a goal</small></h3>
+  <p class="p">记忆怎么组织要看拿来干什么。像文中提到的 Claude Duet 这类助手，适合围绕“用户”组织；做任务时，则应围绕任务需要组织。LAB 的一个收购任务里，最终简报按“合同条款描述得对不对”评分。最初的 wiki 指令没说 wiki 用来干什么，结果多个智能体同时往同一张共享的合同条款表里写，<strong>互相覆盖</strong>。</p>
+  <div class="ba">
+    <div><h4>最初的 wiki</h4><div class="big">41<small>/ 57 项事实（72%）</small></div><p>多个智能体写同一张共享表，概括不好，漏了条款。</p></div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="after"><h4>反思失败 → 改指令 → 重建 wiki</h4><div class="big">57<small>/ 57（100%）</small></div><p>Claude 自己发现合同条款是关键：每份合同由一个智能体单独写一页，逐字引用条款，不再汇总到共享表。</p></div>
+  </div>
+  <p class="pg">原文 Dreaming can focus memory on a goal <span class="src">作者自测</span></p>
+
+  <!-- 5.5 -->
+  <h3 class="sub" id="d-gap">⑤ 补齐会话留下的空白<small>原文 Dreaming can fill gaps</small></h3>
+  <p class="p">写笔记时 Claude 只看得到当前会话；dreaming 可以横跨多个会话，找共同模式、修常见错误。构建 LAB wiki 时，Claude 有时会链接到还没建的页面。第二轮 dreaming 补上了很多：</p>
+  <div class="ba">
+    <div><h4>第一轮之后</h4><div class="big">38<small>个条目</small></div><div class="big">225<small>条链接</small></div><p>9 处链接指向不存在的 <code>escrow-agreement</code> 页面。</p></div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="after"><h4>第二轮 dreaming 之后</h4><div class="big">41<small>个条目</small></div><div class="big">278<small>条链接</small></div><p>9 处断链改指到同一文档已有的 <code>buyer-form-escrow-agreement</code>；新增 index、instructions email、escalations 三页。</p></div>
+  </div>
+  <p class="pg">原文 Dreaming can fill gaps <span class="src">作者自测</span></p>
+</section>
+
+<!-- ======================= 6 ======================= -->
+<section class="sec" id="open">
+  <div class="sec-head"><h2>开放问题与结论</h2><span class="meta">原文 · Looking backward and forward</span></div>
+  <div class="sec-lede">
+    <p>作者没有给出一个“标准记忆架构”，而是列了三个还没解决的问题。读这三条时可以留意：它们都是<strong>在线写（及时但分心）和离线整理（专注但滞后）之间的取舍</strong>。</p>
+  </div>
+  <ol class="dirs" id="dirs">
+    <li><button type="button" aria-expanded="false">什么时候创建记忆</button><div class="body" hidden>任务中写记忆能当场抓住显著性，但会分散 Claude 对主任务的注意力。dreaming 可以把记忆创建挪到后台，但它的产出不一定能马上被 Claude 用到。</div></li>
+    <li><button type="button" aria-expanded="false">怎么让记忆保持最新</button><div class="body" hidden>Claude 可能一开始就预测错、写下错规则，记忆也会随环境变化而失效。时时检查所有记忆不现实；可能要重点盯容易变的信息，或按访问频率调整 dreaming 的节奏。</div></li>
+    <li><button type="button" aria-expanded="false">以转录搜索为底座</button><div class="body" hidden>wiki 这类表示和搜索结合有时很有效，但维护表示要花算力，还要防止错误和幻觉在表示里越积越多。</div></li>
+  </ol>
+  <div class="view"><b>原作结论</b>Claude 对显著性的判断在进步，但没有模型真正知道未来会发生什么。dreaming 让 Claude 能向后看，用算力整理记忆、修正错误、维护表示，让未来的会话更容易用上记忆。随着 Claude 变强，记忆系统还会继续演进。</div>
+  <p class="pg">原文最后一节；文末给了两个上手资源：dreaming 的 cookbook 与 knowledge wiki 的 quickstart（链接见文末“关于这篇解读”）</p>
+</section>
+
+<!-- ======================= 易混 ======================= -->
+<section class="sec" id="learn">
+  <div class="sec-head"><h2>易混辨析</h2><span class="meta">按原文内容整理的学习材料</span></div>
+  <div class="confuses">
+    <div class="confuse"><h4>易混辨析：记忆 vs compaction</h4><p><b>compaction</b>：在一次会话内，用 Claude 写的摘要替换旧的对话轮次，目的是腾出上下文窗口。</p><p><b>记忆</b>：跨会话保留、下次会话能读回的知识。原文明确把 compaction 排除在记忆之外。</p></div>
+    <div class="confuse"><h4>易混辨析：记忆 vs in-context learning</h4><p><b>in-context learning</b>：单次对话里学到的东西，会话结束就没了。</p><p><b>记忆</b>：必须落到会话之外（例如记忆目录），CL-Bench 每题新开会话，正是为了只测这部分。</p></div>
+    <div class="confuse"><h4>易混辨析：写记忆 vs dreaming</h4><p><b>写记忆</b>：会话中实时写，及时抓住显著性，但只看得到当前会话，还分散主任务注意力。</p><p><b>dreaming</b>：会话外回看转录和已有记忆，能跨会话修错、重组、补空白，但产出不一定马上可用。</p></div>
+    <div class="confuse"><h4>易混辨析：注入上下文 vs 检索</h4><p><b>注入</b>：每次会话自动加载，不用搜、不用知道它存在；代价是 token、错误被放大、太长了遵循度下降。</p><p><b>检索</b>：下层（笔记、wiki、转录）按需读或搜，便宜但得想起来去找。</p></div>
+    <div class="confuse"><h4>易混辨析：wiki vs 搜索</h4><p><b>wiki 强</b>：答案要跨多份文档综合、要判断或计算时（LAB 87% vs 73%）。</p><p><b>搜索够</b>：答案在单份文档里能文本搜到时。最好两者组合（Stainless 54%→61%，仅搜索 53%）。</p></div>
+    <div class="confuse"><h4>易混辨析：说用途 vs 定规则</h4><p><b>说用途</b>：“有个记忆文件夹可用”，对强模型足够，自主判断更准。</p><p><b>定规则</b>：“只记录失败”会拉低强模型；但“先读记忆、明确检验假设”能让 Sonnet 4.6 几乎翻倍。规则的价值取决于模型。</p></div>
+  </div>
+</section>
+
+<!-- ======================= 自测 ======================= -->
+<section class="sec" id="quiz">
+  <div class="sec-head"><h2>自测</h2><span class="meta">先自己答，再点开对照原文</span></div>
+  <div class="quiz" style="margin-top:24px">
+    <details><summary><span>01</span>原文定义的“智能体记忆”包括哪些、排除哪些？</summary><p>包括：Claude 从经验（用户互动、分配的任务）中获得、在会话间保留、之后能读取的知识。排除：模型权重变化、单次对话内的 in-context learning、compaction。<em>原文 Memory notes</em></p></details>
+    <details><summary><span>02</span>记忆层级从下到上是哪四层？哪一层每次会话自动加载？</summary><p>转录（可搜索的事件日志）→ Claude 写的记忆笔记 → wiki 等记忆表示 → 注入上下文。最顶层的注入上下文每次会话自动加载，下面几层按需读或搜。<em>原文层级图</em></p></details>
+    <details><summary><span>03</span>为什么说“记忆是对未来需求的预测”？CL-Bench 怎么保证分数提升只来自记忆？</summary><p>写规则是预测模式会再出现，记事实是预测以后能直接依赖它。CL-Bench 每题都在全新会话里做，唯一的延续是持久化的记忆目录。<em>原文 Memory is a prediction</em></p></details>
+    <details><summary><span>04</span>Sonnet 3.7 和 Fable 5 玩《宝可梦》的记忆策略差在哪？判断标准是什么？</summary><p>Sonnet 3.7 什么都记（413 个文件、1 枚徽章），记忆随状态变化过时，忙于维护；Fable 5 只记 9 个文件（4 枚徽章）。标准：屏幕每回合可读的信息不记，自己推导出的策略、计划、试出的规则才记。<em>原文 Claude is learning salience</em></p></details>
+    <details><summary><span>05</span>给 Opus 5 加“只记录失败”规则，结果如何？为什么？</summary><p>记忆增益下降 0.234（Opus 4.7 降 0.150，Sonnet 4.6 降 0.020）。强模型自主判断显著性比固定规则准，规则反而挡住了该记的内容。原则：说用途，不规定方法。<em>原文 Steering</em></p></details>
+    <details><summary><span>06</span>Mt. Moon 里，dreaming 修正了什么？靠什么修正？</summary><p>笔记把入口处宝可梦中心错记在东侧，导致 Claude 以为已经穿过山洞（“Mt Moon DONE”），掉下悬崖还以为走过头了。dreaming 把笔记和原始转录对照，发现并重写错误；修正后第 1,935 步到达 Cerulean。<em>原文 Dreaming can fix memories</em></p></details>
+    <details><summary><span>07</span>wiki 在哪两种情况下帮不上忙？</summary><p>一是答案在单份文档里能文本搜到时，wiki 没有明显提升；二是 wiki 没做抽象、比原文还大时（115KB 原文 → 203KB wiki，1.77 倍）。<em>原文 Dreaming can build new representations</em></p></details>
+    <details><summary><span>08</span>为什么顶层注入要小？Claude Code 怎么做？</summary><p>注入占 token、错笔记会进每个会话、指令越长遵循越差。dreaming 把细节下放、顶层只留链接；Claude Code auto memory 只加载 MEMORY.md 前 200 行或 25KB，当索引用。<em>原文 Dreaming can promote notes</em></p></details>
+    <details><summary><span>09</span>合同条款例子里，简报一开始只拿 72% 的原因是什么？怎么修到 100%？</summary><p>wiki 指令没说 wiki 用来做什么，多个智能体同时写一张共享条款表，互相覆盖、漏条款。通过“反思失败 → 改指令 → 重建 wiki”，改成每份合同一个智能体单独写一页、逐字引用条款。<em>原文 Dreaming can focus memory on a goal</em></p></details>
+    <details><summary><span>10</span>作者列了哪三个开放问题？</summary><p>什么时候创建记忆（在线 vs 后台）；怎么保持记忆最新（盯易变信息、按访问频率调节 dreaming）；以转录搜索为底座时如何维护表示又不让错误和幻觉累积。<em>原文最后一节</em></p></details>
+  </div>
+</section>
+
+<!-- ======================= 金句 ======================= -->
+<section class="sec" id="quotes">
+  <div class="sec-head"><h2>原文金句</h2><span class="meta">英文原句 + 中文意译，按出现顺序</span></div>
+  <div class="sec-lede"><p>这几句最能代表作者的立场。英文为原文摘录，部分是句子片段；中文是我的意译。</p></div>
+  <div class="quotes">
+    <blockquote class="quote"><p>Memory is, occasionally, a prediction.</p><p class="zh">记忆，有时就是一种预测。</p><cite>Memory is a prediction</cite></blockquote>
+    <blockquote class="quote"><p>By writing down a rule, an agent predicts that the pattern it's describing will be relevant again.</p><p class="zh">写下一条规则，智能体就是在预测它描述的模式还会再出现。</p><cite>Memory is a prediction</cite></blockquote>
+    <blockquote class="quote"><p>…memory files about strategy, plans, and tested rules exist only if Claude works them out.</p><p class="zh">关于策略、计划和验证过的规则的记忆，只有 Claude 自己推导出来才会存在。</p><cite>Claude is learning salience</cite></blockquote>
+    <blockquote class="quote"><p>We've found that it helps to tell Claude what memory is for, but not how to use it.</p><p class="zh">我们发现，告诉 Claude 记忆是干什么用的有帮助，但别告诉它怎么用。</p><cite>Steering Claude's memory</cite></blockquote>
+    <blockquote class="quote"><p>So the top layer of the memory hierarchy has to stay relatively small.</p><p class="zh">所以记忆层级的顶层必须保持相对精简。</p><cite>Dreaming can promote notes</cite></blockquote>
+    <blockquote class="quote"><p>…no model can really know what will happen in future turns.</p><p class="zh">没有哪个模型真正知道之后的轮次会发生什么。</p><cite>结论</cite></blockquote>
+  </div>
+</section>
+
+<!-- ======================= 术语 ======================= -->
+<section class="sec" id="glossary">
+  <div class="sec-head"><h2>术语速查</h2><span class="meta">按原文用法改写</span></div>
+  <dl class="qa gloss" style="margin-top:20px">
+    <dt>智能体记忆（agent memory）</dt><dd>Claude 从经验中获得、跨会话保留、之后可读取的知识。</dd>
+    <dt>in-context learning</dt><dd>单次对话内获得的知识，不算记忆。</dd>
+    <dt>compaction</dt><dd>Claude 写摘要替换较早的对话轮次，属于上下文管理，不算记忆。</dd>
+    <dt>转录（transcripts）</dt><dd>会话的完整事件日志，可搜索，是记忆层级的最底层，也是 dreaming 核对笔记的依据。</dd>
+    <dt>记忆笔记（memory notes）</dt><dd>Claude 在会话中写进记忆存储（如一个笔记文件夹）的条目。</dd>
+    <dt>记忆表示（memory representations）</dt><dd>在笔记之上组织出来的结构，如 wiki。</dd>
+    <dt>wiki</dt><dd>Claude 写并维护的页面集合，一个主题一页、互相链接，帮 Claude 定位知识。</dd>
+    <dt>注入上下文（injected context）</dt><dd>每次会话开始时由 harness 自动加载的顶层记忆。</dd>
+    <dt>显著性（salience）</dt><dd>判断什么值得记住的能力。</dd>
+    <dt>dreaming</dt><dd>在会话之外回看日志和记忆，修正错误、产生新笔记和新表示的过程。</dd>
+    <dt>sleep-time compute</dt><dd>Letta 与 UC Berkeley 提出的思路：让模型利用空闲时间整理上下文，是 dreaming 的来源之一。</dd>
+    <dt>harness</dt><dd>包在模型外面、负责加载上下文、调用工具、驱动循环的运行框架。</dd>
+    <dt>CL-Bench 1.0</dt><dd>文中用于测持续学习的基准；数据库任务每题新开会话，答后告知正确答案。</dd>
+    <dt>auto memory（Claude Code）</dt><dd>Claude Code 的自动记忆；会话开始加载 MEMORY.md 前 200 行或 25KB 作为索引。</dd>
+  </dl>
+</section>
+
+<!-- ======================= 读后 ======================= -->
+<section class="sec" id="after">
+  <div class="sec-head"><h2>读后</h2><span class="meta">以下是我的整理，不是原文内容</span></div>
+  <div class="two" style="margin-top:24px">
+    <div class="mine">
+      <h3>对照我自己的 Claude Code 记忆</h3>
+      <p class="hint">我每天在用的就是文中举例的 auto memory，拿原文的原则对照一下。</p>
+      <ol>
+        <li><b>四层在 Claude Code 里各有落点。</b>转录 ≈ 会话的 jsonl 记录；笔记 ≈ <code>memory/</code> 下一条一事的 md 文件；注入层 ≈ <code>MEMORY.md</code> 索引和 CLAUDE.md。中间的“wiki 层”目前没有，笔记之间靠 <code>[[链接]]</code> 弱连接。</li>
+        <li><b>我的 MEMORY.md 离上限不远，而且“顶层不够小”。</b>2026-11-09 实测 77 行、约 17.9KB，还在 200 行 / 25KB 以内；但最长一行有 1,200 多字，把一个项目的进展流水全写进了索引。按原文，索引只该说“我知道什么、去哪找”，进展细节应下放到对应的笔记文件。</li>
+        <li><b>“说用途、不定规则”也适用于 CLAUDE.md。</b>与其写一堆“必须……”的流程，不如写清楚这个项目要什么、为什么，规则只留给真正容易犯的错。</li>
+        <li><b>可以手动做一次“dreaming”。</b>定期让 Claude 对照最近的会话和 git 记录，检查记忆里过时或写错的条目（例如状态已变的待办），合并重复、把细节下沉。这正对应原文的“修正”和“提到顶层 / 下放”。</li>
+      </ol>
+    </div>
+    <div class="mine">
+      <h3>引用前要核对的地方</h3>
+      <p class="hint">来自原文与转述的对照。</p>
+      <ol>
+        <li><b>“三类组件”的说法不是原文的。</b>新闻摘要里“工作上下文、外部存储与检索、跨会话持久化状态”的划分，在原文中找不到对应；原文是转录 / 笔记 / 表示 / 注入四层，并把会话内上下文管理排除在记忆之外。</li>
+        <li><b>数字都是作者自测，且多为案例。</b>《宝可梦》和 Mt. Moon 是单次运行；CL-Bench 没公布题数和评分细则；Stainless、Harvey LAB 是特定语料。可以用来理解方向，不宜当作通用基准引用。</li>
+        <li><b>“wiki + 搜索 54%→61%”要连同条件一起引。</b>它随 dreaming 量增长而上升；仅 wiki 的 48% 是 128 个会话后的最好成绩，2 个会话时只有 13%。</li>
+        <li><b>Hacker News 热度未核对。</b>转述里“约 174 点、99 条评论”的数据我没有去 HN 核实。</li>
+        <li><b>URL 在 /research 下，但署名团队是 Engineering。</b>引用时可写“Anthropic 工程博客，Lance Martin，2026-11-06”。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="about" aria-labelledby="about-h">
+  <h2 id="about-h">关于这篇解读</h2>
+  <div>
+    <p>内容来自 Anthropic 文章《<a href="https://www.anthropic.com/research/components-of-agent-memory" rel="noopener">The components of agent memory</a>》（Lance Martin，2026-11-06）。文末推荐的上手资源：<a href="https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow" rel="noopener">dreaming cookbook</a>、<a href="https://github.com/anthropics/claude-quickstarts/tree/main/managed-agents/knowledge-wiki" rel="noopener">knowledge wiki quickstart</a>。</p>
+    <p>本文以转述原文观点为主，每一节标了原文小节；“原作观点”框是对作者立场的转述，“原文金句”是英文原句摘录加意译。“是不是记忆”“该不该记”两个小练习、易混辨析和自测是按原文内容做的学习材料；“读后”一节是我的整理，与原文区分开。概念与数据以原文为准。</p>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>原文：Anthropic《The components of agent memory》</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+function $(s, r) { return (r || document).querySelector(s); }
+function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function press(group, btn) { group.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); }); }
+var NS = 'http://www.w3.org/2000/svg';
+function s(tag, attrs, txt) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (txt != null) e.textContent = txt; return e; }
+
+/* 两选一小练习（是不是记忆 / 该不该记） */
+function choice(box, scoreEl, items, labels, cls, total) {
+  var right = 0, done = 0;
+  items.forEach(function (it) {
+    var c = h('div', cls, '<div class="t">' + it[0] + '</div>');
+    var o = h('div', 'opts');
+    labels.forEach(function (lb, i) {
+      var b = h('button', '', lb); b.type = 'button';
+      b.addEventListener('click', function () {
+        if (c.classList.contains('done')) return;
+        var ok = (i === 0) === it[1];
+        o.querySelectorAll('button').forEach(function (x, j) { x.disabled = true; if ((j === 0) === it[1]) x.classList.add('ok'); });
+        if (!ok) b.classList.add('no');
+        c.classList.add('done'); done++; if (ok) right++;
+        scoreEl.textContent = '已答 ' + done + ' / ' + total + '，答对 ' + right;
+      });
+      o.appendChild(b);
+    });
+    c.appendChild(o);
+    c.appendChild(h('div', 'ans', (it[1] ? '<b>' + labels[0] + '。</b>' : '<b>' + labels[1] + '。</b>') + it[2]));
+    box.appendChild(c);
+  });
+  scoreEl.textContent = '共 ' + total + ' 条，点选后显示解释';
+}
+
+choice($('#sortq'), $('#sort-score'), [
+  ['在同一次长对话里，Claude 记住了你前面说过“用 Python 3.9”', false, '这是 in-context learning：单次对话内的知识，会话一结束就没了。'],
+  ['上下文快满了，Claude 把前 50 轮对话压成一段摘要继续干活', false, '这是 compaction：用摘要替换旧轮次，属于会话内的上下文管理。'],
+  ['Claude 在记忆目录里写了一条“这个库的测试要先起 Redis”，下次新会话读到了', true, '从经验中得到、跨会话保留、之后读回，正是原文定义的记忆。'],
+  ['模型经过新一轮训练，更擅长写 SQL 了', false, '这是权重变化，原文明确排除。'],
+  ['dreaming 把十次会话的转录整理成一组互相链接的 wiki 页面', true, '这是记忆的“表示层”，由经验整理而来，供以后的会话读取。']
+], ['算', '不算'], 'sq', 5);
+
+/* 记忆层级 */
+var layers = [
+  ['l4', '注入上下文', 'injected context loaded into every session', [
+    ['装什么', '最关键的少量记忆，或一份指向下层的索引。'],
+    ['谁来写', 'dreaming 把关键笔记“提升”上来；harness 负责加载。'],
+    ['何时读', '每次会话开始自动加载，Claude 不用搜，甚至不用知道它存在。'],
+    ['代价', '占 token；错笔记会进每个会话；越长越不被遵循。所以要小。'],
+    ['原文例子', 'Claude Code 的 auto memory 只加载 MEMORY.md 前 200 行或 25KB；Fable 5 的 global.md 也像一块仪表盘。']]],
+  ['l3', '记忆表示（如 wiki）', 'memory representations such as wikis', [
+    ['装什么', '在笔记之上组织出来的结构：一主题一页、互相链接的知识地图。'],
+    ['谁来写', '主要靠 dreaming 构建和维护（合并重复、核对来源、补断链）。'],
+    ['何时读', '需要时查阅，常和搜索组合。'],
+    ['代价', '维护要花算力；没做抽象时会比原文还大；错误和幻觉可能累积。'],
+    ['原文例子', 'Stainless 35 万文件建 wiki；Harvey LAB 并购文件 wiki。']]],
+  ['l2', '记忆笔记', 'memory notes written by Claude', [
+    ['装什么', '规则、已验证的事实、计划、踩过的坑。'],
+    ['谁来写', 'Claude 在会话中实时写；dreaming 事后修正。'],
+    ['何时读', 'Claude 需要时读；强模型会自发先读（Sonnet 5 十次九次）。'],
+    ['代价', '写时只看得到当前会话，可能一开始就错，或随环境过时。'],
+    ['原文例子', 'CL-Bench 的记忆目录；《宝可梦》里的 locations/、gameplay/ 文件夹。']]],
+  ['l1', '转录', 'transcripts (a searchable event log)', [
+    ['装什么', '会话里发生的一切，原样记录。'],
+    ['谁来写', '系统自动记录，不需要判断显著性。'],
+    ['何时读', '需要时搜索；dreaming 拿它核对笔记。'],
+    ['代价', '最全也最散，直接用要搜。'],
+    ['原文例子', 'Mt. Moon 中，dreaming 正是对照转录发现宝可梦中心的位置写错了。']]]
+];
+var stack = $('#stack'), mhCap = $('#mh-cap');
+layers.forEach(function (L, i) {
+  var b = h('button', L[0], '<b>' + L[1] + '</b><i>' + (4 - i) + '</i>'); b.type = 'button';
+  b.addEventListener('click', function () {
+    press(stack, b);
+    mhCap.innerHTML = '<h4>' + L[1] + '</h4><p class="en">' + L[2] + '</p><dl>' + L[3].map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('') + '</dl>';
+  });
+  stack.appendChild(b);
+  if (i === 0) b.click();
+});
+
+/* CL-Bench 哑铃图 */
+var cl = [
+  ['Opus 5.5', 0.655, 0.838, '同样闭合了学习环，有记忆后得分与 Opus 5 相近；差别主要在无记忆的基线略高。'],
+  ['Sonnet 5.5', 0.644, 0.833, '同样闭合了学习环，表现与 Opus 5.5 接近。'],
+  ['Opus 5', 0.564, 0.828, '<b>第一个闭合学习环的模型。</b>多数条目同时写了规则、为什么认为规则成立、之前题目的答案，以及对踩过的坑的明确警告。'],
+  ['Opus 4.7', 0.383, 0.700, '把笔记整合成一份参考文档，<b>标明哪些事实已核实、哪些还没确认</b>。'],
+  ['Sonnet 5', 0.306, 0.610, '评分器核对后把答案标为“已确认”，<b>答错时写下更正</b>。'],
+  ['Sonnet 4.6', 0.330, 0.364, '能猜出错误原因，但笔记零散，<b>全是没验证过的猜想</b>；常常不读记忆文件。增益只有 0.034。']
+];
+var db = $('#db'), dbCap = $('#db-cap'), X0 = 120, X1 = 560, Y0 = 34, RH = 42;
+function xv(v) { return X0 + (X1 - X0) * v; }
+var g = s('g', { 'class': 'grid' });
+[0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+  g.appendChild(s('line', { x1: xv(v), x2: xv(v), y1: 20, y2: Y0 + RH * cl.length - 14 }));
+  g.appendChild(s('text', { x: xv(v), y: 14, 'text-anchor': 'middle' }, v.toFixed(2)));
+});
+db.appendChild(g);
+var rows = [];
+cl.forEach(function (m, i) {
+  var y = Y0 + RH * i + 8, r = s('g', { 'class': 'row', tabindex: 0, role: 'button', 'aria-label': m[0] });
+  r.appendChild(s('rect', { 'class': 'hit', x: 0, y: y - 19, width: 640, height: 38, rx: 6 }));
+  r.appendChild(s('text', { 'class': 'lbl', x: 8, y: y + 5 }, m[0]));
+  r.appendChild(s('line', { 'class': 'bar', x1: xv(m[1]), x2: xv(m[2]), y1: y, y2: y }));
+  r.appendChild(s('circle', { 'class': 'b0', cx: xv(m[1]), cy: y, r: 7 }));
+  r.appendChild(s('circle', { 'class': 'b1', cx: xv(m[2]), cy: y, r: 7 }));
+  r.appendChild(s('text', { 'class': 'v', x: xv(m[1]) - 12, y: y + 5, 'text-anchor': 'end' }, m[1].toFixed(3)));
+  r.appendChild(s('text', { 'class': 'gain', x: xv(m[2]) + 12, y: y + 5 }, m[2].toFixed(3) + '  +' + (m[2] - m[1]).toFixed(3)));
+  function pick() {
+    rows.forEach(function (x) { x.classList.remove('on'); }); r.classList.add('on');
+    dbCap.innerHTML = '<b>' + m[0] + '</b>：' + m[1].toFixed(3) + ' → ' + m[2].toFixed(3) + '。' + m[3];
+  }
+  r.addEventListener('click', pick);
+  r.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  rows.push(r); db.appendChild(r);
+  if (i === 2) pick();
+});
+
+/* 该不该记 */
+choice($('#keep'), $('#keep-score'), [
+  ['当前身上有多少钱', false, '屏幕上每回合都能读到，存下来是冗余，还会马上过时。'],
+  ['当前在地图上的位置', false, '同样每回合可读。Sonnet 3.7 记这类东西，结果记忆不停过时、不停整理。'],
+  ['攻打下一个道馆的计划', true, '计划只有自己想出来才存在。Fable 5 把它放在顶层 global.md。'],
+  ['精灵球连续失败三次以上，就换个时机再扔', true, 'Fable 5 连扔 7 次没抓到鲤鱼王后试出的规则，写下后靠它抓到了。'],
+  ['某条路线该怎么走', true, '路线规划是自己探索出来的，Fable 5 放在 locations/ 文件夹。'],
+  ['自己使用记忆的规则', true, 'Fable 5 在 global.md 里也写了“我怎么用记忆”，属于自己推导出的方法。']
+], ['该记', '不用记'], 'kc', 6);
+
+/* 引导实验 */
+var steer = {
+  rule: ['“只记录失败”规则让记忆增益下降多少', '数值是加规则后记忆增益的变化，越长代表掉得越多', [
+    ['Opus 5', 0.234, '−0.234', 'neg'], ['Opus 4.7', 0.150, '−0.150', 'neg'], ['Sonnet 4.6', 0.020, '−0.020', 'neg']], 0.3],
+  guide: ['提示 Sonnet 4.6“先读记忆，再明确检验假设”', 'CL-Bench 得分，接近翻倍', [
+    ['不提示', 0.364, '0.364', 'mut'], ['加了提示', 0.641, '0.641', '']], 1]
+};
+var sBox = $('#steer-box'), sMode = $('#steer-mode');
+function drawSteer(k) {
+  var d = steer[k]; $('#steer-title').textContent = d[0]; $('#steer-sub').textContent = d[1];
+  sBox.innerHTML = '';
+  d[2].forEach(function (r) {
+    var row = h('div', 'hb-row', '<span class="n">' + r[0] + '</span><span class="track"><span class="fill ' + r[3] + '" style="display:block;width:0"></span></span><span class="val">' + r[2] + '</span>');
+    sBox.appendChild(row);
+    var f = row.querySelector('.fill');
+    requestAnimationFrame(function () { requestAnimationFrame(function () { f.style.width = (r[1] / d[3] * 100) + '%'; }); });
+  });
+}
+sMode.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(sMode, b); drawSteer(b.dataset.m); });
+drawSteer('rule');
+
+/* Mt. Moon 步进 */
+var moon = {
+  raw: [
+    [200, '笔记写错', '以入口处的宝可梦中心为地标，但笔记把它的位置记成了<b>东侧</b>（实际在西侧入口）。'],
+    [240, '误以为已通过', '走出宝可梦中心后，Claude 宣称 <code>Mt Moon is behind me</code>，把笔记改成 <code>Mt Moon DONE</code>，其实根本没穿过山洞。'],
+    [170, '掉下悬崖', '跳下入口附近的单向悬崖，回到来时的路线，却判断自己 <code>overshot far west</code>（往西走过头了），始终没怀疑笔记。'],
+    [170, '第三次循环', '三次跌回原路线。第三次后它写道 <code>I\'m going to stop rather than keep looping</code>。'],
+    [60, '退回 Pewter', 'harness 的自动回复让它继续，它一路走回 Pewter City，再也没到达 Cerulean。']
+  ],
+  dream: [
+    [200, '同一份错笔记', '起点一样：宝可梦中心被错记在东侧，笔记里写着 <code>Mt Moon DONE</code>。'],
+    [200, '运行 dreaming', 'Claude 把笔记和<b>原始转录</b>对照，发现宝可梦中心的位置写错、“已通过”不成立，重写了笔记。'],
+    [300, '直接回山洞', '用修正后的笔记，它直接回到 Mt. Moon 入口，进洞向东走。'],
+    [580, '到达 Cerulean', '第 <b>1,935</b> 步到达 Cerulean City。对照：原始笔记那次退回 Pewter，无记忆那次始终没到。']
+  ]
+};
+var mMode = 'raw', mi = 0, me = $('#moon-me');
+function drawMoon() {
+  var st = moon[mMode], c = st[mi];
+  me.setAttribute('cx', c[0]); me.classList.toggle('good', mMode === 'dream');
+  $('#moon-cap').innerHTML = '<span class="k">' + (mMode === 'raw' ? '原始笔记' : 'dreaming 修正后') + ' · 第 ' + (mi + 1) + ' 步</span><p><b>' + c[1] + '。</b>' + c[2] + '</p>';
+  $('#moon-pos').textContent = (mi + 1) + ' / ' + st.length;
+  $('#moon-prev').disabled = mi === 0; $('#moon-next').disabled = mi === st.length - 1;
+}
+$('#moon-prev').addEventListener('click', function () { if (mi > 0) { mi--; drawMoon(); } });
+$('#moon-next').addEventListener('click', function () { if (mi < moon[mMode].length - 1) { mi++; drawMoon(); } });
+$('#moon-mode').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press($('#moon-mode'), b); mMode = b.dataset.m; mi = 0; drawMoon(); });
+drawMoon();
+
+/* Stainless */
+var wk = [
+  [['wiki + 搜索', 54, ''], ['只用搜索', 53, 'mut'], ['只用 wiki', 13, 'neg']],
+  [['wiki + 搜索', 61, ''], ['只用搜索', 53, 'mut'], ['只用 wiki', 48, 'neg']]
+];
+var wBox = $('#wiki-box'), wMode = $('#wiki-mode');
+function drawWiki(k) {
+  if (!wBox.children.length) wk[k].forEach(function (r) {
+    wBox.appendChild(h('div', 'hb-row', '<span class="n">' + r[0] + '</span><span class="track"><span class="fill ' + r[2] + '" style="display:block;width:0"></span></span><span class="val"></span>'));
+  });
+  wk[k].forEach(function (r, i) {
+    var row = wBox.children[i];
+    row.querySelector('.val').textContent = r[1] + '%';
+    var f = row.querySelector('.fill');
+    requestAnimationFrame(function () { requestAnimationFrame(function () { f.style.width = r[1] + '%'; }); });
+  });
+}
+wMode.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; press(wMode, b); drawWiki(+b.dataset.m); });
+drawWiki(1);
+
+/* 开放问题 */
+$('#dirs').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  var open = b.getAttribute('aria-expanded') === 'true';
+  b.setAttribute('aria-expanded', open ? 'false' : 'true'); b.nextElementSibling.hidden = open;
+});
+
+/* 章节导航高亮 */
+var links = document.querySelectorAll('#secnav a');
+if ('IntersectionObserver' in window) {
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id); });
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  document.querySelectorAll('.sec').forEach(function (x) { io.observe(x); });
+}
+})();
+</script>
+</body>
+</html>
