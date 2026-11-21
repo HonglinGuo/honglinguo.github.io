@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读华为《下一代核心网演进白皮书》</title>
+<meta name="description" content="华为《下一代核心网演进白皮书：从 Cloud Native 到 AI Native，持续释放商业潜能》（2026-11-19 发布）中文导读：智能体时代的三个机遇、三大价值场景、NGC 三大特征（意图接口、数据与智能面 DAP、低时延用户面）、CNF 到 ANF 的网元演进与两步走路径，每节标原文页码，数字标来源。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='18' height='5' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3Crect x='3' y='10' width='18' height='4' rx='1' fill='%232340D6'/%3E%3Crect x='3' y='16' width='18' height='5' rx='1' fill='none' stroke='%2313171C' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/site.js"></script>
+<style>
+/* ---------- 首屏 ---------- */
+.hero { padding-top: 64px; padding-bottom: 32px; }
+.kicker { color: var(--ink-3); font-size: 15px; margin: 0 0 18px; }
+.kicker span + span::before { content: "·"; margin: 0 10px; color: var(--rule); }
+.hero h1 { font-size: clamp(36px, 6.2vw, 76px); line-height: 1.1; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 24px; max-width: 13em; }
+.hero h1 em { font-style: normal; color: var(--s1); }
+.hero .lead { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink-2); max-width: 40em; margin: 0; }
+
+.quote { margin: 0; padding: 4px 0 4px 22px; border-left: 4px solid var(--s1); }
+.quote p { margin: 0; font-size: clamp(19px, 2.1vw, 25px); line-height: 1.55; font-weight: 650; color: var(--ink); }
+.quote p.en { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-top: 6px; }
+.quote cite { display: block; margin-top: 8px; font-size: 15px; font-style: normal; color: var(--ink-3); }
+.hero .quote { margin-top: 40px; max-width: 46em; }
+
+.tldr { margin-top: 56px; border-top: 2px solid var(--ink); }
+.tldr h2 { font-size: 20px; margin: 14px 0 4px; }
+.tldr ol { list-style: none; margin: 0; padding: 0; counter-reset: t; display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 32px; }
+.tldr li { counter-increment: t; padding: 14px 0 14px 40px; position: relative; border-top: 1px solid var(--hair); font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+.tldr li::before { content: counter(t); position: absolute; left: 0; top: 14px; width: 26px; height: 26px; border-radius: 50%; background: var(--s1); color: #fff; font-family: var(--f-num); font-size: 15px; text-align: center; line-height: 26px; }
+.tldr li b { color: var(--ink); font-weight: 650; }
+.tldr li a { color: inherit; text-decoration: none; display: block; }
+.tldr li a:hover b { color: var(--s1); }
+
+.caveat { margin-top: 28px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; font-size: 16px; color: var(--ink-2); max-width: 54em; }
+.caveat p { margin: 0 0 8px; }
+.caveat p:last-child { margin: 0; }
+.caveat b { color: var(--ink); }
+
+.secnav { position: sticky; top: 0; z-index: 20; margin-top: 56px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.secnav .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.secnav .wrap::-webkit-scrollbar { display: none; }
+.secnav a { flex: none; padding: 12px 14px; color: var(--ink-3); text-decoration: none; font-size: 15px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.secnav a:first-child { padding-left: 0; }
+.secnav a.on { color: var(--ink); border-bottom-color: var(--s1); }
+
+/* ---------- 节 ---------- */
+.sec { padding-top: 88px; scroll-margin-top: 40px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+.sec-head h2 { margin: 0; font-size: clamp(28px, 4.2vw, 48px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.sec-head .meta { color: var(--ink-3); font-size: 15px; }
+.sec-lede { max-width: 46em; margin: 22px 0 28px; }
+.sec-lede p { font-size: 17px; line-height: 1.85; color: var(--ink-2); margin: 0 0 12px; }
+.sec-lede p strong { color: var(--ink); font-weight: 650; }
+.sec-lede p.go { color: var(--ink); font-weight: 500; }
+.view { background: var(--ink); color: var(--bg); border-radius: 8px; padding: 14px 20px; margin: 24px 0 0; max-width: 54em; font-size: 17px; line-height: 1.7; }
+.view b { color: var(--bg); font-weight: 700; margin-right: 8px; }
+.sub { font-size: clamp(22px, 2.6vw, 28px); font-weight: 750; margin: 56px 0 12px; letter-spacing: -0.01em; scroll-margin-top: 60px; }
+.sub small { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-left: 10px; letter-spacing: 0; }
+.p { color: var(--ink-2); max-width: 46em; margin: 0 0 14px; font-size: 17px; line-height: 1.85; }
+.p strong { color: var(--ink); font-weight: 650; }
+.pg { font-size: 15px; color: var(--ink-3); margin: 10px 0 0; }
+.src { display: inline-block; font-size: 15px; border: 1px solid; border-radius: 999px; padding: 0 9px; margin-left: 6px; vertical-align: 1px; line-height: 1.6; white-space: nowrap; }
+.src.t3 { color: var(--s1); border-color: var(--s1); }
+.src.hw { color: var(--s2); border-color: var(--s2); }
+.src.na { color: var(--ink-3); border-color: var(--rule); }
+
+.viz { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 20px 22px 18px; margin: 0; min-width: 0; }
+.viz-title { font-weight: 650; font-size: 16px; line-height: 1.5; margin: 0 0 4px; }
+.viz-sub { color: var(--ink-3); font-size: 15px; margin: 0 0 14px; line-height: 1.5; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 880px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 8px; padding: 3px; gap: 3px; margin: 2px 0 14px; }
+.seg button { font: inherit; font-size: 15px; color: var(--ink-2); background: none; border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button:hover:not([aria-pressed="true"]) { background: var(--dim-soft); }
+
+.card { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 18px; }
+.card h4 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0 0 8px; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.card p:last-child { margin-bottom: 0; }
+.card .tag { display: inline-block; font-size: 15px; color: var(--s1); margin-bottom: 4px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+
+/* 三个机遇 */
+.shift { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.shift button { font: inherit; text-align: left; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 8px; padding: 12px 14px; cursor: pointer; font-size: 15px; line-height: 1.45; }
+.shift button b { display: block; font-size: 18px; color: var(--ink); margin-bottom: 2px; }
+.shift button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+.shift button[aria-pressed="true"] b { color: #fff; }
+@media (max-width: 640px) { .shift { grid-template-columns: minmax(0, 1fr); } }
+.shift-cap > p { font-size: 16px; color: var(--ink); line-height: 1.75; margin: 0 0 12px; }
+.facts { list-style: none; margin: 0; padding: 0; }
+.facts li { border-top: 1px solid var(--hair); padding: 10px 0; display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 4px 16px; font-size: 16px; color: var(--ink-2); line-height: 1.65; }
+.facts li .n { font-family: var(--f-num); font-weight: 700; color: var(--ink); font-size: 19px; line-height: 1.4; }
+@media (max-width: 560px) { .facts li { grid-template-columns: minmax(0, 1fr); } }
+
+/* 算力范围条 */
+.rg { width: 100%; height: auto; display: block; }
+.rg text { font-size: 15px; fill: var(--ink-2); }
+.rg .lbl { fill: var(--ink); font-weight: 600; }
+.rg .ax line { stroke: var(--hair); }
+.rg .ax text { fill: var(--ink-3); font-family: var(--f-num); font-size: 13px; }
+.rg .r26 { fill: var(--s2); opacity: .85; }
+.rg .r30 { fill: var(--s1); opacity: .85; }
+.rg .need { stroke: var(--alert); stroke-width: 2; stroke-dasharray: 5 4; }
+.rg .row { cursor: pointer; }
+.rg .row rect.hit { fill: transparent; }
+.rg .row.on rect.hit { fill: var(--s1-soft); opacity: .45; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 15px; color: var(--ink-2); margin: 0 0 8px; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.legend .k26::before { background: var(--s2); }
+.legend .k30::before { background: var(--s1); }
+.rg-cap { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hair); font-size: 16px; color: var(--ink); line-height: 1.75; min-height: 3.6em; }
+
+/* TTFT */
+.ttft { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.tt-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 12px; align-items: center; }
+.tt-row .nm { font-size: 15px; color: var(--ink); font-weight: 600; line-height: 1.4; }
+.tt-row .nm small { display: block; font-weight: 400; color: var(--ink-3); font-size: 15px; }
+.tt-bars { display: flex; flex-direction: column; gap: 3px; }
+.tt-bar { display: grid; grid-template-columns: minmax(0, 1fr) 4.2em; gap: 8px; align-items: center; font-size: 15px; }
+.tt-bar .track { height: 12px; background: var(--dim-soft); border-radius: 3px; overflow: hidden; }
+.tt-bar .fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.tt-bar .v { font-family: var(--f-num); color: var(--ink-2); text-align: right; }
+.tt-bar.t0 .fill { background: var(--dim); } .tt-bar.t1 .fill { background: var(--s2); } .tt-bar.t2 .fill { background: var(--s1); }
+.tt-bar.off { opacity: .25; }
+@media (max-width: 520px) { .tt-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* 场景能力 */
+.scn-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px; align-items: start; }
+@media (max-width: 880px) { .scn-body { grid-template-columns: minmax(0, 1fr); } }
+.scn-l h4 { margin: 0 0 4px; font-size: 21px; }
+.scn-l .en { color: var(--ink-3); font-size: 15px; margin: 0 0 10px; }
+.scn-l p { margin: 0 0 10px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.scn-l ul { margin: 0; padding-left: 18px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.caps { display: flex; flex-direction: column; gap: 8px; }
+.cap { background: var(--bg); border: 1px solid var(--hair); border-left: 4px solid var(--s1); border-radius: 6px; padding: 10px 14px; }
+.cap b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 2px; }
+.cap span { font-size: 15px; color: var(--ink-2); line-height: 1.7; display: block; }
+.cap i { font-style: normal; font-size: 15px; color: var(--ink-3); }
+
+/* 架构图 */
+.arch-w { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px; align-items: start; }
+@media (max-width: 880px) { .arch-w { grid-template-columns: minmax(0, 1fr); } }
+.arch { width: 100%; height: auto; display: block; }
+.arch text { font-size: 15px; fill: var(--ink-2); }
+.arch .pl { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+.arch .pt { fill: var(--ink); font-weight: 700; font-size: 16px; }
+.arch .nf { fill: var(--panel); stroke: var(--ink-3); stroke-width: 1.5; }
+.arch .tool { fill: var(--s2-soft); stroke: var(--s2); stroke-width: 1; }
+.arch .tool + text { fill: var(--s2); font-size: 13px; }
+.arch .ln { stroke: var(--ink-3); stroke-width: 1.5; fill: none; }
+.arch .dash { stroke-dasharray: 5 4; }
+.arch .hot { cursor: pointer; }
+.arch .hot:hover .pl, .arch .hot:hover .nf { stroke: var(--s1); }
+.arch .hot.on .pl, .arch .hot.on .nf { stroke: var(--s1); stroke-width: 3; fill: var(--s1-soft); }
+.arch .num { fill: var(--s1); }
+.arch .num + text { fill: #fff; font-family: var(--f-num); font-size: 13px; font-weight: 700; }
+.arch-cap h4 { margin: 0 0 2px; font-size: 21px; }
+.arch-cap .en { color: var(--ink-3); font-size: 15px; margin: 0 0 12px; }
+.arch-cap p { margin: 0 0 10px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.arch-cap p b { color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chips button { font: inherit; font-size: 15px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink-2); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; }
+
+/* CNF -> ANF */
+.mig { width: 100%; max-width: 560px; height: auto; display: block; }
+.mig text { font-size: 15px; fill: var(--ink-2); }
+.mig .box { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; transition: fill .3s; }
+.mig .nfb { fill: var(--dim-soft); stroke: none; transition: fill .3s; }
+.mig.after .nfb { fill: var(--s1-soft); }
+.mig .nfn { fill: var(--ink); font-weight: 700; font-size: 17px; }
+.mig .ifc { fill: var(--ink-3); font-family: var(--f-num); font-size: 13px; }
+.mig .ln { stroke: var(--ink-3); stroke-width: 1.5; }
+.mig .new { fill: var(--s1); font-weight: 700; }
+.mig-list { margin: 12px 0 0; padding: 0; list-style: none; }
+.mig-list li { border-top: 1px solid var(--hair); padding: 9px 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 12px; }
+.mig-list li b { color: var(--ink); }
+@media (max-width: 560px) { .mig-list li { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+
+/* 路径 */
+.road { display: grid; grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr); gap: 0; align-items: stretch; }
+.road .arrow { display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 22px; }
+@media (max-width: 760px) { .road { grid-template-columns: minmax(0, 1fr); } .road .arrow { transform: rotate(90deg); padding: 4px 0; } }
+.stage { border: 1px solid var(--hair); border-radius: 8px; background: var(--panel); padding: 16px 18px; }
+.stage .tag { font-size: 15px; color: var(--ink-3); font-family: var(--f-num); }
+.stage h4 { margin: 2px 0 10px; font-size: 20px; }
+.stage.now { border-top: 4px solid var(--s2); }
+.stage.next { border-top: 4px solid var(--s1); }
+.stage ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stage li button { font: inherit; width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 15px; line-height: 1.5; }
+.stage li button small { display: block; color: var(--ink-3); font-size: 15px; }
+.stage li button[aria-pressed="true"] { border-color: var(--s1); background: var(--s1-soft); }
+.road-cap { margin-top: 16px; padding: 16px 18px; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); min-height: 8em; }
+.road-cap h4 { margin: 0 0 4px; font-size: 19px; }
+.road-cap .pgx { font-size: 15px; color: var(--ink-3); margin: 0 0 10px; }
+.road-cap p { margin: 0 0 8px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.road-cap ul { margin: 0; padding-left: 18px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.road-cap li b { color: var(--ink); }
+
+/* 时间轴 */
+.tl { position: relative; margin: 8px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tl li { border-top: 4px solid var(--rule); padding-top: 10px; font-size: 15px; color: var(--ink-2); line-height: 1.65; }
+.tl li.a { border-top-color: var(--s2); } .tl li.b { border-top-color: var(--s1); }
+.tl li b { display: block; font-size: 17px; color: var(--ink); }
+.tl li i { font-style: normal; font-family: var(--f-num); color: var(--ink-3); }
+@media (max-width: 760px) { .tl { grid-template-columns: minmax(0, 1fr); } }
+
+/* 数字表 */
+.ntbl { width: 100%; border-collapse: collapse; font-size: 16px; }
+.ntbl th { text-align: left; font-size: 15px; color: var(--ink-3); font-weight: 600; padding: 8px 12px 8px 0; border-bottom: 2px solid var(--ink); }
+.ntbl td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--hair); vertical-align: top; color: var(--ink-2); line-height: 1.6; }
+.ntbl td.n { font-family: var(--f-num); color: var(--ink); font-weight: 700; white-space: nowrap; }
+.ntbl td.p { white-space: nowrap; color: var(--ink-3); font-size: 15px; max-width: none; margin: 0; }
+.ntbl tr.hide { display: none; }
+.tbl-wrap { overflow-x: auto; }
+@media (max-width: 640px) { .ntbl thead { display: none; } .ntbl tr { display: block; border-bottom: 1px solid var(--hair); padding: 8px 0; } .ntbl tr.hide { display: none; } .ntbl td { display: block; border: 0; padding: 2px 0; } }
+
+/* 辨析 */
+.evo { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 8px 0 0; }
+.evo div { flex: 1 1 150px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); padding: 12px 14px; font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+.evo div b { display: block; font-size: 18px; color: var(--ink); }
+.evo div.hi { border-color: var(--s1); background: var(--s1-soft); }
+.evo i { align-self: center; font-style: normal; color: var(--ink-3); }
+.confuses { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 0 20px; }
+@media (max-width: 640px) { .confuses { grid-template-columns: minmax(0, 1fr); } }
+.confuse { margin-top: 18px; border: 1px dashed var(--s2); border-radius: 10px; padding: 14px 18px; background: color-mix(in srgb, var(--s2-soft) 35%, transparent); }
+.confuse h4 { margin: 0 0 8px; font-size: 16px; color: var(--s2); }
+.confuse p { margin: 6px 0; font-size: 16px; color: var(--ink-2); line-height: 1.7; }
+.confuse p b { color: var(--ink); }
+
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.quiz details { background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; padding: 12px 18px; }
+.quiz summary { cursor: pointer; font-size: 16px; font-weight: 600; color: var(--ink); line-height: 1.6; }
+.quiz summary span { font-family: var(--f-num); color: var(--s1); margin-right: 10px; }
+.quiz details p { margin: 10px 0 2px; font-size: 16px; color: var(--ink-2); line-height: 1.75; }
+.quiz details p em { font-style: normal; color: var(--ink-3); font-size: 15px; margin-left: 8px; }
+
+.qa { margin: 0; }
+.qa dt { font-weight: 650; font-size: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink); }
+.qa dt:first-child { border-top: 0; padding-top: 0; }
+.qa dd { margin: 4px 0 12px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.gloss { columns: 2; column-gap: 40px; }
+.gloss dt { break-after: avoid; }
+.gloss dd { break-inside: avoid; }
+@media (max-width: 880px) { .gloss { columns: 1; } }
+
+.quotes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 28px 40px; }
+
+.mine { background: var(--panel); border: 1px dashed var(--ink-3); border-radius: 8px; padding: 20px 24px; }
+.mine h3 { margin: 0 0 4px; font-size: 20px; }
+.mine .hint { margin: 0 0 12px; font-size: 15px; color: var(--ink-3); }
+.mine ol { margin: 0; padding-left: 22px; }
+.mine li { margin: 0 0 10px; color: var(--ink-2); font-size: 16px; line-height: 1.7; }
+.mine li b { color: var(--ink); }
+
+.about { margin-top: 64px; padding: 28px 0 0; border-top: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px 56px; }
+.about h2 { margin: 0; font-size: 24px; }
+.about p { margin: 0 0 12px; color: var(--ink-2); font-size: 16px; }
+@media (max-width: 880px) { .about { grid-template-columns: minmax(0, 1fr); } }
+.scrollx { overflow-x: auto; }
+.scrollx > svg { min-width: 560px; }
+@media (prefers-reduced-motion: reduce) { .tt-bar .fill, .mig .box, .mig .nfb { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="9" width="10" height="11" rx="1.5" fill="var(--s1)"/></svg>
+      AI 观察笔记
+    </a>
+    <nav class="site-nav">
+      <a href="../../">全部文章</a>
+      <button class="theme-btn" type="button">深色</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero wrap">
+  <p class="kicker"><span>报告解读</span><span>华为白皮书 · 2026 年 11 月</span><span>约 25 分钟读完</span></p>
+  <h1>核心网在控制面和用户面之外，<em>再加一个面</em></h1>
+  <p class="lead">华为在 2026 年 11 月 19 日曼谷第十一届全球核心网峰会上发布《下一代核心网演进白皮书：从 Cloud Native 到 AI Native，持续释放商业潜能》，中文版正文 26 页。原作的判断是：智能体将成为移动网络的核心联接对象，传统“信令驱动的预设联接”接不住它，核心网要向“意图驱动”演进。它给出的目标架构有三个特征：<strong>意图接口</strong>、新增的<strong>数据与智能面 DAP</strong>、<strong>低时延用户面</strong>；演进路径分两步：先在 5G SA 上叠加 AI 网元，再通过软件升级把网元从 CNF 变成 ANF。</p>
+
+  <blockquote class="quote">
+    <p>传统网络是信令驱动的预设联接，无法满足新需求，下一代核心网需向意图驱动的网络架构演进。</p>
+    <cite>原文第 08 页 · 第 3 章开篇</cite>
+  </blockquote>
+
+  <div class="tldr">
+    <h2>一页读懂：原作的七个观点</h2>
+    <ol>
+      <li><a href="#why"><b>AI 是移动网络未来十年最大的战略机遇。</b>联接对象从人和物扩展到智能体，网络服务从联接走向“超越联接”，交互从屏幕通话走向沉浸式通信。</a></li>
+      <li><a href="#why"><b>端侧算力受“不可能三角”约束，端云协同是长期趋势。</b>算力、功耗、重量三者难兼得；端云协同的核心体验指标是首 Token 时延 TTFT。</a></li>
+      <li><a href="#goal"><b>智能体和网络的交互量将增加 100 倍。</b>频度和复杂度各提升 10 倍，静态预设联接接不住，核心网要转向意图驱动。</a></li>
+      <li><a href="#goal"><b>围绕三大价值场景设计核心网。</b>智能体通信网络、通算融合服务、沉浸式通信，各自列出网络需具备的共性能力。</a></li>
+      <li><a href="#arch"><b>AI Native 核心网有三大特征。</b>意图接口；在 CP、UP 之外新增的数据与智能面 DAP（智能网元、数据网元、算力网元）；支持 GTP-U+ 的低时延用户面。</a></li>
+      <li><a href="#path"><b>两步走，平滑演进。</b>当下：全融合 5G SA 基础网 + AI 网元（通话 +AI、上网 +AI），基础设施 AI Native Ready；未来：软件升级到全栈 AI Native。</a></li>
+      <li><a href="#path"><b>网元形态 CNF → CNF+ → ANF。</b>NWDAF 等演进为 DAP 的 ANF（Agent），控制面和用户面网元演进为 ANF（Tool），通过 ABI 与 DAP 协同；运维从 AN L4 走向 AN L4+ 单域自治。</a></li>
+    </ol>
+  </div>
+
+  <div class="caveat">
+    <p><b>读的时候留意：</b>这是设备厂商的愿景与产品路线白皮书。文中大量数字是华为自己的预测或商用数据，没有注明出处；引用第三方机构的只有 METR、Gartner、Counterpoint、GSMA Intelligence 等几处。本文给每个数字标了来源类型：<span class="src t3">第三方</span> 原文点名的机构，<span class="src hw">华为</span> 华为自有预测或自有商用数据，<span class="src na">未注出处</span> 原文直接陈述、没说依据。“AgenticCore”这个解决方案名只出现在华为的发布新闻稿里，白皮书正文没有出现，详见文末“读后”。</p>
+    <p><b>页码说明：</b>本文按 PDF 上印刷的页码标注（摘要为第 01 页，缩略语到第 26 页）。PDF 是跨页排版，共 15 个物理页。本文依据中文版，金句附英文版原句。</p>
+  </div>
+</section>
+
+<nav class="secnav" aria-label="章节">
+  <div class="wrap" id="secnav">
+    <a href="#why">机遇</a><a href="#goal">三大场景</a><a href="#arch">目标架构</a><a href="#path">演进路径</a><a href="#nums">数字与来源</a><a href="#learn">演进链与辨析</a><a href="#quiz">自测</a><a href="#quotes">原文金句</a><a href="#glossary">术语速查</a><a href="#after">读后</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ======================= 1 ======================= -->
+<section class="sec" id="why">
+  <div class="sec-head"><h2>智能体时代，网络迎来什么机遇</h2><span class="meta">原文第 01–06 页 · 摘要与第 2 章</span></div>
+  <div class="sec-lede">
+    <p>摘要先回顾了 40 年移动网络“十年一代”的节奏：2G、3G 开启移动通话，4G 催生移动互联网，5G 进入万物互联。原作认为下一个十年的主题是智能体：未来 5 至 10 年 Agentic AI 将跨越式演进，向全终端、全业务、全场景渗透，<strong>联接对象从人和物拓展到智能体</strong>，网络从基础联接走向智能联接、超越联接。</p>
+    <p>在这条主线里，原作给核心网的定位是“向下联接终端、向上使能业务”，所以打造先进的下一代核心网，被说成是移动网络把握智能体时代机遇的<strong>关键抓手</strong>。第 2 章从三个方向展开这个机遇。</p>
+    <p class="go">点三个方向，看原作给出的论据和数字（每个数字都标了来源类型）。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">第 2 章的三个“从……到……”</p>
+    <p class="viz-sub">按原文第 02–06 页整理</p>
+    <div class="shift" id="shift" role="group" aria-label="三个机遇"></div>
+    <div class="shift-cap" id="shift-cap" aria-live="polite"></div>
+  </figure>
+
+  <h3 class="sub">端侧算力的“不可能三角”<small>原文第 04 页 · 图 02</small></h3>
+  <p class="p">原作把端云协同当作长期趋势，理由是移动终端被<strong>算力、功耗、重量</strong>三者卡住：跑 AI 任务要高能耗芯片，推高功耗；加大电池又增加体积重量、损害便携性，还会更耗电。原作预测到 2030 年领先模型参数可达 100T，复杂任务模型需要 200B 以上，而下图这些终端的算力都难以支撑。</p>
+  <figure class="viz">
+    <p class="viz-title">各类终端算力：2026 年 vs 2030 年预测（TOPS，对数刻度）</p>
+    <p class="viz-sub">按原文图 02 的表格重画；点某一行看该终端能跑的模型规模 <span class="src hw">华为</span></p>
+    <div class="legend"><span class="k26">2026 年算力</span><span class="k30">2030 年算力预测</span></div>
+    <div class="scrollx"><svg class="rg" id="rg" viewBox="0 0 720 300" role="img" aria-label="终端算力范围对比"></svg></div>
+    <div class="rg-cap" id="rg-cap" aria-live="polite"></div>
+  </figure>
+  <p class="pg">原文第 04 页 · 图 02 的标题是“移动终端不可能三角”，表头为“2026 年算力 / 2030 年算力预测 / 支持模型参数”，原文没有说明“支持模型参数”对应的是哪一年的算力</p>
+
+  <h3 class="sub">端云协同的体验指标：TTFT<small>原文第 04–05 页 · 图 03</small></h3>
+  <p class="p">原作预测，到 2030 年低时延端云协同请求将占端侧发起协同任务的 <strong>20% 以上</strong> <span class="src hw">华为</span>，覆盖 AI 实时交互、具身智能、工业控制等场景。它把端云协同的核心体验指标定为<strong>任务时延，即 TTFT（首 Token 时延）</strong>，并强调：仅靠边缘 AIDC 难以稳定保障 TTFT，要联合感知算力负载、网络拥塞等多维状态做智能调度。</p>
+  <figure class="viz">
+    <p class="viz-title">三类场景的 TTFT 分级要求</p>
+    <p class="viz-sub">原文图 03 · 点上方按钮只看某一档 <span class="src na">未注出处</span></p>
+    <div class="seg" role="group" aria-label="体验档位" id="tt-mode">
+      <button type="button" aria-pressed="true" data-t="all">三档都看</button>
+      <button type="button" aria-pressed="false" data-t="0">基础体验</button>
+      <button type="button" aria-pressed="false" data-t="1">优秀体验</button>
+      <button type="button" aria-pressed="false" data-t="2">极致体验</button>
+    </div>
+    <div class="ttft" id="ttft"></div>
+  </figure>
+  <p class="pg">原文第 05 页 · 第 11 页给了一个对照：以 AI 实时交互为例，网络传输耗时可控制在 50ms 以内，支撑端到端任务时延低至 400ms，也就是上表的“极致体验”档</p>
+
+  <div class="view"><b>原作观点</b>面向海量终端的低时延算力服务，是移动网络的全新增长机会。原作的逻辑链是：终端算力不够 → 端云协同 → 体验看 TTFT → 光有边缘算力不够，要网络和算力联合调度 → 这件事移动网络能做。</div>
+  <p class="pg">原文第 04 页</p>
+</section>
+
+<!-- ======================= 2 ======================= -->
+<section class="sec" id="goal">
+  <div class="sec-head"><h2>三大价值场景与它们对网络的要求</h2><span class="meta">原文第 07–13 页 · 第 3.1–3.3 节</span></div>
+  <div class="sec-lede">
+    <p>第 3 章开篇用图 05 对比了两代核心网的定位：5G 核心网之上是 App、之下靠<strong>信令</strong>联接终端，提供通话业务和基础联接；下一代核心网之上是“App 智能体”、之下通过<strong>意图</strong>联接各类智能体终端，提供沉浸式通信、通算融合服务、智能体通信网络。使命从<strong>万物互联</strong>变成<strong>万智互联</strong>。</p>
+    <p>接着原作给出全书最关键的一个判断：智能体能感知环境、自主规划、持续执行、动态调整直到目标达成，还能多智能体基于意图协作。这要求网络围绕任务目标实时感知状态、动态调参、动态组网、灵活调度算力。智能体与网络的交互<strong>频度比普通终端提升 10 倍，复杂度提升 10 倍，整体交互量增加 100 倍</strong> <span class="src na">未注出处</span>，所以核心网要转向意图驱动。</p>
+    <p class="go">点三个场景，看原作列出的典型用例和每个场景要求网络具备的共性能力。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">三大价值场景 → 网络共性能力</p>
+    <p class="viz-sub">按原文第 08–13 页整理，能力名称沿用原文</p>
+    <div class="seg" role="group" aria-label="价值场景" id="scn-mode"></div>
+    <div class="scn-body">
+      <div class="scn-l" id="scn-l"></div>
+      <div><div class="caps" id="scn-caps"></div></div>
+    </div>
+  </figure>
+  <p class="pg" id="scn-pg">原文第 08–10 页</p>
+
+  <div class="view"><b>原作观点</b>运营商原生拥有构建沉浸式通信所需的基础网络能力：IMS DC 提供标准化传输通道，低时延 AI 通道保障多模态数据的时延与时序同步，通算融合网络支撑渲染卸载。由此可以做出“开箱即用、不依赖终端算力”的沉浸式通信服务。</div>
+  <p class="pg">原文第 13 页 · 3.3 节结尾</p>
+</section>
+
+<!-- ======================= 3 ======================= -->
+<section class="sec" id="arch">
+  <div class="sec-head"><h2>NGC 目标架构：三个面、三类新网元</h2><span class="meta">原文第 13–14 页 · 第 3.4 节 · 图 11</span></div>
+  <div class="sec-lede">
+    <p>3.4 节先说了一句容易被忽略的话：选择下一代核心网架构时，<strong>应借鉴 5G NSA/SA 多架构路线的经验与教训</strong>，把满足新联接、新业务的长期发展需求放在首位。言下之意是不要再走多条架构路线并行。</p>
+    <p>然后给出目标架构（原文图 11，“AI Native 核心网”）。和 5G 核心网最大的不同，是<strong>在控制面 CP 和用户面 UP 之外新增了一个数据与智能面 DAP（Data &amp; AI Plane）</strong>。终端侧的 Agent 框架通过“意图接口”和 DAP 对话；控制面的 6G AM、6G SM、6G Policy 和用户面的 6G UPF 都挂着“Tool”，变成可以被调用的能力。</p>
+    <p class="go">点图中的平面、网元或接口，右边看原文对它的定义。</p>
+  </div>
+
+  <figure class="viz">
+    <p class="viz-title">AI Native 核心网（按原文图 11 重画）</p>
+    <p class="viz-sub">圆圈数字是原文标出的三大特征：① 意图接口 ② 数据与智能面 ③ 低时延用户面</p>
+    <div class="arch-w">
+      <div class="scrollx"><svg class="arch" id="arch" viewBox="0 0 640 400" role="group" aria-label="AI Native 核心网架构图">
+        <!-- 终端 -->
+        <g class="hot" data-k="ue" tabindex="0" role="button" aria-label="终端与 Agent 框架">
+          <rect class="pl" x="10" y="130" width="96" height="200" rx="8"/>
+          <rect class="nf" x="20" y="150" width="76" height="52" rx="6"/>
+          <text x="58" y="172" text-anchor="middle">Agent</text><text x="58" y="192" text-anchor="middle">框架</text>
+          <text x="58" y="300" text-anchor="middle" class="pt">终端</text>
+        </g>
+        <!-- CP -->
+        <g class="hot" data-k="cp" tabindex="0" role="button" aria-label="可编程控制面">
+          <rect class="pl" x="200" y="20" width="430" height="96" rx="8"/>
+          <rect class="nf" x="214" y="36" width="80" height="62" rx="6"/><text x="254" y="60" text-anchor="middle">6G AM</text>
+          <rect class="nf" x="304" y="36" width="80" height="62" rx="6"/><text x="344" y="60" text-anchor="middle">6G SM</text>
+          <rect class="nf" x="394" y="36" width="90" height="62" rx="6"/><text x="439" y="60" text-anchor="middle">6G Policy</text>
+          <rect class="tool" x="232" y="72" width="44" height="18" rx="3"/><text x="254" y="86" text-anchor="middle">Tool</text>
+          <rect class="tool" x="322" y="72" width="44" height="18" rx="3"/><text x="344" y="86" text-anchor="middle">Tool</text>
+          <rect class="tool" x="417" y="72" width="44" height="18" rx="3"/><text x="439" y="86" text-anchor="middle">Tool</text>
+          <text x="496" y="68">…</text>
+          <text x="566" y="62" text-anchor="middle" class="pt">可编程</text><text x="566" y="84" text-anchor="middle" class="pt">控制面 CP</text>
+        </g>
+        <!-- DAP -->
+        <g class="hot" data-k="dap" tabindex="0" role="button" aria-label="数据与智能面 DAP">
+          <rect class="pl" x="200" y="150" width="430" height="100" rx="8"/>
+          <text x="566" y="196" text-anchor="middle" class="pt">数据与</text><text x="566" y="218" text-anchor="middle" class="pt">智能面 DAP</text>
+        </g>
+        <g class="hot" data-k="inf" tabindex="0" role="button" aria-label="智能网元"><rect class="nf" x="214" y="172" width="92" height="56" rx="6"/><text x="260" y="205" text-anchor="middle">智能网元</text></g>
+        <g class="hot" data-k="dnf" tabindex="0" role="button" aria-label="数据网元"><rect class="nf" x="316" y="172" width="92" height="56" rx="6"/><text x="362" y="205" text-anchor="middle">数据网元</text></g>
+        <g class="hot" data-k="cnf" tabindex="0" role="button" aria-label="算力网元"><rect class="nf" x="418" y="172" width="92" height="56" rx="6"/><text x="464" y="205" text-anchor="middle">算力网元</text></g>
+        <!-- UP -->
+        <g class="hot" data-k="up" tabindex="0" role="button" aria-label="低时延用户面">
+          <rect class="pl" x="200" y="284" width="430" height="96" rx="8"/>
+          <rect class="nf" x="214" y="302" width="120" height="60" rx="6"/><text x="274" y="328" text-anchor="middle">6G UPF</text>
+          <rect class="tool" x="252" y="336" width="44" height="18" rx="3"/><text x="274" y="350" text-anchor="middle">Tool</text>
+          <text x="566" y="326" text-anchor="middle" class="pt">低时延</text><text x="566" y="348" text-anchor="middle" class="pt">用户面 UP</text>
+        </g>
+        <!-- 连线 -->
+        <path class="ln" d="M415 116V150M415 250V284"/>
+        <path class="ln" d="M409 122l6 -6l6 6M409 144l6 6l6 -6M409 256l6 -6l6 6M409 278l6 6l6 -6"/>
+        <g class="hot" data-k="intent" tabindex="0" role="button" aria-label="意图接口">
+          <rect x="106" y="150" width="94" height="44" fill="transparent"/>
+          <path class="ln" d="M106 176H200M112 170l-6 6l6 6M194 170l6 6l-6 6"/>
+          <text x="153" y="166" text-anchor="middle">意图接口</text>
+          <circle class="num" cx="153" cy="190" r="10"/><text x="153" y="195" text-anchor="middle">1</text>
+        </g>
+        <g class="hot" data-k="gtpu" tabindex="0" role="button" aria-label="GTP-U+">
+          <rect x="106" y="300" width="94" height="44" fill="transparent"/>
+          <path class="ln dash" d="M106 322H200"/>
+          <text x="153" y="314" text-anchor="middle">GTP-U+</text>
+          <circle class="num" cx="153" cy="338" r="10"/><text x="153" y="343" text-anchor="middle">3</text>
+        </g>
+        <circle class="num" cx="618" cy="164" r="10"/><text x="618" y="169" text-anchor="middle">2</text>
+      </svg></div>
+      <div class="arch-cap" id="arch-cap" aria-live="polite"></div>
+    </div>
+  </figure>
+  <p class="pg">原文第 14 页 · 图 11 及其下方的三条特征说明；原文没有画出 DAP 与 CP、UP 之间连线上的接口名，第 23 页的图 18 标为 ABI</p>
+
+  <div class="view"><b>原作观点</b>DAP 的作用是“理解终端任务意图，实现终端任务诉求与网络资源动态匹配”。三类新网元各有分工：智能网元是“网络大脑”，数据网元是“数据中枢”，算力网元提供通算融合服务。</div>
+  <p class="pg">原文第 14 页</p>
+</section>
+
+<!-- ======================= 4 ======================= -->
+<section class="sec" id="path">
+  <div class="sec-head"><h2>怎么走过去：两步平滑演进</h2><span class="meta">原文第 15–24 页 · 第 4 章 · 图 12–19</span></div>
+  <div class="sec-lede">
+    <p>第 4 章回答“现网怎么走到目标架构”。原文图 12 把路径画成两朵“云”：左边是<strong>“5G SA + AI，解锁体验价值”</strong>，5G SA Core 叠加 NWDAF+AI，IMS 叠加 UMF+AI+DC；右边是<strong>“下一代核心网 AI 原生，把握智能体新机遇”</strong>，DAP（智能 / 数据 / 算力网元）、基础联接（6G CP、6G UP）、沉浸式通信（6G IMS、6G UMF）。两朵云的底座相同：智能电信云 + 超融合硬件。中间箭头上写着 Intent interface。</p>
+    <p>原作的说法是：当下构建 Cloud Native 全融合基础网、叠加 AI 网元，让通话、数据等主营业务“焕新增收”，同时让基础设施 <strong>AI Native Ready</strong>；未来通过<strong>软件升级</strong>进入 AI 原生架构。</p>
+    <p class="go">点两个阶段里的条目，看每一步做什么、原作给了哪些数字。</p>
+  </div>
+
+  <div class="road" id="road">
+    <div class="stage now"><span class="tag">当下 · 4.1 节</span><h4>5G SA + AI，解锁体验价值</h4><ul id="road-a"></ul></div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="stage next"><span class="tag">未来 · 4.2 节</span><h4>全栈 AI Native，释放智能体新联接价值</h4><ul id="road-b"></ul></div>
+  </div>
+  <div class="road-cap" id="road-cap" aria-live="polite"></div>
+
+  <h3 class="sub">网元形态怎么变：CNF / CNF+ → ANF<small>原文第 22–23 页 · 图 18</small></h3>
+  <p class="p">这是全书技术含量最集中的一张图。左边是 5G SA 的现状：控制面（AMF/SMF 等）是 CNF，承担 AI 辅助能力的 NWDAF 等是 CNF+（原文第 22 页：引入 AI 网元和 O&amp;M Agent 后，网元从 CNF 延伸到 CNF+、ANF），用户面是 CNF，终端和网络之间靠信令、网元之间靠 SBI。右边是目标形态。</p>
+  <figure class="viz">
+    <p class="viz-title">图 18：CNF/CNF+ 升级为 ANF</p>
+    <div class="seg" role="group" aria-label="切换前后" id="mig-mode">
+      <button type="button" aria-pressed="true" data-m="0">5G SA 今天</button>
+      <button type="button" aria-pressed="false" data-m="1">下一代核心网</button>
+    </div>
+    <div class="scrollx"><svg class="mig" id="mig" viewBox="0 0 560 300" role="img" aria-label="网元形态演进示意">
+      <g id="mig-g"></g>
+    </svg></div>
+    <ul class="mig-list" id="mig-list"></ul>
+  </figure>
+  <p class="pg">原文第 23 页 · 4.2 节三条“网元从 CNF/CNF+ 升级为 ANF”</p>
+
+  <h3 class="sub">运维这条线：AN L4 → AN L4+<small>原文第 20–24 页</small></h3>
+  <p class="p">和网元演进并行的是核心网自身的自治运维。原作基于 TM Forum 定义的高价值场景，结合核心网“高稳”的属性，以<strong>高稳、高效</strong>为两大目标分阶段推进。注意这里的“意图”指运维人员对 O&amp;M Agent 的意图（一站式意图交互入口），和第 3 章终端对网络的“意图接口”是两回事，见下方辨析。</p>
+  <ol class="tl">
+    <li class="a"><i>2025–2027 · 第一阶段</i><b>场景自治（AN L4）</b>引入 O&amp;M Agent，先在故障、变更两个高价值场景实现自治闭环；搭建一站式智能交互入口。</li>
+    <li class="b"><i>2027–2029 · 第二阶段</i><b>单域全场景协同自治（AN L4+）</b>从故障、变更单点场景扩展到规划、建设、维护、优化、运营全链路自治。</li>
+    <li><i>目标网</i><b>O&amp;M Agent 与 ANF 通过 ABI 协同</b>和网元全面演进为 ANF 同步完成，原作称为“全栈 AI Native 目标网”。</li>
+  </ol>
+  <p class="pg">原文第 20–21、24 页 · 原文把这部分编号为“4.2.3”，但它位于 4.1 节之内、4.2 节之前，编号疑为笔误</p>
+</section>
+
+<!-- ======================= 数字 ======================= -->
+<section class="sec" id="nums">
+  <div class="sec-head"><h2>全书数字与来源</h2><span class="meta">按原文顺序汇总，便于引用前核对</span></div>
+  <div class="sec-lede">
+    <p>厂商白皮书最容易被误引的是数字。下表把原文出现的主要数字按顺序列出，并按原文的写法分三类：原文点名第三方机构的、明确是华为自有预测或商用数据的、原文直接陈述没说依据的。<strong>“华为”和“未注出处”两类在引用时建议写成“据华为白皮书”。</strong></p>
+    <p class="go">用按钮按来源筛选。</p>
+  </div>
+  <div class="seg" role="group" aria-label="按来源筛选" id="num-f">
+    <button type="button" aria-pressed="true" data-f="all">全部</button>
+    <button type="button" aria-pressed="false" data-f="t3">第三方</button>
+    <button type="button" aria-pressed="false" data-f="hw">华为</button>
+    <button type="button" aria-pressed="false" data-f="na">未注出处</button>
+  </div>
+  <div class="tbl-wrap"><table class="ntbl"><thead><tr><th>数字</th><th>说的是什么</th><th>来源</th><th>页码</th></tr></thead><tbody id="num-b"></tbody></table></div>
+  <p class="pg">“华为”一类的判断依据：原文用“预计”“预测”或明确说是华为方案在运营商网络的商用效果；“中国移动 AI 通话用户破 1 亿”等运营商数据原文没有给出处，归入“未注出处”</p>
+</section>
+
+<!-- ======================= 辨析 ======================= -->
+<section class="sec" id="learn">
+  <div class="sec-head"><h2>演进链与易混辨析</h2><span class="meta">按原文整理的学习材料</span></div>
+  <div class="sec-lede">
+    <p>原作的叙事可以压成一条链：网络使命、核心网形态、网元形态、运维自治各自往前走一步。把它和几组容易混的概念放在一起看，读其他厂商或 3GPP 的材料时更容易对上号。</p>
+  </div>
+
+  <h3 class="sub" style="margin-top:8px">网元形态演进链</h3>
+  <div class="evo">
+    <div><b>VNF</b>虚机承载的网络功能；全融合电信云用“虚机 + 容器”双栈支撑 VNF 到 CNF 平滑迁移（第 17 页）</div><i>→</i>
+    <div><b>CNF</b>Cloud Native Function，5G SA 的基本形态</div><i>→</i>
+    <div><b>CNF+</b>叠加 AI 能力的 CNF，如 NWDAF+AI、UPF+AI（第 20、22 页）</div><i>→</i>
+    <div class="hi"><b>ANF</b>AI Native Function，原生内嵌 AI 推理、Agent 调度；分 Agent 型与 Tool 型（第 22–23 页）</div>
+  </div>
+
+  <div class="confuses">
+    <div class="confuse"><h4>易混辨析：意图接口 vs 运维意图入口</h4><p><b>意图接口</b>是终端（智能体）和网络之间的接口，替代传统信令，表达体验、组网、算力等任务需求（第 14 页）。<b>一站式意图交互入口</b>是运维人员与 O&amp;M Agent 之间的多轮对话入口，属于自治网络运维（第 20–21 页）。前者是业务面的事，后者是管理面的事。</p></div>
+    <div class="confuse"><h4>易混辨析：NWDAF 与 DAP 智能网元</h4><p>5G SA 里 <b>NWDAF</b> 是做数据分析的网元，叠加 AI 后成为 CNF+，用于体验保障闭环（第 20 页）。到目标网，原作说 NWDAF 等<b>演进为 DAP 平面的智能网元</b>，形态升级为 ANF（Agent），而且业务处理入口从控制面迁到 DAP（第 23 页）。也就是从“旁路分析”变成“业务入口”。</p></div>
+    <div class="confuse"><h4>易混辨析：ANF（Agent）vs ANF（Tool）</h4><p><b>ANF（Agent）</b>在 DAP，负责理解意图、分解动作、驱动流程。<b>ANF（Tool）</b>是增强后的控制面和用户面网元，内嵌“可供智能体调用的 Tool”，被 DAP 调用（第 23 页）。控制面和用户面没有消失，而是变成工具。</p></div>
+    <div class="confuse"><h4>易混辨析：SBI vs ABI</h4><p><b>SBI</b> 是 5G 服务化接口，图 18 左侧控制面与智能面之间用它。<b>ABI</b>（Agent Based Interface）是图 18 右侧 DAP 与 CP、UP 之间的接口，也用于 O&amp;M Agent 与 ANF 协同（第 23–24、26 页）。原文没有给出 ABI 的协议细节。</p></div>
+    <div class="confuse"><h4>易混辨析：比特级时延 vs 任务级时延</h4><p>白皮书正文说算力网元保障“任务级时延需求”，AI 任务低时延调度要保障“单次 AI 任务全量 Token 在确定性时限内完成传输”（第 11、14 页）。“从比特级时延到任务级时延”“带内端网协同实现毫秒级时延”是发布新闻稿里的提法。</p></div>
+    <div class="confuse"><h4>易混辨析：AN L4 vs AN L4+</h4><p><b>AN L4</b> 在原文中指故障、变更等高价值<b>单场景</b>自治（场景自治）；<b>AN L4+</b> 指核心网<b>单域全场景</b>协同自治（第 20–21、24 页）。两者都限于核心网单域，原文没有讨论跨域自治。</p></div>
+  </div>
+</section>
+
+<!-- ======================= 自测 ======================= -->
+<section class="sec" id="quiz">
+  <div class="sec-head"><h2>自测</h2><span class="meta">先自己答，再点开对照原文</span></div>
+  <div class="sec-lede"><p>八道题覆盖全书主线，答案按原文整理并注明页码。</p></div>
+  <div class="quiz">
+    <details><summary><span>Q1</span>原作说智能体时代移动网络有哪三个方向的机遇？</summary><p>联接对象从人和物到智能体；网络服务从联接到超越联接；交互体验从基于屏幕的通话到沉浸式通信。<em>第 02–05 页</em></p></details>
+    <details><summary><span>Q2</span>移动终端的“不可能三角”指哪三者？端云协同的核心体验指标是什么？</summary><p>算力、功耗、重量；核心体验指标是任务时延，即 TTFT（首 Token 时延）。<em>第 04 页</em></p></details>
+    <details><summary><span>Q3</span>为什么原作认为核心网要从信令驱动转向意图驱动？</summary><p>智能体要求网络围绕任务目标实时感知、动态调参、动态组网、灵活调度算力；它与网络的交互频度和复杂度各提升 10 倍，整体交互量增加 100 倍，信令驱动的预设联接无法满足。<em>第 08 页</em></p></details>
+    <details><summary><span>Q4</span>智能体通信网络要求网络具备哪三项共性能力？</summary><p>可信数字身份（基于 SIM 的身份体系为智能体发放身份）、基于任务的智能体组网、基于技能的路由。<em>第 09–10 页</em></p></details>
+    <details><summary><span>Q5</span>AI Native 核心网的三大特征是什么？DAP 包含哪三类网元？</summary><p>意图接口、数据与智能面 DAP、低时延用户面（支持 GTP-U+）；DAP 包含智能网元、数据网元、算力网元。<em>第 14 页</em></p></details>
+    <details><summary><span>Q6</span>“5G SA + AI”阶段，上网 +AI 引入了哪三类 AI 增强网元，实现哪四件事？</summary><p>AM-PCF、NWDAF+AI、UPF+AI；实现身份可视、体验可保、效果可证、精准推荐。<em>第 20 页</em></p></details>
+    <details><summary><span>Q7</span>到目标网，控制面和用户面网元变成什么形态？和 DAP 通过什么接口协同？</summary><p>升级为 ANF（Tool），内嵌可供智能体调用的 Tool；通过 ABI 与 DAP 协同。NWDAF 等则演进为 DAP 平面的 ANF（Agent）。<em>第 23 页</em></p></details>
+    <details><summary><span>Q8</span>AI Native 基础设施在硬件和电信云两层各做了什么升级？</summary><p>硬件：CPU、DPU、NPU 异构算力通过高速并行总线对等直连的超融合架构；电信云：引入轻量沙箱、Serverless 等面向智能体的运行时，实例启动从秒级压到毫秒级，并支持专用 AI 推理引擎和智能体框架。<em>第 22 页</em></p></details>
+  </div>
+</section>
+
+<!-- ======================= 金句 ======================= -->
+<section class="sec" id="quotes">
+  <div class="sec-head"><h2>原文金句</h2><span class="meta">中文版原句，附英文版对应句</span></div>
+  <div class="sec-lede"><p>这几句最能代表作者的立场，引用时可以直接用。</p></div>
+  <div class="quotes">
+    <blockquote class="quote"><p>AI 是移动网络未来十年最大的战略机遇。</p><p class="en">AI represents the largest strategic opportunity for mobile networks over the next decade.</p><cite>第 02 页 · 第 2 章开篇</cite></blockquote>
+    <blockquote class="quote"><p>智能体时代，终端从交互入口转向任务执行节点。</p><p class="en">In the agentic era, terminals are shifting from mere interaction entry points to task execution nodes.</p><cite>第 04 页 · 2.2 节</cite></blockquote>
+    <blockquote class="quote"><p>传统网络是信令驱动的预设联接，无法满足新需求，下一代核心网需向意图驱动的网络架构演进。</p><p class="en">Traditional networks rely on signaling-driven preset connections, which fail to meet new requirements. Therefore, the Next-Gen core network needs to evolve to an intent-driven network architecture.</p><cite>第 08 页 · 第 3 章开篇</cite></blockquote>
+    <blockquote class="quote"><p>应借鉴 5G NSA/SA 多架构路线的经验与教训。</p><p class="en">… with the experience and lessons of the 5G NSA/SA multi-architecture path taken into consideration.</p><cite>第 13 页 · 3.4 节</cite></blockquote>
+    <blockquote class="quote"><p>端网交互由传统信令交互演进为意图交互，业务处理入口由控制面向 DAP 平面迁移。</p><p class="en">Terminal-network interaction evolves from traditional signaling to intent-based models, with the service processing entry moving from the control plane to the DAP.</p><cite>第 23 页 · 4.2 节</cite></blockquote>
+  </div>
+</section>
+
+<!-- ======================= 术语 ======================= -->
+<section class="sec" id="glossary">
+  <div class="sec-head"><h2>术语速查</h2><span class="meta">按原文正文与第 26 页缩略语表改写</span></div>
+  <dl class="qa gloss" style="margin-top:20px">
+    <dt>NGC（Next-Gen Core）</dt><dd>下一代核心网。按华为新闻稿的说法，NGC 是华为 AgenticCore 解决方案面向智能体时代的 AI 原生目标网络架构。白皮书正文只用“下一代核心网”，没有出现 NGC 缩写。</dd>
+    <dt>AI Native 核心网</dt><dd>原文图 11 的目标架构，具备意图接口、数据与智能面、低时延用户面三大特征。</dd>
+    <dt>意图接口</dt><dd>智能体终端向网络传递面向任务的差异需求（体验 / 组网 / 算力等）的接口；新闻稿补充说明是“半结构化”的意图表达。</dd>
+    <dt>DAP（Data &amp; AI Plane）</dt><dd>数据与智能面，在控制面和用户面之外新增，理解终端任务意图并动态匹配网络资源；含智能网元、数据网元、算力网元。</dd>
+    <dt>智能网元</dt><dd>“网络大脑”：理解终端意图，分解为可执行动作，驱动业务流程，提供体验保障、动态组网、意图与技能匹配等服务。</dd>
+    <dt>数据网元</dt><dd>“数据中枢”：对用户、网络、算力做实时画像，支撑智能决策和体验保障。</dd>
+    <dt>算力网元</dt><dd>提供通算融合服务，保障任务级时延；通过网内算力资源提供标准化算力服务。</dd>
+    <dt>GTP-U+</dt><dd>低时延用户面支持的增强 GTP-U，通过端网协同保障 AI 任务低时延调度。原文没有给出协议细节。</dd>
+    <dt>CNF / CNF+ / ANF</dt><dd>云原生网络功能 / 叠加 AI 能力的 CNF / AI Native Function（原生内嵌 AI 推理、Agent 调度等能力）。</dd>
+    <dt>ABI（Agent Based Interface）</dt><dd>基于智能体的接口，用于 DAP 与 CP、UP 之间，以及 O&amp;M Agent 与 ANF 之间的协同。</dd>
+    <dt>AI Native Ready</dt><dd>基础设施层面先具备承载 AI 网元和 O&amp;M Agent 的能力（超融合硬件 + 智能电信云），为后续软件升级到全栈 AI Native 做准备。</dd>
+    <dt>TTFT（Time to First Token）</dt><dd>首 Token 时延，原作定义的端云协同核心体验指标。</dd>
+    <dt>IMS DC（Data Channel）</dt><dd>IMS 数据通道，承载沉浸式通信的多模态数据，也是“通话 +AI”交互跃升阶段的基础。</dd>
+    <dt>AN L4 / L4+</dt><dd>自治网络等级；原文中 L4 指故障、变更场景自治，L4+ 指核心网单域全场景协同自治。</dd>
+    <dt>Byte+Token 融合运营</dt><dd>原文在“算力路由”里提出：打通流量套餐与 Token 套餐，提供一站式订购入口。</dd>
+    <dt>UMF</dt><dd>图 12 中与 IMS 并列出现（UMF+AI+DC、6G UMF），原文正文和缩略语表都没有展开，不要自行补全。</dd>
+  </dl>
+</section>
+
+<!-- ======================= 读后 ======================= -->
+<section class="sec" id="after">
+  <div class="sec-head"><h2>读后</h2><span class="meta">以下是我的整理，不是原文内容</span></div>
+  <div class="two" style="margin-top:24px">
+    <div class="mine">
+      <h3>从这份白皮书看到的行业动向</h3>
+      <p class="hint">只做归纳，不做延伸。</p>
+      <ol>
+        <li><b>“智能体进核心网”的落点是新增一个面，而不是改造控制面。</b>DAP 承接意图、做决策；CP、UP 退为可被调用的 Tool。“业务处理入口由控制面向 DAP 迁移”是全书对现有 5GC 架构改动最大的一句话。</li>
+        <li><b>意图取代信令成为端网交互方式。</b>这意味着终端侧要有 Agent 框架，原文把它画在终端里，但没有讨论终端生态怎么跟上。</li>
+        <li><b>运营商的商业抓手被放在通话和体验经营上。</b>第 4 章前半部分篇幅最大的是 AI 通话和体验套餐闭环，智能体新联接放在“未来”。路线明显是先用现网收入撑住演进。</li>
+        <li><b>算力被纳入核心网职责。</b>模型路由网关、算力调度、IaaS/PaaS/MaaS 标准算力服务、Byte+Token 融合套餐都写进了核心网的能力清单。</li>
+        <li><b>“避免再走多架构路线”是对标准化的隐含表态。</b>原文提到借鉴 5G NSA/SA 的经验教训，但没有点名任何标准组织或版本。</li>
+      </ol>
+    </div>
+    <div class="mine">
+      <h3>引用前要核对的地方</h3>
+      <p class="hint">来自原文与发布新闻稿、媒体报道的对照。</p>
+      <ol>
+        <li><b>“AgenticCore”和“NGC”不在正文里。</b>两个名字都来自华为新闻稿（“NGC 是华为 AgenticCore 解决方案……的 AI 原生目标网络架构”）。白皮书正文中英文版都没有出现这两个词。</li>
+        <li><b>正文没有提 3GPP。</b>部分媒体解读把它和 3GPP Rel-19/Rel-20 的 AI/ML 研究联系起来，这是解读者的关联，原文中英文版都没有出现 3GPP 或任何 Release 编号。</li>
+        <li><b>“把智能体能力内嵌到控制面”与原文不符。</b>原文是在 CP、UP 之外新增 DAP，控制面只是“增强可编程能力”、内嵌 Tool。</li>
+        <li><b>部分提法只在新闻稿里。</b>“半结构化意图”“从传输比特到分发智能”“从比特级时延到任务级时延”“带内端网协同、毫秒级时延”“百亿人到千亿智能体”均出自新闻稿，正文没有这些句子。</li>
+        <li><b>原文编号有瑕疵。</b>“4.2.3 基础设施 AI Native 先行”位于 4.1 节内；图号在图题和图旁标签之间也有错位（如“图 16”与“图 15”）。本文按图题引用。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="about" aria-labelledby="about-h">
+  <h2 id="about-h">关于这篇解读</h2>
+  <div>
+    <p>内容来自华为技术有限公司发布的《下一代核心网演进白皮书：从 Cloud Native 到 AI Native，持续释放商业潜能》（迈向智能世界系列，© 华为技术有限公司 2026）。原文可从华为官网获取：<a href="https://www-file.huawei.com/dam/asset/view/next-gen-core-network-evolution-white-paper-cn.pdf" rel="noopener">中文版 PDF</a>、<a href="https://www-file.huawei.com/dam/asset/view/next-gen-core-network-evolution-white-paper-en.pdf" rel="noopener">英文版 PDF</a>。发布背景参考了华为新闻稿<a href="https://www.huawei.com/cn/news/2026/11/agenticcore-whitepaper" rel="noopener">《华为发布下一代核心网演进白皮书……》</a>（2026-11-19）。</p>
+    <p>本文以转述原文观点为主，每一节都标了原文页码；“原作观点”框是对作者立场的转述，“原文金句”是原句摘录；图是按原文图示重画的。“演进链与易混辨析”“自测”是按原文内容做的学习材料；“读后”一节是我的归纳，与原文区分开。概念与表述以原文为准。</p>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>AI 观察笔记</span>
+    <span>原文：华为《下一代核心网演进白皮书》</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+'use strict';
+function $(s, r) { return (r || document).querySelector(s); }
+function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function press(group, btn) { group.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); }); }
+var SRC = { t3: '第三方', hw: '华为', na: '未注出处' };
+function tag(k, who) { return '<span class="src ' + k + '">' + (who || SRC[k]) + '</span>'; }
+
+/* ---------- 三个机遇 ---------- */
+var shifts = [
+  ['联接对象', '从人和物到智能体', '原文第 02–04 页 · 2.1 节',
+    '智能体在大模型基座上实现“感知—决策—行动—反思”闭环，自主执行边界不断拓展，并开始重塑应用和终端：应用从消费走向企业，终端从数字世界走向物理世界。原作预计未来 5–10 年智能体将成为移动网络的核心联接对象，跨域、跨生态的多智能体协作会覆盖生活、办公、工厂等场景。',
+    [['约 4 个月翻倍', '智能体自主任务时长：2019–2024 年约 7 个月翻倍，2024 年后加速到约 4 个月', tag('t3', 'METR')],
+     ['超 20 亿', '独立个人 AI 助手（ChatGPT、Gemini、豆包等）全球用户；全球 TOP 100 消费者 App 中约 80% 已内嵌 AI 助手', tag('na')],
+     ['5% → 40%', '集成任务专用智能体的企业应用占比，2025 年不足 5%，2026 年底预计达 40%', tag('t3', 'Gartner')],
+     ['45%', '2026 年全球 AI 手机出货渗透率预测，国内超过 50%', tag('t3', 'Counterpoint')],
+     ['超 100%', '2026 年 AI 穿戴设备（眼镜、手表、耳机）出货增速', tag('na')],
+     ['10 个', '预计到 2030 年平均每个用户同时拥有的智能体数量', tag('hw', '华为预测')]]],
+  ['网络服务', '从联接到超越联接', '原文第 04–05 页 · 2.2 节',
+    '原作说，智能体时代终端从交互入口转向任务执行节点：AI 终端要承接用户目标，完成意图理解、任务规划、工具调用与闭环执行。但终端算力受“不可能三角”约束，端云协同是长期趋势，于是“面向海量终端的低时延算力服务”成为移动网络的新增长机会。下方有两张图细看。',
+    [['100T / 200B', '2030 年领先模型参数可达 100T；复杂任务模型需 200B 以上', tag('hw', '华为预测')],
+     ['20% 以上', '2030 年低时延端云协同请求占端侧发起协同任务的比例', tag('hw', '华为预测')],
+     ['400ms', 'AI 实时交互“极致体验”TTFT 要求；工业控制极致档低至 10ms', tag('na')]]],
+  ['交互体验', '从基于屏幕的通话到沉浸式通信', '原文第 05–06 页 · 2.3 节',
+    '原作从三项技术推演通话形态的变化：AR 显示突破（碳化硅光波导 + 全彩 MicroLED，整机 40g 以内）、空间音频（声源随头部姿态锚定在物理空间）、AI 多模态交互（语音、手势、眼动）。结论是运营商可以依托标准 IMS DC 能力扩展沉浸式通信业务。',
+    [['4g / 50°', '碳化硅光波导单镜片重量与视场角（玻璃光波导为 6g / 30°）', tag('na')],
+     ['40g 以内', '新一代 AR 眼镜整机重量，支持常规近视配镜', tag('na')],
+     ['2030 年前后', '新光学方案规模量产，AR 终端出货有望迎来增长拐点；全彩 MicroLED 2028 高端量产、2030 主流量产', tag('hw', '原文预测')]]]
+];
+var shBox = $('#shift'), shCap = $('#shift-cap');
+shifts.forEach(function (s, i) {
+  var b = h('button', '', '<b>' + s[0] + '</b>' + s[1]); b.type = 'button';
+  b.addEventListener('click', function () {
+    press(shBox, b);
+    shCap.innerHTML = '<p>' + s[3] + '</p><ul class="facts">' + s[4].map(function (f) {
+      return '<li><span class="n">' + f[0] + '</span><span>' + f[1] + ' ' + f[2] + '</span></li>';
+    }).join('') + '</ul><p class="pg">' + s[2] + '</p>';
+  });
+  shBox.appendChild(b);
+  if (i === 0) b.click();
+});
+
+/* ---------- 算力范围条 ---------- */
+var dev = [
+  ['AI 手机', 40, 70, 100, 200, '7–14B'],
+  ['AI 眼镜', 5, 15, 30, 60, '2–4B'],
+  ['AI 手表', 5, 12, 20, 40, '1–2B'],
+  ['AI 玩具', 0.1, 1, 1, 5, '0.1–0.2B'],
+  ['人形机器人', 50, 200, 400, 1000, '20–70B']
+];
+(function () {
+  var svg = $('#rg'), NS = 'http://www.w3.org/2000/svg', x0 = 120, x1 = 700, lo = -1, hi = 3;
+  function X(v) { return x0 + (Math.log10(v) - lo) / (hi - lo) * (x1 - x0); }
+  var s = '<g class="ax">';
+  [0.1, 1, 10, 100, 1000].forEach(function (v) { s += '<line x1="' + X(v) + '" x2="' + X(v) + '" y1="10" y2="272"/><text x="' + X(v) + '" y="292" text-anchor="middle">' + v + '</text>'; });
+  s += '</g>';
+  dev.forEach(function (d, i) {
+    var y = 18 + i * 52;
+    s += '<g class="row" data-i="' + i + '" tabindex="0" role="button" aria-label="' + d[0] + '"><rect class="hit" x="0" y="' + (y - 6) + '" width="720" height="48" rx="4"/>' +
+      '<text class="lbl" x="8" y="' + (y + 22) + '">' + d[0] + '</text>' +
+      '<rect class="r26" x="' + X(d[1]) + '" y="' + y + '" width="' + Math.max(4, X(d[2]) - X(d[1])) + '" height="14" rx="3"/>' +
+      '<rect class="r30" x="' + X(d[3]) + '" y="' + (y + 18) + '" width="' + Math.max(4, X(d[4]) - X(d[3])) + '" height="14" rx="3"/></g>';
+  });
+  svg.innerHTML = s;
+  var cap = $('#rg-cap');
+  function pick(i) {
+    var d = dev[i];
+    svg.querySelectorAll('.row').forEach(function (r) { r.classList.toggle('on', +r.getAttribute('data-i') === i); });
+    cap.innerHTML = '<b>' + d[0] + '</b>：2026 年 ' + d[1] + '–' + d[2] + ' TOPS，2030 年预测 ' + d[3] + '–' + d[4] + ' TOPS，支持模型参数 ' + d[5] + '。对照原文同页：复杂任务模型需 200B 以上，表中最高的人形机器人也只到 70B。';
+  }
+  svg.querySelectorAll('.row').forEach(function (r) {
+    var i = +r.getAttribute('data-i');
+    r.addEventListener('click', function () { pick(i); });
+    r.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(i); } });
+  });
+  pick(0);
+})();
+
+/* ---------- TTFT ---------- */
+var tt = [
+  ['AI 实时交互', 'AI 眼镜导航、小艺看世界、豆包电话', [1200, 650, 400]],
+  ['具身智能行动', '具身智能巡逻、机器狗避障、AMR 智能搬运', [650, 400, 100]],
+  ['工业控制', '远程控制、机器视觉、机械臂实时分拣', [100, 50, 10]]
+];
+var tierN = ['基础', '优秀', '极致'];
+(function () {
+  var box = $('#ttft');
+  tt.forEach(function (r) {
+    var row = h('div', 'tt-row', '<div class="nm">' + r[0] + '<small>' + r[1] + '</small></div>');
+    var bars = h('div', 'tt-bars');
+    r[2].forEach(function (v, j) {
+      bars.appendChild(h('div', 'tt-bar t' + j, '<div class="track"><div class="fill" style="width:' + (v / 1200 * 100) + '%"></div></div><span class="v">' + v + 'ms</span>'));
+    });
+    bars.setAttribute('aria-label', r[0] + '：' + r[2].map(function (v, j) { return tierN[j] + ' ' + v + 'ms'; }).join('，'));
+    row.appendChild(bars); box.appendChild(row);
+  });
+  var g = $('#tt-mode');
+  g.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      press(g, b); var t = b.getAttribute('data-t');
+      box.querySelectorAll('.tt-bar').forEach(function (e) { e.classList.toggle('off', t !== 'all' && !e.classList.contains('t' + t)); });
+    });
+  });
+})();
+
+/* ---------- 三大场景 ---------- */
+var scn = [
+  ['智能体通信网络', '新联接：扩展智能体专用联接', '原文第 08–10 页 · 3.1 节',
+    ['<b>个人场景</b>：从以手机为中心的单一联接，到以人为中心的多智能体通信。同一个人的 AI 手机、AR 眼镜、AI 玩具、AI PC、家庭虚拟管家等可共享个人记忆数据、AI PC 算力和 Token 套餐，组成个人专网。例子：出差远程伴学、生活出行协同、社区快递取件。',
+     '<b>企业场景</b>：从单一智能体完成特定功能，到多智能体协同完成复杂任务。例子：高海拔电力场景人形机器人安装巡检 + 机器狗配送备件；赛事安保 AR 眼镜下令、机器狗巡逻、无人机取证；智慧工厂、智慧工地、事故救援中的临时组队。'],
+    [['可信数字身份', '依托基于 SIM 的用户身份管理体系，为智能体发放可信数字身份，维护智能体与归属用户的映射，提供全生命周期身份管控与鉴权，做到接入可信、身份不可篡改、行为可追溯。原作的理由是各厂商智能体身份格式不统一，统一身份是互信与协同的基础。', '第 09 页'],
+     ['基于任务的智能体组网', '原生具备高效意图交互机制，识别并解析用户任务意图，按任务动态构建多智能体协作网络；同时保障智能体间通信数据不出网、信息不外泄。', '第 10 页'],
+     ['基于技能的路由', '支持智能体身份、Skill 及各类属性元信息的注册与持久存储，提供任务粒度的动态权限授权；基于任务意图完成技能精准匹配，实现协作智能体的发现与通信路由。', '第 10 页']]],
+  ['通算融合服务', '新能力：构建通算融合服务', '原文第 10–11 页 · 3.2 节',
+    ['按算力部署位置分三类：<b>网外算力</b>（云服务商的中心或边缘 AI DC，网络负责接入与算力路由，追求算力性价比）、<b>网内算力</b>（运营商在网络边缘自建，网络与算力统一管控，满足低时延任务）、<b>移动端侧算力</b>（以车载算力为例，闲时复用）。',
+     '车载算力的论据：截至 2025 年底中国新能源汽车保有量 4000 多万辆、充电设施超 2000 万个；主流高端车型车载算力 500–2000 TOPS，超七成长期闲置（原文未注出处）。'],
+    [['算力路由', '部署模型路由网关，以运营商码号作为用户大模型服务的唯一身份标识，“开机联网、联网即智能”；按模型效果、调用成本、节点负载、SLA 动态选路；搭建 Byte+Token 融合运营体系，打通流量套餐与 Token 套餐。', '第 11 页'],
+     ['算力调度', '汇聚车辆、终端等边缘节点的闲置算力形成全局资源池；通算融合调度引擎综合时延、吞吐、利用率、负载等约束，联合优化通信与算力资源。', '第 11 页'],
+     ['标准算力服务', '依托海量机房构筑分布式算力底座，提供 IaaS（算力资源）、PaaS（分布式推理）、MaaS（AI 模型）分层标准化服务。', '第 11 页'],
+     ['AI 任务低时延调度', '为 AI 任务承载专属传输通道，保障单次 AI 任务全量 Token 在确定性时限内传完；AI 实时交互网络传输可控制在 50ms 以内，支撑端到端 400ms；支持终端用意图申请算力服务。', '第 11 页']]],
+  ['沉浸式通信', '新业务：跃升通话业务体验', '原文第 11–13 页 · 3.3 节',
+    ['四个典型场景：沉浸式通话、沉浸式会议、AR 购物、AR 维修。',
+     '三大关键特征：<b>全息呈现</b>（三维建模与实时渲染）、<b>空间音频</b>（声场重建）、<b>多模态交互</b>（语音、手势、眼动、触觉）。'],
+    [['Data Channel', '多模态数据（文本、音视频、图像、动作、场景描述，以及模型操控、表情、位姿、触感等 AR 信息）高码率、突发、非连续，需要专用通道承载。', '第 13 页'],
+     ['多模态数据同步', '远程手术、工业维修等场景里触觉和视觉错位会引发误判；存在依赖关系的跨多路数据流分组须在指定时间窗口内同步送达，端到端时延预算要精细管控。', '第 13 页'],
+     ['渲染卸载', '多数 AI 眼镜算力不足：终端把位姿、场景原始数据经辅助数据通道上传，核心网完成云端渲染，再经媒体流通道下发增强后的 AR 画面。', '第 13 页']]]
+];
+(function () {
+  var g = $('#scn-mode'), L = $('#scn-l'), C = $('#scn-caps'), P = $('#scn-pg');
+  scn.forEach(function (s, i) {
+    var b = h('button', '', s[0]); b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', function () {
+      press(g, b);
+      L.innerHTML = '<h4>' + s[0] + '</h4><p class="en">' + s[1] + '</p>' + s[3].map(function (t) { return '<p>' + t + '</p>'; }).join('');
+      C.innerHTML = s[4].map(function (c) { return '<div class="cap"><b>' + c[0] + '</b><span>' + c[1] + '</span><i>' + c[2] + '</i></div>'; }).join('');
+      P.textContent = s[2];
+    });
+    g.appendChild(b);
+    if (i === 0) b.click();
+  });
+})();
+
+/* ---------- 架构图 ---------- */
+var arch = {
+  intent: ['意图接口', '特征 ① · Intent interface', ['支持智能体终端传递<b>面向任务的差异需求（体验 / 组网 / 算力等）</b>，提升智能体使用网络服务的便捷性。', '在图 05 里，它对应 5G 核心网下方的“信令”被替换成“意图”；在第 23 页，原作说端网交互由传统信令交互演进为意图交互。', '新闻稿补充：智能体终端以“半结构化”的意图传递需求，“从刚性的信令到灵活的意图表达”。正文没有给出意图的格式或协议。'], '第 14、23 页'],
+  dap: ['数据与智能面 DAP', '特征 ② · Data & AI Plane', ['在控制面和用户面基础上<b>新增</b>的平面，作用是<b>理解终端任务意图，实现终端任务诉求与网络资源动态匹配</b>。', '由三类网元组成：智能网元、数据网元、算力网元（点图中的方块分别查看）。', '到目标网时，业务处理入口从控制面迁移到 DAP，NWDAF 等网元演进为 DAP 平面的智能网元，形态为 ANF（Agent）。'], '第 14、23 页'],
+  inf: ['智能网元', 'DAP 的“网络大脑”', ['<b>理解终端意图，将意图分解为可执行动作，驱动业务流程</b>。', '提供的网络服务举例：体验保障、动态组网、意图与技能匹配。对应第 3.1 节的“基于任务的智能体组网”“基于技能的路由”。'], '第 14 页'],
+  dnf: ['数据网元', 'DAP 的“数据中枢”', ['对<b>用户 / 网络 / 算力</b>做实时画像，支撑智能决策和体验保障。', '原文没有展开数据网元与现有 NWDAF、UDM 等的关系。'], '第 14 页'],
+  cnf: ['算力网元', 'DAP 的通算融合能力', ['<b>提供通算融合服务，保障任务级时延需求</b>；通过网内算力资源提供标准化算力服务。', '对应第 3.2 节的算力路由、算力调度、标准算力服务、AI 任务低时延调度。'], '第 14 页'],
+  cp: ['可编程控制面 CP', '6G AM / 6G SM / 6G Policy …', ['图中控制面网元以“6G AM、6G SM、6G Policy”命名，每个都挂着一个 <b>Tool</b>。', '第 23 页的解释：承载基础联接的控制面<b>增强可编程能力</b>，内嵌可供智能体调用的 Tool，通过 ABI 与 DAP 协同，形态升级为 ANF（Tool）。', '原文没有说明 6G AM、6G SM 与 5G AMF、SMF 的功能对应关系。'], '第 14、23 页'],
+  up: ['低时延用户面 UP', '特征 ③ · 6G UPF', ['支持 <b>GTP-U+</b>，通过端网协同保障 AI 任务低时延调度。', '用户面网元同样内嵌 Tool、形态升级为 ANF（Tool）。', '和第 3.2 节呼应：为 AI 任务承载专属传输通道，保障单次任务全量 Token 在确定性时限内完成传输。'], '第 11、14、23 页'],
+  gtpu: ['GTP-U+', '终端与低时延用户面之间', ['原文只有一句：<b>低时延用户面支持 GTP-U+，通过端网协同保障 AI 任务低时延调度</b>。', '新闻稿的表述是“通过带内端网协同实现毫秒级 AI 任务时延保障”。GTP-U+ 具体增强了什么，正文没有展开。'], '第 14 页'],
+  ue: ['终端与 Agent 框架', '图 11 左侧', ['图中终端内画了一个 <b>Agent 框架</b>，通过意图接口与 DAP 交互，通过 GTP-U+ 与用户面交互。', '第 2 章的背景：智能体时代终端从交互入口转向任务执行节点，可承接用户目标，完成意图理解、任务规划、工具调用与闭环执行。'], '第 04、14 页']
+};
+(function () {
+  var svg = $('#arch'), cap = $('#arch-cap');
+  function show(k) {
+    var a = arch[k];
+    svg.querySelectorAll('.hot').forEach(function (g) { g.classList.toggle('on', g.getAttribute('data-k') === k); });
+    cap.innerHTML = '<h4>' + a[0] + '</h4><p class="en">' + a[1] + '</p>' + a[2].map(function (t) { return '<p>' + t + '</p>'; }).join('') + '<p class="pg">原文' + a[3] + '</p>';
+  }
+  svg.querySelectorAll('.hot').forEach(function (g) {
+    var k = g.getAttribute('data-k');
+    g.addEventListener('click', function (e) { e.stopPropagation(); show(k); });
+    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(k); } });
+  });
+  show('dap');
+})();
+
+/* ---------- 演进路径 ---------- */
+var road = {
+  a: [
+    ['全融合 5G SA 基础网', '4.1.1 · 第 16–17 页', '构建基于 Cloud Native 的全融合基础网络，既释放 5G SA 高阶联接价值，也是迈向下一代核心网的演进基石。',
+      ['<b>5G SA 高阶价值</b>：3CC 及以上载波聚合，带宽增益 50% 以上、时延降低 30% 以上，终端功耗下降 10%~20%；用户级切片 + 专属 UE Logo；RedCap 新联接。' + tag('na'),
+       '<b>全融合</b>：融合分组核心网、融合话音核心网、融合电信云，2/3/4/5G 多代际网元融合部署，虚机到容器平滑演进。',
+       '<b>四点收益</b>：网络极简（资源利用率提升 30% 以上' + tag('na') + '）、平滑迁移（一键完成 4G/NSA→SA、CS→VoLTE）、弹性敏捷、体验优化（融合网元内部处理逻辑接口信令）。']],
+    ['通话 + AI', '4.1.2 · 第 18–19 页', '在 VoLTE/VoNR 核心网中引入 AI 通话新网元，按本地市场诉求和终端成熟节奏分三级释放价值。',
+      ['<b>体验跃升</b>：静谧通话（AI 降噪），不依赖终端改造，单用户订购双向受益。',
+       '<b>业务跃升</b>：通话助理（AI 同传、AI 摘要、AI 防欺诈、AI 代接），终端有视频通道时扩展可视通话、实时翻译。',
+       '<b>交互跃升</b>：终端生态成熟后引入 Data Channel，通话中完成人脸核验、身份确认、支付验证，“一通电话闭环业务”。',
+       '<b>商用进展</b>：截至 2026 年 10 月中国移动 AI 通话用户突破 1 亿，近 50 家运营商明确表达升级意愿；另列举 SKT、LG U+、德国电信、Orange、沃达丰、AT&amp;T、T-Mobile US、STC 等。' + tag('na')]],
+    ['上网 + AI', '4.1.3 · 第 19–20 页', '流量增长放缓，驱动运营商从流量经营走向体验经营；但现有体验套餐难以闭环，拥塞时体验差异不明显，用户规模有限。',
+      ['<b>背景数字</b>：2026–2027 年 DOU 增速小幅回升至 14%，中长期稳定在 11%–12%' + tag('t3', 'GSMA Intelligence') + '；全球超过 30 家运营商推出基于速率或体验计费的套餐。' + tag('na'),
+       '<b>三类 AI 增强网元</b>：AM-PCF、NWDAF+AI、UPF+AI。',
+       '<b>四件事</b>：身份可视（AM-PCF 推送 UE Logo）、体验可保（NWDAF+AI 智能选切片）、效果可证（自动生成体验报告并短信推送）、精准推荐（UPF+AI 实时感知 QoE，NWDAF 对接 B 域推荐套餐）。']],
+    ['基础设施 AI Native 先行', '原文编号 4.2.3 · 第 20–22 页', '核心网 AN L4 以高稳、高效为目标；同时把基础设施升级为 AI Native Ready，既承载 AI 新网元和 O&amp;M Agent，也支撑后续平滑演进。',
+      ['<b>O&amp;M Agent 商用效果</b>：全球 20 多个运营商商用部署，故障处理效率提升 60% 以上，业务 15 分钟快速恢复。' + tag('hw', '华为商用数据'),
+       '<b>三项自治</b>：一站式意图交互入口（意图识别准确率超 90%，运维效率提升 30% 以上）；故障自治（平均恢复从 90 分钟到 15 分钟）；变更自治（大模型生成配置 + 数字孪生验证，上线从小时级到分钟级）。' + tag('hw', '华为商用数据'),
+       '<b>超融合硬件</b>：CPU、DPU、NPU 对等互联，推理带宽较 PCIe 提升 10 倍、时延降低 70%，资源利用率提升 50%。' + tag('hw', '华为产品数据'),
+       '<b>智能电信云</b>：轻量沙箱、Serverless，实例启动从秒级到毫秒级；专用 AI 推理引擎，推理成本降低 30%。' + tag('hw', '华为产品数据')]]
+  ],
+  b: [
+    ['网元升级为 ANF', '4.2 · 第 23 页', '在基础设施 AI Native Ready 的基础上，通过<b>软件升级</b>进入 AI Native 架构。',
+      ['端网交互由传统信令交互演进为<b>意图交互</b>，业务处理入口由控制面向 <b>DAP</b> 迁移。',
+       'NWDAF 等承担 AI 辅助能力的网元演进为 DAP 平面智能网元，形态由 CNF+ 升级为 <b>ANF（Agent）</b>。',
+       '控制面增强可编程能力，用户面支持 AI 任务低时延调度，内嵌可供智能体调用的 Tool，通过 ABI 与 DAP 协同，形态升级为 <b>ANF（Tool）</b>。']],
+    ['AN L4 → AN L4+ 单域自治', '4.2 · 第 24 页', 'O&amp;M Agent 与 ANF 网元通过 ABI 接口协同，实现核心网单域全场景协同自治。',
+      ['能力从故障、变更单点场景，扩展到规划、建设、维护、优化、运营全流程自治。']],
+    ['基础设施按需扩容', '4.2 · 第 24 页 · 图 19', 'AI Native 基础设施上承载的网元全面演进为 ANF：DAP ANF（Agent）、CP ANF（Tool）、UP ANF（Tool）。',
+      ['硬件按需扩容 AI 算力；智能电信云按需扩展 Sandbox、Serverless 等新型运行时，保障 ANF 高效运行与电信级任务成功率。']],
+    ['沉浸式通信', '第 16 页 · 图 12', '图 12 右侧把沉浸式通信（6G IMS、6G UMF）与基础联接、DAP 并列，第 4 章开头写明“未来……支持沉浸式通信，跃升通话业务体验”。',
+      ['第 4.2 节正文没有单独展开沉浸式通信的演进步骤；相关能力需求见第 3.3 节。']]
+  ]
+};
+(function () {
+  var cap = $('#road-cap'), all = [];
+  function show(it, btn) {
+    all.forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); });
+    cap.innerHTML = '<h4>' + it[0] + '</h4><p class="pgx">原文 ' + it[1] + '</p><p>' + it[2] + '</p><ul>' + it[3].map(function (t) { return '<li>' + t + '</li>'; }).join('') + '</ul>';
+  }
+  ['a', 'b'].forEach(function (k) {
+    var ul = $('#road-' + k);
+    road[k].forEach(function (it) {
+      var li = h('li'), b = h('button', '', it[0] + '<small>' + it[1] + '</small>'); b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', function () { show(it, b); });
+      all.push(b); li.appendChild(b); ul.appendChild(li);
+    });
+  });
+  all[0].click();
+})();
+
+/* ---------- CNF -> ANF ---------- */
+var mig = [
+  { link: '信令', rows: [['CNF', 'AMF/SMF…', '控制面 CP'], ['CNF+', 'NWDAF…', '智能面'], ['CNF', '', '用户面 UP']], ifc: 'SBI', hook: 0,
+    list: [['端网交互', '信令，入口在控制面'], ['智能面', 'NWDAF 等以 CNF+ 形态做旁路分析、辅助决策'], ['网元间接口', 'SBI']] },
+  { link: '意图', rows: [['ANF', 'Tool', '可编程控制面 CP'], ['ANF', 'Agent', '数据与智能面 DAP'], ['ANF', 'Tool', '低时延用户面 UP']], ifc: 'ABI', hook: 1,
+    list: [['端网交互', '意图，入口迁到 DAP ①'], ['DAP', 'ANF（Agent）：理解意图、驱动流程 ②'], ['CP / UP', 'ANF（Tool）：内嵌可供智能体调用的 Tool ③'], ['网元间接口', 'ABI']] }
+];
+(function () {
+  var g = $('#mig-g'), svg = $('#mig'), list = $('#mig-list'), seg = $('#mig-mode');
+  function draw(i) {
+    var m = mig[i], s = '';
+    m.rows.forEach(function (r, j) {
+      var y = 14 + j * 96;
+      s += '<rect class="box" x="150" y="' + y + '" width="400" height="76" rx="6"/>' +
+        '<rect class="nfb" x="166" y="' + (y + 12) + '" width="150" height="52" rx="4"/>' +
+        '<text class="nfn" x="241" y="' + (y + 36) + '" text-anchor="middle">' + r[0] + '</text>' +
+        (r[1] ? '<text x="241" y="' + (y + 56) + '" text-anchor="middle"' + (i ? ' class="new"' : '') + '>' + r[1] + '</text>' : '') +
+        '<text x="436" y="' + (y + 44) + '" text-anchor="middle" class="nfn" style="font-size:16px">' + r[2] + '</text>';
+      if (j < 2) s += '<path class="ln" d="M350 ' + (y + 76) + 'V' + (y + 96) + '"/><text class="ifc" x="520" y="' + (y + 91) + '">' + m.ifc + '</text>';
+    });
+    var hy = 14 + m.hook * 96 + 38;
+    s += '<rect x="20" y="' + (hy - 30) + '" width="40" height="60" rx="8" fill="none" stroke="var(--ink-3)" stroke-width="2"/>' +
+      '<path class="ln" d="M60 ' + hy + 'H150"/><text x="104" y="' + (hy - 8) + '" text-anchor="middle"' + (i ? ' class="new"' : '') + '>' + m.link + '</text>' +
+      '<text x="40" y="' + (hy + 50) + '" text-anchor="middle">终端</text>';
+    g.innerHTML = s;
+    svg.classList.toggle('after', i === 1);
+    list.innerHTML = m.list.map(function (l) { return '<li><b>' + l[0] + '</b><span>' + l[1] + '</span></li>'; }).join('');
+  }
+  seg.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () { press(seg, b); draw(+b.getAttribute('data-m')); });
+  });
+  draw(0);
+})();
+
+/* ---------- 数字表 ---------- */
+var nums = [
+  ['约 4 个月', '智能体自主任务时长翻倍周期（2024 年后；此前约 7 个月）', 't3', 'METR', '02'],
+  ['超 20 亿', '独立个人 AI 助手全球用户', 'na', '', '03'],
+  ['约 80%', '全球 TOP 100 消费者 App 中已内嵌 AI 助手的比例', 'na', '', '03'],
+  ['5% → 40%', '集成任务专用智能体的企业应用占比（2025 → 2026 年底）', 't3', 'Gartner', '03'],
+  ['45% / >50%', '2026 年 AI 手机出货渗透率：全球 / 国内', 't3', 'Counterpoint', '03'],
+  ['超 100%', '2026 年 AI 穿戴设备出货增速', 'na', '', '03'],
+  ['10 个', '2030 年每用户平均同时拥有的智能体数', 'hw', '预计', '03'],
+  ['100T / 200B', '2030 年领先模型参数 / 复杂任务模型所需参数', 'hw', '预测', '04'],
+  ['20% 以上', '2030 年低时延端云协同请求占端侧协同任务比例', 'hw', '预计', '04'],
+  ['400 / 100 / 10ms', '三类场景（AI 实时交互 / 具身 / 工业控制）极致体验 TTFT', 'na', '', '05'],
+  ['10× / 10× / 100×', '智能体与网络交互的频度 / 复杂度 / 整体交互量（相对普通终端）', 'na', '', '08'],
+  ['4000 多万 / 2000 万', '2025 年底中国新能源汽车保有量 / 充电设施', 'na', '', '11'],
+  ['500–2000 TOPS', '主流高端车型车载算力，超七成长期闲置', 'na', '', '11'],
+  ['50ms → 400ms', 'AI 实时交互：网络传输耗时 → 端到端任务时延', 'na', '', '11'],
+  ['50% / 30% / 10–20%', '5G SA 3CC 载波聚合带宽增益 / 时延降低 / 终端功耗下降', 'na', '', '16'],
+  ['30% 以上', '2/3/4/5G 全融合后资源利用率提升', 'na', '', '17'],
+  ['1 亿', '中国移动 AI 通话用户（截至 2026 年 10 月）', 'na', '', '19'],
+  ['近 50 家', '明确表达 AI 通话升级意愿的运营商', 'na', '', '19'],
+  ['14% / 11–12%', 'DOU 增速：2026–2027 年 / 中长期', 't3', 'GSMA Intelligence', '19'],
+  ['超过 30 家', '推出速率或体验计费套餐的运营商', 'na', '', '19'],
+  ['20 多个 / 60% / 15 分钟', 'O&M Agent 商用运营商数 / 故障处理效率提升 / 业务恢复时间', 'hw', '商用数据', '21'],
+  ['90% / 30%', '意图识别准确率 / 运维效率提升', 'hw', '商用数据', '21'],
+  ['90 → 15 分钟', '故障场景业务平均恢复时长', 'hw', '商用数据', '21'],
+  ['10× / 70% / 50%', '超融合硬件：推理带宽较 PCIe 提升 / 时延降低 / 资源利用率提升', 'hw', '产品数据', '22'],
+  ['30%', '专用 AI 推理引擎带来的推理成本降低', 'hw', '产品数据', '22']
+];
+(function () {
+  var tb = $('#num-b'), f = $('#num-f');
+  tb.innerHTML = nums.map(function (n) {
+    return '<tr data-s="' + n[2] + '"><td class="n">' + n[0] + '</td><td>' + n[1] + '</td><td>' + tag(n[2], n[3] ? (n[2] === 'hw' ? '华为' + n[3] : n[3]) : null) + '</td><td class="p">第 ' + n[4] + ' 页</td></tr>';
+  }).join('');
+  f.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      press(f, b); var k = b.getAttribute('data-f');
+      tb.querySelectorAll('tr').forEach(function (r) { r.classList.toggle('hide', k !== 'all' && r.getAttribute('data-s') !== k); });
+    });
+  });
+})();
+
+/* ---------- 章节导航 ---------- */
+var links = document.querySelectorAll('#secnav a');
+if ('IntersectionObserver' in window) {
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) links.forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id); });
+    });
+  }, { rootMargin: '-45% 0px -50% 0px' });
+  document.querySelectorAll('.sec').forEach(function (s) { io.observe(s); });
+}
+})();
+</script>
+</body>
+</html>
